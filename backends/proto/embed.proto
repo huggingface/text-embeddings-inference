@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package embedding.v1;
+
+service EmbeddingService {
+    /// Decode token for a list of prefilled batches
+    rpc Embed (EmbedRequest) returns (EmbedResponse);
+    /// Health check
+    rpc Health (HealthRequest) returns (HealthResponse);
+}
+
+message HealthRequest {}
+message HealthResponse {}
+
+message EmbedRequest {
+    repeated uint32 input_ids = 1;
+    repeated uint32 token_type_ids = 2;
+    repeated uint32 position_ids = 3;
+    repeated uint32 cu_seq_lengths = 4;
+    /// Length of the longest request
+    uint32 max_length = 5;
+}
+
+message Embedding {
+    repeated float values = 1;
+}
+
+message EmbedResponse {
+    repeated Embedding embeddings = 1;
+}

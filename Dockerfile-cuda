@@ -1,0 +1,77 @@
+FROM nvidia/cuda:12.2.0-devel-ubuntu22.04 AS base-builder
+
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    curl \
+    libssl-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
+RUN cargo install cargo-chef --locked
+
+FROM base-builder AS planner
+
+WORKDIR /usr/src
+
+COPY backends backends
+COPY core core
+COPY router router
+COPY Cargo.toml ./
+COPY Cargo.lock ./
+
+RUN cargo chef prepare  --recipe-path recipe.json
+
+FROM base-builder AS builder
+
+ARG CUDA_COMPUTE_CAP=80
+ARG GIT_SHA
+ARG DOCKER_LABEL
+
+WORKDIR /usr/src
+
+RUN if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
+    then  \
+        nvprune --generate-code code=sm_${CUDA_COMPUTE_CAP} /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
+    elif [ ${CUDA_COMPUTE_CAP} -ge 80 -a ${CUDA_COMPUTE_CAP} -lt 90 ]; \
+    then  \
+        nvprune --generate-code code=sm_80 --generate-code code=sm_${CUDA_COMPUTE_CAP} /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
+    elif [ ${CUDA_COMPUTE_CAP} -eq 90 ]; \
+    then  \
+        nvprune --generate-code code=sm_90 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
+    else  \
+        echo "cuda compute cap ${CUDA_COMPUTE_CAP} is not supported"; exit 1; \
+    fi;
+
+COPY --from=planner /usr/src/recipe.json recipe.json
+
+RUN if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
+    then \
+        cargo chef cook --release --features candle-cuda-turing --features static-linking --no-default-features --recipe-path recipe.json; \
+    else \
+        cargo chef cook --release --features candle-cuda --features static-linking --no-default-features --recipe-path recipe.json; \
+    fi;
+
+COPY backends backends
+COPY core core
+COPY router router
+COPY Cargo.toml ./
+COPY Cargo.lock ./
+
+RUN if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
+    then \
+        cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F static-linking --no-default-features; \
+    else \
+        cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking --no-default-features; \
+    fi;
+
+FROM nvidia/cuda:12.2.0-base-ubuntu22.04
+
+ENV HUGGINGFACE_HUB_CACHE=/data \
+    PORT=80
+
+COPY --from=builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
+
+ENTRYPOINT ["text-embeddings-router"]
+CMD ["--json-output"]

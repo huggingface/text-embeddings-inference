@@ -1,0 +1,543 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Text Embeddings Inference",
+    "description": "Text Embedding Webserver",
+    "contact": {
+      "name": "Olivier Dehaene"
+    },
+    "license": {
+      "name": "HFOIL"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/embed": {
+      "post": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Get Embeddings",
+        "description": "Get Embeddings",
+        "operationId": "embed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Embeddings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbedResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Embedding Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Inference failed",
+                  "error_type": "backend"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Model is overloaded",
+                  "error_type": "overloaded"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Health check method",
+        "description": "Health check method",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Everything is working fine"
+          },
+          "503": {
+            "description": "Text embeddings Inference is down",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "unhealthy",
+                  "error_type": "unhealthy"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/info": {
+      "get": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Text Embeddings Inference endpoint info",
+        "description": "Text Embeddings Inference endpoint info",
+        "operationId": "get_model_info",
+        "responses": {
+          "200": {
+            "description": "Served model info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Info"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Prometheus metrics scrape endpoint",
+        "description": "Prometheus metrics scrape endpoint",
+        "operationId": "metrics",
+        "responses": {
+          "200": {
+            "description": "Prometheus Metrics",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openai": {
+      "post": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "OpenAI compatible route",
+        "description": "OpenAI compatible route",
+        "operationId": "openai_embed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAICompatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Embeddings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                },
+                "example": {
+                  "message": "Batch size error",
+                  "type": "validation"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                },
+                "example": {
+                  "message": "Tokenization error",
+                  "type": "tokenizer"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Embedding Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                },
+                "example": {
+                  "message": "Inference failed",
+                  "type": "backend"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                },
+                "example": {
+                  "message": "Model is overloaded",
+                  "type": "overloaded"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "EmbedRequest": {
+        "type": "object",
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "inputs": {
+            "$ref": "#/components/schemas/Input"
+          },
+          "truncate": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false"
+          }
+        }
+      },
+      "EmbedResponse": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          }
+        },
+        "example": [
+          [
+            "0.0",
+            "1.0",
+            "2.0"
+          ]
+        ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error",
+          "error_type"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "error_type": {
+            "$ref": "#/components/schemas/ErrorType"
+          }
+        }
+      },
+      "ErrorType": {
+        "type": "string",
+        "enum": [
+          "Unhealthy",
+          "Backend",
+          "Overloaded",
+          "Validation",
+          "Tokenizer"
+        ]
+      },
+      "Info": {
+        "type": "object",
+        "required": [
+          "model_id",
+          "model_dtype",
+          "max_concurrent_requests",
+          "max_input_length",
+          "max_batch_tokens",
+          "max_client_batch_size",
+          "tokenization_workers",
+          "version"
+        ],
+        "properties": {
+          "docker_label": {
+            "type": "string",
+            "example": "null",
+            "nullable": true
+          },
+          "max_batch_requests": {
+            "type": "integer",
+            "default": "null",
+            "example": "null",
+            "nullable": true,
+            "minimum": 0
+          },
+          "max_batch_tokens": {
+            "type": "integer",
+            "example": "2048",
+            "minimum": 0
+          },
+          "max_client_batch_size": {
+            "type": "integer",
+            "example": "32",
+            "minimum": 0
+          },
+          "max_concurrent_requests": {
+            "type": "integer",
+            "description": "Router Parameters",
+            "example": "128",
+            "minimum": 0
+          },
+          "max_input_length": {
+            "type": "integer",
+            "example": "512",
+            "minimum": 0
+          },
+          "model_dtype": {
+            "type": "string",
+            "example": "float16"
+          },
+          "model_id": {
+            "type": "string",
+            "description": "Model info",
+            "example": "thenlper/gte-base"
+          },
+          "model_sha": {
+            "type": "string",
+            "example": "fca14538aa9956a46526bd1d0d11d69e19b5a101",
+            "nullable": true
+          },
+          "sha": {
+            "type": "string",
+            "example": "null",
+            "nullable": true
+          },
+          "tokenization_workers": {
+            "type": "integer",
+            "example": "4",
+            "minimum": 0
+          },
+          "version": {
+            "type": "string",
+            "description": "Router Info",
+            "example": "0.5.0"
+          }
+        }
+      },
+      "Input": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "OpenAICompatEmbedding": {
+        "type": "object",
+        "required": [
+          "object",
+          "embedding",
+          "index"
+        ],
+        "properties": {
+          "embedding": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            },
+            "example": [
+              "0.0",
+              "1.0",
+              "2.0"
+            ]
+          },
+          "index": {
+            "type": "integer",
+            "example": "0",
+            "minimum": 0
+          },
+          "object": {
+            "type": "string",
+            "example": "embedding"
+          }
+        }
+      },
+      "OpenAICompatErrorResponse": {
+        "type": "object",
+        "required": [
+          "message",
+          "code",
+          "error_type"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "error_type": {
+            "$ref": "#/components/schemas/ErrorType"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "OpenAICompatRequest": {
+        "type": "object",
+        "required": [
+          "input"
+        ],
+        "properties": {
+          "input": {
+            "$ref": "#/components/schemas/Input"
+          },
+          "model": {
+            "type": "string",
+            "example": "null",
+            "nullable": true
+          },
+          "user": {
+            "type": "string",
+            "example": "null",
+            "nullable": true
+          }
+        }
+      },
+      "OpenAICompatResponse": {
+        "type": "object",
+        "required": [
+          "object",
+          "data",
+          "model",
+          "usage"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenAICompatEmbedding"
+            }
+          },
+          "model": {
+            "type": "string",
+            "example": "thenlper/gte-base"
+          },
+          "object": {
+            "type": "string",
+            "example": "list"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/OpenAICompatUsage"
+          }
+        }
+      },
+      "OpenAICompatUsage": {
+        "type": "object",
+        "required": [
+          "prompt_tokens",
+          "total_tokens"
+        ],
+        "properties": {
+          "prompt_tokens": {
+            "type": "integer",
+            "example": "512",
+            "minimum": 0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "example": "512",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Text Embeddings Inference",
+      "description": "Hugging Face Text Embeddings Inference API"
+    }
+  ]
+}

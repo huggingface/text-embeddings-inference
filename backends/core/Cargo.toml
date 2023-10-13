@@ -1,0 +1,9 @@
+[package]
+name = "text-embeddings-backend-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+
+[dependencies]
+thiserror = "^1.0"

@@ -1,0 +1,57 @@
+[package]
+name = "text-embeddings-router"
+description = "Text Embedding Webserver"
+build = "build.rs"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "text-embeddings-router"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.71"
+async-stream = "0.3.3"
+axum = { version = "0.6.4", features = ["json"] }
+axum-tracing-opentelemetry = "0.14.1"
+text-embeddings-backend = { path = "../backends", features = ["clap"] }
+text-embeddings-core = { path = "../core" }
+clap = { version = "4.1.4", features = ["derive", "env"] }
+futures = "^0.3"
+flume = "0.10.14"
+init-tracing-opentelemetry = { version = "0.14.1", features = ["opentelemetry-otlp"] }
+hf-hub = { version = "0.3.0", features = ["tokio"] }
+metrics = "0.21.0"
+metrics-exporter-prometheus = { version = "0.12.1", features = [] }
+opentelemetry = { version = "0.19.0", features = ["rt-tokio"] }
+opentelemetry-otlp = "0.12.0"
+reqwest = { version = "0.11.14", features = [] }
+serde = "1.0.152"
+serde_json = "1.0.93"
+thiserror = "1.0.38"
+tokenizers = { version = "^0.13", default-features=false, features=["onig"] }
+tokio = { version = "1.25.0", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync"] }
+tower-http = { version = "0.4.0", features = ["cors"] }
+tracing = "0.1.37"
+tracing-opentelemetry = "0.19.0"
+tracing-subscriber = { version = "0.3.16", features = ["json", "env-filter"] }
+utoipa = { version = "3.0.1", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "3.0.2", features = ["axum"] }
+
+[build-dependencies]
+vergen = { version = "8.0.0", features = ["build", "git", "gitcl"] }
+
+[features]
+default = ["candle"]
+mkl = ["text-embeddings-backend/mkl"]
+accelerate = ["text-embeddings-backend/accelerate"]
+python = ["text-embeddings-backend/python"]
+candle = ["text-embeddings-backend/candle"]
+candle-cuda = ["text-embeddings-backend/candle", "text-embeddings-backend/flash-attn"]
+candle-cuda-turing = ["text-embeddings-backend/candle", "text-embeddings-backend/flash-attn-v1"]
+static-linking = ["text-embeddings-backend/static-linking"]

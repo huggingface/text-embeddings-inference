@@ -1,0 +1,41 @@
+[tool.poetry]
+name = "text-embeddings-server"
+version = "0.1.0"
+description = "Text Embeddings Python gRPC Server"
+authors = ["Olivier Dehaene <olivier@huggingface.co>"]
+
+[tool.poetry.scripts]
+python-text-embeddings-server = 'text_embeddings_server.cli:app'
+
+[tool.poetry.dependencies]
+python = ">=3.9,<3.13"
+protobuf = "^4.21.7"
+grpcio = "^1.51.1"
+grpcio-status = "^1.51.1"
+grpcio-reflection = "^1.51.1"
+grpc-interceptor = "^0.15.0"
+typer = "^0.6.1"
+safetensors = "^0.3.2"
+loguru = "^0.6.0"
+opentelemetry-api = "^1.15.0"
+opentelemetry-exporter-otlp = "^1.15.0"
+opentelemetry-instrumentation-grpc = "^0.36b0"
+torch = { version = "^2.0.1" }
+
+[tool.poetry.extras]
+
+[tool.poetry.group.dev.dependencies]
+grpcio-tools = "^1.51.1"
+pytest = "^7.3.0"
+
+[[tool.poetry.source]]
+name = "pytorch-gpu-src"
+url = "https://download.pytorch.org/whl/cu118"
+priority = "explicit"
+
+[tool.pytest.ini_options]
+markers = ["private: marks tests as requiring an admin hf token (deselect with '-m \"not private\"')"]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

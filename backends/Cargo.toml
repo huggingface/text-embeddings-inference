@@ -1,0 +1,25 @@
+[package]
+name = "text-embeddings-backend"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+
+[dependencies]
+flume = "^0.10"
+clap = { version = "4.1.4", features = ["derive"], optional = true }
+text-embeddings-backend-core = { path = "core" }
+text-embeddings-backend-python = { path = "python", optional = true }
+text-embeddings-backend-candle = { path = "candle", optional = true }
+tokio = { version = "^1.25", features = ["sync"] }
+tracing = "^0.1"
+
+[features]
+clap = [ "dep:clap" ]
+python = ["dep:text-embeddings-backend-python"]
+candle = ["dep:text-embeddings-backend-candle"]
+mkl = ["text-embeddings-backend-candle?/mkl"]
+accelerate = ["text-embeddings-backend-candle?/accelerate"]
+static-linking = ["text-embeddings-backend-candle?/static-linking"]
+flash-attn = ["text-embeddings-backend-candle?/flash-attn"]
+flash-attn-v1 = ["text-embeddings-backend-candle?/flash-attn-v1"]

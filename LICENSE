@@ -1,0 +1,181 @@
+Hugging Face Optimized Inference License 1.0 (HFOILv1.0)
+
+
+This License Agreement governs the use of the Software and its Modifications. It is a
+binding agreement between the Licensor and You.
+
+This License Agreement shall be referred to as Hugging Face Optimized Inference License
+1.0 or HFOILv1.0. We may publish revised versions of this License Agreement from time to
+time. Each version will be given a distinguished number.
+
+By downloading, accessing, modifying, distributing or otherwise using the Software, You
+consent to all of the terms and conditions below. So, if You do not agree with those,
+please do not download, access, modify, distribute, or use the Software.
+
+
+1. PERMISSIONS
+
+You may use, modify and distribute the Software pursuant to the following terms and
+conditions:
+
+Copyright License. Subject to the terms and conditions of this License Agreement and where
+and as applicable, each Contributor hereby grants You a perpetual, worldwide,
+non-exclusive, royalty-free, copyright license to reproduce, prepare, publicly display,
+publicly perform, sublicense under the terms herein, and distribute the Software and
+Modifications of the Software.
+
+Patent License. Subject to the terms and conditions of this License Agreement and where
+and as applicable, each Contributor hereby grants You a perpetual, worldwide,
+non-exclusive, royalty-free patent license to make, have made, Use, offer to sell, sell,
+import, and otherwise transfer the Software, where such license applies only to those
+patent claims licensable by such Contributor that are necessarily infringed by their
+Contribution(s) alone or by combination of their Contribution(s) with the Software to
+which such Contribution(s) was submitted. If You institute patent litigation against any
+entity (including a cross-claim or counterclaim in a lawsuit) alleging that the Software
+or a Contribution incorporated within the Software constitutes direct or contributory
+patent infringement, then any rights granted to You under this License Agreement for the
+Software shall terminate as of the date such litigation is filed.
+
+No other rights. All rights not expressly granted herein are retained.
+
+
+2. RESTRICTIONS
+
+You may not distribute the Software as a hosted or managed, and paid service, where the
+service grants users access to any substantial set of the features or functionality of the
+Software. If you wish to do so, You will need to be granted additional rights from the
+Licensor which will be subject to a separate mutually agreed agreement.
+
+You may not sublicense the Software under any other terms than those listed in this
+License.
+
+
+3. OBLIGATIONS
+
+When You modify the Software, You agree to: - attach a notice stating the Modifications of
+the Software You made; and - attach a notice stating that the Modifications of the
+Software are released under this License Agreement.
+
+When You distribute the Software or Modifications of the Software, You agree to: - give
+any recipients of the Software a copy of this License Agreement; - retain all Explanatory
+Documentation; and if sharing the Modifications of the Software, add Explanatory
+Documentation documenting the changes made to create the Modifications of the Software; -
+retain all copyright, patent, trademark and attribution notices.
+
+
+4. MISCELLANEOUS
+
+Termination. Licensor reserves the right to restrict Use of the Software in violation of
+this License Agreement, upon which Your licenses will automatically terminate.
+
+Contributions. Unless You explicitly state otherwise, any Contribution intentionally
+submitted for inclusion in the Software by You to the Licensor shall be under the terms
+and conditions of this License, without any additional terms or conditions.
+Notwithstanding the above, nothing herein shall supersede or modify the terms of any
+separate license agreement you may have executed with Licensor regarding such
+Contributions.
+
+Trademarks and related. Nothing in this License Agreement permits You (i) to make Use of
+Licensors’ trademarks, trade names, or logos, (ii) otherwise suggest endorsement by
+Licensor, or (iii) misrepresent the relationship between the parties; and any rights not
+expressly granted herein are reserved by the Licensors.
+
+Output You generate. Licensor claims no rights in the Output. You agree not to contravene
+any provision as stated in the License Agreement with your Use of the Output.
+
+Disclaimer of Warranty. Except as expressly provided otherwise herein, and to the fullest
+extent permitted by law, Licensor provides the Software (and each Contributor provides its
+Contributions) AS IS, and Licensor disclaims all warranties or guarantees of any kind,
+express or implied, whether arising under any law or from any usage in trade, or otherwise
+including but not limited to the implied warranties of merchantability, non-infringement,
+quiet enjoyment, fitness for a particular purpose, or otherwise. You are solely
+responsible for determining the appropriateness of the Software and Modifications of the
+Software for your purposes (including your use or distribution of the Software and
+Modifications of the Software), and assume any risks associated with Your exercise of
+permissions under this License Agreement.
+
+Limitation of Liability. In no event and under no legal theory, whether in tort (including
+negligence), contract, or otherwise, unless required by applicable law (such as deliberate
+and grossly negligent acts) or agreed to in writing, shall any Contributor be liable to
+You for damages, including any direct, indirect, special, incidental, or consequential
+damages of any character arising as a result of this License Agreement or out of the Use
+or inability to Use the Software (including but not limited to damages for loss of
+goodwill, work stoppage, computer failure or malfunction, model failure or malfunction, or
+any and all other commercial damages or losses), even if such Contributor has been advised
+of the possibility of such damages.
+
+Accepting Warranty or Additional Liability. While sharing the Software or Modifications of
+the Software thereof, You may choose to offer and charge a fee for, acceptance of support,
+warranty, indemnity, or other liability obligations and/or rights consistent with this
+License Agreement. However, in accepting such obligations, You may act only on Your own
+behalf and on Your sole responsibility, not on behalf of Licensor or any other
+Contributor, and you hereby agree to indemnify, defend, and hold Licensor and each other
+Contributor (and their successors or assigns) harmless for any liability incurred by, or
+claims asserted against, such Licensor or Contributor (and their successors or assigns) by
+reason of your accepting any such warranty or additional liability.
+
+Severability. This License Agreement is a license of copyright and patent rights and an
+agreement in contract between You and the Licensor. If any provision of this License
+Agreement is held to be invalid, illegal or unenforceable, the remaining provisions shall
+be unaffected thereby and remain valid as if such provision had not been set forth herein.
+
+
+5. DEFINITIONS
+
+“Contribution” refers to any work of authorship, including the original version of the
+Software and any Modifications of the Software that is intentionally submitted to Licensor
+for inclusion in the Software by the copyright owner or by an individual or entity
+authorized to submit on behalf of the copyright owner. For the purposes of this
+definition, “submitted” means any form of electronic, verbal, or written communication
+sent to the Licensor or its representatives, including but not limited to communication on
+electronic mailing lists, source code control systems, and issue tracking systems that are
+managed by, or on behalf of, the Licensor for the purpose of discussing and improving the
+Software, but excluding communication that is conspicuously marked or otherwise designated
+in writing by the copyright owner as “Not a Contribution.”
+
+“Contributor” refers to Licensor and any individual or entity on behalf of whom a
+Contribution has been received by Licensor and subsequently incorporated within the
+Software.
+
+“Data” refers to a collection of information extracted from the dataset used with the
+Model, including to train, pretrain, or otherwise evaluate the Model. The Data is not
+licensed under this License Agreement.
+
+“Explanatory Documentation” refers to any documentation or related information including
+but not limited to model cards or data cards dedicated to inform the public about the
+characteristics of the Software. Explanatory documentation is not licensed under this
+License.
+
+"License Agreement" refers to these terms and conditions.
+
+“Licensor” refers to the rights owners or entity authorized by the rights owners that are
+granting the terms and conditions of this License Agreement.
+
+“Model” refers to machine-learning based assemblies (including checkpoints), consisting of
+learnt weights and parameters (including optimizer states), corresponding to a model
+architecture as embodied in Software source code. Source code is not licensed under this
+License Agreement.
+
+“Modifications of the Software” refers to all changes to the Software, including without
+limitation derivative works of the Software.
+
+“Output” refers to the results of operating the Software.
+
+“Share” refers to any transmission, reproduction, publication or other sharing of the
+Software or Modifications of the Software to a third party, including providing the
+Softwaire as a hosted service made available by electronic or other remote means,
+including - but not limited to - API-based or web access.
+
+“Software” refers to the software and Model (or parts of either) that Licensor makes
+available under this License Agreement.
+
+“Third Parties” refers to individuals or legal entities that are not under common control
+with Licensor or You.
+
+“Use” refers to anything You or your representatives do with the Software, including but
+not limited to generating any Output, fine tuning, updating, running, training, evaluating
+and/or reparametrizing the Model.
+
+"You" (or "Your")  refers to an individual or Legal Entity exercising permissions granted
+by this License Agreement and/or making Use of the Software for whichever purpose and in
+any field of Use.
