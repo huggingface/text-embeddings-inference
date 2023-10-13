@@ -100,7 +100,7 @@
          uses: docker/metadata-action@v4.3.0
          with:
            images: |
-             registry.internal.huggingface.tech/text-embeddings-inference
+             registry.internal.huggingface.tech/api-inference/text-embeddings-inference
              ghcr.io/huggingface/text-embeddings-inference
            tags: |
              type=semver,pattern=turing-{{version}}
@@ -112,7 +112,7 @@
          uses: docker/metadata-action@v4.3.0
          with:
            images: |
-             registry.internal.huggingface.tech/text-embeddings-inference
+             registry.internal.huggingface.tech/api-inference/text-embeddings-inference
              ghcr.io/huggingface/text-embeddings-inference
            tags: |
              type=semver,pattern={{version}}
@@ -124,7 +124,7 @@
          uses: docker/metadata-action@v4.3.0
          with:
            images: |
-             registry.internal.huggingface.tech/text-embeddings-inference
+             registry.internal.huggingface.tech/api-inference/text-embeddings-inference
              ghcr.io/huggingface/text-embeddings-inference
            tags: |
              type=semver,pattern=86-{{version}}
@@ -136,7 +136,7 @@
          uses: docker/metadata-action@v4.3.0
          with:
            images: |
-             registry.internal.huggingface.tech/text-embeddings-inference
+             registry.internal.huggingface.tech/api-inference/text-embeddings-inference
              ghcr.io/huggingface/text-embeddings-inference
            tags: |
              type=semver,pattern=hopper-{{version}}
@@ -148,7 +148,7 @@
          uses: docker/metadata-action@v4.3.0
          with:
            images: |
-             registry.internal.huggingface.tech/text-embeddings-inference
+             registry.internal.huggingface.tech/api-inference/text-embeddings-inference
              ghcr.io/huggingface/text-embeddings-inference
            tags: |
              type=semver,pattern=cpu-{{version}}
@@ -169,8 +169,8 @@
              DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
            tags: ${{ steps.meta-75.outputs.tags }}
            labels: ${{ steps.meta-75.outputs.labels }}
-           cache-from: type=registry,ref=registry.internal.huggingface.tech/text-embeddings-inference:cache,mode=min
-           cache-to: type=registry,ref=registry.internal.huggingface.tech/text-embeddings-inference:cache,mode=min
+           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=min
+           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=min
        - name: Build and push Docker image
          id: build-and-push-80
          uses: docker/build-push-action@v4
@@ -185,8 +185,8 @@
              DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
            tags: ${{ steps.meta-80.outputs.tags }}
            labels: ${{ steps.meta-80.outputs.labels }}
-           cache-from: type=registry,ref=registry.internal.huggingface.tech/text-embeddings-inference:cache,mode=min
-           cache-to: type=registry,ref=registry.internal.huggingface.tech/text-embeddings-inference:cache,mode=min
+           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=min
+           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=min
        - name: Build and push Docker image
          id: build-and-push-86
          uses: docker/build-push-action@v4
@@ -201,8 +201,8 @@
              DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
            tags: ${{ steps.meta-86.outputs.tags }}
            labels: ${{ steps.meta-86.outputs.labels }}
-           cache-from: type=registry,ref=registry.internal.huggingface.tech/text-embeddings-inference:cache,mode=min
-           cache-to: type=registry,ref=registry.internal.huggingface.tech/text-embeddings-inference:cache,mode=min
+           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=min
+           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=min
        - name: Build and push Docker image
          id: build-and-push-90
          uses: docker/build-push-action@v4
@@ -217,8 +217,8 @@
              DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
            tags: ${{ steps.meta-90.outputs.tags }}
            labels: ${{ steps.meta-90.outputs.labels }}
-           cache-from: type=registry,ref=registry.internal.huggingface.tech/text-embeddings-inference:cache,mode=min
-           cache-to: type=registry,ref=registry.internal.huggingface.tech/text-embeddings-inference:cache,mode=min
+           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=min
+           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=min
        - name: Build and push Docker image
          id: build-and-push-cpu
          uses: docker/build-push-action@v4
@@ -232,8 +232,8 @@
              DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
            tags: ${{ steps.meta-cpu.outputs.tags }}
            labels: ${{ steps.meta-cpu.outputs.labels }}
-           cache-from: type=registry,ref=registry.internal.huggingface.tech/text-embeddings-inference:cache,mode=min
-           cache-to: type=registry,ref=registry.internal.huggingface.tech/text-embeddings-inference:cache,mode=min
+           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=min
+           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=min
 
    stop-runner:
      name: Stop self-hosted EC2 runner
