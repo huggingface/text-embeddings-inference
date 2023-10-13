@@ -1,17 +1,19 @@
+use candle::cuda_backend::cudarc::driver::sys::CUdevice_attribute::{
+    CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
+};
+use candle::cuda_backend::cudarc::driver::CudaDevice;
 use lazy_static::lazy_static;
 
 lazy_static! {
     pub static ref RUNTIME_COMPUTE_CAP: usize = {
-        let out = std::process::Command::new("nvidia-smi")
-            .arg("--query-gpu=compute_cap")
-            .arg("--format=csv")
-            .output()
+        let device = CudaDevice::new(0).expect("cuda is not available");
+        let major = device
+            .attribute(CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR)
             .unwrap();
-        let out = std::str::from_utf8(&out.stdout).unwrap();
-        let mut lines = out.lines();
-        assert_eq!(lines.next().unwrap(), "compute_cap");
-        let cap = lines.next().unwrap().replace('.', "");
-        cap.parse::<usize>().unwrap()
+        let minor = device
+            .attribute(CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR)
+            .unwrap();
+        (major * 10 + minor) as usize
     };
     pub static ref COMPILE_COMPUTE_CAP: usize = env!("CUDA_COMPUTE_CAP").parse::<usize>().unwrap();
 }

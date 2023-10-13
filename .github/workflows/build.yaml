@@ -169,8 +169,8 @@
              DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
            tags: ${{ steps.meta-75.outputs.tags }}
            labels: ${{ steps.meta-75.outputs.labels }}
-           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=max
-           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=max
+           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-75,mode=min
+           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-75,mode=min
        - name: Build and push Docker image
          id: build-and-push-80
          uses: docker/build-push-action@v4
@@ -185,8 +185,8 @@
              DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
            tags: ${{ steps.meta-80.outputs.tags }}
            labels: ${{ steps.meta-80.outputs.labels }}
-           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=max
-           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=max
+           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-80,mode=min
+           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-80,mode=min
        - name: Build and push Docker image
          id: build-and-push-86
          uses: docker/build-push-action@v4
@@ -201,8 +201,8 @@
              DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
            tags: ${{ steps.meta-86.outputs.tags }}
            labels: ${{ steps.meta-86.outputs.labels }}
-           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=max
-           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=max
+           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-86,mode=min
+           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-86,mode=min
        - name: Build and push Docker image
          id: build-and-push-90
          uses: docker/build-push-action@v4
@@ -217,8 +217,8 @@
              DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
            tags: ${{ steps.meta-90.outputs.tags }}
            labels: ${{ steps.meta-90.outputs.labels }}
-           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=max
-           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=max
+           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-90,mode=min
+           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-90,mode=min
        - name: Build and push Docker image
          id: build-and-push-cpu
          uses: docker/build-push-action@v4
@@ -232,8 +232,8 @@
              DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
            tags: ${{ steps.meta-cpu.outputs.tags }}
            labels: ${{ steps.meta-cpu.outputs.labels }}
-           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=max
-           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache,mode=max
+           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-cpu,mode=min
+           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-cpu,mode=min
 
    stop-runner:
      name: Stop self-hosted EC2 runner
