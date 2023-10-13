@@ -89,8 +89,106 @@ curl 127.0.0.1:8080/embed \
 We also recommend using NVIDIA drivers with CUDA version 12 or higher. 
 
 To see all options to serve your models:
-```
+
+```shell
 text-embeddings-router --help
+```
+
+```
+Usage: text-embeddings-router [OPTIONS]
+
+Options:
+      --model-id <MODEL_ID>
+          The name of the model to load. Can be a MODEL_ID as listed on <https://hf.co/models> like `thenlper/gte-base`. Or it can be a local directory containing the necessary files as saved by `save_pretrained(...)` methods of transformers
+
+          [env: MODEL_ID=]
+          [default: thenlper/gte-base]
+
+      --revision <REVISION>
+          The actual revision of the model if you're referring to a model on the hub. You can use a specific commit id or a branch like `refs/pr/2`
+
+          [env: REVISION=]
+
+      --tokenization-workers <TOKENIZATION_WORKERS>
+          The number of tokenizer workers used for payload validation and truncation inside the router
+
+          [env: TOKENIZATION_WORKERS=]
+          [default: 8]
+
+      --dtype <DTYPE>
+          The dtype to be forced upon the model
+
+          [env: DTYPE=]
+          [default: float16]
+          [possible values: float16, float32]
+
+      --max-concurrent-requests <MAX_CONCURRENT_REQUESTS>
+          The maximum amount of concurrent requests for this particular deployment. Having a low limit will refuse clients requests instead of having them wait for too long and is usually good to handle backpressure correctly
+
+          [env: MAX_CONCURRENT_REQUESTS=]
+          [default: 512]
+
+      --max-batch-tokens <MAX_BATCH_TOKENS>
+          **IMPORTANT** This is one critical control to allow maximum usage of the available hardware.
+
+          This represents the total amount of potential tokens within a batch.
+
+          For `max_batch_tokens=1000`, you could fit `10` queries of `total_tokens=100` or a single query of `1000` tokens.
+
+          Overall this number should be the largest possible until the model is compute bound. Since the actual memory overhead depends on the model implementation, text-embeddings-inference cannot infer this number automatically.
+
+          [env: MAX_BATCH_TOKENS=]
+          [default: 16384]
+
+      --max-batch-requests <MAX_BATCH_REQUESTS>
+          Optionally control the maximum number of individual requests in a batch
+
+          [env: MAX_BATCH_REQUESTS=]
+
+      --max-client-batch-size <MAX_CLIENT_BATCH_SIZE>
+          Control the maximum number of inputs that a client can send in a single request
+
+          [env: MAX_CLIENT_BATCH_SIZE=]
+          [default: 32]
+
+      --hf-api-token <HF_API_TOKEN>
+          Your HuggingFace hub token
+
+          [env: HF_API_TOKEN=]
+
+      --hostname <HOSTNAME>
+          The IP address to listen on
+
+          [env: HOSTNAME=]
+          [default: 0.0.0.0]
+
+  -p, --port <PORT>
+          The port to listen on
+
+          [env: PORT=]
+          [default: 3000]
+
+      --uds-path <UDS_PATH>
+          The name of the unix socket some text-embeddings-inference backends will use as they communicate internally with gRPC
+
+          [env: UDS_PATH=]
+          [default: /tmp/text-embeddings-inference-server]
+
+      --huggingface-hub-cache <HUGGINGFACE_HUB_CACHE>
+          The location of the huggingface hub cache. Used to override the location if you want to provide a mounted disk for instance
+
+          [env: HUGGINGFACE_HUB_CACHE=/data]
+
+      --json-output
+          Outputs the logs in JSON format (useful for telemetry)
+
+          [env: JSON_OUTPUT=]
+
+      --otlp-endpoint <OTLP_ENDPOINT>
+          [env: OTLP_ENDPOINT=]
+
+      --cors-allow-origin <CORS_ALLOW_ORIGIN>
+          [env: CORS_ALLOW_ORIGIN=]
 ```
 
 ### Docker Images
