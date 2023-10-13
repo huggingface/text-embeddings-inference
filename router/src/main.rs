@@ -60,18 +60,13 @@ struct Args {
     /// of the available hardware.
     ///
     /// This represents the total amount of potential tokens within a batch.
-    /// When using padding (not recommended) this would be equivalent of
-    /// `batch_size` * `max_total_tokens`.
     ///
-    /// However in the non-padded (flash attention) version this can be much finer.
-    ///
-    /// For `max_batch_total_tokens=1000`, you could fit `10` queries of `total_tokens=100`
+    /// For `max_batch_tokens=1000`, you could fit `10` queries of `total_tokens=100`
     /// or a single query of `1000` tokens.
     ///
     /// Overall this number should be the largest possible until the model is compute bound.
-    /// Since the actual memory overhead depends on other parameters like if you're flash attention
-    /// or the model implementation, text-embeddings-inference cannot infer this number
-    /// automatically.
+    /// Since the actual memory overhead depends on the model implementation,
+    /// text-embeddings-inference cannot infer this number automatically.
     #[clap(default_value = "16384", long, env)]
     max_batch_tokens: usize,
 
@@ -79,7 +74,7 @@ struct Args {
     #[clap(long, env)]
     max_batch_requests: Option<usize>,
 
-    /// Control the maximum number of inputs that a client can send
+    /// Control the maximum number of inputs that a client can send in a single request
     #[clap(default_value = "32", long, env)]
     max_client_batch_size: usize,
 

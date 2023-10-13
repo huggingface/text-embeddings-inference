@@ -105,7 +105,7 @@ Options:
           [default: thenlper/gte-base]
 
       --revision <REVISION>
-          The actual revision of the model if you are referring to a model on the hub. You can use a specific commit id or a branch like `refs/pr/2`
+          The actual revision of the model if you're referring to a model on the hub. You can use a specific commit id or a branch like `refs/pr/2`
 
           [env: REVISION=]
 
@@ -131,16 +131,14 @@ Options:
       --max-batch-tokens <MAX_BATCH_TOKENS>
           **IMPORTANT** This is one critical control to allow maximum usage of the available hardware.
 
-          This represents the total amount of potential tokens within a batch. When using padding (not recommended) this would be equivalent of `batch_size` * `max_total_tokens`.
+          This represents the total amount of potential tokens within a batch.
 
-          However in the non-padded (flash attention) version this can be much finer.
+          For `max_batch_tokens=1000`, you could fit `10` queries of `total_tokens=100` or a single query of `1000` tokens.
 
-          For `max_batch_total_tokens=1000`, you could fit `10` queries of `total_tokens=100` or a single query of `1000` tokens.
-
-          Overall this number should be the largest possible until the model is compute bound. Since the actual memory overhead depends on other parameters like if you are flash attention or the model implementation, text-embeddings cannot infer this number automatically.
+          Overall this number should be the largest possible until the model is compute bound. Since the actual memory overhead depends on the model implementation, text-embeddings-inference cannot infer this number automatically.
 
           [env: MAX_BATCH_TOKENS=]
-          [default: 8192]
+          [default: 16384]
 
       --max-batch-requests <MAX_BATCH_REQUESTS>
           Optionally control the maximum number of individual requests in a batch
@@ -148,7 +146,7 @@ Options:
           [env: MAX_BATCH_REQUESTS=]
 
       --max-client-batch-size <MAX_CLIENT_BATCH_SIZE>
-          Control the maximum number of inputs that a client can send
+          Control the maximum number of inputs that a client can send in a single request
 
           [env: MAX_CLIENT_BATCH_SIZE=]
           [default: 32]
@@ -171,10 +169,10 @@ Options:
           [default: 3000]
 
       --uds-path <UDS_PATH>
-          The name of the unix socket some text-embeddings backends will use as they communicate internally with gRPC
+          The name of the unix socket some text-embeddings-inference backends will use as they communicate internally with gRPC
 
           [env: UDS_PATH=]
-          [default: /tmp/text-embeddings-server]
+          [default: /tmp/text-embeddings-inference-server]
 
       --huggingface-hub-cache <HUGGINGFACE_HUB_CACHE>
           The location of the huggingface hub cache. Used to override the location if you want to provide a mounted disk for instance
