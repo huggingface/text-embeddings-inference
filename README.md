@@ -48,21 +48,25 @@ Benchmark for [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1
 
 ### Supported Models
 
-You can use any BERT model with absolute positions in `text-embeddings-inference`. If the model does not have `safetensors` weights
-you can convert it using [this space](https://huggingface.co/spaces/safetensors/convert).
+You can use any BERT or XLM-RoBERTa model with absolute positions in `text-embeddings-inference`. 
+If the model does not have `safetensors` weights you can convert it using [this space](https://huggingface.co/spaces/safetensors/convert).
 
 **Support for other model types will be added in the future.**
 
-| MTEB Rank | Model Type | Model ID               | Specific Revision                                                        |
-|-----------|------------|------------------------|--------------------------------------------------------------------------|
-| 1         | Bert       | BAAI/bge-large-en-v1.5 | [refs/pr/5](https://huggingface.co/BAAI/bge-large-en-v1.5/discussions/5) |
-| 2         |            | BAAI/bge-base-en-v1.5  | [refs/pr/1](https://huggingface.co/BAAI/bge-base-en-v1.5/discussions/1)  |
-| 3         |            | llmrails/ember-v1      |                                                                          |
-| 4         |            | thenlper/gte-large     |                                                                          |
-| 5         |            | thenlper/gte-base      |                                                                          |
-| 6         |            | intfloat/e5-large-v2   |                                                                          |
-| 7         |            | BAAI/bge-small-en-v1.5 | [refs/pr/3](https://huggingface.co/BAAI/bge-small-en-v1.5/discussions/3) |
-| 10        |            | intfloat/e5-base-v2    |                                                                          |
+Examples of supported models:
+
+| MTEB Rank | Model Type   | Model ID                       | Specific Revision                                                        |
+|-----------|--------------|--------------------------------|--------------------------------------------------------------------------|
+| 1         | Bert         | BAAI/bge-large-en-v1.5         | [refs/pr/5](https://huggingface.co/BAAI/bge-large-en-v1.5/discussions/5) |
+| 2         |              | BAAI/bge-base-en-v1.5          | [refs/pr/1](https://huggingface.co/BAAI/bge-base-en-v1.5/discussions/1)  |
+| 3         |              | llmrails/ember-v1              |                                                                          |
+| 4         |              | thenlper/gte-large             |                                                                          |
+| 5         |              | thenlper/gte-base              |                                                                          |
+| 6         |              | intfloat/e5-large-v2           |                                                                          |
+| 7         |              | BAAI/bge-small-en-v1.5         | [refs/pr/3](https://huggingface.co/BAAI/bge-small-en-v1.5/discussions/3) |
+| 10        |              | intfloat/e5-base-v2            |                                                                          |
+| 11        | XLM-RoBERTa  | intfloat/multilingual-e5-large |                                                                          |
+
 
 You can explore the list of best performing text embeddings models [here](https://huggingface.co/spaces/mteb/leaderboard).
 
