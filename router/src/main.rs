@@ -116,6 +116,7 @@ pub struct ModelConfig {
     pub model_type: String,
     #[serde(alias = "n_positions")]
     pub max_position_embeddings: usize,
+    pub pad_token_id: usize,
 }
 
 #[tokio::main]
@@ -167,11 +168,19 @@ async fn main() -> Result<()> {
     );
     tokenizer.with_padding(None);
 
+    // Position IDs offset. Used for Roberta.
+    let position_offset = if config.pad_token_id == 0 {
+        0
+    } else {
+        config.pad_token_id + 1
+    };
+
     // Tokenization logic
     let tokenization = Tokenization::new(
         args.tokenization_workers,
         tokenizer,
         config.max_position_embeddings,
+        position_offset,
     );
 
     // Create backend
