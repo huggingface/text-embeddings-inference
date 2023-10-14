@@ -13,7 +13,12 @@ pub struct Tokenization {
 }
 
 impl Tokenization {
-    pub fn new(workers: usize, tokenizer: Tokenizer, max_input_length: usize) -> Self {
+    pub fn new(
+        workers: usize,
+        tokenizer: Tokenizer,
+        max_input_length: usize,
+        position_offset: usize,
+    ) -> Self {
         // Create channel
         let (sender, receiver) = flume::unbounded();
 
@@ -24,7 +29,12 @@ impl Tokenization {
 
             // Spawn worker
             tokio::task::spawn_blocking(move || {
-                tokenizer_worker(tokenizer_clone, max_input_length, receiver_clone)
+                tokenizer_worker(
+                    tokenizer_clone,
+                    max_input_length,
+                    position_offset,
+                    receiver_clone,
+                )
             });
         }
 
@@ -66,6 +76,7 @@ impl Tokenization {
 fn tokenizer_worker(
     tokenizer: Tokenizer,
     max_input_length: usize,
+    position_offset: usize,
     receiver: flume::Receiver<TokenizerRequest>,
 ) {
     // Loop over requests
@@ -74,8 +85,13 @@ fn tokenizer_worker(
             if !response_tx.is_closed() {
                 // It's possible that the user dropped its request resulting in a send error.
                 // We just discard the error
-                let _ =
-                    response_tx.send(encode_input(inputs, truncate, max_input_length, &tokenizer));
+                let _ = response_tx.send(encode_input(
+                    inputs,
+                    truncate,
+                    max_input_length,
+                    position_offset,
+                    &tokenizer,
+                ));
             }
         })
     }
@@ -86,6 +102,7 @@ fn encode_input(
     inputs: String,
     truncate: bool,
     max_input_length: usize,
+    position_offset: usize,
     tokenizer: &Tokenizer,
 ) -> Result<Encoding, TextEmbeddingsError> {
     // Get the number of tokens in the input
@@ -109,7 +126,8 @@ fn encode_input(
     Ok(Encoding {
         input_ids: encoding.get_ids().to_vec(),
         token_type_ids: encoding.get_type_ids().to_vec(),
-        position_ids: (0..seq_len as u32).collect::<Vec<_>>(),
+        position_ids: (position_offset as u32..(seq_len + position_offset) as u32)
+            .collect::<Vec<_>>(),
     })
 }
 
