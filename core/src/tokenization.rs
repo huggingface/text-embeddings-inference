@@ -19,6 +19,8 @@ impl Tokenization {
         max_input_length: usize,
         position_offset: usize,
     ) -> Self {
+        tracing::info!("Starting {workers} tokenization workers");
+
         // Create channel
         let (sender, receiver) = flume::unbounded();
 

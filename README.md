@@ -114,10 +114,9 @@ Options:
           [env: REVISION=]
 
       --tokenization-workers <TOKENIZATION_WORKERS>
-          The number of tokenizer workers used for payload validation and truncation inside the router
+          Optionally control the number of tokenizer workers used for payload tokenization, validation and truncation. Default to the number of CPU cores on the machine
 
           [env: TOKENIZATION_WORKERS=]
-          [default: 8]
 
       --dtype <DTYPE>
           The dtype to be forced upon the model
