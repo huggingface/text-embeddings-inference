@@ -41,10 +41,11 @@ struct Args {
     #[clap(long, env)]
     revision: Option<String>,
 
-    /// The number of tokenizer workers used for payload validation and truncation inside the
-    /// router.
-    #[clap(default_value = "8", long, env)]
-    tokenization_workers: usize,
+    /// Optionally control the number of tokenizer workers used for payload tokenization, validation
+    /// and truncation.
+    /// Default to the number of CPU cores on the machine.
+    #[clap(long, env)]
+    tokenization_workers: Option<usize>,
 
     /// The dtype to be forced upon the model.
     #[clap(default_value = "float16", long, env, value_enum)]
@@ -175,9 +176,13 @@ async fn main() -> Result<()> {
         config.pad_token_id + 1
     };
 
+    let tokenization_workers = args
+        .tokenization_workers
+        .unwrap_or_else(num_cpus::get_physical);
+
     // Tokenization logic
     let tokenization = Tokenization::new(
-        args.tokenization_workers,
+        tokenization_workers,
         tokenizer,
         config.max_position_embeddings,
         position_offset,
@@ -217,7 +222,7 @@ async fn main() -> Result<()> {
         max_concurrent_requests: args.max_concurrent_requests,
         max_input_length: config.max_position_embeddings,
         max_batch_tokens: args.max_batch_tokens,
-        tokenization_workers: args.tokenization_workers,
+        tokenization_workers,
         max_batch_requests,
         max_client_batch_size: args.max_client_batch_size,
         version: env!("CARGO_PKG_VERSION"),

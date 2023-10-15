@@ -26,8 +26,8 @@ export const options = {
         load_test: {
             executor: 'constant-arrival-rate',
             duration: '30s',
-            preAllocatedVUs: 2000,
-            rate: 500,
+            preAllocatedVUs: 10000,
+            rate: 9000,
             timeUnit: '1s',
             gracefulStop: '1s',
         },
