@@ -146,7 +146,7 @@ async fn batching_task(backend: Backend, queue: Queue, notify: Arc<Notify>) {
         while let Some(batch) = queue.next_batch().await {
             let results = backend.embed(batch.1).await;
 
-            // Handle sending responses in another thread to not starve the model
+            // Handle sending responses in another thread to avoid starting the backend
             tokio::task::spawn_blocking(move || match results {
                 Ok(embeddings) => {
                     batch.0.into_iter().zip(embeddings).for_each(|(m, e)| {

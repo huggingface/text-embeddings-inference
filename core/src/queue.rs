@@ -7,7 +7,7 @@ use std::ptr;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{BackendError, Batch};
 use tokio::sync::oneshot;
-use tracing::{info_span, instrument, Span};
+use tracing::{instrument, Span};
 
 /// Queue entry
 #[derive(Debug)]
@@ -51,8 +51,9 @@ impl Queue {
         // Create channels
         let (queue_sender, queue_receiver) = flume::unbounded();
 
+        // Launch background queue task
         tokio::task::spawn_blocking(move || {
-            queue_task(
+            queue_blocking_task(
                 max_batch_tokens,
                 max_batch_requests,
                 max_concurrent_requests,
@@ -95,7 +96,7 @@ impl Queue {
 }
 
 // Background task responsible of the queue state
-fn queue_task(
+fn queue_blocking_task(
     max_batch_tokens: usize,
     max_batch_requests: Option<usize>,
     max_concurrent_requests: usize,
@@ -118,12 +119,12 @@ fn queue_task(
             } => unsafe {
                 let _span = span.entered();
 
-                let mut metadata = Vec::with_capacity(capacity);
-
+                // Allocate raw memory
                 let raw_input_ids = raw_u32_vec(max_batch_tokens);
                 let raw_token_type_ids = raw_u32_vec(max_batch_tokens);
                 let raw_position_ids = raw_u32_vec(max_batch_tokens);
 
+                let mut metadata = Vec::with_capacity(capacity);
                 let mut cu_seq_lengths = Vec::with_capacity(capacity);
                 cu_seq_lengths.push(0);
 
@@ -151,45 +152,33 @@ fn queue_task(
 
                     entry.metadata.batch_time = Some(batch_time);
 
-                    {
-                        let _span = info_span!("extend").entered();
+                    // Copy memory to the correct spot in the raw vectors
+                    ptr::copy(
+                        entry.encoding.input_ids.as_mut_ptr(),
+                        raw_input_ids.add(current_tokens),
+                        entry.encoding.input_ids.len(),
+                    );
+                    ptr::copy(
+                        entry.encoding.token_type_ids.as_mut_ptr(),
+                        raw_token_type_ids.add(current_tokens),
+                        entry.encoding.token_type_ids.len(),
+                    );
+                    ptr::copy(
+                        entry.encoding.position_ids.as_mut_ptr(),
+                        raw_position_ids.add(current_tokens),
+                        entry.encoding.position_ids.len(),
+                    );
 
-                        ptr::copy(
-                            entry.encoding.input_ids.as_mut_ptr(),
-                            raw_input_ids.add(current_tokens),
-                            entry.encoding.input_ids.len(),
-                        );
-                        ptr::copy(
-                            entry.encoding.token_type_ids.as_mut_ptr(),
-                            raw_token_type_ids.add(current_tokens),
-                            entry.encoding.token_type_ids.len(),
-                        );
-                        ptr::copy(
-                            entry.encoding.position_ids.as_mut_ptr(),
-                            raw_position_ids.add(current_tokens),
-                            entry.encoding.position_ids.len(),
-                        );
-
-                        // input_ids.extend_from_slice(entry.encoding.input_ids.as_slice());
-                        // token_type_ids.extend_from_slice(entry.encoding.token_type_ids.as_slice());
-                        // position_ids.extend_from_slice(entry.encoding.position_ids.as_slice());
-
-                        // for i in 0..entry.encoding.input_ids.len() {
-                        //     input_ids.push(entry.encoding.input_ids[i]);
-                        //     token_type_ids.push(entry.encoding.token_type_ids[i]);
-                        //     position_ids.push(entry.encoding.position_ids[i]);
-                        // }
-
-                        current_tokens += entry_tokens;
-                        metadata.push(entry.metadata);
-                        cu_seq_lengths.push(current_tokens as u32);
-                    }
+                    current_tokens += entry_tokens;
+                    metadata.push(entry.metadata);
+                    cu_seq_lengths.push(current_tokens as u32);
 
                     if Some(metadata.len()) == max_batch_requests {
                         break;
                     }
                 }
 
+                // Create final vectors from raw memory
                 let input_ids =
                     Vec::from_raw_parts(raw_input_ids, current_tokens, max_batch_tokens);
                 let token_type_ids =
