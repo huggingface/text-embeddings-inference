@@ -129,6 +129,8 @@
              DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
            tags: ${{ steps.meta-cpu.outputs.tags }}
            labels: ${{ steps.meta-cpu.outputs.labels }}
+           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-cpu,mode=max
+           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-cpu,mode=max
 
    stop-runner:
      name: Stop self-hosted EC2 runner
