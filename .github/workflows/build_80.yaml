@@ -1,4 +1,4 @@
- name: Build and push docker image to registry
+ name: Build and push Cuda Ampere docker image to registry
 
  on:
    workflow_dispatch:
@@ -27,7 +27,7 @@
      env:
        AWS_REGION: us-east-1
        EC2_AMI_ID: ami-03cfed9ea28f4b002
-       EC2_INSTANCE_TYPE: g5.4xlarge
+       EC2_INSTANCE_TYPE: r5.8xlarge
        EC2_SUBNET_ID: subnet-931b34f5,subnet-ecb993cd,subnet-943dc2d8,subnet-45371f1a,subnet-ee93e0df,subnet-fddc3dfc
        EC2_SECURITY_GROUP: sg-030175c435ac141d6
      outputs:
@@ -52,13 +52,13 @@
            security-group-id: ${{ env.EC2_SECURITY_GROUP }}
            aws-resource-tags: > # optional, requires additional permissions
              [
-               {"Key": "Name", "Value": "ec2-tgi-github-runner"},
+               {"Key": "Name", "Value": "ec2-tei-github-runner"},
                {"Key": "GitHubRepository", "Value": "${{ github.repository }}"}
              ]
 
    build-and-push-image:
      concurrency:
-       group: ${{ github.workflow }}-${{ github.job }}-${{ github.head_ref || github.run_id }}
+       group: ${{ github.workflow }}-${{ github.job }}-80-${{ github.head_ref || github.run_id }}
        cancel-in-progress: true
      needs: start-runner # required to start the main job when the runner is ready
      runs-on: ${{ needs.start-runner.outputs.label }} # run the job on the newly created runner
@@ -102,18 +102,6 @@
            password: ${{ secrets.TAILSCALE_DOCKER_PASSWORD }}
            registry: registry.internal.huggingface.tech
        - name: Extract metadata (tags, labels) for Docker
-         id: meta-75
-         uses: docker/metadata-action@v4.3.0
-         with:
-           images: |
-             registry.internal.huggingface.tech/api-inference/text-embeddings-inference
-             ghcr.io/huggingface/text-embeddings-inference
-           tags: |
-             type=semver,pattern=turing-{{version}}
-             type=semver,pattern=turing-{{major}}.{{minor}}
-             type=raw,value=turing-latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
-             type=raw,value=turing-sha-${{ env.GITHUB_SHA_SHORT }}
-       - name: Extract metadata (tags, labels) for Docker
          id: meta-80
          uses: docker/metadata-action@v4.3.0
          with:
@@ -125,59 +113,6 @@
              type=semver,pattern={{major}}.{{minor}}
              type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
              type=raw,value=sha-${{ env.GITHUB_SHA_SHORT }}
-       - name: Extract metadata (tags, labels) for Docker
-         id: meta-86
-         uses: docker/metadata-action@v4.3.0
-         with:
-           images: |
-             registry.internal.huggingface.tech/api-inference/text-embeddings-inference
-             ghcr.io/huggingface/text-embeddings-inference
-           tags: |
-             type=semver,pattern=86-{{version}}
-             type=semver,pattern=86-{{major}}.{{minor}}
-             type=raw,value=86-latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
-             type=raw,value=86-sha-${{ env.GITHUB_SHA_SHORT }}
-       - name: Extract metadata (tags, labels) for Docker
-         id: meta-90
-         uses: docker/metadata-action@v4.3.0
-         with:
-           images: |
-             registry.internal.huggingface.tech/api-inference/text-embeddings-inference
-             ghcr.io/huggingface/text-embeddings-inference
-           tags: |
-             type=semver,pattern=hopper-{{version}}
-             type=semver,pattern=hopper-{{major}}.{{minor}}
-             type=raw,value=hopper-latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
-             type=raw,value=hopper-sha-${{ env.GITHUB_SHA_SHORT }}
-       - name: Extract metadata (tags, labels) for Docker
-         id: meta-cpu
-         uses: docker/metadata-action@v4.3.0
-         with:
-           images: |
-             registry.internal.huggingface.tech/api-inference/text-embeddings-inference
-             ghcr.io/huggingface/text-embeddings-inference
-           tags: |
-             type=semver,pattern=cpu-{{version}}
-             type=semver,pattern=cpu-{{major}}.{{minor}}
-             type=raw,value=cpu-latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
-             type=raw,value=cpu-sha-${{ env.GITHUB_SHA_SHORT }}
-       - name: Build and push Docker image
-         id: build-and-push-75
-         uses: docker/build-push-action@v4
-         with:
-           context: .
-           file: Dockerfile-cuda
-           push: ${{ github.event_name != 'pull_request' }}
-           platforms: 'linux/amd64'
-           build-args: |
-             SCCACHE_GHA_ENABLED=on
-             ACTIONS_CACHE_URL=${{ env.ACTIONS_CACHE_URL }}
-             ACTIONS_RUNTIME_TOKEN=${{ env.ACTIONS_RUNTIME_TOKEN }}
-             CUDA_COMPUTE_CAP=75
-             GIT_SHA=${{ env.GITHUB_SHA }}
-             DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
-           tags: ${{ steps.meta-75.outputs.tags }}
-           labels: ${{ steps.meta-75.outputs.labels }}
        - name: Build and push Docker image
          id: build-and-push-80
          uses: docker/build-push-action@v4
@@ -195,56 +130,8 @@
              DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
            tags: ${{ steps.meta-80.outputs.tags }}
            labels: ${{ steps.meta-80.outputs.labels }}
-       - name: Build and push Docker image
-         id: build-and-push-86
-         uses: docker/build-push-action@v4
-         with:
-           context: .
-           file: Dockerfile-cuda
-           push: ${{ github.event_name != 'pull_request' }}
-           platforms: 'linux/amd64'
-           build-args: |
-             SCCACHE_GHA_ENABLED=on
-             ACTIONS_CACHE_URL=${{ env.ACTIONS_CACHE_URL }}
-             ACTIONS_RUNTIME_TOKEN=${{ env.ACTIONS_RUNTIME_TOKEN }}
-             CUDA_COMPUTE_CAP=86
-             GIT_SHA=${{ env.GITHUB_SHA }}
-             DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
-           tags: ${{ steps.meta-86.outputs.tags }}
-           labels: ${{ steps.meta-86.outputs.labels }}
-       - name: Build and push Docker image
-         id: build-and-push-90
-         uses: docker/build-push-action@v4
-         with:
-           context: .
-           file: Dockerfile-cuda
-           push: ${{ github.event_name != 'pull_request' }}
-           platforms: 'linux/amd64'
-           build-args: |
-             SCCACHE_GHA_ENABLED=on
-             ACTIONS_CACHE_URL=${{ env.ACTIONS_CACHE_URL }}
-             ACTIONS_RUNTIME_TOKEN=${{ env.ACTIONS_RUNTIME_TOKEN }}
-             CUDA_COMPUTE_CAP=90
-             GIT_SHA=${{ env.GITHUB_SHA }}
-             DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
-           tags: ${{ steps.meta-90.outputs.tags }}
-           labels: ${{ steps.meta-90.outputs.labels }}
-       - name: Build and push Docker image
-         id: build-and-push-cpu
-         uses: docker/build-push-action@v4
-         with:
-           context: .
-           file: Dockerfile
-           push: ${{ github.event_name != 'pull_request' }}
-           platforms: 'linux/amd64'
-           build-args: |
-             SCCACHE_GHA_ENABLED=on
-             ACTIONS_CACHE_URL=${{ env.ACTIONS_CACHE_URL }}
-             ACTIONS_RUNTIME_TOKEN=${{ env.ACTIONS_RUNTIME_TOKEN }}
-             GIT_SHA=${{ env.GITHUB_SHA }}
-             DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
-           tags: ${{ steps.meta-cpu.outputs.tags }}
-           labels: ${{ steps.meta-cpu.outputs.labels }}
+           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-80,mode=max
+           cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-80,mode=max
 
    stop-runner:
      name: Stop self-hosted EC2 runner

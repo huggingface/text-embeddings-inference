@@ -59,14 +59,19 @@ impl CandleBackend {
                         DType::F16
                     };
 
-                    let vb = unsafe {
-                        VarBuilder::from_mmaped_safetensors(
-                            &[model_path.join("model.safetensors")],
-                            dtype,
-                            &device,
-                        )
-                        .map_err(|err| BackendError::Start(err.to_string()))?
-                    };
+                    let safetensors_path = model_path.join("model.safetensors");
+                    let vb = if safetensors_path.exists() {
+                        unsafe {
+                            VarBuilder::from_mmaped_safetensors(
+                                &[model_path.join("model.safetensors")],
+                                dtype,
+                                &device,
+                            )
+                        }
+                    } else {
+                        VarBuilder::from_pth(model_path.join("pytorch_model.bin"), dtype, &device)
+                    }
+                    .map_err(|err| BackendError::Start(err.to_string()))?;
 
                     Box::new(
                         BertModel::load(vb, &config, pool_config.into())
@@ -109,14 +114,19 @@ impl CandleBackend {
                         )))
                     }?;
 
-                    let vb = unsafe {
-                        VarBuilder::from_mmaped_safetensors(
-                            &[model_path.join("model.safetensors")],
-                            dtype,
-                            &device,
-                        )
-                        .map_err(|err| BackendError::Start(err.to_string()))?
-                    };
+                    let safetensors_path = model_path.join("model.safetensors");
+                    let vb = if safetensors_path.exists() {
+                        unsafe {
+                            VarBuilder::from_mmaped_safetensors(
+                                &[model_path.join("model.safetensors")],
+                                dtype,
+                                &device,
+                            )
+                        }
+                    } else {
+                        VarBuilder::from_pth(model_path.join("pytorch_model.bin"), dtype, &device)
+                    }
+                    .map_err(|err| BackendError::Start(err.to_string()))?;
 
                     if incompatible_compute_cap() {
                         return Err(BackendError::Start(format!("Runtime compute cap {} is not compatible with compile time compute cap {}", *RUNTIME_COMPUTE_CAP, *COMPILE_COMPUTE_CAP)));

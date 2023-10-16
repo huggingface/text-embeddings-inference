@@ -8,12 +8,17 @@ pub async fn download_artifacts(api: &ApiRepo) -> Result<PathBuf, ApiError> {
 
     tracing::info!("Starting download");
 
-    let model_root = api
-        .get("model.safetensors")
-        .await?
-        .parent()
-        .unwrap()
-        .to_path_buf();
+    let model_root = match api.get("model.safetensors").await {
+        Ok(p) => p,
+        Err(_) => {
+            tracing::warn!("`model.safetensors` not found. Using `pytorch_model.bin` instead. Model loading will be significantly slower.");
+            api.get("pytorch_model.bin").await?
+        },
+    }
+    .parent()
+    .unwrap()
+    .to_path_buf();
+
     api.get("config.json").await?;
     api.get("1_Pooling/config.json").await?;
     api.get("tokenizer.json").await?;
