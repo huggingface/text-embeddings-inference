@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use axum::http::HeaderValue;
 use clap::Parser;
 use hf_hub::api::tokio::ApiBuilder;
@@ -12,8 +12,9 @@ use serde::Deserialize;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
-use text_embeddings_backend::{Backend, DType};
-use text_embeddings_core::download::download_artifacts;
+use text_embeddings_backend::DType;
+use text_embeddings_backend::{Backend, Pool};
+use text_embeddings_core::download::{download_artifacts, download_pool_config};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
 use text_embeddings_core::tokenization::Tokenization;
@@ -50,6 +51,15 @@ struct Args {
     /// The dtype to be forced upon the model.
     #[clap(default_value = "float16", long, env, value_enum)]
     dtype: DType,
+
+    /// Optionally control the pooling method.
+    ///
+    /// If `pooling` is not set, the pooling configuration will be parsed from the
+    /// model `1_Pooling/config.json` configuration.
+    ///
+    /// If `pooling` is set, it will override the model pooling configuration
+    #[clap(long, env, value_enum)]
+    pooling: Option<Pool>,
 
     /// The maximum amount of concurrent requests for this particular deployment.
     /// Having a low limit will refuse clients requests instead of having them
@@ -120,6 +130,14 @@ pub struct ModelConfig {
     pub pad_token_id: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct PoolConfig {
+    pooling_mode_cls_token: bool,
+    pooling_mode_mean_tokens: bool,
+    pooling_mode_max_tokens: bool,
+    pooling_mode_mean_sqrt_len_tokens: bool,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Pattern match configuration
@@ -150,6 +168,11 @@ async fn main() -> Result<()> {
             args.revision.clone().unwrap_or("main".to_string()),
         ));
 
+        // Optionally download the pooling config.
+        if args.pooling.is_none() {
+            download_pool_config(&api_repo).await.context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.")?;
+        }
+
         // Download model from the Hub
         download_artifacts(&api_repo)
             .await
@@ -158,9 +181,28 @@ async fn main() -> Result<()> {
 
     // Load config
     let config_path = model_root.join("config.json");
-    let config = fs::read_to_string(config_path).context("config.json not found")?;
+    let config = fs::read_to_string(config_path).context("`config.json` not found")?;
     let config: ModelConfig =
-        serde_json::from_str(&config).context("Failed to parse config.json")?;
+        serde_json::from_str(&config).context("Failed to parse `config.json`")?;
+
+    // Set pooling
+    let pool = match args.pooling {
+        Some(pool) => pool,
+        None => {
+            // Load pooling config
+            let config_path = model_root.join("1_Pooling/config.json");
+            let config = fs::read_to_string(config_path).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.")?;
+            let config: PoolConfig =
+                serde_json::from_str(&config).context("Failed to parse `1_Pooling/config.json`")?;
+            if config.pooling_mode_cls_token {
+                Pool::Cls
+            } else if config.pooling_mode_mean_tokens {
+                Pool::Mean
+            } else {
+                return Err(anyhow!("Pooling config {config:?} is not supported"));
+            }
+        }
+    };
 
     // Load tokenizer
     let tokenizer_path = model_root.join("tokenizer.json");
@@ -193,6 +235,7 @@ async fn main() -> Result<()> {
     let backend = Backend::new(
         model_root,
         args.dtype.clone(),
+        pool.clone(),
         args.uds_path,
         args.otlp_endpoint,
     )
@@ -223,6 +266,7 @@ async fn main() -> Result<()> {
         model_id: args.model_id,
         model_sha: args.revision,
         model_dtype: args.dtype.to_string(),
+        model_pooling: pool.to_string(),
         max_concurrent_requests: args.max_concurrent_requests,
         max_input_length: config.max_position_embeddings,
         max_batch_tokens: args.max_batch_tokens,

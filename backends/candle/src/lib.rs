@@ -9,9 +9,9 @@ use crate::compute_cap::{incompatible_compute_cap, COMPILE_COMPUTE_CAP, RUNTIME_
 use crate::models::{BertModel, EmbeddingModel, QuantBertModel};
 use candle::{DType, Device};
 use candle_nn::VarBuilder;
-use models::{Config, PoolConfig};
+use models::Config;
 use std::path::PathBuf;
-use text_embeddings_backend_core::{BackendError, Batch, Embedding, EmbeddingBackend};
+use text_embeddings_backend_core::{BackendError, Batch, Embedding, EmbeddingBackend, Pool};
 
 pub struct CandleBackend {
     model: Box<dyn EmbeddingModel + Send>,
@@ -19,18 +19,12 @@ pub struct CandleBackend {
 }
 
 impl CandleBackend {
-    pub fn new(model_path: PathBuf, dtype: String) -> Result<Self, BackendError> {
+    pub fn new(model_path: PathBuf, dtype: String, pool: Pool) -> Result<Self, BackendError> {
         // Load config
         let config: String = std::fs::read_to_string(model_path.join("config.json"))
             .map_err(|err| BackendError::Start(err.to_string()))?;
         let config: Config =
             serde_json::from_str(&config).map_err(|err| BackendError::Start(err.to_string()))?;
-
-        // Load pooling config
-        let pool_config: String = std::fs::read_to_string(model_path.join("1_Pooling/config.json"))
-            .map_err(|err| BackendError::Start(err.to_string()))?;
-        let pool_config: PoolConfig = serde_json::from_str(&pool_config)
-            .map_err(|err| BackendError::Start(err.to_string()))?;
 
         // Get candle device
         let device = match Device::cuda_if_available(0) {
@@ -71,12 +65,9 @@ impl CandleBackend {
                     } else {
                         VarBuilder::from_pth(model_path.join("pytorch_model.bin"), dtype, &device)
                     }
-                    .map_err(|err| BackendError::Start(err.to_string()))?;
+                    .s()?;
 
-                    Box::new(
-                        BertModel::load(vb, &config, pool_config.into())
-                            .map_err(|err| BackendError::Start(err.to_string()))?,
-                    )
+                    Box::new(BertModel::load(vb, &config, pool).s()?)
                 } else if &dtype == "q6k" {
                     let vb = candle_transformers::quantized_var_builder::VarBuilder::from_gguf(
                         model_path.join("ggml-model-q6k.bin"),
@@ -84,10 +75,7 @@ impl CandleBackend {
                     .map_err(|err| BackendError::Start(err.to_string()))?;
                     tracing::info!("vb");
 
-                    Box::new(
-                        QuantBertModel::load(vb, &config, pool_config.into())
-                            .map_err(|err| BackendError::Start(err.to_string()))?,
-                    )
+                    Box::new(QuantBertModel::load(vb, &config, pool).s()?)
                 } else {
                     return Err(BackendError::Start(format!(
                         "dtype {dtype} is not supported"
@@ -126,17 +114,14 @@ impl CandleBackend {
                     } else {
                         VarBuilder::from_pth(model_path.join("pytorch_model.bin"), dtype, &device)
                     }
-                    .map_err(|err| BackendError::Start(err.to_string()))?;
+                    .s()?;
 
                     if incompatible_compute_cap() {
                         return Err(BackendError::Start(format!("Runtime compute cap {} is not compatible with compile time compute cap {}", *RUNTIME_COMPUTE_CAP, *COMPILE_COMPUTE_CAP)));
                     }
 
                     tracing::info!("Starting FlashBert model on Cuda");
-                    Box::new(
-                        FlashBertModel::load(vb, &config, pool_config.into())
-                            .map_err(|err| BackendError::Start(err.to_string()))?,
-                    )
+                    Box::new(FlashBertModel::load(vb, &config, pool).s()?)
                 }
             }
         };
@@ -151,8 +136,8 @@ impl EmbeddingBackend for CandleBackend {
     }
 
     fn embed(&self, batch: Batch) -> Result<Vec<Embedding>, BackendError> {
-        let results = self.model.embed(batch).w()?;
-        let results = results.to_dtype(DType::F32).w()?.to_vec2().w()?;
+        let results = self.model.embed(batch).e()?;
+        let results = results.to_dtype(DType::F32).e()?.to_vec2().e()?;
         Ok(results)
     }
 
@@ -165,11 +150,15 @@ impl EmbeddingBackend for CandleBackend {
 }
 
 pub trait WrapErr<O> {
-    fn w(self) -> Result<O, BackendError>;
+    fn s(self) -> Result<O, BackendError>;
+    fn e(self) -> Result<O, BackendError>;
 }
 
 impl<O> WrapErr<O> for Result<O, candle::Error> {
-    fn w(self) -> Result<O, BackendError> {
+    fn s(self) -> Result<O, BackendError> {
+        self.map_err(|e| BackendError::Start(e.to_string()))
+    }
+    fn e(self) -> Result<O, BackendError> {
         self.map_err(|e| BackendError::Inference(e.to_string()))
     }
 }

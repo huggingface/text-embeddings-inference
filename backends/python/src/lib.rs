@@ -2,7 +2,7 @@ mod logging;
 mod management;
 
 use backend_grpc_client::Client;
-use text_embeddings_backend_core::{BackendError, Batch, Embedding, EmbeddingBackend};
+use text_embeddings_backend_core::{BackendError, Batch, Embedding, EmbeddingBackend, Pool};
 use tokio::runtime::Runtime;
 
 pub struct PythonBackend {
@@ -15,9 +15,14 @@ impl PythonBackend {
     pub fn new(
         model_path: String,
         dtype: String,
+        pool: Pool,
         uds_path: String,
         otlp_endpoint: Option<String>,
     ) -> Result<Self, BackendError> {
+        if pool != Pool::Cls {
+            return Err(BackendError::Start(format!("{pool:?} is not supported")));
+        }
+
         let backend_process =
             management::BackendProcess::new(model_path, dtype, &uds_path, otlp_endpoint)?;
         let tokio_runtime = tokio::runtime::Builder::new_current_thread()

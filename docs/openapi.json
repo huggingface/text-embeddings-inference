@@ -327,6 +327,7 @@
         "required": [
           "model_id",
           "model_dtype",
+          "model_pooling",
           "max_concurrent_requests",
           "max_input_length",
           "max_batch_tokens",
@@ -376,6 +377,10 @@
             "type": "string",
             "description": "Model info",
             "example": "thenlper/gte-base"
+          },
+          "model_pooling": {
+            "type": "string",
+            "example": "cls"
           },
           "model_sha": {
             "type": "string",

@@ -4,7 +4,7 @@ use candle_nn::ops::softmax;
 use candle_nn::{Embedding, VarBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
-use text_embeddings_backend_core::Batch;
+use text_embeddings_backend_core::{Batch, Pool};
 
 // https://github.com/huggingface/transformers/blob/6eedfa6dd15dc1e22a55ae036f681914e5a0d9a1/src/transformers/models/bert/configuration_bert.py#L1
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -37,41 +37,11 @@ pub enum HiddenAct {
     Relu,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum Pool {
-    Cls,
-    Mean,
-    Max,
-    MeanSqrt,
-}
-
-impl From<PoolConfig> for Pool {
-    fn from(value: PoolConfig) -> Self {
-        if value.pooling_mode_cls_token {
-            Pool::Cls
-        } else if value.pooling_mode_mean_tokens {
-            Pool::Mean
-        } else if value.pooling_mode_max_tokens {
-            Pool::Max
-        } else {
-            Pool::MeanSqrt
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PositionEmbeddingType {
     #[default]
     Absolute,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct PoolConfig {
-    pooling_mode_cls_token: bool,
-    pooling_mode_mean_tokens: bool,
-    pooling_mode_max_tokens: bool,
-    pooling_mode_mean_sqrt_len_tokens: bool,
 }
 
 #[derive(Debug)]
@@ -85,8 +55,12 @@ struct LayerNorm {
 impl LayerNorm {
     pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
         Ok(Self {
-            weight: vb.get(config.hidden_size, "weight")?,
-            bias: vb.get(config.hidden_size, "bias")?,
+            weight: vb
+                .get(config.hidden_size, "weight")
+                .or_else(|_| vb.get(config.hidden_size, "gamma"))?,
+            bias: vb
+                .get(config.hidden_size, "bias")
+                .or_else(|_| vb.get(config.hidden_size, "beta"))?,
             epsilon: config.layer_norm_eps,
             span: tracing::span!(tracing::Level::TRACE, "layer-norm"),
         })
@@ -435,15 +409,18 @@ impl BertModel {
         ) {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
-                if let Some(model_type) = &config.model_type {
-                    if let (Ok(embeddings), Ok(encoder)) = (
-                        BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
-                        BertEncoder::load(vb.pp(format!("{model_type}.encoder")), config),
-                    ) {
-                        (embeddings, encoder)
-                    } else {
-                        return Err(err);
-                    }
+                let model_type = config.model_type.clone().unwrap_or("bert".to_string());
+
+                if let (Ok(embeddings), Ok(encoder)) = (
+                    BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
+                    BertEncoder::load(vb.pp(format!("{model_type}.encoder")), config),
+                ) {
+                    (embeddings, encoder)
+                } else if let (Ok(embeddings), Ok(encoder)) = (
+                    BertEmbeddings::load(vb.pp("bert.embeddings"), config),
+                    BertEncoder::load(vb.pp("bert.encoder"), config),
+                ) {
+                    (embeddings, encoder)
                 } else {
                     return Err(err);
                 }
@@ -484,7 +461,6 @@ impl BertModel {
             Pool::Cls => outputs.i(0..1)?,
             // Mean pooling
             Pool::Mean => (outputs.sum_keepdim(0)? / (batch.max_length as f64))?,
-            _ => candle::bail!("Pool type {:?} is not supported", self.pool),
         };
 
         // Normalize

@@ -1,4 +1,5 @@
-use std::fmt;
+mod dtype;
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -6,40 +7,14 @@ use text_embeddings_backend_core::EmbeddingBackend;
 use tokio::sync::oneshot;
 use tracing::{instrument, Span};
 
-pub use text_embeddings_backend_core::{BackendError, Batch, Embedding};
+pub use crate::dtype::DType;
+pub use text_embeddings_backend_core::{BackendError, Batch, Embedding, Pool};
 
 #[cfg(feature = "candle")]
-pub use text_embeddings_backend_candle::CandleBackend;
+use text_embeddings_backend_candle::CandleBackend;
 
 #[cfg(feature = "python")]
-pub use text_embeddings_backend_python::PythonBackend;
-
-#[cfg(feature = "clap")]
-use clap::ValueEnum;
-
-#[derive(Debug, PartialEq)]
-#[cfg_attr(feature = "clap", derive(Clone, ValueEnum))]
-pub enum DType {
-    #[cfg(any(feature = "python", feature = "candle"))]
-    Float16,
-    #[cfg(any(feature = "python", feature = "candle"))]
-    Float32,
-    // #[cfg(feature = "candle")]
-    // Q6K,
-}
-
-impl fmt::Display for DType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            #[cfg(any(feature = "python", feature = "candle"))]
-            DType::Float16 => write!(f, "float16"),
-            #[cfg(any(feature = "python", feature = "candle"))]
-            DType::Float32 => write!(f, "float32"),
-            // #[cfg(feature = "candle")]
-            // DType::Q6K => write!(f, "q6k"),
-        }
-    }
-}
+use text_embeddings_backend_python::PythonBackend;
 
 #[derive(Debug, Clone)]
 pub struct Backend {
@@ -54,12 +29,13 @@ impl Backend {
     pub fn new(
         model_path: PathBuf,
         dtype: DType,
+        pool: Pool,
         uds_path: String,
         otlp_endpoint: Option<String>,
     ) -> Result<Self, BackendError> {
         let (backend_sender, backend_receiver) = flume::unbounded();
 
-        let backend = init_backend(model_path, dtype, uds_path, otlp_endpoint)?;
+        let backend = init_backend(model_path, dtype, pool, uds_path, otlp_endpoint)?;
         let max_batch_size = backend.max_batch_size();
 
         tokio::task::spawn_blocking(move || backend_blocking_task(backend, backend_receiver));
@@ -130,12 +106,17 @@ impl Backend {
 fn init_backend(
     model_path: PathBuf,
     dtype: DType,
+    pool: Pool,
     uds_path: String,
     otlp_endpoint: Option<String>,
 ) -> Result<Box<dyn EmbeddingBackend + Send>, BackendError> {
     if cfg!(feature = "candle") {
         #[cfg(feature = "candle")]
-        return Ok(Box::new(CandleBackend::new(model_path, dtype.to_string())?));
+        return Ok(Box::new(CandleBackend::new(
+            model_path,
+            dtype.to_string(),
+            pool,
+        )?));
     } else if cfg!(feature = "python") {
         #[cfg(feature = "python")]
         {
@@ -146,6 +127,7 @@ fn init_backend(
                     PythonBackend::new(
                         model_path.to_str().unwrap().to_string(),
                         dtype.to_string(),
+                        pool,
                         uds_path,
                         otlp_endpoint,
                     )

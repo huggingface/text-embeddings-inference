@@ -15,7 +15,7 @@ tokio = { version = "^1.25", features = ["sync"] }
 tracing = "^0.1"
 
 [features]
-clap = [ "dep:clap" ]
+clap = ["dep:clap", "text-embeddings-backend-core/clap"]
 python = ["dep:text-embeddings-backend-python"]
 candle = ["dep:text-embeddings-backend-candle"]
 mkl = ["text-embeddings-backend-candle?/mkl"]

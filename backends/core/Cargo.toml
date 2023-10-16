@@ -7,3 +7,7 @@ homepage.workspace = true
 
 [dependencies]
 thiserror = "^1.0"
+clap = { version = "4.1.4", features = ["derive"], optional = true }
+
+[features]
+clap = ["dep:clap"]
