@@ -13,6 +13,8 @@ pub struct Info {
     pub model_sha: Option<String>,
     #[schema(example = "float16")]
     pub model_dtype: String,
+    #[schema(example = "cls")]
+    pub model_pooling: String,
     /// Router Parameters
     #[schema(example = "128")]
     pub max_concurrent_requests: usize,

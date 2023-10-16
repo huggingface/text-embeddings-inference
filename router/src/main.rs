@@ -235,7 +235,7 @@ async fn main() -> Result<()> {
     let backend = Backend::new(
         model_root,
         args.dtype.clone(),
-        pool,
+        pool.clone(),
         args.uds_path,
         args.otlp_endpoint,
     )
@@ -266,6 +266,7 @@ async fn main() -> Result<()> {
         model_id: args.model_id,
         model_sha: args.revision,
         model_dtype: args.dtype.to_string(),
+        model_pooling: pool.to_string(),
         max_concurrent_requests: args.max_concurrent_requests,
         max_input_length: config.max_position_embeddings,
         max_batch_tokens: args.max_batch_tokens,

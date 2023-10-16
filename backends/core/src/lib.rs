@@ -1,13 +1,7 @@
 #[cfg(feature = "clap")]
 use clap::ValueEnum;
+use std::fmt;
 use thiserror::Error;
-
-#[derive(Debug, PartialEq)]
-#[cfg_attr(feature = "clap", derive(Clone, ValueEnum))]
-pub enum Pool {
-    Cls,
-    Mean,
-}
 
 #[derive(Debug)]
 pub struct Batch {
@@ -27,6 +21,22 @@ pub trait EmbeddingBackend {
 
     fn max_batch_size(&self) -> Option<usize> {
         None
+    }
+}
+
+#[derive(Debug, PartialEq)]
+#[cfg_attr(feature = "clap", derive(Clone, ValueEnum))]
+pub enum Pool {
+    Cls,
+    Mean,
+}
+
+impl fmt::Display for Pool {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Pool::Cls => write!(f, "cls"),
+            Pool::Mean => write!(f, "mean"),
+        }
     }
 }
 
