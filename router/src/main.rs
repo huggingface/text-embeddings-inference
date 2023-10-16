@@ -209,7 +209,11 @@ async fn main() -> Result<()> {
     });
 
     // Queue logic
-    let queue = Queue::new(args.max_batch_tokens, max_batch_requests);
+    let queue = Queue::new(
+        args.max_batch_tokens,
+        max_batch_requests,
+        args.max_concurrent_requests,
+    );
 
     // Create infer task
     let infer = Infer::new(tokenization, queue, args.max_concurrent_requests, backend);

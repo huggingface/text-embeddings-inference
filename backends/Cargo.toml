@@ -6,7 +6,7 @@ authors.workspace = true
 homepage.workspace = true
 
 [dependencies]
-flume = "^0.10"
+flume = "^0.11"
 clap = { version = "4.1.4", features = ["derive"], optional = true }
 text-embeddings-backend-core = { path = "core" }
 text-embeddings-backend-python = { path = "python", optional = true }

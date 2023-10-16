@@ -16,14 +16,13 @@ candle-flash-attn-v1 = { git = "https://github.com/huggingface/candle-flash-attn
 candle-cublaslt = { git = "https://github.com/huggingface/candle-cublaslt", rev = "07e1a5490211e25ed0d096a2b21d3c607666eaae", optional = true }
 candle-layer-norm = { git = "https://github.com/huggingface/candle-layer-norm", rev = "5ed96012a693dff9685320765dd55a57fdaecdd6", optional = true }
 lazy_static = "^1.4"
-flume = "^0.10"
 text-embeddings-backend-core = { path = "../core" }
 tracing = "^0.1"
-safetensors = "^0.3"
+safetensors = "^0.4"
 thiserror = "^1.0"
 serde = { version = "^1.0", features = ["serde_derive"] }
 serde_json = "^1.0"
-memmap2 = "^0.7"
+memmap2 = "^0.9"
 
 [build-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
