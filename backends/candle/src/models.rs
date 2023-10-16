@@ -7,7 +7,7 @@ extern crate accelerate_src;
 mod bert;
 mod bert_quant;
 
-pub use bert::{BertModel, Config, PoolConfig};
+pub use bert::{BertModel, Config};
 pub use bert_quant::QuantBertModel;
 use candle::{Result, Tensor};
 use text_embeddings_backend_core::Batch;

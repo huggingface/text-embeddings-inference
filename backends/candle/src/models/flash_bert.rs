@@ -1,11 +1,11 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::models::bert::{Config, HiddenAct, Pool, PositionEmbeddingType};
+use crate::models::bert::{Config, HiddenAct, PositionEmbeddingType};
 use crate::models::EmbeddingModel;
 use candle::{DType, Device, Result, Tensor};
 use candle_cublaslt::{fused_matmul, Activation, CublasLt};
 use candle_layer_norm::fused_add_layer_norm;
 use candle_nn::{Embedding, Module, VarBuilder};
-use text_embeddings_backend_core::Batch;
+use text_embeddings_backend_core::{Batch, Pool};
 
 #[derive(Debug)]
 struct FastLayerNorm {
@@ -18,8 +18,12 @@ struct FastLayerNorm {
 impl FastLayerNorm {
     pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
         Ok(Self {
-            weight: vb.get(config.hidden_size, "weight")?,
-            bias: vb.get(config.hidden_size, "bias")?,
+            weight: vb
+                .get(config.hidden_size, "weight")
+                .or_else(|_| vb.get(config.hidden_size, "gamma"))?,
+            bias: vb
+                .get(config.hidden_size, "bias")
+                .or_else(|_| vb.get(config.hidden_size, "beta"))?,
             epsilon: config.layer_norm_eps as f32,
             span: tracing::span!(tracing::Level::TRACE, "layer-norm"),
         })
@@ -374,15 +378,22 @@ impl FlashBertModel {
         ) {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
-                if let Some(model_type) = &config.model_type {
-                    if let (Ok(embeddings), Ok(encoder)) = (
-                        BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
-                        BertEncoder::load(vb.pp(format!("{model_type}.encoder")), config, cublaslt),
-                    ) {
-                        (embeddings, encoder)
-                    } else {
-                        return Err(err);
-                    }
+                let model_type = config.model_type.clone().unwrap_or("bert".to_string());
+
+                if let (Ok(embeddings), Ok(encoder)) = (
+                    BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
+                    BertEncoder::load(
+                        vb.pp(format!("{model_type}.encoder")),
+                        config,
+                        cublaslt.clone(),
+                    ),
+                ) {
+                    (embeddings, encoder)
+                } else if let (Ok(embeddings), Ok(encoder)) = (
+                    BertEmbeddings::load(vb.pp("bert.embeddings"), config),
+                    BertEncoder::load(vb.pp("bert.encoder"), config, cublaslt.clone()),
+                ) {
+                    (embeddings, encoder)
                 } else {
                     return Err(err);
                 }
@@ -446,7 +457,6 @@ impl FlashBertModel {
                     (outputs.sum_keepdim(0)? / (batch.max_length as f64))?
                 }
             }
-            _ => candle::bail!("Pool type {:?} is not supported", self.pool),
         };
 
         // Normalize

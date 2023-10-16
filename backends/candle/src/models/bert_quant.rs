@@ -1,11 +1,11 @@
-use crate::models::bert::{Config, HiddenAct, Pool, PositionEmbeddingType};
+use crate::models::bert::{Config, HiddenAct, PositionEmbeddingType};
 use crate::models::EmbeddingModel;
 use candle::quantized::QMatMul;
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::ops::softmax;
 use candle_nn::Embedding;
 use candle_transformers::quantized_var_builder::VarBuilder;
-use text_embeddings_backend_core::Batch;
+use text_embeddings_backend_core::{Batch, Pool};
 
 #[derive(Debug)]
 struct LayerNorm {
@@ -19,10 +19,12 @@ impl LayerNorm {
     pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
         Ok(Self {
             weight: vb
-                .get(config.hidden_size, "weight")?
+                .get(config.hidden_size, "weight")
+                .or_else(|_| vb.get(config.hidden_size, "gamma"))?
                 .dequantize(vb.device())?,
             bias: vb
-                .get(config.hidden_size, "bias")?
+                .get(config.hidden_size, "bias")
+                .or_else(|_| vb.get(config.hidden_size, "beta"))?
                 .dequantize(vb.device())?,
             epsilon: config.layer_norm_eps,
             span: tracing::span!(tracing::Level::TRACE, "layer-norm"),
@@ -391,15 +393,18 @@ impl QuantBertModel {
         ) {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
-                if let Some(model_type) = &config.model_type {
-                    if let (Ok(embeddings), Ok(encoder)) = (
-                        BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
-                        BertEncoder::load(vb.pp(format!("{model_type}.encoder")), config),
-                    ) {
-                        (embeddings, encoder)
-                    } else {
-                        return Err(err);
-                    }
+                let model_type = config.model_type.clone().unwrap_or("bert".to_string());
+
+                if let (Ok(embeddings), Ok(encoder)) = (
+                    BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
+                    BertEncoder::load(vb.pp(format!("{model_type}.encoder")), config),
+                ) {
+                    (embeddings, encoder)
+                } else if let (Ok(embeddings), Ok(encoder)) = (
+                    BertEmbeddings::load(vb.pp("bert.embeddings"), config),
+                    BertEncoder::load(vb.pp("bert.encoder"), config),
+                ) {
+                    (embeddings, encoder)
                 } else {
                     return Err(err);
                 }
@@ -440,7 +445,6 @@ impl QuantBertModel {
             Pool::Cls => outputs.i(0..1)?,
             // Mean pooling
             Pool::Mean => (outputs.sum_keepdim(0)? / (batch.max_length as f64))?,
-            _ => candle::bail!("Pool type {:?} is not supported", self.pool),
         };
 
         // Normalize

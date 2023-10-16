@@ -102,18 +102,22 @@ Usage: text-embeddings-router [OPTIONS]
 
 Options:
       --model-id <MODEL_ID>
-          The name of the model to load. Can be a MODEL_ID as listed on <https://hf.co/models> like `thenlper/gte-base`. Or it can be a local directory containing the necessary files as saved by `save_pretrained(...)` methods of transformers
+          The name of the model to load. Can be a MODEL_ID as listed on <https://hf.co/models> like `thenlper/gte-base`. 
+          Or it can be a local directory containing the necessary files as saved by `save_pretrained(...)` methods of 
+          transformers
 
           [env: MODEL_ID=]
           [default: thenlper/gte-base]
 
       --revision <REVISION>
-          The actual revision of the model if you're referring to a model on the hub. You can use a specific commit id or a branch like `refs/pr/2`
+          The actual revision of the model if you're referring to a model on the hub. You can use a specific commit id 
+          or a branch like `refs/pr/2`
 
           [env: REVISION=]
 
       --tokenization-workers <TOKENIZATION_WORKERS>
-          Optionally control the number of tokenizer workers used for payload tokenization, validation and truncation. Default to the number of CPU cores on the machine
+          Optionally control the number of tokenizer workers used for payload tokenization, validation and truncation. 
+          Default to the number of CPU cores on the machine
 
           [env: TOKENIZATION_WORKERS=]
 
@@ -124,8 +128,21 @@ Options:
           [default: float16]
           [possible values: float16, float32]
 
+      --pooling <POOLING>
+          Optionally control the pooling method. 
+          
+          If `pooling` is not set, the pooling configuration will be parsed from the model `1_Pooling/config.json`
+          configuration. 
+          
+          If `pooling` is set, it will override the model pooling configuration
+          
+          [env: POOLING=]
+          [possible values: cls, mean]
+
       --max-concurrent-requests <MAX_CONCURRENT_REQUESTS>
-          The maximum amount of concurrent requests for this particular deployment. Having a low limit will refuse clients requests instead of having them wait for too long and is usually good to handle backpressure correctly
+          The maximum amount of concurrent requests for this particular deployment. 
+          Having a low limit will refuse clients requests instead of having them wait for too long and is usually good 
+          to handle backpressure correctly
 
           [env: MAX_CONCURRENT_REQUESTS=]
           [default: 512]
@@ -137,7 +154,8 @@ Options:
 
           For `max_batch_tokens=1000`, you could fit `10` queries of `total_tokens=100` or a single query of `1000` tokens.
 
-          Overall this number should be the largest possible until the model is compute bound. Since the actual memory overhead depends on the model implementation, text-embeddings-inference cannot infer this number automatically.
+          Overall this number should be the largest possible until the model is compute bound. Since the actual memory 
+          overhead depends on the model implementation, text-embeddings-inference cannot infer this number automatically.
 
           [env: MAX_BATCH_TOKENS=]
           [default: 16384]
@@ -171,13 +189,15 @@ Options:
           [default: 3000]
 
       --uds-path <UDS_PATH>
-          The name of the unix socket some text-embeddings-inference backends will use as they communicate internally with gRPC
+          The name of the unix socket some text-embeddings-inference backends will use as they communicate internally 
+          with gRPC
 
           [env: UDS_PATH=]
           [default: /tmp/text-embeddings-inference-server]
 
       --huggingface-hub-cache <HUGGINGFACE_HUB_CACHE>
-          The location of the huggingface hub cache. Used to override the location if you want to provide a mounted disk for instance
+          The location of the huggingface hub cache. Used to override the location if you want to provide a mounted disk 
+          for instance
 
           [env: HUGGINGFACE_HUB_CACHE=/data]
 

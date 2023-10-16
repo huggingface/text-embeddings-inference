@@ -1,4 +1,13 @@
+#[cfg(feature = "clap")]
+use clap::ValueEnum;
 use thiserror::Error;
+
+#[derive(Debug, PartialEq)]
+#[cfg_attr(feature = "clap", derive(Clone, ValueEnum))]
+pub enum Pool {
+    Cls,
+    Mean,
+}
 
 #[derive(Debug)]
 pub struct Batch {
