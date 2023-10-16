@@ -29,6 +29,12 @@ impl Infer {
     ) -> Self {
         let notify_batching_task = Arc::new(Notify::new());
 
+        // Create two batching tasks to prefetch batches
+        tokio::spawn(batching_task(
+            backend.clone(),
+            queue.clone(),
+            notify_batching_task.clone(),
+        ));
         tokio::spawn(batching_task(
             backend.clone(),
             queue.clone(),
@@ -86,7 +92,6 @@ impl Infer {
             metadata: Metadata {
                 response_tx,
                 span: Span::current(),
-                temp_span: None,
                 tokenization: start_time.elapsed(),
                 queue_time: Instant::now(),
                 batch_time: None,
@@ -133,12 +138,16 @@ impl Infer {
     }
 }
 
+#[instrument(skip_all)]
 async fn batching_task(backend: Backend, queue: Queue, notify: Arc<Notify>) {
     loop {
         notify.notified().await;
 
         while let Some(batch) = queue.next_batch().await {
-            match backend.embed(batch.1).await {
+            let results = backend.embed(batch.1).await;
+
+            // Handle sending responses in another thread to not starve the model
+            tokio::task::spawn_blocking(move || match results {
                 Ok(embeddings) => {
                     batch.0.into_iter().zip(embeddings).for_each(|(m, e)| {
                         let _ = m.response_tx.send(Ok(InferResponse {
@@ -160,7 +169,7 @@ async fn batching_task(backend: Backend, queue: Queue, notify: Arc<Notify>) {
                         let _ = m.response_tx.send(Err(err.clone()));
                     });
                 }
-            }
+            });
         }
     }
 }

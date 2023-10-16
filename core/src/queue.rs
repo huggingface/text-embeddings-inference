@@ -1,7 +1,9 @@
 use crate::infer::InferResponse;
 use crate::tokenization::Encoding;
+use std::alloc::{alloc, Layout};
 use std::cmp::max;
 use std::collections::VecDeque;
+use std::ptr;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{BackendError, Batch};
 use tokio::sync::oneshot;
@@ -23,8 +25,6 @@ pub struct Metadata {
     pub response_tx: oneshot::Sender<Result<InferResponse, BackendError>>,
     /// Span that will live as long as entry
     pub span: Span,
-    /// Temporary span used as a guard when logging inference, wait times...
-    pub temp_span: Option<Span>,
     /// Tokenization duration
     pub tokenization: Duration,
     /// Instant when this entry was queued
@@ -43,16 +43,22 @@ pub struct Queue {
 }
 
 impl Queue {
-    pub fn new(max_batch_tokens: usize, max_batch_requests: Option<usize>) -> Self {
+    pub fn new(
+        max_batch_tokens: usize,
+        max_batch_requests: Option<usize>,
+        max_concurrent_requests: usize,
+    ) -> Self {
         // Create channels
         let (queue_sender, queue_receiver) = flume::unbounded();
 
-        // Launch background queue task
-        tokio::spawn(queue_task(
-            max_batch_tokens,
-            max_batch_requests,
-            queue_receiver,
-        ));
+        tokio::task::spawn_blocking(move || {
+            queue_task(
+                max_batch_tokens,
+                max_batch_requests,
+                max_concurrent_requests,
+                queue_receiver,
+            )
+        });
 
         Self { queue_sender }
     }
@@ -89,16 +95,17 @@ impl Queue {
 }
 
 // Background task responsible of the queue state
-async fn queue_task(
+fn queue_task(
     max_batch_tokens: usize,
     max_batch_requests: Option<usize>,
+    max_concurrent_requests: usize,
     queue_receiver: flume::Receiver<QueueCommand>,
 ) {
-    let capacity = max_batch_requests.unwrap_or(512);
+    let capacity = max_batch_requests.unwrap_or(max_concurrent_requests);
 
-    let mut entries: VecDeque<Entry> = VecDeque::with_capacity(512);
+    let mut entries: VecDeque<Entry> = VecDeque::with_capacity(max_concurrent_requests);
 
-    while let Ok(cmd) = queue_receiver.recv_async().await {
+    while let Ok(cmd) = queue_receiver.recv() {
         match cmd {
             QueueCommand::Append(entry, span) => {
                 let _span = span.entered();
@@ -108,22 +115,22 @@ async fn queue_task(
             QueueCommand::NextBatch {
                 response_sender,
                 span,
-            } => {
+            } => unsafe {
                 let _span = span.entered();
-
-                let next_batch_span = info_span!(parent: None, "batch", batch_size = tracing::field::Empty, tokens = tracing::field::Empty);
-                next_batch_span.follows_from(Span::current());
 
                 let mut metadata = Vec::with_capacity(capacity);
 
-                let mut input_ids = Vec::with_capacity(max_batch_tokens);
-                let mut token_type_ids = Vec::with_capacity(max_batch_tokens);
-                let mut position_ids = Vec::with_capacity(max_batch_tokens);
+                let raw_input_ids = raw_u32_vec(max_batch_tokens);
+                let raw_token_type_ids = raw_u32_vec(max_batch_tokens);
+                let raw_position_ids = raw_u32_vec(max_batch_tokens);
+
                 let mut cu_seq_lengths = Vec::with_capacity(capacity);
                 cu_seq_lengths.push(0);
 
                 let mut current_tokens = 0;
                 let mut max_length = 0;
+
+                let batch_time = Instant::now();
 
                 while let Some(mut entry) = entries.pop_front() {
                     // Filter entries where the response receiver was dropped (== entries where the request
@@ -141,37 +148,59 @@ async fn queue_task(
                     }
 
                     max_length = max(max_length, entry_tokens as u32);
-                    current_tokens += entry_tokens;
 
-                    // Create a new span to link the batch back to this entry
-                    let entry_batch_span = info_span!(parent: &entry.metadata.span, "infer");
-                    // Add relationships
-                    next_batch_span.follows_from(&entry_batch_span);
-                    entry_batch_span.follows_from(&next_batch_span);
+                    entry.metadata.batch_time = Some(batch_time);
 
-                    entry.metadata.batch_time = Some(Instant::now());
-                    entry.metadata.temp_span = Some(entry_batch_span);
+                    {
+                        let _span = info_span!("extend").entered();
 
-                    metadata.push(entry.metadata);
-                    input_ids.extend(entry.encoding.input_ids);
-                    token_type_ids.extend(entry.encoding.token_type_ids);
-                    position_ids.extend(entry.encoding.position_ids);
-                    cu_seq_lengths.push(current_tokens as u32);
+                        ptr::copy(
+                            entry.encoding.input_ids.as_mut_ptr(),
+                            raw_input_ids.add(current_tokens),
+                            entry.encoding.input_ids.len(),
+                        );
+                        ptr::copy(
+                            entry.encoding.token_type_ids.as_mut_ptr(),
+                            raw_token_type_ids.add(current_tokens),
+                            entry.encoding.token_type_ids.len(),
+                        );
+                        ptr::copy(
+                            entry.encoding.position_ids.as_mut_ptr(),
+                            raw_position_ids.add(current_tokens),
+                            entry.encoding.position_ids.len(),
+                        );
+
+                        // input_ids.extend_from_slice(entry.encoding.input_ids.as_slice());
+                        // token_type_ids.extend_from_slice(entry.encoding.token_type_ids.as_slice());
+                        // position_ids.extend_from_slice(entry.encoding.position_ids.as_slice());
+
+                        // for i in 0..entry.encoding.input_ids.len() {
+                        //     input_ids.push(entry.encoding.input_ids[i]);
+                        //     token_type_ids.push(entry.encoding.token_type_ids[i]);
+                        //     position_ids.push(entry.encoding.position_ids[i]);
+                        // }
+
+                        current_tokens += entry_tokens;
+                        metadata.push(entry.metadata);
+                        cu_seq_lengths.push(current_tokens as u32);
+                    }
 
                     if Some(metadata.len()) == max_batch_requests {
                         break;
                     }
                 }
 
+                let input_ids =
+                    Vec::from_raw_parts(raw_input_ids, current_tokens, max_batch_tokens);
+                let token_type_ids =
+                    Vec::from_raw_parts(raw_token_type_ids, current_tokens, max_batch_tokens);
+                let position_ids =
+                    Vec::from_raw_parts(raw_position_ids, current_tokens, max_batch_tokens);
+
+                let batch_size = metadata.len();
                 let next_batch = if metadata.is_empty() {
                     None
                 } else {
-                    next_batch_span.record("batch_size", metadata.len() as u32);
-                    next_batch_span.record("tokens", current_tokens as u32);
-
-                    metrics::histogram!("te_batch_next_size", metadata.len() as f64);
-                    metrics::histogram!("te_batch_next_tokens", current_tokens as f64);
-
                     Some((
                         metadata,
                         Batch {
@@ -181,18 +210,25 @@ async fn queue_task(
                             cumulative_seq_lengths: cu_seq_lengths,
                             max_length,
                         },
-                        next_batch_span,
                     ))
                 };
 
                 let _ = response_sender.send(next_batch);
+
+                metrics::histogram!("te_batch_next_size", batch_size as f64);
+                metrics::histogram!("te_batch_next_tokens", current_tokens as f64);
                 metrics::gauge!("te_queue_size", entries.len() as f64);
-            }
+            },
         }
     }
 }
 
-type NextBatch = (Vec<Metadata>, Batch, Span);
+unsafe fn raw_u32_vec(capacity: usize) -> *mut u32 {
+    let layout = Layout::array::<u32>(capacity).unwrap();
+    alloc(layout).cast::<u32>()
+}
+
+type NextBatch = (Vec<Metadata>, Batch);
 
 #[derive(Debug)]
 enum QueueCommand {
