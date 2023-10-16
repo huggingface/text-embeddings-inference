@@ -26,7 +26,7 @@ ARG DOCKER_LABEL
 # sccache specific variables
 ARG ACTIONS_CACHE_URL
 ARG ACTIONS_RUNTIME_TOKEN
-ARG SCCACHE_GHA_ENABLED="false"
+ARG SCCACHE_GHA_ENABLED
 
 RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
 | gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null && \
