@@ -33,7 +33,8 @@ Benchmark for [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1
   - [API Documentation](#api-documentation)
   - [Using a private or gated model](#using-a-private-or-gated-model)
   - [Distributed Tracing](#distributed-tracing)
-  - [Local Install](#local-install)
+- [Local Install](#local-install)
+- [Docker Build](#docker-build)
 
 - No compilation step
 - Dynamic shapes
@@ -89,7 +90,7 @@ curl 127.0.0.1:8080/embed \
 ```
 
 **Note:** To use GPUs, you need to install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html). 
-We also recommend using NVIDIA drivers with CUDA version 12 or higher. 
+We also recommend using NVIDIA drivers with CUDA version 12.2 or higher. 
 
 To see all options to serve your models:
 
@@ -123,9 +124,10 @@ Options:
 
       --dtype <DTYPE>
           The dtype to be forced upon the model
+          
+          If `dtype` is not set, it defaults to float32 on accelerate, and float16 for all other architectures
 
           [env: DTYPE=]
-          [default: float16]
           [possible values: float16, float32]
 
       --pooling <POOLING>
@@ -217,13 +219,14 @@ Options:
 
 Text Embeddings Inference ships with multiple Docker images that you can use to target a specific backend:
 
-| Architecture | Image                                                       |
-|--------------|-------------------------------------------------------------|
-| CPU          | ghcr.io/huggingface/text-embeddings-inference:cpu-latest    |
-| Turing       | ghcr.io/huggingface/text-embeddings-inference:turing-latest |
-| Ampere 80    | ghcr.io/huggingface/text-embeddings-inference:latest        |
-| Ampere 86    | ghcr.io/huggingface/text-embeddings-inference:86-latest     |
-| Hopper       | ghcr.io/huggingface/text-embeddings-inference:hopper-latest |
+| Architecture                      | Image                                                       |
+|-----------------------------------|-------------------------------------------------------------|
+| CPU                               | ghcr.io/huggingface/text-embeddings-inference:cpu-latest    |
+| Volta                             | NOT SUPPORTED                                               |
+| Turing (T4, RTX 2000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:turing-latest |
+| Ampere 80 (A100, A30)             | ghcr.io/huggingface/text-embeddings-inference:latest        |
+| Ampere 86 (A10, A40, ...)         | ghcr.io/huggingface/text-embeddings-inference:86-latest     |
+| Hopper (H100)                     | ghcr.io/huggingface/text-embeddings-inference:hopper-latest |
 
 ### API documentation
 
@@ -256,9 +259,9 @@ docker run --gpus all -e HUGGING_FACE_HUB_TOKEN=$token -p 8080:80 -v $volume:/da
 `text-embeddings-inference` is instrumented with distributed tracing using OpenTelemetry. You can use this feature
 by setting the address to an OTLP collector with the `--otlp-endpoint` argument.
 
-### Local install
+## Local install
 
-#### CPU
+### CPU
 
 You can also opt to install `text-embeddings-inference` locally.
 
@@ -292,9 +295,11 @@ text-embeddings-router --model-id $model --revision $revision --port 8080
 sudo apt-get install libssl-dev gcc -y
 ```
 
-#### Cuda
+### Cuda
 
-Make sure you have Cuda and the nvidia drivers installed. We recommend using NVIDIA drivers with CUDA version 12 or higher. 
+GPUs with Cuda compute capabilities < 7.5 are not supported (V100, Titan V, GTX 1000 series, ...).
+
+Make sure you have Cuda and the nvidia drivers installed. We recommend using NVIDIA drivers with CUDA version 12.2 or higher. 
 You also need to add the nvidia binaries to your path:
 
 ```shell
@@ -305,6 +310,11 @@ Then run:
 
 ```shell
 # This can take a while as we need to compile a lot of cuda kernels
+
+# On Turing GPUs (T4, RTX 2000 series ... )
+cargo install --path router -F candle-cuda-turing --no-default-features
+
+# On Ampere and Hopper
 cargo install --path router -F candle-cuda --no-default-features
 ```
 
@@ -315,4 +325,33 @@ model=BAAI/bge-large-en-v1.5
 revision=refs/pr/5
 
 text-embeddings-router --model-id $model --revision $revision --port 8080
+```
+
+## Docker build
+
+You can build the CPU container with:
+
+```shell
+docker build .
+```
+
+To build the Cuda containers, you need to know the compute cap of the GPU you will be using
+at runtime.
+
+Then you can build the container with:
+
+```shell
+# Example for Turing (T4, RTX 2000 series, ...)
+runtime_compute_cap=75
+
+# Example for A100
+runtime_compute_cap=80
+
+# Example for A10
+runtime_compute_cap=86
+
+# Example for H100
+runtime_compute_cap=90
+
+docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
 ```

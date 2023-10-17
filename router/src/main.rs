@@ -49,8 +49,8 @@ struct Args {
     tokenization_workers: Option<usize>,
 
     /// The dtype to be forced upon the model.
-    #[clap(default_value = "float16", long, env, value_enum)]
-    dtype: DType,
+    #[clap(long, env, value_enum)]
+    dtype: Option<DType>,
 
     /// Optionally control the pooling method.
     ///
@@ -230,11 +230,19 @@ async fn main() -> Result<()> {
         position_offset,
     );
 
+    // Get dtype
+    let dtype = args.dtype.unwrap_or_else(|| {
+        if cfg!(feature = "accelerate") {
+            return DType::Float32;
+        }
+        DType::Float16
+    });
+
     // Create backend
     tracing::info!("Starting model backend");
     let backend = Backend::new(
         model_root,
-        args.dtype.clone(),
+        dtype.clone(),
         pool.clone(),
         args.uds_path,
         args.otlp_endpoint,
@@ -265,7 +273,7 @@ async fn main() -> Result<()> {
     let info = Info {
         model_id: args.model_id,
         model_sha: args.revision,
-        model_dtype: args.dtype.to_string(),
+        model_dtype: dtype.to_string(),
         model_pooling: pool.to_string(),
         max_concurrent_requests: args.max_concurrent_requests,
         max_input_length: config.max_position_embeddings,
