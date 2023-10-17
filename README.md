@@ -128,7 +128,7 @@ Options:
           If `dtype` is not set, it defaults to float32 on accelerate, and float16 for all other architectures
 
           [env: DTYPE=]
-          [possible values: float16, float32]
+          [possible values: float16]
 
       --pooling <POOLING>
           Optionally control the pooling method. 

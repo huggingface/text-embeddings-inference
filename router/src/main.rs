@@ -232,10 +232,14 @@ async fn main() -> Result<()> {
 
     // Get dtype
     let dtype = args.dtype.unwrap_or_else(|| {
-        if cfg!(feature = "accelerate") {
-            return DType::Float32;
+        #[cfg(feature = "accelerate")]
+        {
+            DType::Float32
         }
-        DType::Float16
+        #[cfg(not(feature = "accelerate"))]
+        {
+            DType::Float16
+        }
     });
 
     // Create backend
