@@ -219,14 +219,15 @@ Options:
 
 Text Embeddings Inference ships with multiple Docker images that you can use to target a specific backend:
 
-| Architecture                      | Image                                                       |
-|-----------------------------------|-------------------------------------------------------------|
-| CPU                               | ghcr.io/huggingface/text-embeddings-inference:cpu-latest    |
-| Volta                             | NOT SUPPORTED                                               |
-| Turing (T4, RTX 2000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:turing-latest |
-| Ampere 80 (A100, A30)             | ghcr.io/huggingface/text-embeddings-inference:latest        |
-| Ampere 86 (A10, A40, ...)         | ghcr.io/huggingface/text-embeddings-inference:86-latest     |
-| Hopper (H100)                     | ghcr.io/huggingface/text-embeddings-inference:hopper-latest |
+| Architecture                        | Image                                                       |
+|-------------------------------------|-------------------------------------------------------------|
+| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-latest    |
+| Volta                               | NOT SUPPORTED                                               |
+| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-latest |
+| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:latest        |
+| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-latest     |
+| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-latest     |
+| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-latest |
 
 ### API documentation
 
@@ -349,6 +350,9 @@ runtime_compute_cap=80
 
 # Example for A10
 runtime_compute_cap=86
+
+# Example for Ada Lovelace (RTX 4000 series, ...)
+runtime_compute_cap=89
 
 # Example for H100
 runtime_compute_cap=90
