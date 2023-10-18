@@ -212,10 +212,10 @@ async fn main() -> Result<()> {
     tokenizer.with_padding(None);
 
     // Position IDs offset. Used for Roberta.
-    let position_offset = if config.pad_token_id == 0 {
-        0
-    } else {
+    let position_offset = if &config.model_type == "xlm-roberta"  {
         config.pad_token_id + 1
+    } else {
+        0
     };
 
     let tokenization_workers = args
