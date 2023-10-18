@@ -223,7 +223,7 @@ dependencies = [
 
 [[package]]
 name = "backend-grpc-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "grpc-metadata",
  "prost",
@@ -1029,9 +1029,9 @@ dependencies = [
 
 [[package]]
 name = "gemm"
-version = "0.16.7"
+version = "0.16.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37efb01181a9db4ea19af713d429db719003ef85d9aeeb7003d3db30cf1504f2"
+checksum = "b5d95fc1fc8faee5a31ab9e21c561c7006f2cc97efeea4e00d029da1af540227"
 dependencies = [
  "dyn-stack",
  "gemm-c32",
@@ -1049,9 +1049,9 @@ dependencies = [
 
 [[package]]
 name = "gemm-c32"
-version = "0.16.7"
+version = "0.16.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61b8b541dc8d78b21049af9cccbc8979d7fbfea3fe6aafd5715070e9ac16f52f"
+checksum = "856170e9e413042cee3b664737cea7996c538687f2bd4a2a951e1a1c27fa9b33"
 dependencies = [
  "dyn-stack",
  "gemm-common",
@@ -1064,9 +1064,9 @@ dependencies = [
 
 [[package]]
 name = "gemm-c64"
-version = "0.16.7"
+version = "0.16.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f441bf2b3b87d0b0febbec3d3c68d15e2ed39230fd3fcd4b376d2575dceeca08"
+checksum = "0275c3bdc3ae4a63f23cf03c308c39601dada6c3b729c31060bf98fa7a6574e4"
 dependencies = [
  "dyn-stack",
  "gemm-common",
@@ -1079,9 +1079,9 @@ dependencies = [
 
 [[package]]
 name = "gemm-common"
-version = "0.16.7"
+version = "0.16.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ccd8e5e8d3d6c23b23d023409d9c155136ffd746da7681247fd624a0fe43211"
+checksum = "a2a96a69f9745e5254447e4d707b303df5ac427152720bd8d3bfb03499793754"
 dependencies = [
  "bytemuck",
  "dyn-stack",
@@ -1098,9 +1098,9 @@ dependencies = [
 
 [[package]]
 name = "gemm-f16"
-version = "0.16.7"
+version = "0.16.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4de2c73f97969186617470a778f652bcf1539494c06817b8da3a5f6ea596e074"
+checksum = "677148cc406d693e312ac44327612075a0fd2ea97607d5f0ee45ccec78846296"
 dependencies = [
  "dyn-stack",
  "gemm-common",
@@ -1116,9 +1116,9 @@ dependencies = [
 
 [[package]]
 name = "gemm-f32"
-version = "0.16.7"
+version = "0.16.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b77c8381183b42b89fc4147d87944199ba1366de07ef0520cc140c278ec536d"
+checksum = "0b447dff92aae7eeba1028275121d45f1eeecb6bfac7ef647b9e2c84d9531824"
 dependencies = [
  "dyn-stack",
  "gemm-common",
@@ -1131,9 +1131,9 @@ dependencies = [
 
 [[package]]
 name = "gemm-f64"
-version = "0.16.7"
+version = "0.16.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42756182c208d218880308bd09ff5e8d05471441bb5ded067cf66964b74726f5"
+checksum = "a6050edf1e4df730a1a65a790c80eb76b5b68e2a0d576bcd45f345843d8fd4f9"
 dependencies = [
  "dyn-stack",
  "gemm-common",
@@ -1388,16 +1388,16 @@ dependencies = [
 
 [[package]]
 name = "iana-time-zone"
-version = "0.1.57"
+version = "0.1.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fad5b825842d2b38bd206f3e81d6957625fd7f0a361e345c30e01a0ae2dd613"
+checksum = "8326b86b6cff230b97d0d312a6c40a60726df3332e721f72a1b035f451663b20"
 dependencies = [
  "android_system_properties",
  "core-foundation-sys",
  "iana-time-zone-haiku",
  "js-sys",
  "wasm-bindgen",
- "windows",
+ "windows-core",
 ]
 
 [[package]]
@@ -1568,9 +1568,9 @@ checksum = "da2479e8c062e40bf0066ffa0bc823de0a9368974af99c9f6df941d2c231e03f"
 
 [[package]]
 name = "lock_api"
-version = "0.4.10"
+version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1cc9717a20b1bb222f333e6a92fd32f7d8a18ddc5a3191a11af45dcbf4dcd16"
+checksum = "3c168f8615b12bc01f9c17e2eb0cc07dcae1940121185446edc3744920e8ef45"
 dependencies = [
  "autocfg",
  "scopeguard",
@@ -2173,13 +2173,13 @@ dependencies = [
 
 [[package]]
 name = "parking_lot_core"
-version = "0.9.8"
+version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93f00c865fe7cabf650081affecd3871070f26767e7b2070a3ffae14c654b447"
+checksum = "4c42a9226546d68acdd9c0a280d17ce19bfe27a46bf68784e4066115788d008e"
 dependencies = [
  "cfg-if",
  "libc",
- "redox_syscall 0.3.5",
+ "redox_syscall 0.4.1",
  "smallvec",
  "windows-targets 0.48.5",
 ]
@@ -2361,9 +2361,9 @@ dependencies = [
 
 [[package]]
 name = "pulp"
-version = "0.16.2"
+version = "0.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ec4bc5d82f5e87a98115b50266eab2d353d1d88276204697227a8f191752b41"
+checksum = "f409ff823a19c749a4723f6faeef67ff0a15234b33d1f001182fc39078458bc6"
 dependencies = [
  "bytemuck",
  "libm",
@@ -2495,6 +2495,15 @@ name = "redox_syscall"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "567664f262709473930a4bf9e51bf2ebf3348f2e748ccc50dea20646858f8f29"
+dependencies = [
+ "bitflags 1.3.2",
+]
+
+[[package]]
+name = "redox_syscall"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4722d768eff46b75989dd134e5c353f0d6296e5aaa3132e776cbdb56be7731aa"
 dependencies = [
  "bitflags 1.3.2",
 ]
@@ -3048,7 +3057,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "flume",
@@ -3061,7 +3070,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend-candle"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "accelerate-src",
  "anyhow",
@@ -3085,7 +3094,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "thiserror",
@@ -3093,7 +3102,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend-python"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "backend-grpc-client",
  "serde",
@@ -3106,7 +3115,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "flume",
  "hf-hub",
@@ -3120,7 +3129,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-router"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3927,10 +3936,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
-name = "windows"
-version = "0.48.0"
+name = "windows-core"
+version = "0.51.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e686886bc078bc1b0b600cac0147aadb815089b6e4da64016cbd754b6342700f"
+checksum = "f1f8cf84f35d2db49a46868f947758c7a1138116f7fac3bc844f43ade1292e64"
 dependencies = [
  "windows-targets 0.48.5",
 ]

@@ -11,7 +11,7 @@
 
 A blazing fast inference solution for text embeddings models. 
 
-Benchmark for [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5) on a Nvidia A10 with a sequence length of 512 tokens:
+Benchmark for [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5) on an Nvidia A10 with a sequence length of 512 tokens:
 
 <p>
   <img src="assets/bs1-lat.png" width="400" />
@@ -36,14 +36,18 @@ Benchmark for [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1
 - [Local Install](#local-install)
 - [Docker Build](#docker-build)
 
-- No compilation step
-- Dynamic shapes
-- Small docker images and fast boot times. Get ready for true serverless!
-- Token based dynamic batching
-- Optimized transformers code for inference using [Flash Attention](https://github.com/HazyResearch/flash-attention),
+Text Embeddings Inference (TEI) is a toolkit for deploying and serving open source text embeddings models. TEI enables
+high-performance extraction for the most popular models, including FlagEmbedding, Ember, GTE and E5. TEI implements many features
+such as:
+
+* No model graph compilation step
+* Small docker images and fast boot times. Get ready for true serverless!
+* Token based dynamic batching
+* Optimized transformers code for inference using [Flash Attention](https://github.com/HazyResearch/flash-attention),
 [Candle](https://github.com/huggingface/candle) and [cuBLASLt](https://docs.nvidia.com/cuda/cublas/#using-the-cublaslt-api)
-- [Safetensors](https://github.com/huggingface/safetensors) weight loading
-- Production ready (distributed tracing with Open Telemetry, Prometheus metrics)
+* [Safetensors](https://github.com/huggingface/safetensors) weight loading
+* Production ready (distributed tracing with Open Telemetry, Prometheus metrics)
+
 
 ## Get Started
 
