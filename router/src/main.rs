@@ -231,7 +231,7 @@ async fn main() -> Result<()> {
     );
 
     // Get dtype
-    let dtype = args.dtype.unwrap_or_else(|| {
+    let dtype = args.dtype.unwrap_or({
         #[cfg(feature = "accelerate")]
         {
             DType::Float32

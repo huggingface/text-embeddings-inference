@@ -22,7 +22,11 @@ pub fn incompatible_compute_cap() -> bool {
     let compile_compute_cap = *COMPILE_COMPUTE_CAP;
     let runtime_compute_cap = *RUNTIME_COMPUTE_CAP;
 
-    ((runtime_compute_cap == 75 || runtime_compute_cap == 90)
-        && runtime_compute_cap != compile_compute_cap)
-        || (!((80..90).contains(&runtime_compute_cap) && (80..90).contains(&compile_compute_cap)))
+    match (runtime_compute_cap, compile_compute_cap) {
+        (75, 75) => false,
+        (80, 80) => false,
+        (86, 80..=86) => false,
+        (90, 90) => false,
+        (_, _) => true,
+    }
 }
