@@ -217,6 +217,7 @@ async fn main() -> Result<()> {
     } else {
         0
     };
+    let max_input_length = config.max_position_embeddings - position_offset;
 
     let tokenization_workers = args
         .tokenization_workers
@@ -226,7 +227,7 @@ async fn main() -> Result<()> {
     let tokenization = Tokenization::new(
         tokenization_workers,
         tokenizer,
-        config.max_position_embeddings,
+        max_input_length,
         position_offset,
     );
 
