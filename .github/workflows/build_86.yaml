@@ -108,6 +108,8 @@
            images: |
              registry.internal.huggingface.tech/api-inference/text-embeddings-inference
              ghcr.io/huggingface/text-embeddings-inference
+           flavor: |
+             latest=false
            tags: |
              type=semver,pattern=86-{{version}}
              type=semver,pattern=86-{{major}}.{{minor}}
