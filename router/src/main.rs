@@ -24,9 +24,10 @@ use tower_http::cors::AllowOrigin;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
+use veil::Redact;
 
 /// App Configuration
-#[derive(Parser, Debug)]
+#[derive(Parser, Redact)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
     /// The name of the model to load.
@@ -35,6 +36,7 @@ struct Args {
     /// Or it can be a local directory containing the necessary files
     /// as saved by `save_pretrained(...)` methods of transformers
     #[clap(default_value = "thenlper/gte-base", long, env)]
+    #[redact(partial)]
     model_id: String,
 
     /// The actual revision of the model if you're referring to a model
@@ -91,6 +93,7 @@ struct Args {
 
     /// Your HuggingFace hub token
     #[clap(long, env)]
+    #[redact(partial)]
     hf_api_token: Option<String>,
 
     /// The IP address to listen on
@@ -212,7 +215,7 @@ async fn main() -> Result<()> {
     tokenizer.with_padding(None);
 
     // Position IDs offset. Used for Roberta.
-    let position_offset = if &config.model_type == "xlm-roberta"  {
+    let position_offset = if &config.model_type == "xlm-roberta" {
         config.pad_token_id + 1
     } else {
         0

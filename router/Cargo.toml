@@ -44,6 +44,7 @@ tracing-opentelemetry = "0.21.0"
 tracing-subscriber = { version = "0.3.16", features = ["json", "env-filter"] }
 utoipa = { version = "4.0.0", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "4.0.0", features = ["axum"] }
+veil = "0.1.6"
 
 [build-dependencies]
 vergen = { version = "8.0.0", features = ["build", "git", "gitcl"] }
