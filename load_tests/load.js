@@ -2,7 +2,7 @@ import {check} from 'k6';
 import http from 'k6/http';
 import {Trend} from 'k6/metrics';
 
-const host = __ENV.HOST || '127.0.0.1:8080';
+const host = __ENV.HOST || '127.0.0.1:3000';
 
 const totalTime = new Trend('total_time', true);
 const tokenizationTIme = new Trend('tokenization_time', true);
@@ -18,7 +18,7 @@ export const options = {
     scenarios: {
         // throughput: {
         //     executor: 'shared-iterations',
-        //     vus: 4,
+        //     vus: 1000,
         //     iterations: 1000,
         //     maxDuration: '2m',
         //     gracefulStop: '1s',
@@ -27,7 +27,7 @@ export const options = {
             executor: 'constant-arrival-rate',
             duration: '30s',
             preAllocatedVUs: 10000,
-            rate: 500,
+            rate: 9000,
             timeUnit: '1s',
             gracefulStop: '1s',
         },

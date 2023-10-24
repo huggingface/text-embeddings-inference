@@ -269,8 +269,11 @@ impl BertAttention {
         let attention_scores = (attention_scores * self.softmax_scale)?;
         let attention_probs = candle_nn::ops::softmax_last_dim(&attention_scores)?;
 
-        let context_layer = attention_probs.matmul(&value_layer)?;
-        let context_layer = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?.squeeze(0)?;
+        let context_layer = attention_probs.matmul(value_layer)?;
+        let context_layer = context_layer
+            .transpose(1, 2)?
+            .flatten_from(D::Minus2)?
+            .squeeze(0)?;
 
         let hidden_states = self.dense.forward(&context_layer)?.add(&residual)?;
         let hidden_states = self.layer_norm.forward(&hidden_states)?;

@@ -3117,7 +3117,6 @@ dependencies = [
 name = "text-embeddings-core"
 version = "0.2.1"
 dependencies = [
- "flume",
  "hf-hub",
  "metrics",
  "text-embeddings-backend",
