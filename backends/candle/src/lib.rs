@@ -15,7 +15,6 @@ use text_embeddings_backend_core::{BackendError, Batch, Embedding, EmbeddingBack
 
 pub struct CandleBackend {
     model: Box<dyn EmbeddingModel + Send>,
-    device: Device,
 }
 
 impl CandleBackend {
@@ -126,7 +125,7 @@ impl CandleBackend {
             }
         };
 
-        Ok(Self { model, device })
+        Ok(Self { model })
     }
 }
 
@@ -142,10 +141,7 @@ impl EmbeddingBackend for CandleBackend {
     }
 
     fn max_batch_size(&self) -> Option<usize> {
-        match self.device {
-            Device::Cpu => Some(1),
-            Device::Cuda(_) => None,
-        }
+        None
     }
 }
 
