@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::ptr;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{BackendError, Batch};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{instrument, Span};
 
 /// Queue entry
@@ -29,8 +29,6 @@ pub struct Metadata {
     pub tokenization: Duration,
     /// Instant when this entry was queued
     pub queue_time: Instant,
-    /// Instant when this entry was added to a batch
-    pub batch_time: Option<Instant>,
     /// Number of tokens in the prompt
     pub prompt_tokens: usize,
 }
@@ -39,7 +37,7 @@ pub struct Metadata {
 #[derive(Debug, Clone)]
 pub struct Queue {
     /// Channel to communicate with the background queue task
-    queue_sender: flume::Sender<QueueCommand>,
+    queue_sender: mpsc::UnboundedSender<QueueCommand>,
 }
 
 impl Queue {
@@ -49,7 +47,7 @@ impl Queue {
         max_concurrent_requests: usize,
     ) -> Self {
         // Create channels
-        let (queue_sender, queue_receiver) = flume::unbounded();
+        let (queue_sender, queue_receiver) = mpsc::unbounded_channel();
 
         // Launch background queue task
         tokio::task::spawn_blocking(move || {
@@ -100,13 +98,13 @@ fn queue_blocking_task(
     max_batch_tokens: usize,
     max_batch_requests: Option<usize>,
     max_concurrent_requests: usize,
-    queue_receiver: flume::Receiver<QueueCommand>,
+    mut queue_receiver: mpsc::UnboundedReceiver<QueueCommand>,
 ) {
     let capacity = max_batch_requests.unwrap_or(max_concurrent_requests);
 
     let mut entries: VecDeque<Entry> = VecDeque::with_capacity(max_concurrent_requests);
 
-    while let Ok(cmd) = queue_receiver.recv() {
+    while let Some(cmd) = queue_receiver.blocking_recv() {
         match cmd {
             QueueCommand::Append(entry, span) => {
                 let _span = span.entered();
@@ -131,8 +129,6 @@ fn queue_blocking_task(
                 let mut current_tokens = 0;
                 let mut max_length = 0;
 
-                let batch_time = Instant::now();
-
                 while let Some(mut entry) = entries.pop_front() {
                     // Filter entries where the response receiver was dropped (== entries where the request
                     // was dropped by the client)
@@ -149,8 +145,6 @@ fn queue_blocking_task(
                     }
 
                     max_length = max(max_length, entry_tokens as u32);
-
-                    entry.metadata.batch_time = Some(batch_time);
 
                     // Copy memory to the correct spot in the raw vectors
                     ptr::copy(
@@ -217,7 +211,7 @@ unsafe fn raw_u32_vec(capacity: usize) -> *mut u32 {
     alloc(layout).cast::<u32>()
 }
 
-type NextBatch = (Vec<Metadata>, Batch);
+pub type NextBatch = (Vec<Metadata>, Batch);
 
 #[derive(Debug)]
 enum QueueCommand {

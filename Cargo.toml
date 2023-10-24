@@ -18,10 +18,10 @@ homepage = "https://github.com/huggingface/text-embeddings-inference"
 
 [patch.crates-io]
 cudarc = { git = "https://github.com/OlivierDehaene/cudarc", rev = "4c8e6d36a4a4c31e2e4649ae5246226452a01fc1" }
-candle = { git = "https://github.com/huggingface/candle", rev = "122da875806f274a7aa9048f76d7a676b473e56f", package = "candle-core" }
-candle-nn = { git = "https://github.com/huggingface/candle", rev = "122da875806f274a7aa9048f76d7a676b473e56f", package = "candle-nn" }
-candle-transformers = { git = "https://github.com/huggingface/candle", rev = "122da875806f274a7aa9048f76d7a676b473e56f", package = "candle-transformers" }
-candle-flash-attn = { git = "https://github.com/huggingface/candle", rev = "122da875806f274a7aa9048f76d7a676b473e56f", package = "candle-flash-attn" }
+candle = { git = "https://github.com/OlivierDehaene/candle", rev = "9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e", package = "candle-core" }
+candle-nn = { git = "https://github.com/OlivierDehaene/candle", rev = "9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e", package = "candle-nn" }
+candle-transformers = { git = "https://github.com/OlivierDehaene/candle", rev = "9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e", package = "candle-transformers" }
+candle-flash-attn = { git = "https://github.com/OlivierDehaene/candle", rev = "9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e", package = "candle-flash-attn" }
 
 [profile.release]
 debug = 1

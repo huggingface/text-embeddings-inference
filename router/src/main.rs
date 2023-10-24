@@ -236,11 +236,11 @@ async fn main() -> Result<()> {
 
     // Get dtype
     let dtype = args.dtype.unwrap_or({
-        #[cfg(feature = "accelerate")]
+        #[cfg(any(feature = "accelerate", feature = "mkl", feature = "mkl-dynamic"))]
         {
             DType::Float32
         }
-        #[cfg(not(feature = "accelerate"))]
+        #[cfg(not(any(feature = "accelerate", feature = "mkl", feature = "mkl-dynamic")))]
         {
             DType::Float16
         }

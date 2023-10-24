@@ -331,7 +331,7 @@ checksum = "a2bd12c1caf447e69cd4528f47f94d203fd2582878ecb9e9465484c4148a8223"
 [[package]]
 name = "candle-core"
 version = "0.3.0"
-source = "git+https://github.com/huggingface/candle?rev=122da875806f274a7aa9048f76d7a676b473e56f#122da875806f274a7aa9048f76d7a676b473e56f"
+source = "git+https://github.com/OlivierDehaene/candle?rev=9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e#9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e"
 dependencies = [
  "accelerate-src",
  "byteorder",
@@ -366,7 +366,7 @@ dependencies = [
 [[package]]
 name = "candle-flash-attn"
 version = "0.3.0"
-source = "git+https://github.com/huggingface/candle?rev=122da875806f274a7aa9048f76d7a676b473e56f#122da875806f274a7aa9048f76d7a676b473e56f"
+source = "git+https://github.com/OlivierDehaene/candle?rev=9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e#9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -390,7 +390,7 @@ dependencies = [
 [[package]]
 name = "candle-kernels"
 version = "0.3.0"
-source = "git+https://github.com/huggingface/candle?rev=122da875806f274a7aa9048f76d7a676b473e56f#122da875806f274a7aa9048f76d7a676b473e56f"
+source = "git+https://github.com/OlivierDehaene/candle?rev=9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e#9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e"
 dependencies = [
  "anyhow",
  "glob",
@@ -412,7 +412,7 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.3.0"
-source = "git+https://github.com/huggingface/candle?rev=122da875806f274a7aa9048f76d7a676b473e56f#122da875806f274a7aa9048f76d7a676b473e56f"
+source = "git+https://github.com/OlivierDehaene/candle?rev=9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e#9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e"
 dependencies = [
  "accelerate-src",
  "candle-core",
@@ -428,7 +428,7 @@ dependencies = [
 [[package]]
 name = "candle-transformers"
 version = "0.3.0"
-source = "git+https://github.com/huggingface/candle?rev=122da875806f274a7aa9048f76d7a676b473e56f#122da875806f274a7aa9048f76d7a676b473e56f"
+source = "git+https://github.com/OlivierDehaene/candle?rev=9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e#9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -3117,7 +3117,6 @@ dependencies = [
 name = "text-embeddings-core"
 version = "0.2.1"
 dependencies = [
- "flume",
  "hf-hub",
  "metrics",
  "text-embeddings-backend",

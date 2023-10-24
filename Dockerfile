@@ -35,11 +35,15 @@ RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRO
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     intel-oneapi-mkl-devel \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
+
+RUN echo "int mkl_serv_intel_cpu_true() {return 1;}" > fakeintel.c && \
+    gcc -shared -fPIC -o libfakeintel.so fakeintel.c
 
 COPY --from=planner /usr/src/recipe.json recipe.json
 
-RUN cargo chef cook --release --features candle --features mkl --no-default-features --recipe-path recipe.json && sccache -s
+RUN cargo chef cook --release --features candle --features mkl-dynamic --no-default-features --recipe-path recipe.json && sccache -s
 
 COPY backends backends
 COPY core core
@@ -47,18 +51,36 @@ COPY router router
 COPY Cargo.toml ./
 COPY Cargo.lock ./
 
-RUN cargo build --release --bin text-embeddings-router -F candle -F mkl --no-default-features && sccache -s
+RUN cargo build --release --bin text-embeddings-router -F candle -F mkl-dynamic --no-default-features && sccache -s
 
 FROM debian:bookworm-slim
 
 ENV HUGGINGFACE_HUB_CACHE=/data \
-    PORT=80
+    PORT=80 \
+    MKL_ENABLE_INSTRUCTIONS=AVX512_E4 \
+    RAYON_NUM_THREADS=8 \
+    LD_PRELOAD=/usr/local/libfakeintel.so \
+    LD_LIBRARY_PATH=/usr/local/lib
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     libomp-dev \
     ca-certificates \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Copy a lot of the Intel shared objects because of the mkl_serv_intel_cpu_true patch...
+COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_intel_lp64.so.2 /usr/local/lib/libmkl_intel_lp64.so.2
+COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_intel_thread.so.2 /usr/local/lib/libmkl_intel_thread.so.2
+COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_core.so.2 /usr/local/lib/libmkl_core.so.2
+COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_vml_def.so.2 /usr/local/lib/libmkl_vml_def.so.2
+COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_def.so.2 /usr/local/lib/libmkl_def.so.2
+COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_vml_avx.so.2 /usr/local/lib/libmkl_vml_avx.so.2
+COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_vml_avx2.so.2 /usr/local/lib/libmkl_vml_avx2.so.2
+COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_vml_avx512.so.2 /usr/local/lib/libmkl_vml_avx512.so.2
+COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_avx.so.2 /usr/local/lib/libmkl_avx.so.2
+COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_avx2.so.2 /usr/local/lib/libmkl_avx2.so.2
+COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_avx512.so.2 /usr/local/lib/libmkl_avx512.so.2
+COPY --from=builder /usr/src/libfakeintel.so /usr/local/libfakeintel.so
 
 COPY --from=builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
 

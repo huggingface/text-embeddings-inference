@@ -1,6 +1,5 @@
 use crate::models::EmbeddingModel;
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
-use candle_nn::ops::softmax;
 use candle_nn::{Embedding, VarBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -108,7 +107,11 @@ impl Linear {
     pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let x = x.matmul(&self.weight)?;
+        let w = match x.dims() {
+            &[bsize, _, _] => self.weight.broadcast_left(bsize)?.t()?,
+            _ => self.weight.t()?,
+        };
+        let x = x.matmul(&w)?;
         let x = match &self.bias {
             None => Ok(x),
             Some(bias) => x.broadcast_add(bias),
@@ -184,9 +187,7 @@ impl BertEmbeddings {
 }
 
 struct BertAttention {
-    q_linear: Linear,
-    k_linear: Linear,
-    v_linear: Linear,
+    qkv_linear: Linear,
 
     dense: Linear,
     layer_norm: LayerNorm,
@@ -208,19 +209,21 @@ impl BertAttention {
             .pp("self.query")
             .get((all_head_size, hidden_size), "weight")?;
         let query_bias = vb.pp("self.query").get(all_head_size, "bias")?;
-        let q_linear = Linear::new(query_weight.t()?, Some(query_bias), None);
 
         let key_weight = vb
             .pp("self.key")
             .get((all_head_size, hidden_size), "weight")?;
         let key_bias = vb.pp("self.key").get(all_head_size, "bias")?;
-        let k_linear = Linear::new(key_weight.t()?, Some(key_bias), None);
 
         let value_weight = vb
             .pp("self.value")
             .get((all_head_size, hidden_size), "weight")?;
         let value_bias = vb.pp("self.value").get(all_head_size, "bias")?;
-        let v_linear = Linear::new(value_weight.t()?, Some(value_bias), None);
+
+        let qkv_weight = Tensor::cat(&[&query_weight, &key_weight, &value_weight], 0)?;
+        let qkv_bias = Tensor::cat(&[&query_bias, &key_bias, &value_bias], 0)?;
+
+        let qkv_linear = Linear::new(qkv_weight, Some(qkv_bias), None);
 
         let dense_weight = vb
             .pp("output")
@@ -228,16 +231,14 @@ impl BertAttention {
             .get((hidden_size, hidden_size), "weight")?;
         let dense_bias = vb.pp("output").pp("dense").get(hidden_size, "bias")?;
 
-        let dense = Linear::new(dense_weight.t()?, Some(dense_bias), None);
+        let dense = Linear::new(dense_weight, Some(dense_bias), None);
 
         let layer_norm = LayerNorm::load(vb.pp("output").pp("LayerNorm"), config)?;
 
         let softmax_scale = 1. / (attention_head_size as f64).sqrt();
 
         Ok(Self {
-            q_linear,
-            k_linear,
-            v_linear,
+            qkv_linear,
             dense,
             layer_norm,
             num_attention_heads: config.num_attention_heads,
@@ -247,38 +248,35 @@ impl BertAttention {
         })
     }
 
-    fn transpose_for_scores(&self, xs: &Tensor) -> Result<Tensor> {
-        let mut new_x_shape = xs.dims().to_vec();
-        new_x_shape.pop();
-        new_x_shape.push(self.num_attention_heads);
-        new_x_shape.push(self.attention_head_size);
-        let xs = xs
-            .reshape(new_x_shape.as_slice())?
-            .unsqueeze(0)?
-            .transpose(1, 2)?;
-        xs.contiguous()
-    }
-
-    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+    fn forward(&self, hidden_states: &Tensor, attention_mask: Option<&Tensor>) -> Result<Tensor> {
         let _enter = self.span.enter();
 
         let residual = hidden_states.clone();
 
-        let query_layer = self.q_linear.forward(hidden_states)?;
-        let key_layer = self.k_linear.forward(hidden_states)?;
-        let value_layer = self.v_linear.forward(hidden_states)?;
+        let qkv = self.qkv_linear.forward(hidden_states)?;
 
-        let query_layer = self.transpose_for_scores(&query_layer)?;
-        let key_layer = self.transpose_for_scores(&key_layer)?;
-        let value_layer = self.transpose_for_scores(&value_layer)?;
+        let mut new_qkv_shape = qkv.dims().to_vec();
+        new_qkv_shape.pop();
+        new_qkv_shape.push(self.num_attention_heads * 3);
+        new_qkv_shape.push(self.attention_head_size);
+        let qkv = qkv.reshape(new_qkv_shape.as_slice())?.transpose(1, 2)?;
+
+        let qkv = qkv.chunk(3, 1)?;
+        let query_layer = &qkv[0].contiguous()?;
+        let key_layer = &qkv[1].contiguous()?;
+        let value_layer = &qkv[2].contiguous()?;
 
         let attention_scores = query_layer.matmul(&key_layer.t()?)?;
-        let attention_scores = (attention_scores * self.softmax_scale)?;
-        let attention_probs = softmax(&attention_scores, D::Minus1)?;
+        let mut attention_scores = (attention_scores * self.softmax_scale)?;
 
-        let context_layer = attention_probs.matmul(&value_layer)?;
-        let context_layer = context_layer.transpose(1, 2)?.contiguous()?;
-        let context_layer = context_layer.flatten_from(D::Minus2)?.squeeze(0)?;
+        if let Some(attention_mask) = attention_mask {
+            attention_scores = attention_scores.add(attention_mask)?;
+        }
+
+        let attention_probs = candle_nn::ops::softmax_last_dim(&attention_scores)?;
+
+        let context_layer = attention_probs.matmul(value_layer)?;
+        let context_layer = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?;
 
         let hidden_states = self.dense.forward(&context_layer)?.add(&residual)?;
         let hidden_states = self.layer_norm.forward(&hidden_states)?;
@@ -308,7 +306,7 @@ impl BertLayer {
             .pp("dense")
             .get(config.intermediate_size, "bias")?;
         let intermediate = Linear::new(
-            intermediate_weight.t()?,
+            intermediate_weight,
             Some(intermediate_bias),
             Some(config.hidden_act.clone()),
         );
@@ -321,7 +319,7 @@ impl BertLayer {
             .pp("output")
             .pp("dense")
             .get(config.hidden_size, "bias")?;
-        let output = Linear::new(output_weight.t()?, Some(output_bias), None);
+        let output = Linear::new(output_weight, Some(output_bias), None);
 
         let layer_norm = LayerNorm::load(vb.pp("output").pp("LayerNorm"), config)?;
 
@@ -334,10 +332,14 @@ impl BertLayer {
         })
     }
 
-    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+    pub fn forward(
+        &self,
+        hidden_states: &Tensor,
+        attention_mask: Option<&Tensor>,
+    ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let hidden_states = self.attention.forward(hidden_states)?;
+        let hidden_states = self.attention.forward(hidden_states, attention_mask)?;
         let residual = hidden_states.clone();
 
         let hidden_states = self.intermediate.forward(&hidden_states)?;
@@ -363,14 +365,14 @@ impl BertEncoder {
         Ok(BertEncoder { layers, span })
     }
 
-    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+    fn forward(&self, hidden_states: &Tensor, attention_mask: Option<&Tensor>) -> Result<Tensor> {
         let _enter = self.span.enter();
 
         let mut hidden_states = hidden_states.clone();
 
         // Use a loop rather than a fold as it's easier to modify when adding debug/...
         for layer in self.layers.iter() {
-            hidden_states = layer.forward(&hidden_states)?
+            hidden_states = layer.forward(&hidden_states, attention_mask)?;
         }
 
         Ok(hidden_states)
@@ -381,6 +383,9 @@ pub struct BertModel {
     embeddings: BertEmbeddings,
     encoder: BertEncoder,
     pool: Pool,
+
+    num_attention_heads: usize,
+
     pub device: Device,
 
     span: tracing::Span,
@@ -431,6 +436,7 @@ impl BertModel {
             embeddings,
             encoder,
             pool,
+            num_attention_heads: config.num_attention_heads,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
@@ -440,27 +446,107 @@ impl BertModel {
         let _enter = self.span.enter();
 
         let batch_size = batch.cumulative_seq_lengths.len() - 1;
-        if batch_size > 1 {
-            candle::bail!("Bert CPU only support batch_size == 1");
-        }
-        let shape = batch.input_ids.len();
+        let max_length = batch.max_length as usize;
 
-        // Create Cuda tensors
-        let input_ids = Tensor::from_vec(batch.input_ids, shape, &self.device)?;
-        let type_ids = Tensor::from_vec(batch.token_type_ids, shape, &self.device)?;
-        let position_ids = Tensor::from_vec(batch.position_ids, shape, &self.device)?;
+        let shape = (batch_size, max_length);
+
+        let (input_ids, type_ids, position_ids, input_lengths, attention_mask) = if batch_size > 1 {
+            // Prepare padded batch
+            let elems = batch_size * max_length;
+
+            let mut input_ids = Vec::with_capacity(elems);
+            let mut type_ids = Vec::with_capacity(elems);
+            let mut position_ids = Vec::with_capacity(elems);
+            let mut attention_mask = Vec::with_capacity(elems);
+            let mut input_lengths = Vec::with_capacity(batch_size);
+            // Bool to know if we need to use the attention mask
+            let mut masking = false;
+
+            for i in 0..batch_size {
+                let start = batch.cumulative_seq_lengths[i] as usize;
+                let end = batch.cumulative_seq_lengths[i + 1] as usize;
+                let seq_length = (end - start) as u32;
+                input_lengths.push(seq_length as f32);
+
+                // Copy values
+                for j in start..end {
+                    input_ids.push(batch.input_ids[j]);
+                    type_ids.push(batch.token_type_ids[j]);
+                    position_ids.push(batch.position_ids[j]);
+                    attention_mask.push(0.0);
+                }
+
+                // Add padding if needed
+                let padding = batch.max_length - seq_length;
+                if padding > 0 {
+                    // Set bool to use attention mask
+                    masking = true;
+                    for _ in 0..padding {
+                        input_ids.push(0);
+                        type_ids.push(0);
+                        position_ids.push(0);
+                        attention_mask.push(f32::NEG_INFINITY);
+                    }
+                }
+            }
+
+            let attention_mask = match masking {
+                true => {
+                    let attention_mask = Tensor::from_vec(
+                        attention_mask,
+                        (batch_size, 1, 1, max_length),
+                        &self.device,
+                    )?;
+                    // Broadcast once instead of at every layer
+                    let attention_mask = attention_mask
+                        .broadcast_as((
+                            batch_size,
+                            self.num_attention_heads,
+                            max_length,
+                            max_length,
+                        ))?
+                        .contiguous()?;
+                    Some(attention_mask)
+                }
+                false => None,
+            };
+
+            (
+                input_ids,
+                type_ids,
+                position_ids,
+                input_lengths,
+                attention_mask,
+            )
+        } else {
+            (
+                batch.input_ids,
+                batch.token_type_ids,
+                batch.position_ids,
+                vec![batch.max_length as f32],
+                None,
+            )
+        };
+
+        // Create CPU tensors
+        let input_ids = Tensor::from_vec(input_ids, shape, &self.device)?;
+        let type_ids = Tensor::from_vec(type_ids, shape, &self.device)?;
+        let position_ids = Tensor::from_vec(position_ids, shape, &self.device)?;
+        let input_lengths = Tensor::from_vec(input_lengths, (batch_size, 1), &self.device)?;
 
         let embedding_output = self
             .embeddings
             .forward(&input_ids, &type_ids, &position_ids)?;
 
-        let outputs = self.encoder.forward(&embedding_output)?;
+        let outputs = self
+            .encoder
+            .forward(&embedding_output, attention_mask.as_ref())?;
 
         let results = match self.pool {
             // CLS pooling
-            Pool::Cls => outputs.i(0..1)?,
+            Pool::Cls => outputs.i((.., 0))?,
             // Mean pooling
-            Pool::Mean => (outputs.sum_keepdim(0)? / (batch.max_length as f64))?,
+            Pool::Mean => (outputs.sum(1)?.broadcast_div(&input_lengths))?,
         };
 
         // Normalize

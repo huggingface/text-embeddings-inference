@@ -2,14 +2,14 @@ use crate::TextEmbeddingsError;
 /// Payload tokenization logic
 use tokenizers::tokenizer::Tokenizer;
 use tokenizers::TruncationDirection;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{instrument, Span};
 
 /// Validation
 #[derive(Debug, Clone)]
 pub struct Tokenization {
     /// Channel to communicate with the background tokenization task
-    sender: flume::Sender<TokenizerRequest>,
+    sender: mpsc::UnboundedSender<TokenizerRequest>,
 }
 
 impl Tokenization {
@@ -22,12 +22,14 @@ impl Tokenization {
         tracing::info!("Starting {workers} tokenization workers");
 
         // Create channel
-        let (sender, receiver) = flume::unbounded();
+        let (sender, mut round_robin_receiver) = mpsc::unbounded_channel();
+        let mut senders = Vec::with_capacity(workers);
 
         // Create workers
         for _ in 0..workers {
             let tokenizer_clone = tokenizer.clone();
-            let receiver_clone = receiver.clone();
+            let (tokenizer_sender, tokenizer_receiver) = mpsc::unbounded_channel();
+            senders.push(tokenizer_sender);
 
             // Spawn worker
             tokio::task::spawn_blocking(move || {
@@ -35,10 +37,23 @@ impl Tokenization {
                     tokenizer_clone,
                     max_input_length,
                     position_offset,
-                    receiver_clone,
+                    tokenizer_receiver,
                 )
             });
         }
+
+        // Create tokenization round robin task
+        tokio::spawn(async move {
+            // Loop over requests
+            loop {
+                for sender in &senders {
+                    match round_robin_receiver.recv().await {
+                        None => return,
+                        Some(request) => sender.send(request).unwrap(),
+                    };
+                }
+            }
+        });
 
         Self { sender }
     }
@@ -79,10 +94,10 @@ fn tokenizer_worker(
     tokenizer: Tokenizer,
     max_input_length: usize,
     position_offset: usize,
-    receiver: flume::Receiver<TokenizerRequest>,
+    mut receiver: mpsc::UnboundedReceiver<TokenizerRequest>,
 ) {
     // Loop over requests
-    while let Ok((inputs, truncate, response_tx, parent_span)) = receiver.recv() {
+    while let Some((inputs, truncate, response_tx, parent_span)) = receiver.blocking_recv() {
         parent_span.in_scope(|| {
             if !response_tx.is_closed() {
                 // It's possible that the user dropped its request resulting in a send error.
