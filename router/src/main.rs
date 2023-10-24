@@ -25,6 +25,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 use veil::Redact;
+use tracing_chrome::{ChromeLayerBuilder, FlushGuard};
 
 /// App Configuration
 #[derive(Parser, Redact)]
@@ -147,7 +148,7 @@ async fn main() -> Result<()> {
     let args: Args = Args::parse();
 
     // Initialize loggin and telemetry
-    init_logging(args.otlp_endpoint.clone(), args.json_output);
+    let _guard = init_logging(args.otlp_endpoint.clone(), args.json_output);
 
     tracing::info!("{args:?}");
 
@@ -236,11 +237,11 @@ async fn main() -> Result<()> {
 
     // Get dtype
     let dtype = args.dtype.unwrap_or({
-        #[cfg(feature = "accelerate")]
+        #[cfg(any(feature = "accelerate", feature = "mkl"))]
         {
             DType::Float32
         }
-        #[cfg(not(feature = "accelerate"))]
+        #[cfg(not(any(feature = "accelerate", feature = "mkl")))]
         {
             DType::Float16
         }
@@ -326,7 +327,7 @@ async fn main() -> Result<()> {
 ///     - otlp_endpoint is an optional URL to an Open Telemetry collector
 ///     - LOG_LEVEL may be TRACE, DEBUG, INFO, WARN or ERROR (default to INFO)
 ///     - LOG_FORMAT may be TEXT or JSON (default to TEXT)
-fn init_logging(otlp_endpoint: Option<String>, json_output: bool) {
+fn init_logging(otlp_endpoint: Option<String>, json_output: bool) -> FlushGuard {
     let mut layers = Vec::new();
 
     // STDOUT/STDERR layer
@@ -371,8 +372,13 @@ fn init_logging(otlp_endpoint: Option<String>, json_output: bool) {
     let env_filter =
         EnvFilter::try_from_env("LOG_LEVEL").unwrap_or_else(|_| EnvFilter::new("info"));
 
+    let (chrome_layer, guard) = ChromeLayerBuilder::new().build();
+
     tracing_subscriber::registry()
         .with(env_filter)
         .with(layers)
+        .with(chrome_layer)
         .init();
+
+    guard
 }

@@ -1,6 +1,5 @@
 use crate::models::EmbeddingModel;
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
-use candle_nn::ops::softmax;
 use candle_nn::{Embedding, VarBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -108,7 +107,7 @@ impl Linear {
     pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let x = x.matmul(&self.weight)?;
+        let x = x.matmul(&self.weight.t()?)?;
         let x = match &self.bias {
             None => Ok(x),
             Some(bias) => x.broadcast_add(bias),
@@ -184,9 +183,7 @@ impl BertEmbeddings {
 }
 
 struct BertAttention {
-    q_linear: Linear,
-    k_linear: Linear,
-    v_linear: Linear,
+    qkv_linear: Linear,
 
     dense: Linear,
     layer_norm: LayerNorm,
@@ -208,19 +205,21 @@ impl BertAttention {
             .pp("self.query")
             .get((all_head_size, hidden_size), "weight")?;
         let query_bias = vb.pp("self.query").get(all_head_size, "bias")?;
-        let q_linear = Linear::new(query_weight.t()?, Some(query_bias), None);
 
         let key_weight = vb
             .pp("self.key")
             .get((all_head_size, hidden_size), "weight")?;
         let key_bias = vb.pp("self.key").get(all_head_size, "bias")?;
-        let k_linear = Linear::new(key_weight.t()?, Some(key_bias), None);
 
         let value_weight = vb
             .pp("self.value")
             .get((all_head_size, hidden_size), "weight")?;
         let value_bias = vb.pp("self.value").get(all_head_size, "bias")?;
-        let v_linear = Linear::new(value_weight.t()?, Some(value_bias), None);
+
+        let qkv_weight = Tensor::cat(&[&query_weight, &key_weight, &value_weight], 0)?;
+        let qkv_bias = Tensor::cat(&[&query_bias, &key_bias, &value_bias], 0)?;
+
+        let qkv_linear = Linear::new(qkv_weight, Some(qkv_bias), None);
 
         let dense_weight = vb
             .pp("output")
@@ -228,16 +227,14 @@ impl BertAttention {
             .get((hidden_size, hidden_size), "weight")?;
         let dense_bias = vb.pp("output").pp("dense").get(hidden_size, "bias")?;
 
-        let dense = Linear::new(dense_weight.t()?, Some(dense_bias), None);
+        let dense = Linear::new(dense_weight, Some(dense_bias), None);
 
         let layer_norm = LayerNorm::load(vb.pp("output").pp("LayerNorm"), config)?;
 
         let softmax_scale = 1. / (attention_head_size as f64).sqrt();
 
         Ok(Self {
-            q_linear,
-            k_linear,
-            v_linear,
+            qkv_linear,
             dense,
             layer_norm,
             num_attention_heads: config.num_attention_heads,
@@ -247,38 +244,33 @@ impl BertAttention {
         })
     }
 
-    fn transpose_for_scores(&self, xs: &Tensor) -> Result<Tensor> {
-        let mut new_x_shape = xs.dims().to_vec();
-        new_x_shape.pop();
-        new_x_shape.push(self.num_attention_heads);
-        new_x_shape.push(self.attention_head_size);
-        let xs = xs
-            .reshape(new_x_shape.as_slice())?
-            .unsqueeze(0)?
-            .transpose(1, 2)?;
-        xs.contiguous()
-    }
-
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
         let residual = hidden_states.clone();
 
-        let query_layer = self.q_linear.forward(hidden_states)?;
-        let key_layer = self.k_linear.forward(hidden_states)?;
-        let value_layer = self.v_linear.forward(hidden_states)?;
+        let qkv = self.qkv_linear.forward(hidden_states)?;
 
-        let query_layer = self.transpose_for_scores(&query_layer)?;
-        let key_layer = self.transpose_for_scores(&key_layer)?;
-        let value_layer = self.transpose_for_scores(&value_layer)?;
+        let mut new_qkv_shape = qkv.dims().to_vec();
+        new_qkv_shape.pop();
+        new_qkv_shape.push(self.num_attention_heads * 3);
+        new_qkv_shape.push(self.attention_head_size);
+        let qkv = qkv
+            .reshape(new_qkv_shape.as_slice())?
+            .unsqueeze(0)?
+            .transpose(1, 2)?;
+
+        let qkv = qkv.chunk(3, 1)?;
+        let query_layer = &qkv[0].contiguous()?;
+        let key_layer = &qkv[0].contiguous()?;
+        let value_layer = &qkv[0].contiguous()?;
 
         let attention_scores = query_layer.matmul(&key_layer.t()?)?;
         let attention_scores = (attention_scores * self.softmax_scale)?;
-        let attention_probs = softmax(&attention_scores, D::Minus1)?;
+        let attention_probs = candle_nn::ops::softmax_last_dim(&attention_scores)?;
 
         let context_layer = attention_probs.matmul(&value_layer)?;
-        let context_layer = context_layer.transpose(1, 2)?.contiguous()?;
-        let context_layer = context_layer.flatten_from(D::Minus2)?.squeeze(0)?;
+        let context_layer = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?.squeeze(0)?;
 
         let hidden_states = self.dense.forward(&context_layer)?.add(&residual)?;
         let hidden_states = self.layer_norm.forward(&hidden_states)?;
@@ -308,7 +300,7 @@ impl BertLayer {
             .pp("dense")
             .get(config.intermediate_size, "bias")?;
         let intermediate = Linear::new(
-            intermediate_weight.t()?,
+            intermediate_weight,
             Some(intermediate_bias),
             Some(config.hidden_act.clone()),
         );
@@ -321,7 +313,7 @@ impl BertLayer {
             .pp("output")
             .pp("dense")
             .get(config.hidden_size, "bias")?;
-        let output = Linear::new(output_weight.t()?, Some(output_bias), None);
+        let output = Linear::new(output_weight, Some(output_bias), None);
 
         let layer_norm = LayerNorm::load(vb.pp("output").pp("LayerNorm"), config)?;
 

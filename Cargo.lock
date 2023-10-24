@@ -331,7 +331,7 @@ checksum = "a2bd12c1caf447e69cd4528f47f94d203fd2582878ecb9e9465484c4148a8223"
 [[package]]
 name = "candle-core"
 version = "0.3.0"
-source = "git+https://github.com/huggingface/candle?rev=122da875806f274a7aa9048f76d7a676b473e56f#122da875806f274a7aa9048f76d7a676b473e56f"
+source = "git+https://github.com/OlivierDehaene/candle?rev=db052aa921f0ddd0333152a4886f432e878fdf16#db052aa921f0ddd0333152a4886f432e878fdf16"
 dependencies = [
  "accelerate-src",
  "byteorder",
@@ -366,7 +366,7 @@ dependencies = [
 [[package]]
 name = "candle-flash-attn"
 version = "0.3.0"
-source = "git+https://github.com/huggingface/candle?rev=122da875806f274a7aa9048f76d7a676b473e56f#122da875806f274a7aa9048f76d7a676b473e56f"
+source = "git+https://github.com/OlivierDehaene/candle?rev=db052aa921f0ddd0333152a4886f432e878fdf16#db052aa921f0ddd0333152a4886f432e878fdf16"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -390,7 +390,7 @@ dependencies = [
 [[package]]
 name = "candle-kernels"
 version = "0.3.0"
-source = "git+https://github.com/huggingface/candle?rev=122da875806f274a7aa9048f76d7a676b473e56f#122da875806f274a7aa9048f76d7a676b473e56f"
+source = "git+https://github.com/OlivierDehaene/candle?rev=db052aa921f0ddd0333152a4886f432e878fdf16#db052aa921f0ddd0333152a4886f432e878fdf16"
 dependencies = [
  "anyhow",
  "glob",
@@ -412,7 +412,7 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.3.0"
-source = "git+https://github.com/huggingface/candle?rev=122da875806f274a7aa9048f76d7a676b473e56f#122da875806f274a7aa9048f76d7a676b473e56f"
+source = "git+https://github.com/OlivierDehaene/candle?rev=db052aa921f0ddd0333152a4886f432e878fdf16#db052aa921f0ddd0333152a4886f432e878fdf16"
 dependencies = [
  "accelerate-src",
  "candle-core",
@@ -428,7 +428,7 @@ dependencies = [
 [[package]]
 name = "candle-transformers"
 version = "0.3.0"
-source = "git+https://github.com/huggingface/candle?rev=122da875806f274a7aa9048f76d7a676b473e56f#122da875806f274a7aa9048f76d7a676b473e56f"
+source = "git+https://github.com/OlivierDehaene/candle?rev=db052aa921f0ddd0333152a4886f432e878fdf16#db052aa921f0ddd0333152a4886f432e878fdf16"
 dependencies = [
  "candle-core",
  "candle-nn",

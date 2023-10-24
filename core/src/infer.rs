@@ -94,7 +94,6 @@ impl Infer {
                 span: Span::current(),
                 tokenization: start_time.elapsed(),
                 queue_time: Instant::now(),
-                batch_time: None,
                 prompt_tokens: encoding.input_ids.len(),
             },
             encoding,

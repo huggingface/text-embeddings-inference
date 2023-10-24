@@ -52,6 +52,7 @@ vergen = { version = "8.0.0", features = ["build", "git", "gitcl"] }
 [features]
 default = ["candle"]
 mkl = ["text-embeddings-backend/mkl"]
+mkl-dynamic = ["text-embeddings-backend/mkl-dynamic"]
 accelerate = ["text-embeddings-backend/accelerate"]
 python = ["text-embeddings-backend/python"]
 candle = ["text-embeddings-backend/candle"]

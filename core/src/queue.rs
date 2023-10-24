@@ -29,8 +29,6 @@ pub struct Metadata {
     pub tokenization: Duration,
     /// Instant when this entry was queued
     pub queue_time: Instant,
-    /// Instant when this entry was added to a batch
-    pub batch_time: Option<Instant>,
     /// Number of tokens in the prompt
     pub prompt_tokens: usize,
 }
@@ -131,7 +129,6 @@ fn queue_blocking_task(
                 let mut current_tokens = 0;
                 let mut max_length = 0;
 
-                let batch_time = Instant::now();
 
                 while let Some(mut entry) = entries.pop_front() {
                     // Filter entries where the response receiver was dropped (== entries where the request
@@ -149,8 +146,6 @@ fn queue_blocking_task(
                     }
 
                     max_length = max(max_length, entry_tokens as u32);
-
-                    entry.metadata.batch_time = Some(batch_time);
 
                     // Copy memory to the correct spot in the raw vectors
                     ptr::copy(
