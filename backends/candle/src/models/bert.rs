@@ -1,10 +1,10 @@
+use crate::layers::{HiddenAct, LayerNorm, Linear};
 use crate::models::EmbeddingModel;
-use candle::{D, Device, IndexOp, Module, Result, Tensor};
+use candle::{Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{Embedding, VarBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
 use text_embeddings_backend_core::{Batch, Pool};
-use crate::layers::{LayerNorm, HiddenAct, Linear};
 
 // https://github.com/huggingface/transformers/blob/6eedfa6dd15dc1e22a55ae036f681914e5a0d9a1/src/transformers/models/bert/configuration_bert.py#L1
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -49,7 +49,7 @@ struct BertEmbeddings {
 impl BertEmbeddings {
     pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
         if config.position_embedding_type != PositionEmbeddingType::Absolute {
-            candle::bail!("FlashBert only supports absolute position embeddings");
+            candle::bail!("Bert only supports absolute position embeddings");
         }
 
         Ok(Self {
@@ -70,7 +70,11 @@ impl BertEmbeddings {
                 )?,
                 config.hidden_size,
             ),
-            layer_norm: LayerNorm::load(vb.pp("LayerNorm"), config.hidden_size, config.layer_norm_eps as f32)?,
+            layer_norm: LayerNorm::load(
+                vb.pp("LayerNorm"),
+                config.hidden_size,
+                config.layer_norm_eps as f32,
+            )?,
             span: tracing::span!(tracing::Level::TRACE, "embeddings"),
         })
     }
@@ -87,8 +91,7 @@ impl BertEmbeddings {
         let token_type_embeddings = self.token_type_embeddings.forward(token_type_ids)?;
         let position_embeddings = self.position_embeddings.forward(position_ids)?;
 
-        let embeddings = input_embeddings
-            .add(&token_type_embeddings)?;
+        let embeddings = input_embeddings.add(&token_type_embeddings)?;
         let embeddings = self.layer_norm.forward(&embeddings, &position_embeddings)?;
 
         Ok(embeddings)
@@ -142,7 +145,11 @@ impl BertAttention {
 
         let dense = Linear::new(dense_weight, Some(dense_bias), None);
 
-        let layer_norm = LayerNorm::load(vb.pp("output").pp("LayerNorm"), config.hidden_size, config.layer_norm_eps as f32)?;
+        let layer_norm = LayerNorm::load(
+            vb.pp("output").pp("LayerNorm"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
+        )?;
 
         let softmax_scale = 1. / (attention_head_size as f64).sqrt();
 
@@ -230,7 +237,11 @@ impl BertLayer {
             .get(config.hidden_size, "bias")?;
         let output = Linear::new(output_weight, Some(output_bias), None);
 
-        let layer_norm = LayerNorm::load(vb.pp("output").pp("LayerNorm"), config.hidden_size, config.layer_norm_eps as f32)?;
+        let layer_norm = LayerNorm::load(
+            vb.pp("output").pp("LayerNorm"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
+        )?;
 
         Ok(Self {
             attention,
@@ -450,7 +461,11 @@ impl BertModel {
             // CLS pooling
             Pool::Cls => outputs.i((.., 0))?,
             // Mean pooling
-            Pool::Mean => (outputs.sum(1)?.broadcast_div(&input_lengths))?,
+            Pool::Mean => {
+                (outputs
+                    .sum(1)?
+                    .broadcast_div(&input_lengths.to_dtype(outputs.dtype())?))?
+            }
         };
 
         // Normalize

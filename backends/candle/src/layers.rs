@@ -1,5 +1,5 @@
-mod linear;
 mod layer_norm;
+mod linear;
 
-pub use linear::{HiddenAct, Linear};
 pub use layer_norm::LayerNorm;
+pub use linear::{HiddenAct, Linear};

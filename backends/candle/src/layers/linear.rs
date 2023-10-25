@@ -1,22 +1,26 @@
-use candle::{D, Device, Result, Tensor};
-use serde::Deserialize;
+use candle::{Device, Result, Tensor, D};
 use lazy_static::lazy_static;
+use serde::Deserialize;
 
 #[cfg(feature = "cuda")]
-use candle_cublaslt::{Activation, CublasLt, fused_matmul};
+use candle_cublaslt::{fused_matmul, Activation, CublasLt};
 
 lazy_static! {
     pub static ref CUBLASLT: Option<CublasLtWrapper> = {
         match Device::cuda_if_available(0) {
             Ok(device) => {
-                #[cfg(feature = "cuda")] {
-                    Some(CublasLtWrapper { cublaslt: CublasLt::new(&device).unwrap()})
+                #[cfg(feature = "cuda")]
+                {
+                    Some(CublasLtWrapper {
+                        cublaslt: CublasLt::new(&device).unwrap(),
+                    })
                 }
-                #[cfg(not(feature = "cuda"))] {
+                #[cfg(not(feature = "cuda"))]
+                {
                     None
                 }
-            },
-            Err(_) =>  None
+            }
+            Err(_) => None,
         }
     };
 }
@@ -28,27 +32,28 @@ pub struct CublasLtWrapper {
 }
 
 impl CublasLtWrapper {
-    pub fn matmul(&self, a: &Tensor, b: &Tensor, bias: Option<&Tensor>, act: Option<HiddenAct>) -> Result<Tensor> {
-        #[cfg(feature = "cuda")] {
+    pub fn matmul(
+        &self,
+        a: &Tensor,
+        b: &Tensor,
+        bias: Option<&Tensor>,
+        act: Option<HiddenAct>,
+    ) -> Result<Tensor> {
+        #[cfg(feature = "cuda")]
+        {
             let act = act.clone().map(|a| match a {
                 HiddenAct::Gelu => Activation::Gelu,
                 HiddenAct::Relu => Activation::Relu,
             });
 
-            fused_matmul(
-                &a,
-                &b,
-                bias,
-                act.clone(),
-                self.cublaslt.clone(),
-            )
+            fused_matmul(&a, &b, bias, act.clone(), self.cublaslt.clone())
         }
-        #[cfg(not(feature = "cuda"))] {
+        #[cfg(not(feature = "cuda"))]
+        {
             candle::bail!("`cuda` feature is not enabled")
         }
     }
 }
-
 
 #[derive(Debug, Deserialize, PartialEq, Clone)]
 #[serde(rename_all = "lowercase")]
@@ -66,11 +71,7 @@ pub struct Linear {
 }
 
 impl Linear {
-    pub fn new(
-        weight: Tensor,
-        bias: Option<Tensor>,
-        act: Option<HiddenAct>,
-    ) -> Self {
+    pub fn new(weight: Tensor, bias: Option<Tensor>, act: Option<HiddenAct>) -> Self {
         let span = tracing::span!(tracing::Level::TRACE, "linear");
 
         Self {
@@ -115,5 +116,3 @@ impl Linear {
         }
     }
 }
-
-

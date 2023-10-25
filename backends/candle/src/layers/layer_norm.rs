@@ -1,5 +1,5 @@
-use candle_nn::VarBuilder;
 use candle::{DType, Device, Result, Tensor, D};
+use candle_nn::VarBuilder;
 
 #[derive(Debug)]
 pub struct LayerNorm {
@@ -36,15 +36,21 @@ impl LayerNorm {
                 };
                 let hidden_size = hidden_states.dim(D::Minus1)?;
                 let hidden_states = hidden_states.to_dtype(internal_dtype)?;
-                let mean_hidden_states = (hidden_states.sum_keepdim(D::Minus1)? / hidden_size as f64)?;
+                let mean_hidden_states =
+                    (hidden_states.sum_keepdim(D::Minus1)? / hidden_size as f64)?;
                 let hidden_states = hidden_states.broadcast_sub(&mean_hidden_states)?;
-                let norm_hidden_states = (hidden_states.sqr()?.sum_keepdim(D::Minus1)? / hidden_size as f64)?;
-                let hidden_states_normed = hidden_states.broadcast_div(&(norm_hidden_states + self.epsilon as f64)?.sqrt()?)?;
-                let hidden_states = hidden_states_normed.to_dtype(hidden_states_dtype)?.broadcast_mul(&self.weight)?;
+                let norm_hidden_states =
+                    (hidden_states.sqr()?.sum_keepdim(D::Minus1)? / hidden_size as f64)?;
+                let hidden_states_normed = hidden_states
+                    .broadcast_div(&(norm_hidden_states + self.epsilon as f64)?.sqrt()?)?;
+                let hidden_states = hidden_states_normed
+                    .to_dtype(hidden_states_dtype)?
+                    .broadcast_mul(&self.weight)?;
                 hidden_states.broadcast_add(&self.bias)
             }
             Device::Cuda(_) => {
-                #[cfg(feature = "cuda")] {
+                #[cfg(feature = "cuda")]
+                {
                     use candle_layer_norm::fused_add_layer_norm;
 
                     let original_shape = hidden_states.shape();

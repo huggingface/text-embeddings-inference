@@ -1,12 +1,12 @@
+use crate::layers::HiddenAct;
 use crate::models::bert::{Config, PositionEmbeddingType};
 use crate::models::EmbeddingModel;
 use candle::quantized::QMatMul;
-use candle::{D, Device, DType, IndexOp, Module, Result, Tensor};
+use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::ops::softmax;
 use candle_nn::Embedding;
 use candle_transformers::quantized_var_builder::VarBuilder;
 use text_embeddings_backend_core::{Batch, Pool};
-use crate::layers::HiddenAct;
 
 #[derive(Debug)]
 struct LayerNorm {

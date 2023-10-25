@@ -1,10 +1,10 @@
 use crate::flash_attn::flash_attn_varlen;
+use crate::layers::{LayerNorm, Linear};
 use crate::models::bert::{Config, PositionEmbeddingType};
 use crate::models::EmbeddingModel;
-use candle::{Device, DType, Result, Tensor};
+use candle::{DType, Device, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
 use text_embeddings_backend_core::{Batch, Pool};
-use crate::layers::{LayerNorm, Linear};
 
 #[derive(Debug)]
 struct BertEmbeddings {
@@ -39,7 +39,11 @@ impl BertEmbeddings {
                 )?,
                 config.hidden_size,
             ),
-            layer_norm: LayerNorm::load(vb.pp("LayerNorm"), config.hidden_size, config.layer_norm_eps as f32)?,
+            layer_norm: LayerNorm::load(
+                vb.pp("LayerNorm"),
+                config.hidden_size,
+                config.layer_norm_eps as f32,
+            )?,
             span: tracing::span!(tracing::Level::TRACE, "embeddings"),
         })
     }
@@ -108,7 +112,11 @@ impl BertAttention {
 
         let dense = Linear::new(dense_weight, Some(dense_bias), None);
 
-        let layer_norm = LayerNorm::load(vb.pp("output").pp("LayerNorm"), config.hidden_size, config.layer_norm_eps as f32)?;
+        let layer_norm = LayerNorm::load(
+            vb.pp("output").pp("LayerNorm"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
+        )?;
 
         let softmax_scale = (1. / (attention_head_size as f64).sqrt()) as f32;
 
@@ -199,7 +207,11 @@ impl BertLayer {
             .get(config.hidden_size, "bias")?;
         let output = Linear::new(output_weight, Some(output_bias), None);
 
-        let layer_norm = LayerNorm::load(vb.pp("output").pp("LayerNorm"), config.hidden_size, config.layer_norm_eps as f32)?;
+        let layer_norm = LayerNorm::load(
+            vb.pp("output").pp("LayerNorm"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
+        )?;
 
         Ok(Self {
             attention,
@@ -288,7 +300,6 @@ impl FlashBertModel {
             candle::bail!("Pool type {pool:?} is not supported");
         }
 
-
         let (embeddings, encoder) = match (
             BertEmbeddings::load(vb.pp("embeddings"), config),
             BertEncoder::load(vb.pp("encoder"), config),
@@ -299,10 +310,7 @@ impl FlashBertModel {
 
                 if let (Ok(embeddings), Ok(encoder)) = (
                     BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
-                    BertEncoder::load(
-                        vb.pp(format!("{model_type}.encoder")),
-                        config,
-                    ),
+                    BertEncoder::load(vb.pp(format!("{model_type}.encoder")), config),
                 ) {
                     (embeddings, encoder)
                 } else if let (Ok(embeddings), Ok(encoder)) = (

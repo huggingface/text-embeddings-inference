@@ -2,8 +2,8 @@
 mod compute_cap;
 #[cfg(feature = "cuda")]
 mod flash_attn;
-mod models;
 mod layers;
+mod models;
 
 #[cfg(feature = "cuda")]
 use crate::compute_cap::{incompatible_compute_cap, COMPILE_COMPUTE_CAP, RUNTIME_COMPUTE_CAP};
@@ -118,7 +118,9 @@ impl CandleBackend {
                         return Err(BackendError::Start(format!("Runtime compute cap {} is not compatible with compile time compute cap {}", *RUNTIME_COMPUTE_CAP, *COMPILE_COMPUTE_CAP)));
                     }
 
-                    if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1")) {
+                    if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                        && dtype == DType::F16
+                    {
                         use crate::models::FlashBertModel;
 
                         tracing::info!("Starting FlashBert model on Cuda");
