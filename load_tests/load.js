@@ -49,6 +49,8 @@ export default function () {
         'Post status is 200': (r) => res.status === 200,
     });
 
+    console.log(res.json()[0][5]);
+
     if (res.status === 200) {
         totalTime.add(res.headers["X-Total-Time"]);
         tokenizationTIme.add(res.headers["X-Tokenization-Time"]);

@@ -1,9 +1,10 @@
 use crate::models::EmbeddingModel;
-use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
+use candle::{D, Device, IndexOp, Module, Result, Tensor};
 use candle_nn::{Embedding, VarBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
 use text_embeddings_backend_core::{Batch, Pool};
+use crate::layers::{LayerNorm, HiddenAct, Linear};
 
 // https://github.com/huggingface/transformers/blob/6eedfa6dd15dc1e22a55ae036f681914e5a0d9a1/src/transformers/models/bert/configuration_bert.py#L1
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -29,102 +30,11 @@ pub struct Config {
     pub id2label: Option<HashMap<String, String>>,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Clone)]
-#[serde(rename_all = "lowercase")]
-pub enum HiddenAct {
-    Gelu,
-    Relu,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PositionEmbeddingType {
     #[default]
     Absolute,
-}
-
-#[derive(Debug)]
-struct LayerNorm {
-    weight: Tensor,
-    bias: Tensor,
-    epsilon: f64,
-    span: tracing::Span,
-}
-
-impl LayerNorm {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
-        Ok(Self {
-            weight: vb
-                .get(config.hidden_size, "weight")
-                .or_else(|_| vb.get(config.hidden_size, "gamma"))?,
-            bias: vb
-                .get(config.hidden_size, "bias")
-                .or_else(|_| vb.get(config.hidden_size, "beta"))?,
-            epsilon: config.layer_norm_eps,
-            span: tracing::span!(tracing::Level::TRACE, "layer-norm"),
-        })
-    }
-
-    fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let x_dtype = x.dtype();
-        let internal_dtype = match x_dtype {
-            DType::F16 | DType::BF16 => DType::F32,
-            d => d,
-        };
-        let hidden_size = x.dim(D::Minus1)?;
-        let x = x.to_dtype(internal_dtype)?;
-        let mean_x = (x.sum_keepdim(D::Minus1)? / hidden_size as f64)?;
-        let x = x.broadcast_sub(&mean_x)?;
-        let norm_x = (x.sqr()?.sum_keepdim(D::Minus1)? / hidden_size as f64)?;
-        let x_normed = x.broadcast_div(&(norm_x + self.epsilon)?.sqrt()?)?;
-        let x = x_normed.to_dtype(x_dtype)?.broadcast_mul(&self.weight)?;
-        x.broadcast_add(&self.bias)
-    }
-}
-
-#[derive(Debug)]
-pub struct Linear {
-    weight: Tensor,
-    bias: Option<Tensor>,
-    act: Option<HiddenAct>,
-    span: tracing::Span,
-}
-
-impl Linear {
-    pub fn new(weight: Tensor, bias: Option<Tensor>, act: Option<HiddenAct>) -> Self {
-        let span = tracing::span!(tracing::Level::TRACE, "linear");
-
-        Self {
-            weight,
-            bias,
-            act,
-            span,
-        }
-    }
-
-    pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let w = match x.dims() {
-            &[bsize, _, _] => self.weight.broadcast_left(bsize)?.t()?,
-            _ => self.weight.t()?,
-        };
-        let x = x.matmul(&w)?;
-        let x = match &self.bias {
-            None => Ok(x),
-            Some(bias) => x.broadcast_add(bias),
-        }?;
-        if let Some(act) = &self.act {
-            match act {
-                HiddenAct::Gelu => x.gelu(),
-                HiddenAct::Relu => x.relu(),
-            }
-        } else {
-            Ok(x)
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -160,7 +70,7 @@ impl BertEmbeddings {
                 )?,
                 config.hidden_size,
             ),
-            layer_norm: LayerNorm::load(vb.pp("LayerNorm"), config)?,
+            layer_norm: LayerNorm::load(vb.pp("LayerNorm"), config.hidden_size, config.layer_norm_eps as f32)?,
             span: tracing::span!(tracing::Level::TRACE, "embeddings"),
         })
     }
@@ -178,9 +88,8 @@ impl BertEmbeddings {
         let position_embeddings = self.position_embeddings.forward(position_ids)?;
 
         let embeddings = input_embeddings
-            .add(&token_type_embeddings)?
-            .add(&position_embeddings)?;
-        let embeddings = self.layer_norm.forward(&embeddings)?;
+            .add(&token_type_embeddings)?;
+        let embeddings = self.layer_norm.forward(&embeddings, &position_embeddings)?;
 
         Ok(embeddings)
     }
@@ -233,7 +142,7 @@ impl BertAttention {
 
         let dense = Linear::new(dense_weight, Some(dense_bias), None);
 
-        let layer_norm = LayerNorm::load(vb.pp("output").pp("LayerNorm"), config)?;
+        let layer_norm = LayerNorm::load(vb.pp("output").pp("LayerNorm"), config.hidden_size, config.layer_norm_eps as f32)?;
 
         let softmax_scale = 1. / (attention_head_size as f64).sqrt();
 
@@ -278,8 +187,8 @@ impl BertAttention {
         let context_layer = attention_probs.matmul(value_layer)?;
         let context_layer = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?;
 
-        let hidden_states = self.dense.forward(&context_layer)?.add(&residual)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states)?;
+        let hidden_states = self.dense.forward(&context_layer)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
 
         Ok(hidden_states)
     }
@@ -321,7 +230,7 @@ impl BertLayer {
             .get(config.hidden_size, "bias")?;
         let output = Linear::new(output_weight, Some(output_bias), None);
 
-        let layer_norm = LayerNorm::load(vb.pp("output").pp("LayerNorm"), config)?;
+        let layer_norm = LayerNorm::load(vb.pp("output").pp("LayerNorm"), config.hidden_size, config.layer_norm_eps as f32)?;
 
         Ok(Self {
             attention,
@@ -343,8 +252,8 @@ impl BertLayer {
         let residual = hidden_states.clone();
 
         let hidden_states = self.intermediate.forward(&hidden_states)?;
-        let hidden_states = self.output.forward(&hidden_states)?.add(&residual)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states)?;
+        let hidden_states = self.output.forward(&hidden_states)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
 
         Ok(hidden_states)
     }
@@ -393,14 +302,9 @@ pub struct BertModel {
 
 impl BertModel {
     pub fn load(vb: VarBuilder, config: &Config, pool: Pool) -> Result<Self> {
-        match vb.device() {
-            Device::Cpu => {}
-            _ => candle::bail!("Bert requires CPU"),
-        }
-
         // Check position embedding type
         if config.position_embedding_type != PositionEmbeddingType::Absolute {
-            candle::bail!("FlashBert only supports absolute position embeddings")
+            candle::bail!("Bert only supports absolute position embeddings")
         }
 
         // Check pool type
