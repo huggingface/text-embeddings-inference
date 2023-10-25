@@ -23,9 +23,6 @@ candle-nn = { git = "https://github.com/OlivierDehaene/candle", rev = "9f2b4081b
 candle-transformers = { git = "https://github.com/OlivierDehaene/candle", rev = "9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e", package = "candle-transformers" }
 candle-flash-attn = { git = "https://github.com/OlivierDehaene/candle", rev = "9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e", package = "candle-flash-attn" }
 
-[patch."https://github.com/huggingface/candle-flash-attn-v1"]
-candle-flash-attn-v1 = { path = "../candle-flash-attn-v1" }
-
 [profile.release]
 debug = 1
 incremental = true
