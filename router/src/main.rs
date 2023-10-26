@@ -214,12 +214,13 @@ async fn main() -> Result<()> {
     );
     tokenizer.with_padding(None);
 
-    // Position IDs offset. Used for Roberta.
-    let position_offset = if &config.model_type == "xlm-roberta" {
-        config.pad_token_id + 1
-    } else {
-        0
-    };
+    // Position IDs offset. Used for Roberta and camembert.
+    let position_offset =
+        if &config.model_type == "xlm-roberta" || &config.model_type == "camembert" {
+            config.pad_token_id + 1
+        } else {
+            0
+        };
     let max_input_length = config.max_position_embeddings - position_offset;
 
     let tokenization_workers = args

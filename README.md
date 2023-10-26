@@ -53,7 +53,7 @@ such as:
 
 ### Supported Models
 
-You can use any BERT or XLM-RoBERTa model with absolute positions in `text-embeddings-inference`. 
+You can use any BERT, CamemBERT or XLM-RoBERTa model with absolute positions in `text-embeddings-inference`. 
 
 **Support for other model types will be added in the future.**
 
