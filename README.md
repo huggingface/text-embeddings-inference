@@ -11,7 +11,7 @@
 
 A blazing fast inference solution for text embeddings models. 
 
-Benchmark for [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5) on an Nvidia A10 with a sequence length of 512 tokens:
+Benchmark for [BAAI/bgsadasdasdasdase-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5) on an Nvidia A10 with a sequence length of 512 tokens:
 
 <p>
   <img src="assets/bs1-lat.png" width="400" />
