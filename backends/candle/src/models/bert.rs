@@ -217,7 +217,8 @@ impl BertAttention {
                 let context_layer = cublaslt.batch_matmul(
                     &value_layer.t()?.contiguous()?,
                     &attention_probs,
-                    None,
+                    // We save one allocation
+                    Some(&query_layer),
                     None,
                     None,
                     None,
