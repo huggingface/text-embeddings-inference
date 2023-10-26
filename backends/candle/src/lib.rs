@@ -120,6 +120,9 @@ impl CandleBackend {
 
                     if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
                         && dtype == DType::F16
+                        // Flash attention v1 precision problem with head_size == 32
+                        // See: https://github.com/huggingface/text-embeddings-inference/issues/37
+                        && !(*RUNTIME_COMPUTE_CAP == 75 && (config.hidden_size / config.num_attention_heads) == 32)
                     {
                         use crate::models::FlashBertModel;
 

@@ -28,7 +28,7 @@ impl LayerNorm {
 
         match hidden_states.device() {
             Device::Cpu => {
-                let hidden_states = hidden_states.add(&residual)?;
+                let hidden_states = hidden_states.add(residual)?;
                 let hidden_states_dtype = hidden_states.dtype();
                 let internal_dtype = match hidden_states_dtype {
                     DType::F16 | DType::BF16 => DType::F32,
