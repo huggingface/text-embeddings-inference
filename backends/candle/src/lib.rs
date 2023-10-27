@@ -1,3 +1,4 @@
+mod alibi;
 #[cfg(feature = "cuda")]
 mod compute_cap;
 #[cfg(feature = "cuda")]
@@ -9,7 +10,9 @@ mod models;
 use crate::compute_cap::{incompatible_compute_cap, COMPILE_COMPUTE_CAP, RUNTIME_COMPUTE_CAP};
 #[cfg(feature = "cuda")]
 use crate::models::FlashBertModel;
-use crate::models::{BertModel, EmbeddingModel, PositionEmbeddingType, QuantBertModel};
+use crate::models::{
+    BertModel, EmbeddingModel, JinaBertModel, PositionEmbeddingType, QuantBertModel,
+};
 use candle::{DType, Device};
 use candle_nn::VarBuilder;
 use models::Config;
@@ -47,8 +50,6 @@ impl CandleBackend {
 
         let model: Box<dyn EmbeddingModel + Send> = match device {
             Device::Cpu => {
-                tracing::info!("Starting Bert model on CPU");
-
                 if &dtype == "float32" || &dtype == "float16" {
                     let dtype = if &dtype == "float32" {
                         DType::F32
@@ -70,7 +71,13 @@ impl CandleBackend {
                     }
                     .s()?;
 
-                    Box::new(BertModel::load(vb, &config, pool).s()?)
+                    if config.position_embedding_type == PositionEmbeddingType::Alibi {
+                        tracing::info!("Starting JinaBert model on CPU");
+                        Box::new(JinaBertModel::load(vb, &config, pool).s()?)
+                    } else {
+                        tracing::info!("Starting Bert model on CPU");
+                        Box::new(BertModel::load(vb, &config, pool).s()?)
+                    }
                 } else if &dtype == "q6k" {
                     let vb = candle_transformers::quantized_var_builder::VarBuilder::from_gguf(
                         model_path.join("ggml-model-q6k.bin"),
@@ -78,6 +85,7 @@ impl CandleBackend {
                     .map_err(|err| BackendError::Start(err.to_string()))?;
                     tracing::info!("vb");
 
+                    tracing::info!("Starting QuantBert model on CPU");
                     Box::new(QuantBertModel::load(vb, &config, pool).s()?)
                 } else {
                     return Err(BackendError::Start(format!(
@@ -130,6 +138,9 @@ impl CandleBackend {
                     {
                         tracing::info!("Starting FlashBert model on Cuda");
                         Box::new(FlashBertModel::load(vb, &config, pool).s()?)
+                    } else if config.position_embedding_type == PositionEmbeddingType::Alibi {
+                        tracing::info!("Starting JinaBert model on Cuda");
+                        Box::new(JinaBertModel::load(vb, &config, pool).s()?)
                     } else {
                         tracing::info!("Starting Bert model on Cuda");
                         Box::new(BertModel::load(vb, &config, pool).s()?)
