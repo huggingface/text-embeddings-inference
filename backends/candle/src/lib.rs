@@ -2,11 +2,14 @@
 mod compute_cap;
 #[cfg(feature = "cuda")]
 mod flash_attn;
+mod layers;
 mod models;
 
 #[cfg(feature = "cuda")]
 use crate::compute_cap::{incompatible_compute_cap, COMPILE_COMPUTE_CAP, RUNTIME_COMPUTE_CAP};
-use crate::models::{BertModel, EmbeddingModel, QuantBertModel};
+#[cfg(feature = "cuda")]
+use crate::models::FlashBertModel;
+use crate::models::{BertModel, EmbeddingModel, PositionEmbeddingType, QuantBertModel};
 use candle::{DType, Device};
 use candle_nn::VarBuilder;
 use models::Config;
@@ -89,8 +92,6 @@ impl CandleBackend {
                 ));
                 #[cfg(feature = "cuda")]
                 {
-                    use crate::models::FlashBertModel;
-
                     // Get candle dtype
                     let dtype = if &dtype == "float32" {
                         Ok(DType::F32)
@@ -120,8 +121,19 @@ impl CandleBackend {
                         return Err(BackendError::Start(format!("Runtime compute cap {} is not compatible with compile time compute cap {}", *RUNTIME_COMPUTE_CAP, *COMPILE_COMPUTE_CAP)));
                     }
 
-                    tracing::info!("Starting FlashBert model on Cuda");
-                    Box::new(FlashBertModel::load(vb, &config, pool).s()?)
+                    if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                        && dtype == DType::F16
+                        && config.position_embedding_type == PositionEmbeddingType::Absolute
+                        // Flash attention v1 precision problem with head_size == 32
+                        // See: https://github.com/huggingface/text-embeddings-inference/issues/37
+                        && !(*RUNTIME_COMPUTE_CAP == 75 && (config.hidden_size / config.num_attention_heads) == 32)
+                    {
+                        tracing::info!("Starting FlashBert model on Cuda");
+                        Box::new(FlashBertModel::load(vb, &config, pool).s()?)
+                    } else {
+                        tracing::info!("Starting Bert model on Cuda");
+                        Box::new(BertModel::load(vb, &config, pool).s()?)
+                    }
                 }
             }
         };

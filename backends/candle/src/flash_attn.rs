@@ -1,7 +1,7 @@
 use crate::compute_cap::RUNTIME_COMPUTE_CAP;
 use candle::Tensor;
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, unused)]
 pub(crate) fn flash_attn_varlen(
     q: &Tensor,
     k: &Tensor,

@@ -1,4 +1,5 @@
-use crate::models::bert::{Config, HiddenAct, PositionEmbeddingType};
+use crate::layers::HiddenAct;
+use crate::models::bert::{Config, PositionEmbeddingType};
 use crate::models::EmbeddingModel;
 use candle::quantized::QMatMul;
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};

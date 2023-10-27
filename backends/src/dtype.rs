@@ -13,14 +13,7 @@ pub enum DType {
     ))]
     Float16,
     // Float32 is not available on candle cuda
-    #[cfg(any(
-        feature = "python",
-        all(
-            feature = "candle",
-            not(feature = "flash-attn"),
-            not(feature = "flash-attn-v1")
-        )
-    ))]
+    #[cfg(any(feature = "python", feature = "candle"))]
     Float32,
     // #[cfg(feature = "candle")]
     // Q6K,
@@ -36,14 +29,7 @@ impl fmt::Display for DType {
             ))]
             DType::Float16 => write!(f, "float16"),
             // Float32 is not available on candle cuda
-            #[cfg(any(
-                feature = "python",
-                all(
-                    feature = "candle",
-                    not(feature = "flash-attn"),
-                    not(feature = "flash-attn-v1")
-                )
-            ))]
+            #[cfg(any(feature = "python", feature = "candle"))]
             DType::Float32 => write!(f, "float32"),
             // #[cfg(feature = "candle")]
             // DType::Q6K => write!(f, "q6k"),

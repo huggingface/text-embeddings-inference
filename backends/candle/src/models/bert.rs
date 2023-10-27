@@ -1,3 +1,4 @@
+use crate::layers::{HiddenAct, LayerNorm, Linear, CUBLASLT};
 use crate::models::EmbeddingModel;
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{Embedding, VarBuilder};
@@ -29,102 +30,11 @@ pub struct Config {
     pub id2label: Option<HashMap<String, String>>,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Clone)]
-#[serde(rename_all = "lowercase")]
-pub enum HiddenAct {
-    Gelu,
-    Relu,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PositionEmbeddingType {
     #[default]
     Absolute,
-}
-
-#[derive(Debug)]
-struct LayerNorm {
-    weight: Tensor,
-    bias: Tensor,
-    epsilon: f64,
-    span: tracing::Span,
-}
-
-impl LayerNorm {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
-        Ok(Self {
-            weight: vb
-                .get(config.hidden_size, "weight")
-                .or_else(|_| vb.get(config.hidden_size, "gamma"))?,
-            bias: vb
-                .get(config.hidden_size, "bias")
-                .or_else(|_| vb.get(config.hidden_size, "beta"))?,
-            epsilon: config.layer_norm_eps,
-            span: tracing::span!(tracing::Level::TRACE, "layer-norm"),
-        })
-    }
-
-    fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let x_dtype = x.dtype();
-        let internal_dtype = match x_dtype {
-            DType::F16 | DType::BF16 => DType::F32,
-            d => d,
-        };
-        let hidden_size = x.dim(D::Minus1)?;
-        let x = x.to_dtype(internal_dtype)?;
-        let mean_x = (x.sum_keepdim(D::Minus1)? / hidden_size as f64)?;
-        let x = x.broadcast_sub(&mean_x)?;
-        let norm_x = (x.sqr()?.sum_keepdim(D::Minus1)? / hidden_size as f64)?;
-        let x_normed = x.broadcast_div(&(norm_x + self.epsilon)?.sqrt()?)?;
-        let x = x_normed.to_dtype(x_dtype)?.broadcast_mul(&self.weight)?;
-        x.broadcast_add(&self.bias)
-    }
-}
-
-#[derive(Debug)]
-pub struct Linear {
-    weight: Tensor,
-    bias: Option<Tensor>,
-    act: Option<HiddenAct>,
-    span: tracing::Span,
-}
-
-impl Linear {
-    pub fn new(weight: Tensor, bias: Option<Tensor>, act: Option<HiddenAct>) -> Self {
-        let span = tracing::span!(tracing::Level::TRACE, "linear");
-
-        Self {
-            weight,
-            bias,
-            act,
-            span,
-        }
-    }
-
-    pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let w = match x.dims() {
-            &[bsize, _, _] => self.weight.broadcast_left(bsize)?.t()?,
-            _ => self.weight.t()?,
-        };
-        let x = x.matmul(&w)?;
-        let x = match &self.bias {
-            None => Ok(x),
-            Some(bias) => x.broadcast_add(bias),
-        }?;
-        if let Some(act) = &self.act {
-            match act {
-                HiddenAct::Gelu => x.gelu(),
-                HiddenAct::Relu => x.relu(),
-            }
-        } else {
-            Ok(x)
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -139,7 +49,7 @@ struct BertEmbeddings {
 impl BertEmbeddings {
     pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
         if config.position_embedding_type != PositionEmbeddingType::Absolute {
-            candle::bail!("FlashBert only supports absolute position embeddings");
+            candle::bail!("Bert only supports absolute position embeddings");
         }
 
         Ok(Self {
@@ -160,7 +70,11 @@ impl BertEmbeddings {
                 )?,
                 config.hidden_size,
             ),
-            layer_norm: LayerNorm::load(vb.pp("LayerNorm"), config)?,
+            layer_norm: LayerNorm::load(
+                vb.pp("LayerNorm"),
+                config.hidden_size,
+                config.layer_norm_eps as f32,
+            )?,
             span: tracing::span!(tracing::Level::TRACE, "embeddings"),
         })
     }
@@ -177,10 +91,8 @@ impl BertEmbeddings {
         let token_type_embeddings = self.token_type_embeddings.forward(token_type_ids)?;
         let position_embeddings = self.position_embeddings.forward(position_ids)?;
 
-        let embeddings = input_embeddings
-            .add(&token_type_embeddings)?
-            .add(&position_embeddings)?;
-        let embeddings = self.layer_norm.forward(&embeddings)?;
+        let embeddings = input_embeddings.add(&token_type_embeddings)?;
+        let embeddings = self.layer_norm.forward(&embeddings, &position_embeddings)?;
 
         Ok(embeddings)
     }
@@ -233,7 +145,11 @@ impl BertAttention {
 
         let dense = Linear::new(dense_weight, Some(dense_bias), None);
 
-        let layer_norm = LayerNorm::load(vb.pp("output").pp("LayerNorm"), config)?;
+        let layer_norm = LayerNorm::load(
+            vb.pp("output").pp("LayerNorm"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
+        )?;
 
         let softmax_scale = 1. / (attention_head_size as f64).sqrt();
 
@@ -250,6 +166,7 @@ impl BertAttention {
 
     fn forward(&self, hidden_states: &Tensor, attention_mask: Option<&Tensor>) -> Result<Tensor> {
         let _enter = self.span.enter();
+        let device = hidden_states.device();
 
         let residual = hidden_states.clone();
 
@@ -264,22 +181,78 @@ impl BertAttention {
         let qkv = qkv.chunk(3, 1)?;
         let query_layer = &qkv[0].contiguous()?;
         let key_layer = &qkv[1].contiguous()?;
-        let value_layer = &qkv[2].contiguous()?;
+        let value_layer = &qkv[2];
 
-        let attention_scores = query_layer.matmul(&key_layer.t()?)?;
-        let mut attention_scores = (attention_scores * self.softmax_scale)?;
+        #[allow(unused_variables)]
+        let context_layer = if let (Device::Cuda(_), Some(cublaslt)) = (device, &*CUBLASLT) {
+            #[cfg(feature = "cuda")]
+            {
+                // cuBLASLt batch matmul implementation requires inputs to be dims3
+                let (batch_size, _, seq_len, _) = key_layer.shape().dims4()?;
+                let key_layer = key_layer.flatten(0, 1)?;
+                let query_layer = query_layer.flatten(0, 1)?;
+                let value_layer = value_layer.flatten(0, 1)?;
+                let attention_mask = attention_mask.map(|mask| mask.flatten(0, 1)).transpose()?;
 
-        if let Some(attention_mask) = attention_mask {
-            attention_scores = attention_scores.add(attention_mask)?;
-        }
+                // If attention_mask is set, we fuse the add by giving it as the output matrix
+                // and setting beta to 1.0
+                let beta = match attention_mask.is_some() {
+                    true => Some(1.0),
+                    false => None,
+                };
 
-        let attention_probs = candle_nn::ops::softmax_last_dim(&attention_scores)?;
+                // Batch matrix multiplication
+                // Fuse softmax scale and attention_mask add
+                let attention_scores = cublaslt.batch_matmul(
+                    &key_layer,
+                    &query_layer,
+                    attention_mask.as_ref(),
+                    Some(self.softmax_scale as f32),
+                    beta,
+                    None,
+                    None,
+                )?;
+                let attention_probs = candle_nn::ops::softmax_last_dim(&attention_scores)?;
 
-        let context_layer = attention_probs.matmul(value_layer)?;
+                let context_layer = cublaslt.batch_matmul(
+                    &value_layer.t()?.contiguous()?,
+                    &attention_probs,
+                    // We save one allocation
+                    Some(&query_layer),
+                    None,
+                    None,
+                    None,
+                    None,
+                )?;
+
+                // Reshape to dims4
+                context_layer.reshape((
+                    batch_size,
+                    self.num_attention_heads,
+                    seq_len,
+                    self.attention_head_size,
+                ))
+            }
+            #[cfg(not(feature = "cuda"))]
+            {
+                candle::bail!("`cuda` feature is not enabled")
+            }
+        } else {
+            let attention_scores = query_layer.matmul(&key_layer.t()?)?;
+            let mut attention_scores = (attention_scores * self.softmax_scale)?;
+
+            if let Some(attention_mask) = attention_mask {
+                attention_scores = attention_scores.add(attention_mask)?;
+            }
+
+            let attention_probs = candle_nn::ops::softmax_last_dim(&attention_scores)?;
+            attention_probs.matmul(&value_layer.contiguous()?)
+        }?;
+
         let context_layer = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?;
 
-        let hidden_states = self.dense.forward(&context_layer)?.add(&residual)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states)?;
+        let hidden_states = self.dense.forward(&context_layer)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
 
         Ok(hidden_states)
     }
@@ -321,7 +294,11 @@ impl BertLayer {
             .get(config.hidden_size, "bias")?;
         let output = Linear::new(output_weight, Some(output_bias), None);
 
-        let layer_norm = LayerNorm::load(vb.pp("output").pp("LayerNorm"), config)?;
+        let layer_norm = LayerNorm::load(
+            vb.pp("output").pp("LayerNorm"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
+        )?;
 
         Ok(Self {
             attention,
@@ -343,8 +320,8 @@ impl BertLayer {
         let residual = hidden_states.clone();
 
         let hidden_states = self.intermediate.forward(&hidden_states)?;
-        let hidden_states = self.output.forward(&hidden_states)?.add(&residual)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states)?;
+        let hidden_states = self.output.forward(&hidden_states)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
 
         Ok(hidden_states)
     }
@@ -386,21 +363,17 @@ pub struct BertModel {
 
     num_attention_heads: usize,
 
-    pub device: Device,
+    device: Device,
+    dtype: DType,
 
     span: tracing::Span,
 }
 
 impl BertModel {
     pub fn load(vb: VarBuilder, config: &Config, pool: Pool) -> Result<Self> {
-        match vb.device() {
-            Device::Cpu => {}
-            _ => candle::bail!("Bert requires CPU"),
-        }
-
         // Check position embedding type
         if config.position_embedding_type != PositionEmbeddingType::Absolute {
-            candle::bail!("FlashBert only supports absolute position embeddings")
+            candle::bail!("Bert only supports absolute position embeddings")
         }
 
         // Check pool type
@@ -438,6 +411,7 @@ impl BertModel {
             pool,
             num_attention_heads: config.num_attention_heads,
             device: vb.device().clone(),
+            dtype: vb.dtype(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
     }
@@ -496,7 +470,8 @@ impl BertModel {
                         attention_mask,
                         (batch_size, 1, 1, max_length),
                         &self.device,
-                    )?;
+                    )?
+                    .to_dtype(self.dtype)?;
                     // Broadcast once instead of at every layer
                     let attention_mask = attention_mask
                         .broadcast_as((
@@ -532,7 +507,8 @@ impl BertModel {
         let input_ids = Tensor::from_vec(input_ids, shape, &self.device)?;
         let type_ids = Tensor::from_vec(type_ids, shape, &self.device)?;
         let position_ids = Tensor::from_vec(position_ids, shape, &self.device)?;
-        let input_lengths = Tensor::from_vec(input_lengths, (batch_size, 1), &self.device)?;
+        let input_lengths =
+            Tensor::from_vec(input_lengths, (batch_size, 1), &self.device)?.to_dtype(self.dtype)?;
 
         let embedding_output = self
             .embeddings

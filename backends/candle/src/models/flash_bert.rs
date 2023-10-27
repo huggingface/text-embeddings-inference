@@ -1,98 +1,17 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::models::bert::{Config, HiddenAct, PositionEmbeddingType};
+use crate::layers::{LayerNorm, Linear};
+use crate::models::bert::{Config, PositionEmbeddingType};
 use crate::models::EmbeddingModel;
 use candle::{DType, Device, Result, Tensor};
-use candle_cublaslt::{fused_matmul, Activation, CublasLt};
-use candle_layer_norm::fused_add_layer_norm;
 use candle_nn::{Embedding, Module, VarBuilder};
 use text_embeddings_backend_core::{Batch, Pool};
-
-#[derive(Debug)]
-struct FastLayerNorm {
-    weight: Tensor,
-    bias: Tensor,
-    epsilon: f32,
-    span: tracing::Span,
-}
-
-impl FastLayerNorm {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
-        Ok(Self {
-            weight: vb
-                .get(config.hidden_size, "weight")
-                .or_else(|_| vb.get(config.hidden_size, "gamma"))?,
-            bias: vb
-                .get(config.hidden_size, "bias")
-                .or_else(|_| vb.get(config.hidden_size, "beta"))?,
-            epsilon: config.layer_norm_eps as f32,
-            span: tracing::span!(tracing::Level::TRACE, "layer-norm"),
-        })
-    }
-
-    pub fn forward(&self, hidden_states: &Tensor, residual: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        fused_add_layer_norm(
-            hidden_states,
-            residual,
-            &self.weight,
-            &self.bias,
-            self.epsilon,
-        )
-    }
-}
-
-#[derive(Debug)]
-pub struct Linear {
-    weight: Tensor,
-    bias: Option<Tensor>,
-    act: Option<Activation>,
-    cublaslt: CublasLt,
-    span: tracing::Span,
-}
-
-impl Linear {
-    pub fn new(
-        weight: Tensor,
-        bias: Option<Tensor>,
-        act: Option<HiddenAct>,
-        cublaslt: CublasLt,
-    ) -> Self {
-        let span = tracing::span!(tracing::Level::TRACE, "linear");
-
-        let act = act.map(|a| match a {
-            HiddenAct::Gelu => Activation::Gelu,
-            HiddenAct::Relu => Activation::Relu,
-        });
-
-        Self {
-            weight,
-            bias,
-            act,
-            cublaslt,
-            span,
-        }
-    }
-
-    pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        fused_matmul(
-            &self.weight,
-            x,
-            self.bias.as_ref(),
-            self.act.clone(),
-            self.cublaslt.clone(),
-        )
-    }
-}
 
 #[derive(Debug)]
 struct BertEmbeddings {
     word_embeddings: Embedding,
     token_type_embeddings: Embedding,
     position_embeddings: Embedding,
-    layer_norm: FastLayerNorm,
+    layer_norm: LayerNorm,
     span: tracing::Span,
 }
 
@@ -120,7 +39,11 @@ impl BertEmbeddings {
                 )?,
                 config.hidden_size,
             ),
-            layer_norm: FastLayerNorm::load(vb.pp("LayerNorm"), config)?,
+            layer_norm: LayerNorm::load(
+                vb.pp("LayerNorm"),
+                config.hidden_size,
+                config.layer_norm_eps as f32,
+            )?,
             span: tracing::span!(tracing::Level::TRACE, "embeddings"),
         })
     }
@@ -148,7 +71,7 @@ impl BertEmbeddings {
 struct BertAttention {
     qkv_linear: Linear,
     dense: Linear,
-    layer_norm: FastLayerNorm,
+    layer_norm: LayerNorm,
 
     num_attention_heads: usize,
     attention_head_size: usize,
@@ -158,7 +81,7 @@ struct BertAttention {
 }
 
 impl BertAttention {
-    pub fn load(vb: VarBuilder, config: &Config, cublaslt: CublasLt) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
         let attention_head_size = config.hidden_size / config.num_attention_heads;
         let all_head_size = config.num_attention_heads * attention_head_size;
         let hidden_size = config.hidden_size;
@@ -179,7 +102,7 @@ impl BertAttention {
         let qkv_weight = Tensor::cat(&[&query_weight, &key_weight, &value_weight], 0)?;
         let qkv_bias = Tensor::cat(&[&query_bias, &key_bias, &value_bias], 0)?;
 
-        let qkv_linear = Linear::new(qkv_weight, Some(qkv_bias), None, cublaslt.clone());
+        let qkv_linear = Linear::new(qkv_weight, Some(qkv_bias), None);
 
         let dense_weight = vb
             .pp("output")
@@ -187,9 +110,13 @@ impl BertAttention {
             .get((hidden_size, hidden_size), "weight")?;
         let dense_bias = vb.pp("output").pp("dense").get(hidden_size, "bias")?;
 
-        let dense = Linear::new(dense_weight, Some(dense_bias), None, cublaslt.clone());
+        let dense = Linear::new(dense_weight, Some(dense_bias), None);
 
-        let layer_norm = FastLayerNorm::load(vb.pp("output").pp("LayerNorm"), config)?;
+        let layer_norm = LayerNorm::load(
+            vb.pp("output").pp("LayerNorm"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
+        )?;
 
         let softmax_scale = (1. / (attention_head_size as f64).sqrt()) as f32;
 
@@ -248,13 +175,13 @@ struct BertLayer {
     attention: BertAttention,
     intermediate: Linear,
     output: Linear,
-    layer_norm: FastLayerNorm,
+    layer_norm: LayerNorm,
     span: tracing::Span,
 }
 
 impl BertLayer {
-    pub fn load(vb: VarBuilder, config: &Config, cublaslt: CublasLt) -> Result<Self> {
-        let attention = BertAttention::load(vb.pp("attention"), config, cublaslt.clone())?;
+    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+        let attention = BertAttention::load(vb.pp("attention"), config)?;
 
         let intermediate_weight = vb
             .pp("intermediate")
@@ -268,7 +195,6 @@ impl BertLayer {
             intermediate_weight,
             Some(intermediate_bias),
             Some(config.hidden_act.clone()),
-            cublaslt.clone(),
         );
 
         let output_weight = vb
@@ -279,9 +205,13 @@ impl BertLayer {
             .pp("output")
             .pp("dense")
             .get(config.hidden_size, "bias")?;
-        let output = Linear::new(output_weight, Some(output_bias), None, cublaslt.clone());
+        let output = Linear::new(output_weight, Some(output_bias), None);
 
-        let layer_norm = FastLayerNorm::load(vb.pp("output").pp("LayerNorm"), config)?;
+        let layer_norm = LayerNorm::load(
+            vb.pp("output").pp("LayerNorm"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
+        )?;
 
         Ok(Self {
             attention,
@@ -317,9 +247,9 @@ struct BertEncoder {
 }
 
 impl BertEncoder {
-    pub fn load(vb: VarBuilder, config: &Config, cublaslt: CublasLt) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
         let layers = (0..config.num_hidden_layers)
-            .map(|index| BertLayer::load(vb.pp(format!("layer.{index}")), config, cublaslt.clone()))
+            .map(|index| BertLayer::load(vb.pp(format!("layer.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
         let span = tracing::span!(tracing::Level::TRACE, "encoder");
 
@@ -370,11 +300,9 @@ impl FlashBertModel {
             candle::bail!("Pool type {pool:?} is not supported");
         }
 
-        let cublaslt = CublasLt::new(vb.device()).unwrap();
-
         let (embeddings, encoder) = match (
             BertEmbeddings::load(vb.pp("embeddings"), config),
-            BertEncoder::load(vb.pp("encoder"), config, cublaslt.clone()),
+            BertEncoder::load(vb.pp("encoder"), config),
         ) {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
@@ -382,16 +310,12 @@ impl FlashBertModel {
 
                 if let (Ok(embeddings), Ok(encoder)) = (
                     BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
-                    BertEncoder::load(
-                        vb.pp(format!("{model_type}.encoder")),
-                        config,
-                        cublaslt.clone(),
-                    ),
+                    BertEncoder::load(vb.pp(format!("{model_type}.encoder")), config),
                 ) {
                     (embeddings, encoder)
                 } else if let (Ok(embeddings), Ok(encoder)) = (
                     BertEmbeddings::load(vb.pp("bert.embeddings"), config),
-                    BertEncoder::load(vb.pp("bert.encoder"), config, cublaslt.clone()),
+                    BertEncoder::load(vb.pp("bert.encoder"), config),
                 ) {
                     (embeddings, encoder)
                 } else {

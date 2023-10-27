@@ -356,7 +356,7 @@ dependencies = [
 [[package]]
 name = "candle-cublaslt"
 version = "0.2.2"
-source = "git+https://github.com/huggingface/candle-cublaslt?rev=07e1a5490211e25ed0d096a2b21d3c607666eaae#07e1a5490211e25ed0d096a2b21d3c607666eaae"
+source = "git+https://github.com/huggingface/candle-cublaslt?rev=ffd246552c266640fab217f964a83960e07a66ec#ffd246552c266640fab217f964a83960e07a66ec"
 dependencies = [
  "candle-core",
  "cudarc",
@@ -624,8 +624,8 @@ dependencies = [
 
 [[package]]
 name = "cudarc"
-version = "0.9.14"
-source = "git+https://github.com/OlivierDehaene/cudarc?rev=4c8e6d36a4a4c31e2e4649ae5246226452a01fc1#4c8e6d36a4a4c31e2e4649ae5246226452a01fc1"
+version = "0.9.15"
+source = "git+https://github.com/OlivierDehaene/cudarc?rev=8be6ff46e4a2014fb563570e0d206c09aea88152#8be6ff46e4a2014fb563570e0d206c09aea88152"
 dependencies = [
  "half",
 ]
