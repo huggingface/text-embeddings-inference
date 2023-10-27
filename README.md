@@ -53,23 +53,26 @@ such as:
 
 ### Supported Models
 
-You can use any BERT, CamemBERT or XLM-RoBERTa model with absolute positions in `text-embeddings-inference`. 
+You can use any JinaBERT model with Alibi or absolute positions or any BERT, CamemBERT or XLM-RoBERTa model with 
+absolute positions in `text-embeddings-inference`. 
 
 **Support for other model types will be added in the future.**
 
 Examples of supported models:
 
-| MTEB Rank | Model Type   | Model ID                                                                       | 
-|-----------|--------------|--------------------------------------------------------------------------------|
-| 1         | Bert         | [BAAI/bge-large-en-v1.5](https://hf.co/BAAI/bge-large-en-v1.5)                 |
-| 2         |              | [BAAI/bge-base-en-v1.5](https://hf.co/BAAI/bge-base-en-v1.5)                   |
-| 3         |              | [llmrails/ember-v1](https://hf.co/llmrails/ember-v1)                           |
-| 4         |              | [thenlper/gte-large](https://hf.co/thenlper/gte-large)                         |
-| 5         |              | [thenlper/gte-base](https://hf.co/thenlper/gte-base)                           |
-| 6         |              | [intfloat/e5-large-v2](https://hf.co/intfloat/e5-large-v2)                     |
-| 7         |              | [BAAI/bge-small-en-v1.5](https://hf.co/BAAI/bge-small-en-v1.5)                 |
-| 10        |              | [intfloat/e5-base-v2](https://hf.co/intfloat/e5-base-v2)                       |
-| 11        | XLM-RoBERTa  | [intfloat/multilingual-e5-large](https://hf.co/intfloat/multilingual-e5-large) |
+| MTEB Rank | Model Type  | Model ID                                                                               | 
+|-----------|-------------|----------------------------------------------------------------------------------------|
+| 1         | Bert        | [BAAI/bge-large-en-v1.5](https://hf.co/BAAI/bge-large-en-v1.5)                         |
+| 2         |             | [BAAI/bge-base-en-v1.5](https://hf.co/BAAI/bge-base-en-v1.5)                           |
+| 3         |             | [llmrails/ember-v1](https://hf.co/llmrails/ember-v1)                                   |
+| 4         |             | [thenlper/gte-large](https://hf.co/thenlper/gte-large)                                 |
+| 5         |             | [thenlper/gte-base](https://hf.co/thenlper/gte-base)                                   |
+| 6         |             | [intfloat/e5-large-v2](https://hf.co/intfloat/e5-large-v2)                             |
+| 7         |             | [BAAI/bge-small-en-v1.5](https://hf.co/BAAI/bge-small-en-v1.5)                         |
+| 10        |             | [intfloat/e5-base-v2](https://hf.co/intfloat/e5-base-v2)                               |
+| 11        | XLM-RoBERTa | [intfloat/multilingual-e5-large](https://hf.co/intfloat/multilingual-e5-large)         |
+| N/A       | JinaBERT    | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)   |
+| N/A       | JinaBERT    | [jinaai/jina-embeddings-v2-small-en](https://hf.co/jinaai/jina-embeddings-v2-small-en) |
 
 
 You can explore the list of best performing text embeddings models [here](https://huggingface.co/spaces/mteb/leaderboard).
@@ -81,7 +84,7 @@ model=BAAI/bge-large-en-v1.5
 revision=refs/pr/5
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.2.2 --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.3.0 --model-id $model --revision $revision
 ```
 
 And then you can make requests like
@@ -223,15 +226,15 @@ Options:
 
 Text Embeddings Inference ships with multiple Docker images that you can use to target a specific backend:
 
-| Architecture                        | Image                                                      |
-|-------------------------------------|------------------------------------------------------------|
-| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-0.2.2    |
-| Volta                               | NOT SUPPORTED                                              |
-| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-0.2.2 |
-| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:0.2.2        |
-| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-0.2.2     |
-| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-0.2.2     |
-| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-0.2.2 |
+| Architecture                        | Image                                                                     |
+|-------------------------------------|---------------------------------------------------------------------------|
+| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-0.3.0                   |
+| Volta                               | NOT SUPPORTED                                                             |
+| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-0.3.0 (experimental) |
+| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:0.3.0                       |
+| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-0.3.0                    |
+| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-0.3.0                    |
+| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-0.3.0 (experimental) |
 
 ### API documentation
 
@@ -256,7 +259,7 @@ model=<your private model>
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 token=<your cli READ token>
 
-docker run --gpus all -e HUGGING_FACE_HUB_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.2.2 --model-id $model
+docker run --gpus all -e HUGGING_FACE_HUB_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.3.0 --model-id $model
 ```
 
 ### Distributed Tracing
