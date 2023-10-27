@@ -1,57 +1,34 @@
+use crate::alibi::build_alibi_tensor;
 use crate::layers::{HiddenAct, LayerNorm, Linear, CUBLASLT};
 use crate::models::EmbeddingModel;
+use crate::models::{Config, PositionEmbeddingType};
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{Embedding, VarBuilder};
-use serde::Deserialize;
-use std::collections::HashMap;
 use text_embeddings_backend_core::{Batch, Pool};
-
-// https://github.com/huggingface/transformers/blob/6eedfa6dd15dc1e22a55ae036f681914e5a0d9a1/src/transformers/models/bert/configuration_bert.py#L1
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct Config {
-    pub vocab_size: usize,
-    pub hidden_size: usize,
-    pub num_hidden_layers: usize,
-    pub num_attention_heads: usize,
-    pub intermediate_size: usize,
-    pub hidden_act: HiddenAct,
-    pub hidden_dropout_prob: f64,
-    pub max_position_embeddings: usize,
-    pub type_vocab_size: usize,
-    pub initializer_range: f64,
-    pub layer_norm_eps: f64,
-    pub pad_token_id: usize,
-    #[serde(default)]
-    pub position_embedding_type: PositionEmbeddingType,
-    #[serde(default)]
-    pub use_cache: bool,
-    pub classifier_dropout: Option<f64>,
-    pub model_type: Option<String>,
-    pub id2label: Option<HashMap<String, String>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum PositionEmbeddingType {
-    #[default]
-    Absolute,
-    Alibi,
-}
 
 #[derive(Debug)]
 struct BertEmbeddings {
     word_embeddings: Embedding,
     token_type_embeddings: Embedding,
-    position_embeddings: Embedding,
+    position_embeddings: Option<Embedding>,
     layer_norm: LayerNorm,
     span: tracing::Span,
 }
 
 impl BertEmbeddings {
     pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
-        if config.position_embedding_type != PositionEmbeddingType::Absolute {
-            candle::bail!("Bert only supports absolute position embeddings");
-        }
+        let position_embeddings =
+            if config.position_embedding_type == PositionEmbeddingType::Absolute {
+                Some(Embedding::new(
+                    vb.pp("position_embeddings").get(
+                        (config.max_position_embeddings, config.hidden_size),
+                        "weight",
+                    )?,
+                    config.hidden_size,
+                ))
+            } else {
+                None
+            };
 
         Ok(Self {
             word_embeddings: Embedding::new(
@@ -64,13 +41,7 @@ impl BertEmbeddings {
                     .get((config.type_vocab_size, config.hidden_size), "weight")?,
                 config.hidden_size,
             ),
-            position_embeddings: Embedding::new(
-                vb.pp("position_embeddings").get(
-                    (config.max_position_embeddings, config.hidden_size),
-                    "weight",
-                )?,
-                config.hidden_size,
-            ),
+            position_embeddings,
             layer_norm: LayerNorm::load(
                 vb.pp("LayerNorm"),
                 config.hidden_size,
@@ -90,12 +61,15 @@ impl BertEmbeddings {
 
         let input_embeddings = self.word_embeddings.forward(input_ids)?;
         let token_type_embeddings = self.token_type_embeddings.forward(token_type_ids)?;
-        let position_embeddings = self.position_embeddings.forward(position_ids)?;
 
-        let embeddings = input_embeddings.add(&token_type_embeddings)?;
-        let embeddings = self.layer_norm.forward(&embeddings, &position_embeddings)?;
-
-        Ok(embeddings)
+        if let Some(position_embeddings) = &self.position_embeddings {
+            let position_embeddings = position_embeddings.forward(position_ids)?;
+            let embeddings = input_embeddings.add(&token_type_embeddings)?;
+            self.layer_norm.forward(&embeddings, &position_embeddings)
+        } else {
+            self.layer_norm
+                .forward(&input_embeddings, &token_type_embeddings)
+        }
     }
 }
 
@@ -259,53 +233,48 @@ impl BertAttention {
     }
 }
 
-struct BertLayer {
+struct JinaBertLayer {
     attention: BertAttention,
-    intermediate: Linear,
+    gated: Linear,
     output: Linear,
     layer_norm: LayerNorm,
+    act: HiddenAct,
+
+    intermediate_size: usize,
+
     span: tracing::Span,
 }
 
-impl BertLayer {
+impl JinaBertLayer {
     pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
         let attention = BertAttention::load(vb.pp("attention"), config)?;
 
-        let intermediate_weight = vb
-            .pp("intermediate")
-            .pp("dense")
-            .get((config.intermediate_size, config.hidden_size), "weight")?;
-        let intermediate_bias = vb
-            .pp("intermediate")
-            .pp("dense")
-            .get(config.intermediate_size, "bias")?;
-        let intermediate = Linear::new(
-            intermediate_weight,
-            Some(intermediate_bias),
-            Some(config.hidden_act.clone()),
-        );
+        let gated_weight = vb
+            .pp("mlp")
+            .pp("gated_layers")
+            .get((config.intermediate_size * 2, config.hidden_size), "weight")?;
+        let gated = Linear::new(gated_weight, None, None);
 
         let output_weight = vb
-            .pp("output")
-            .pp("dense")
+            .pp("mlp")
+            .pp("wo")
             .get((config.hidden_size, config.intermediate_size), "weight")?;
-        let output_bias = vb
-            .pp("output")
-            .pp("dense")
-            .get(config.hidden_size, "bias")?;
+        let output_bias = vb.pp("mlp").pp("wo").get(config.hidden_size, "bias")?;
         let output = Linear::new(output_weight, Some(output_bias), None);
 
         let layer_norm = LayerNorm::load(
-            vb.pp("output").pp("LayerNorm"),
+            vb.pp("mlp").pp("layernorm"),
             config.hidden_size,
             config.layer_norm_eps as f32,
         )?;
 
         Ok(Self {
             attention,
-            intermediate,
+            gated,
             output,
             layer_norm,
+            act: config.hidden_act.clone(),
+            intermediate_size: config.intermediate_size,
             span: tracing::span!(tracing::Level::TRACE, "layer"),
         })
     }
@@ -320,7 +289,16 @@ impl BertLayer {
         let hidden_states = self.attention.forward(hidden_states, attention_bias)?;
         let residual = hidden_states.clone();
 
-        let hidden_states = self.intermediate.forward(&hidden_states)?;
+        let hidden_states = self.gated.forward(&hidden_states)?;
+        let gated = hidden_states.i((.., .., 0..self.intermediate_size))?;
+        let gated = match self.act {
+            HiddenAct::Gelu => gated.gelu(),
+            HiddenAct::Relu => gated.relu(),
+        }?;
+
+        let non_gated = hidden_states.i((.., .., self.intermediate_size..))?;
+        let hidden_states = (gated * non_gated)?;
+
         let hidden_states = self.output.forward(&hidden_states)?;
         let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
 
@@ -329,14 +307,14 @@ impl BertLayer {
 }
 
 struct BertEncoder {
-    layers: Vec<BertLayer>,
+    layers: Vec<JinaBertLayer>,
     span: tracing::Span,
 }
 
 impl BertEncoder {
     pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
         let layers = (0..config.num_hidden_layers)
-            .map(|index| BertLayer::load(vb.pp(format!("layer.{index}")), config))
+            .map(|index| JinaBertLayer::load(vb.pp(format!("layer.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
         let span = tracing::span!(tracing::Level::TRACE, "encoder");
 
@@ -357,10 +335,11 @@ impl BertEncoder {
     }
 }
 
-pub struct BertModel {
+pub struct JinaBertModel {
     embeddings: BertEmbeddings,
     encoder: BertEncoder,
     pool: Pool,
+    alibi: Option<Tensor>,
 
     num_attention_heads: usize,
 
@@ -370,12 +349,17 @@ pub struct BertModel {
     span: tracing::Span,
 }
 
-impl BertModel {
+impl JinaBertModel {
     pub fn load(vb: VarBuilder, config: &Config, pool: Pool) -> Result<Self> {
-        // Check position embedding type
-        if config.position_embedding_type != PositionEmbeddingType::Absolute {
-            candle::bail!("Bert only supports absolute position embeddings")
-        }
+        let alibi = match config.position_embedding_type {
+            PositionEmbeddingType::Alibi => Some(build_alibi_tensor(
+                config.max_position_embeddings,
+                config.num_attention_heads,
+                &vb.device(),
+                vb.dtype(),
+            )?),
+            PositionEmbeddingType::Absolute => None,
+        };
 
         // Check pool type
         if pool != Pool::Mean && pool != Pool::Cls {
@@ -410,6 +394,7 @@ impl BertModel {
             embeddings,
             encoder,
             pool,
+            alibi,
             num_attention_heads: config.num_attention_heads,
             device: vb.device().clone(),
             dtype: vb.dtype(),
@@ -492,18 +477,51 @@ impl BertModel {
                             &self.device,
                         )?
                         .to_dtype(self.dtype)?;
+
                         // Broadcast once instead of at every layer
-                        let attention_bias = attention_bias
-                            .broadcast_as((
-                                batch_size,
-                                self.num_attention_heads,
-                                max_length,
-                                max_length,
-                            ))?
-                            .contiguous()?;
-                        (Some(attention_bias), attention_mask)
+                        let mut attention_bias = attention_bias.broadcast_as((
+                            batch_size,
+                            self.num_attention_heads,
+                            max_length,
+                            max_length,
+                        ))?;
+
+                        // Add alibi tensor
+                        if let Some(alibi) = &self.alibi {
+                            let alibi = alibi
+                                .i((.., .., 0..max_length, 0..max_length))?
+                                .broadcast_as((
+                                    batch_size,
+                                    self.num_attention_heads,
+                                    max_length,
+                                    max_length,
+                                ))?;
+
+                            attention_bias = attention_bias.add(&alibi)?;
+                        }
+
+                        (Some(attention_bias.contiguous()?), attention_mask)
                     }
-                    false => (None, None),
+                    false => {
+                        if let Some(alibi) = &self.alibi {
+                            (
+                                Some(
+                                    alibi
+                                        .i((.., .., 0..max_length, 0..max_length))?
+                                        .broadcast_as((
+                                            batch_size,
+                                            self.num_attention_heads,
+                                            max_length,
+                                            max_length,
+                                        ))?
+                                        .contiguous()?,
+                                ),
+                                None,
+                            )
+                        } else {
+                            (None, None)
+                        }
+                    }
                 };
 
                 (
@@ -515,12 +533,22 @@ impl BertModel {
                     attention_mask,
                 )
             } else {
+                let attention_bias = if let Some(alibi) = &self.alibi {
+                    Some(
+                        alibi
+                            .i((.., .., 0..max_length, 0..max_length))?
+                            .contiguous()?,
+                    )
+                } else {
+                    None
+                };
+
                 (
                     batch.input_ids,
                     batch.token_type_ids,
                     batch.position_ids,
                     vec![batch.max_length as f32],
-                    None,
+                    attention_bias,
                     None,
                 )
             };
@@ -561,7 +589,7 @@ impl BertModel {
     }
 }
 
-impl EmbeddingModel for BertModel {
+impl EmbeddingModel for JinaBertModel {
     fn embed(&self, batch: Batch) -> Result<Tensor> {
         self.forward(batch)
     }

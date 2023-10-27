@@ -10,10 +10,13 @@ mod bert_quant;
 pub use bert::{BertModel, Config, PositionEmbeddingType};
 pub use bert_quant::QuantBertModel;
 use candle::{Result, Tensor};
+pub use jina::JinaBertModel;
 use text_embeddings_backend_core::Batch;
 
 #[cfg(feature = "cuda")]
 mod flash_bert;
+mod jina;
+
 #[cfg(feature = "cuda")]
 pub use flash_bert::FlashBertModel;
 
