@@ -410,124 +410,148 @@ impl JinaBertModel {
 
         let shape = (batch_size, max_length);
 
-        let (input_ids, type_ids, position_ids, input_lengths, attention_bias) = if batch_size > 1 {
-            // Prepare padded batch
-            let elems = batch_size * max_length;
+        let (input_ids, type_ids, position_ids, input_lengths, attention_bias, attention_mask) =
+            if batch_size > 1 {
+                // Prepare padded batch
+                let elems = batch_size * max_length;
 
-            let mut input_ids = Vec::with_capacity(elems);
-            let mut type_ids = Vec::with_capacity(elems);
-            let mut position_ids = Vec::with_capacity(elems);
-            let mut attention_mask = Vec::with_capacity(elems);
-            let mut input_lengths = Vec::with_capacity(batch_size);
-            // Bool to know if we need to use the attention mask
-            let mut masking = false;
+                let mut input_ids = Vec::with_capacity(elems);
+                let mut type_ids = Vec::with_capacity(elems);
+                let mut position_ids = Vec::with_capacity(elems);
+                let mut attention_mask = Vec::with_capacity(elems);
+                let mut attention_bias = Vec::with_capacity(elems);
+                let mut input_lengths = Vec::with_capacity(batch_size);
+                // Bool to know if we need to use the attention mask
+                let mut masking = false;
 
-            for i in 0..batch_size {
-                let start = batch.cumulative_seq_lengths[i] as usize;
-                let end = batch.cumulative_seq_lengths[i + 1] as usize;
-                let seq_length = (end - start) as u32;
-                input_lengths.push(seq_length as f32);
+                for i in 0..batch_size {
+                    let start = batch.cumulative_seq_lengths[i] as usize;
+                    let end = batch.cumulative_seq_lengths[i + 1] as usize;
+                    let seq_length = (end - start) as u32;
+                    input_lengths.push(seq_length as f32);
 
-                // Copy values
-                for j in start..end {
-                    input_ids.push(batch.input_ids[j]);
-                    type_ids.push(batch.token_type_ids[j]);
-                    position_ids.push(batch.position_ids[j]);
-                    attention_mask.push(0.0);
-                }
-
-                // Add padding if needed
-                let padding = batch.max_length - seq_length;
-                if padding > 0 {
-                    // Set bool to use attention mask
-                    masking = true;
-                    for _ in 0..padding {
-                        input_ids.push(0);
-                        type_ids.push(0);
-                        position_ids.push(0);
-                        attention_mask.push(f32::NEG_INFINITY);
-                    }
-                }
-            }
-
-            let attention_bias = match masking {
-                true => {
-                    let attention_mask = Tensor::from_vec(
-                        attention_mask,
-                        (batch_size, 1, 1, max_length),
-                        &self.device,
-                    )?
-                    .to_dtype(self.dtype)?;
-
-                    // Broadcast once instead of at every layer
-                    let mut attention_mask = attention_mask.broadcast_as((
-                        batch_size,
-                        self.num_attention_heads,
-                        max_length,
-                        max_length,
-                    ))?;
-
-                    // Add alibi tensor
-                    if let Some(alibi) = &self.alibi {
-                        let alibi = alibi
-                            .i((.., .., 0..max_length, 0..max_length))?
-                            .broadcast_as((
-                                batch_size,
-                                self.num_attention_heads,
-                                max_length,
-                                max_length,
-                            ))?;
-
-                        attention_mask = attention_mask.add(&alibi)?;
+                    // Copy values
+                    for j in start..end {
+                        input_ids.push(batch.input_ids[j]);
+                        type_ids.push(batch.token_type_ids[j]);
+                        position_ids.push(batch.position_ids[j]);
+                        attention_mask.push(1.0);
+                        attention_bias.push(0.0);
                     }
 
-                    Some(attention_mask.contiguous()?)
+                    // Add padding if needed
+                    let padding = batch.max_length - seq_length;
+                    if padding > 0 {
+                        // Set bool to use attention mask
+                        masking = true;
+                        for _ in 0..padding {
+                            input_ids.push(0);
+                            type_ids.push(0);
+                            position_ids.push(0);
+                            attention_mask.push(0.0);
+                            attention_bias.push(f32::NEG_INFINITY);
+                        }
+                    }
                 }
-                false => {
-                    if let Some(alibi) = &self.alibi {
-                        Some(
-                            alibi
+
+                let (attention_bias, attention_mask) = match masking {
+                    true => {
+                        // We only need the mask if we use mean pooling
+                        // For CLS pooling, the bias is enough
+                        let attention_mask = if self.pool == Pool::Mean {
+                            let attention_mask = Tensor::from_vec(
+                                attention_mask,
+                                (batch_size, max_length, 1),
+                                &self.device,
+                            )?
+                            .to_dtype(self.dtype)?;
+
+                            Some(attention_mask)
+                        } else {
+                            None
+                        };
+
+                        let attention_bias = Tensor::from_vec(
+                            attention_bias,
+                            (batch_size, 1, 1, max_length),
+                            &self.device,
+                        )?
+                        .to_dtype(self.dtype)?;
+
+                        // Broadcast once instead of at every layer
+                        let mut attention_bias = attention_bias.broadcast_as((
+                            batch_size,
+                            self.num_attention_heads,
+                            max_length,
+                            max_length,
+                        ))?;
+
+                        // Add alibi tensor
+                        if let Some(alibi) = &self.alibi {
+                            let alibi = alibi
                                 .i((.., .., 0..max_length, 0..max_length))?
                                 .broadcast_as((
                                     batch_size,
                                     self.num_attention_heads,
                                     max_length,
                                     max_length,
-                                ))?
-                                .contiguous()?,
-                        )
-                    } else {
-                        None
-                    }
-                }
-            };
+                                ))?;
 
-            (
-                input_ids,
-                type_ids,
-                position_ids,
-                input_lengths,
-                attention_bias,
-            )
-        } else {
-            let attention_bias = if let Some(alibi) = &self.alibi {
-                Some(
-                    alibi
-                        .i((.., .., 0..max_length, 0..max_length))?
-                        .contiguous()?,
+                            attention_bias = attention_bias.add(&alibi)?;
+                        }
+
+                        (Some(attention_bias.contiguous()?), attention_mask)
+                    }
+                    false => {
+                        if let Some(alibi) = &self.alibi {
+                            (
+                                Some(
+                                    alibi
+                                        .i((.., .., 0..max_length, 0..max_length))?
+                                        .broadcast_as((
+                                            batch_size,
+                                            self.num_attention_heads,
+                                            max_length,
+                                            max_length,
+                                        ))?
+                                        .contiguous()?,
+                                ),
+                                None,
+                            )
+                        } else {
+                            (None, None)
+                        }
+                    }
+                };
+
+                (
+                    input_ids,
+                    type_ids,
+                    position_ids,
+                    input_lengths,
+                    attention_bias,
+                    attention_mask,
                 )
             } else {
-                None
-            };
+                let attention_bias = if let Some(alibi) = &self.alibi {
+                    Some(
+                        alibi
+                            .i((.., .., 0..max_length, 0..max_length))?
+                            .contiguous()?,
+                    )
+                } else {
+                    None
+                };
 
-            (
-                batch.input_ids,
-                batch.token_type_ids,
-                batch.position_ids,
-                vec![batch.max_length as f32],
-                attention_bias,
-            )
-        };
+                (
+                    batch.input_ids,
+                    batch.token_type_ids,
+                    batch.position_ids,
+                    vec![batch.max_length as f32],
+                    attention_bias,
+                    None,
+                )
+            };
 
         // Create CPU tensors
         let input_ids = Tensor::from_vec(input_ids, shape, &self.device)?;
@@ -540,7 +564,7 @@ impl JinaBertModel {
             .embeddings
             .forward(&input_ids, &type_ids, &position_ids)?;
 
-        let outputs = self
+        let mut outputs = self
             .encoder
             .forward(&embedding_output, attention_bias.as_ref())?;
 
@@ -548,7 +572,14 @@ impl JinaBertModel {
             // CLS pooling
             Pool::Cls => outputs.i((.., 0))?,
             // Mean pooling
-            Pool::Mean => (outputs.sum(1)?.broadcast_div(&input_lengths))?,
+            Pool::Mean => {
+                if let Some(attention_mask) = attention_mask {
+                    // Mask padded values
+                    outputs = outputs.broadcast_mul(&attention_mask)?;
+                }
+
+                (outputs.sum(1)?.broadcast_div(&input_lengths))?
+            }
         };
 
         // Normalize
