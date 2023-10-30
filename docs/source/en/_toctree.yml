@@ -16,7 +16,7 @@
   - local: tei_cli
     title: Using TEI CLI
   - local: custom_cpu_container
-    title: Build custom CPU container for TEI
+    title: Build custom container for TEI
   title: Tutorials
 - sections:
   - local: cli_arguments

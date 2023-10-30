@@ -30,6 +30,19 @@ TEI offers multiple features tailored to optimize the deployment process and enh
 * **Safetensors weight loading:** TEI loads [Safetensors](https://github.com/huggingface/safetensors) weights to enable tensor parallelism.
 * **Production-Ready:** TEI supports distributed tracing through Open Telemetry and Prometheus metrics.
 
+**Benchmarks**
+
+Benchmark for [BAAI/bge-base-en-v1.5](https://hf.co/BAAI/bge-large-en-v1.5) on an NVIDIA A10 with a sequence length of 512 tokens:
+
+<p>
+  <img src="assets/bs1-lat.png" width="400" />
+  <img src="assets/bs1-tp.png" width="400" />
+</p>
+<p>
+  <img src="assets/bs32-lat.png" width="400" />
+  <img src="assets/bs32-tp.png" width="400" />
+</p>
+
 **Getting Started:**
 
 To start using TEI, check the [Quick Tour](quick_tour) guide. 

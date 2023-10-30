@@ -138,5 +138,3 @@ Options:
       --cors-allow-origin <CORS_ALLOW_ORIGIN>
           [env: CORS_ALLOW_ORIGIN=]
 ```
-
-
