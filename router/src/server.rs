@@ -135,7 +135,7 @@ async fn embed(
                     let local_infer = infer.clone();
                     futures.push(async move {
                         let permit = local_infer.acquire_permit().await;
-                        local_infer.embed(input, false, permit).await
+                        local_infer.embed(input, req.truncate, permit).await
                     })
                 }
                 let results = join_all(futures)
