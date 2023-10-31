@@ -97,7 +97,7 @@ curl 127.0.0.1:8080/embed \
 ```
 
 **Note:** To use GPUs, you need to install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html). 
-We also recommend using NVIDIA drivers with CUDA version 12.2 or higher. 
+We also recommend using NVIDIA drivers with CUDA version 12.0 or higher. 
 
 To see all options to serve your models:
 
@@ -236,6 +236,9 @@ Text Embeddings Inference ships with multiple Docker images that you can use to 
 | Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-0.3.0                    |
 | Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-0.3.0 (experimental) |
 
+**Warning**: Flash Attention is turned off by default for the Turing image as it suffers from precision issues. 
+You can turn Flash Attention v1 ON by using the `USE_FLASH_ATTENTION=True` environment variable.
+
 ### API documentation
 
 You can consult the OpenAPI documentation of the `text-embeddings-inference` REST API using the `/docs` route.
@@ -307,7 +310,7 @@ sudo apt-get install libssl-dev gcc -y
 
 GPUs with Cuda compute capabilities < 7.5 are not supported (V100, Titan V, GTX 1000 series, ...).
 
-Make sure you have Cuda and the nvidia drivers installed. We recommend using NVIDIA drivers with CUDA version 12.2 or higher. 
+Make sure you have Cuda and the nvidia drivers installed. We recommend using NVIDIA drivers with CUDA version 12.0 or higher. 
 You also need to add the nvidia binaries to your path:
 
 ```shell
