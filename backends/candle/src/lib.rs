@@ -132,9 +132,9 @@ impl CandleBackend {
                     if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
                         && dtype == DType::F16
                         && config.position_embedding_type == PositionEmbeddingType::Absolute
-                        // Flash attention v1 precision problem with head_size == 32
+                        // Allow disabling because of flash attention v1 precision problems
                         // See: https://github.com/huggingface/text-embeddings-inference/issues/37
-                        && !(*RUNTIME_COMPUTE_CAP == 75 && (config.hidden_size / config.num_attention_heads) == 32)
+                        && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
                     {
                         tracing::info!("Starting FlashBert model on Cuda");
                         Box::new(FlashBertModel::load(vb, &config, pool).s()?)

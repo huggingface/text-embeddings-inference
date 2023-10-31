@@ -130,6 +130,7 @@
              CUDA_COMPUTE_CAP=75
              GIT_SHA=${{ env.GITHUB_SHA }}
              DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
+             DEFAULT_USE_FLASH_ATTENTION=False
            tags: ${{ steps.meta-75.outputs.tags }}
            labels: ${{ steps.meta-75.outputs.labels }}
            cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-75,mode=max
