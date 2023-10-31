@@ -95,6 +95,16 @@ pub(crate) struct EmbedRequest {
 #[schema(example = json ! ([["0.0", "1.0", "2.0"]]))]
 pub(crate) struct EmbedResponse(Vec<Vec<f32>>);
 
+#[derive(Deserialize)]
+pub(crate) struct HFECompatRequest {
+    pub inputs: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct HFECompatResponse {
+    embeddings: Vec<f32>,
+}
+
 #[derive(Serialize, ToSchema)]
 pub(crate) enum ErrorType {
     Unhealthy,
