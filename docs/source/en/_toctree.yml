@@ -13,8 +13,8 @@
     title: Using TEI locally with GPU
   - local: private_models
     title: Serving private and gated models
-  - local: tei_cli
-    title: Using TEI CLI
+#  - local: tei_cli
+#    title: Using TEI CLI
   - local: custom_cpu_container
     title: Build custom container for TEI
   title: Tutorials
