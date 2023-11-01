@@ -26,15 +26,19 @@ Benchmark for [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1
 
 ## Table of contents
 
-- [Get Started](#get-started)
-  - [Supported Models](#supported-models)
-  - [Docker](#docker)
-  - [Docker Images](#docker-images)
-  - [API Documentation](#api-documentation)
-  - [Using a private or gated model](#using-a-private-or-gated-model)
-  - [Distributed Tracing](#distributed-tracing)
-- [Local Install](#local-install)
-- [Docker Build](#docker-build)
+- [Text Embeddings Inference](#text-embeddings-inference)
+  - [Table of contents](#table-of-contents)
+  - [Get Started](#get-started)
+    - [Supported Models](#supported-models)
+    - [Docker](#docker)
+    - [Docker Images](#docker-images)
+    - [API documentation](#api-documentation)
+    - [Using a private or gated model](#using-a-private-or-gated-model)
+    - [Distributed Tracing](#distributed-tracing)
+  - [Local install](#local-install)
+    - [CPU](#cpu)
+    - [Cuda](#cuda)
+  - [Docker build](#docker-build)
 
 Text Embeddings Inference (TEI) is a toolkit for deploying and serving open source text embeddings models. TEI enables
 high-performance extraction for the most popular models, including FlagEmbedding, Ember, GTE and E5. TEI implements many features
@@ -53,8 +57,7 @@ such as:
 
 ### Supported Models
 
-You can use any JinaBERT model with Alibi or absolute positions or any BERT, CamemBERT or XLM-RoBERTa model with 
-absolute positions in `text-embeddings-inference`. 
+You can use any JinaBERT model with Alibi or absolute positions or any BERT, CamemBERT, RoBERTa, or XLM-RoBERTa model with absolute positions in `text-embeddings-inference`.
 
 **Support for other model types will be added in the future.**
 
@@ -96,8 +99,8 @@ curl 127.0.0.1:8080/embed \
     -H 'Content-Type: application/json'
 ```
 
-**Note:** To use GPUs, you need to install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html). 
-We also recommend using NVIDIA drivers with CUDA version 12.0 or higher. 
+**Note:** To use GPUs, you need to install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
+We also recommend using NVIDIA drivers with CUDA version 12.0 or higher.
 
 To see all options to serve your models:
 
@@ -236,7 +239,7 @@ Text Embeddings Inference ships with multiple Docker images that you can use to 
 | Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-0.3.0                    |
 | Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-0.3.0 (experimental) |
 
-**Warning**: Flash Attention is turned off by default for the Turing image as it suffers from precision issues. 
+**Warning**: Flash Attention is turned off by default for the Turing image as it suffers from precision issues.
 You can turn Flash Attention v1 ON by using the `USE_FLASH_ATTENTION=True` environment variable.
 
 ### API documentation
@@ -329,7 +332,7 @@ cargo install --path router -F candle-cuda-turing --no-default-features
 cargo install --path router -F candle-cuda --no-default-features
 ```
 
-You can now launch Text Embeddings Inference on GPU with: 
+You can now launch Text Embeddings Inference on GPU with:
 
 ```shell
 model=BAAI/bge-large-en-v1.5
