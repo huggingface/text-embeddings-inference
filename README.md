@@ -26,19 +26,15 @@ Benchmark for [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1
 
 ## Table of contents
 
-- [Text Embeddings Inference](#text-embeddings-inference)
-  - [Table of contents](#table-of-contents)
-  - [Get Started](#get-started)
-    - [Supported Models](#supported-models)
-    - [Docker](#docker)
-    - [Docker Images](#docker-images)
-    - [API documentation](#api-documentation)
-    - [Using a private or gated model](#using-a-private-or-gated-model)
-    - [Distributed Tracing](#distributed-tracing)
-  - [Local install](#local-install)
-    - [CPU](#cpu)
-    - [Cuda](#cuda)
-  - [Docker build](#docker-build)
+- [Get Started](#get-started)
+  - [Supported Models](#supported-models)
+  - [Docker](#docker)
+  - [Docker Images](#docker-images)
+  - [API Documentation](#api-documentation)
+  - [Using a private or gated model](#using-a-private-or-gated-model)
+  - [Distributed Tracing](#distributed-tracing)
+- [Local Install](#local-install)
+- [Docker Build](#docker-build)
 
 Text Embeddings Inference (TEI) is a toolkit for deploying and serving open source text embeddings models. TEI enables
 high-performance extraction for the most popular models, including FlagEmbedding, Ember, GTE and E5. TEI implements many features
