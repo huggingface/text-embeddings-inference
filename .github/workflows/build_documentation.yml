@@ -11,6 +11,7 @@ jobs:
     with:
       commit_sha: ${{ github.sha }}
       package: text-embeddings-inference
+      additional_args: --not_python_module
       languages: en
     secrets:
       token: ${{ secrets.HUGGINGFACE_PUSH }}
