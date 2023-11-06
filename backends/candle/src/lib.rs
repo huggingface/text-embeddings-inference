@@ -41,6 +41,7 @@ impl CandleBackend {
         if config.model_type != Some("bert".to_string())
             && config.model_type != Some("xlm-roberta".to_string())
             && config.model_type != Some("camembert".to_string())
+            && config.model_type != Some("roberta".to_string())
         {
             return Err(BackendError::Start(format!(
                 "Model {:?} is not supported",
