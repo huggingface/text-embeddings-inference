@@ -1,0 +1,24 @@
+- sections:
+  - local: index
+    title: Text Embeddings Inference
+  - local: quick_tour
+    title: Quick Tour
+  - local: supported_models
+    title: Supported models and hardware
+  title: Getting started
+- sections:
+  - local: local_cpu
+    title: Using TEI locally with CPU
+  - local: local_gpu
+    title: Using TEI locally with GPU
+  - local: private_models
+    title: Serving private and gated models
+#  - local: tei_cli
+#    title: Using TEI CLI
+  - local: custom_cpu_container
+    title: Build custom container for TEI
+  title: Tutorials
+- sections:
+  - local: cli_arguments
+    title: CLI arguments
+  title: Reference
