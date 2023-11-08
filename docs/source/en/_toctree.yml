@@ -15,7 +15,7 @@
     title: Serving private and gated models
 #  - local: tei_cli
 #    title: Using TEI CLI
-  - local: custom_cpu_container
+  - local: custom_container
     title: Build custom container for TEI
   title: Tutorials
 - sections:
