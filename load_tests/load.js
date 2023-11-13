@@ -54,5 +54,7 @@ export default function () {
         tokenizationTIme.add(res.headers["X-Tokenization-Time"]);
         queueTime.add(res.headers["X-Queue-Time"]);
         inferenceTime.add(res.headers["X-Inference-Time"]);
+    } else {
+        console.log(res.error);
     }
 }
