@@ -1,9 +1,7 @@
 use crate::infer::InferResponse;
 use crate::tokenization::Encoding;
-use std::alloc::{alloc, Layout};
 use std::cmp::max;
 use std::collections::VecDeque;
-use std::ptr;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{BackendError, Batch};
 use tokio::sync::{mpsc, oneshot};
@@ -31,6 +29,8 @@ pub struct Metadata {
     pub queue_time: Instant,
     /// Number of tokens in the prompt
     pub prompt_tokens: usize,
+    /// Normalize the embeddings
+    pub normalize: bool,
 }
 
 /// Request Queue
@@ -114,13 +114,12 @@ fn queue_blocking_task(
             QueueCommand::NextBatch {
                 response_sender,
                 span,
-            } => unsafe {
+            } => {
                 let _span = span.entered();
 
-                // Allocate raw memory
-                let raw_input_ids = raw_u32_vec(max_batch_tokens);
-                let raw_token_type_ids = raw_u32_vec(max_batch_tokens);
-                let raw_position_ids = raw_u32_vec(max_batch_tokens);
+                let mut input_ids = Vec::with_capacity(max_batch_tokens);
+                let mut token_type_ids = Vec::with_capacity(max_batch_tokens);
+                let mut position_ids = Vec::with_capacity(max_batch_tokens);
 
                 let mut metadata = Vec::with_capacity(capacity);
                 let mut cu_seq_lengths = Vec::with_capacity(capacity);
@@ -129,7 +128,7 @@ fn queue_blocking_task(
                 let mut current_tokens = 0;
                 let mut max_length = 0;
 
-                while let Some(mut entry) = entries.pop_front() {
+                while let Some(entry) = entries.pop_front() {
                     // Filter entries where the response receiver was dropped (== entries where the request
                     // was dropped by the client)
                     if entry.metadata.response_tx.is_closed() {
@@ -146,22 +145,9 @@ fn queue_blocking_task(
 
                     max_length = max(max_length, entry_tokens as u32);
 
-                    // Copy memory to the correct spot in the raw vectors
-                    ptr::copy(
-                        entry.encoding.input_ids.as_mut_ptr(),
-                        raw_input_ids.add(current_tokens),
-                        entry.encoding.input_ids.len(),
-                    );
-                    ptr::copy(
-                        entry.encoding.token_type_ids.as_mut_ptr(),
-                        raw_token_type_ids.add(current_tokens),
-                        entry.encoding.token_type_ids.len(),
-                    );
-                    ptr::copy(
-                        entry.encoding.position_ids.as_mut_ptr(),
-                        raw_position_ids.add(current_tokens),
-                        entry.encoding.position_ids.len(),
-                    );
+                    input_ids.extend(entry.encoding.input_ids);
+                    token_type_ids.extend(entry.encoding.token_type_ids);
+                    position_ids.extend(entry.encoding.position_ids);
 
                     current_tokens += entry_tokens;
                     metadata.push(entry.metadata);
@@ -171,14 +157,6 @@ fn queue_blocking_task(
                         break;
                     }
                 }
-
-                // Create final vectors from raw memory
-                let input_ids =
-                    Vec::from_raw_parts(raw_input_ids, current_tokens, max_batch_tokens);
-                let token_type_ids =
-                    Vec::from_raw_parts(raw_token_type_ids, current_tokens, max_batch_tokens);
-                let position_ids =
-                    Vec::from_raw_parts(raw_position_ids, current_tokens, max_batch_tokens);
 
                 let batch_size = metadata.len();
                 let next_batch = if metadata.is_empty() {
@@ -201,14 +179,9 @@ fn queue_blocking_task(
                 metrics::histogram!("te_batch_next_size", batch_size as f64);
                 metrics::histogram!("te_batch_next_tokens", current_tokens as f64);
                 metrics::gauge!("te_queue_size", entries.len() as f64);
-            },
+            }
         }
     }
-}
-
-unsafe fn raw_u32_vec(capacity: usize) -> *mut u32 {
-    let layout = Layout::array::<u32>(capacity).unwrap();
-    alloc(layout).cast::<u32>()
 }
 
 pub type NextBatch = (Vec<Metadata>, Batch);

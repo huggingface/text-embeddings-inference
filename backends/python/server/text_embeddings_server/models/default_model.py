@@ -42,9 +42,7 @@ class DefaultModel(Model):
 
         output = self.model(**kwargs)
         embedding = output[0][:, 0]
-        results = torch.nn.functional.normalize(embedding, p=2, dim=1)
-
-        cpu_results = results.view(-1).tolist()
+        cpu_results = embedding.view(-1).tolist()
 
         return [
             Embedding(

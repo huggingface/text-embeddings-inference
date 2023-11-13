@@ -1,5 +1,5 @@
-use crate::TextEmbeddingsError;
 /// Payload tokenization logic
+use crate::TextEmbeddingsError;
 use tokenizers::tokenizer::Tokenizer;
 use tokenizers::TruncationDirection;
 use tokio::sync::{mpsc, oneshot};
@@ -81,11 +81,7 @@ impl Tokenization {
 
         // Await on response channel
         // Unwrap is safe here
-        let payload = response_receiver.await.expect("Tokenization background task dropped the sender without sending a response. This is a bug.")?;
-
-        metrics::histogram!("te_request_input_length", payload.input_ids.len() as f64);
-
-        Ok(payload)
+        Ok(response_receiver.await.expect("Tokenization background task dropped the sender without sending a response. This is a bug.")?)
     }
 }
 

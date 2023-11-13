@@ -8,8 +8,9 @@ homepage.workspace = true
 [dependencies]
 hf-hub = { version = "^0.3.0", features = ["tokio"] }
 metrics = "^0.21"
+rayon = "^1.8"
 text-embeddings-backend = { path = "../backends" }
 thiserror = "^1.0"
-tokenizers = { version = "^0.14", default-features=false, features=["onig"] }
+tokenizers = { version = "^0.14.1", default-features=false, features=["onig", "esaxx_fast"] }
 tracing = "^0.1"
 tokio = { version = "^1.25", features = ["rt", "rt-multi-thread", "parking_lot", "sync"] }

@@ -448,10 +448,7 @@ impl QuantBertModel {
             Pool::Mean => (outputs.sum_keepdim(0)? / (batch.max_length as f64))?,
         };
 
-        // Normalize
-        let normalized_results = results.broadcast_div(&results.sqr()?.sum_keepdim(1)?.sqrt()?)?;
-
-        Ok(normalized_results)
+        Ok(results)
     }
 }
 
