@@ -35,12 +35,12 @@ TEI offers multiple features tailored to optimize the deployment process and enh
 Benchmark for [BAAI/bge-base-en-v1.5](https://hf.co/BAAI/bge-large-en-v1.5) on an NVIDIA A10 with a sequence length of 512 tokens:
 
 <p>
-  <img src="assets/bs1-lat.png" width="400" />
-  <img src="assets/bs1-tp.png" width="400" />
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/tei/bs1-lat.png" width="400" alt="Latency comparison for batch size of 1" />
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/tei/bs1-tp.png" width="400" alt="Throughput comparison for batch size of 1"/>
 </p>
 <p>
-  <img src="assets/bs32-lat.png" width="400" />
-  <img src="assets/bs32-tp.png" width="400" />
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/tei/bs32-lat.png" width="400" alt="Latency comparison for batch size of 32"/>
+  <img src="https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/tei/bs32-tp.png" width="400" alt="Throughput comparison for batch size of 32" />
 </p>
 
 **Getting Started:**
