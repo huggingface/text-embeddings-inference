@@ -29,6 +29,8 @@ pub struct Metadata {
     pub queue_time: Instant,
     /// Number of tokens in the prompt
     pub prompt_tokens: usize,
+    /// Normalize the embeddings
+    pub normalize: bool,
 }
 
 /// Request Queue
@@ -126,7 +128,7 @@ fn queue_blocking_task(
                 let mut current_tokens = 0;
                 let mut max_length = 0;
 
-                while let Some(mut entry) = entries.pop_front() {
+                while let Some(entry) = entries.pop_front() {
                     // Filter entries where the response receiver was dropped (== entries where the request
                     // was dropped by the client)
                     if entry.metadata.response_tx.is_closed() {
@@ -156,7 +158,6 @@ fn queue_blocking_task(
                     }
                 }
 
-
                 let batch_size = metadata.len();
                 let next_batch = if metadata.is_empty() {
                     None
@@ -178,7 +179,7 @@ fn queue_blocking_task(
                 metrics::histogram!("te_batch_next_size", batch_size as f64);
                 metrics::histogram!("te_batch_next_tokens", current_tokens as f64);
                 metrics::gauge!("te_queue_size", entries.len() as f64);
-            },
+            }
         }
     }
 }

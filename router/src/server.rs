@@ -93,7 +93,7 @@ async fn embed(
 
                 let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
                 let response = infer
-                    .embed(input, req.truncate, permit)
+                    .embed(input, req.truncate, req.normalize, permit)
                     .await
                     .map_err(ErrorResponse::from)?;
 
@@ -135,7 +135,9 @@ async fn embed(
                     let local_infer = infer.clone();
                     futures.push(async move {
                         let permit = local_infer.acquire_permit().await;
-                        local_infer.embed(input, req.truncate, permit).await
+                        local_infer
+                            .embed(input, req.truncate, req.normalize, permit)
+                            .await
                     })
                 }
                 let results = join_all(futures)
@@ -269,7 +271,7 @@ async fn openai_embed(
 
                 let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
                 let response = infer
-                    .embed(input, false, permit)
+                    .embed(input, false, true, permit)
                     .await
                     .map_err(ErrorResponse::from)?;
 
@@ -315,7 +317,7 @@ async fn openai_embed(
                     let local_infer = infer.clone();
                     futures.push(async move {
                         let permit = local_infer.acquire_permit().await;
-                        local_infer.embed(input, false, permit).await
+                        local_infer.embed(input, false, true, permit).await
                     })
                 }
                 let results = join_all(futures)

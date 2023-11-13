@@ -1,6 +1,7 @@
 use crate::queue::{Entry, Metadata, NextBatch, Queue};
 use crate::tokenization::Tokenization;
 use crate::TextEmbeddingsError;
+use rayon::prelude::*;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{Backend, Embedding};
@@ -85,6 +86,7 @@ impl Infer {
         &self,
         inputs: String,
         truncate: bool,
+        normalize: bool,
         permit: OwnedSemaphorePermit,
     ) -> Result<InferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
@@ -112,6 +114,7 @@ impl Infer {
                 tokenization: start_time.elapsed(),
                 queue_time: Instant::now(),
                 prompt_tokens: encoding.input_ids.len(),
+                normalize,
             },
             encoding,
         });
@@ -185,7 +188,23 @@ async fn embed_task(
         // Handle sending responses in another thread to avoid starving the backend
         tokio::task::spawn_blocking(move || match results {
             Ok(embeddings) => {
-                batch.0.into_iter().zip(embeddings).for_each(|(m, e)| {
+                batch.0.into_par_iter().zip(embeddings).for_each(|(m, e)| {
+                    let e = match m.normalize {
+                        // Normalize embedding
+                        true => {
+                            let scale = (1.0
+                                / e.iter()
+                                    .map(|v| {
+                                        let v = *v as f64;
+                                        v * v
+                                    })
+                                    .sum::<f64>()
+                                    .sqrt()) as f32;
+                            e.into_iter().map(|v| v * scale).collect()
+                        }
+                        false => e,
+                    };
+
                     let _ = m.response_tx.send(Ok(InferResponse {
                         embeddings: e,
                         prompt_tokens: m.prompt_tokens,

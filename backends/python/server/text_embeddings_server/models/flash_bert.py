@@ -243,8 +243,7 @@ class FlashBert(Model):
             cu_seqlens=batch.cu_seqlens,
             max_s=batch.max_s,
         )
-        results = torch.nn.functional.normalize(embedding, p=2, dim=1)
-        cpu_results = results.view(-1).tolist()
+        cpu_results = embedding.view(-1).tolist()
 
         return [
             Embedding(

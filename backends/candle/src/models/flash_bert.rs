@@ -383,10 +383,7 @@ impl FlashBertModel {
             }
         };
 
-        // Normalize
-        let normalized_results = results.broadcast_div(&results.sqr()?.sum_keepdim(1)?.sqrt()?)?;
-
-        Ok(normalized_results)
+        Ok(results)
     }
 }
 
