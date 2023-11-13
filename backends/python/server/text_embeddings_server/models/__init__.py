@@ -6,8 +6,8 @@ from typing import Optional
 from transformers import AutoConfig
 from transformers.models.bert import BertConfig
 
-from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.default_model import DefaultModel
+from text_embeddings_server.models.jina_model import JinaModel
 
 __all__ = ["Model"]
 
@@ -53,6 +53,8 @@ def get_model(model_path: Path, dtype: Optional[str]):
             and FLASH_ATTENTION
         ):
             return FlashBert(model_path, device, dtype)
+        elif 'JinaBertForMaskedLM' in config.architectures:
+            return JinaModel(model_path, device, dtype)
         else:
             return DefaultModel(model_path, device, dtype)
 
