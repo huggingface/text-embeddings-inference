@@ -100,10 +100,9 @@ async fn predict(
         _ => panic!(),
     };
 
-    tracing::info!("{response:?}");
-
-    let predictions = {
+    let mut predictions: Vec<Prediction> = {
         if req.softmax {
+            // Softmax
             if response.results.len() > 1 {
                 let max = *response
                     .results
@@ -119,21 +118,27 @@ async fn predict(
                 for v in response.results.iter_mut() {
                     *v /= den;
                 }
-            } else {
+            }
+            // Sigmoid
+            else {
                 response.results[0] = 1.0 / (1.0 + (-response.results[0]).exp());
             }
         }
 
+        // Map score to label
         response
             .results
             .into_iter()
-            .zip(id2label.values())
-            .map(|(s, l)| Prediction {
+            .enumerate()
+            .map(|(i, s)| Prediction {
                 score: s,
-                label: l.clone(),
+                label: id2label.get(&i.to_string()).unwrap().clone(),
             })
             .collect()
     };
+    // Reverse sort
+    predictions.sort_by(|x, y| x.score.partial_cmp(&y.score).unwrap());
+    predictions.reverse();
 
     metrics::increment_counter!("te_request_success", "method" => "predict");
 
