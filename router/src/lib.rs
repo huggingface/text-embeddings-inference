@@ -90,11 +90,21 @@ pub(crate) struct PredictRequest {
     #[serde(default)]
     #[schema(default = "false", example = "false")]
     pub truncate: bool,
+    #[serde(default)]
+    #[schema(default = "false", example = "false")]
+    pub softmax: bool,
 }
 
 #[derive(Serialize, ToSchema)]
-#[schema(example = json!([["0.0", "1.0"]]))]
-pub(crate) struct PredictResponse(Vec<f32>);
+pub(crate) struct Prediction {
+    #[schema(example = "0.5")]
+    score: f32,
+    #[schema(example = "admiration")]
+    label: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct PredictResponse(Vec<Prediction>);
 
 #[derive(Deserialize, ToSchema)]
 #[serde(untagged)]

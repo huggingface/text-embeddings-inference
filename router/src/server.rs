@@ -2,7 +2,7 @@
 use crate::{
     ClassifierModel, EmbedRequest, EmbedResponse, EmbeddingModel, ErrorResponse, ErrorType, Info,
     Input, ModelType, OpenAICompatEmbedding, OpenAICompatErrorResponse, OpenAICompatRequest,
-    OpenAICompatResponse, OpenAICompatUsage, PredictRequest, PredictResponse, Sequence,
+    OpenAICompatResponse, OpenAICompatUsage, PredictRequest, PredictResponse, Prediction, Sequence,
 };
 use axum::extract::Extension;
 use axum::http::{HeaderMap, Method, StatusCode};
@@ -79,6 +79,7 @@ example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )]
 async fn predict(
     infer: Extension<Infer>,
+    info: Extension<Info>,
     Json(req): Json<PredictRequest>,
 ) -> Result<(HeaderMap, Json<PredictResponse>), (StatusCode, Json<ErrorResponse>)> {
     let span = tracing::Span::current();
@@ -89,10 +90,50 @@ async fn predict(
     let compute_chars = req.inputs.count_chars();
 
     let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
-    let response = infer
+    let mut response = infer
         .predict(req.inputs, req.truncate, permit)
         .await
         .map_err(ErrorResponse::from)?;
+
+    let id2label = match &info.model_type {
+        ModelType::Classifier(classifier) => &classifier.id2label,
+        _ => panic!(),
+    };
+
+    tracing::info!("{response:?}");
+
+    let predictions = {
+        if req.softmax {
+            if response.results.len() > 1 {
+                let max = *response
+                    .results
+                    .iter()
+                    .max_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap())
+                    .unwrap();
+
+                let mut den = 0.0;
+                for v in response.results.iter_mut() {
+                    *v = (*v - max).exp();
+                    den += *v;
+                }
+                for v in response.results.iter_mut() {
+                    *v /= den;
+                }
+            } else {
+                response.results[0] = 1.0 / (1.0 + (-response.results[0]).exp());
+            }
+        }
+
+        response
+            .results
+            .into_iter()
+            .zip(id2label.values())
+            .map(|(s, l)| Prediction {
+                score: s,
+                label: l.clone(),
+            })
+            .collect()
+    };
 
     metrics::increment_counter!("te_request_success", "method" => "predict");
 
@@ -155,7 +196,7 @@ async fn predict(
 
     tracing::info!("Success");
 
-    Ok((headers, Json(PredictResponse(response.results))))
+    Ok((headers, Json(PredictResponse(predictions))))
 }
 
 /// Get Embeddings
@@ -566,6 +607,7 @@ pub async fn run(
     ClassifierModel,
     EmbeddingModel,
     PredictRequest,
+    Prediction,
     PredictResponse,
     OpenAICompatRequest,
     OpenAICompatEmbedding,
