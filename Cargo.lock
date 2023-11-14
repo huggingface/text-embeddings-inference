@@ -3118,7 +3118,6 @@ version = "0.3.0"
 dependencies = [
  "hf-hub",
  "metrics",
- "rayon",
  "text-embeddings-backend",
  "thiserror",
  "tokenizers",

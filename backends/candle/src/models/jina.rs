@@ -1,10 +1,10 @@
 use crate::alibi::build_alibi_tensor;
 use crate::layers::{HiddenAct, LayerNorm, Linear, CUBLASLT};
-use crate::models::EmbeddingModel;
+use crate::models::Model;
 use crate::models::{Config, PositionEmbeddingType};
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{Embedding, VarBuilder};
-use text_embeddings_backend_core::{Batch, Pool};
+use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 #[derive(Debug)]
 struct BertEmbeddings {
@@ -350,15 +350,23 @@ pub struct JinaBertModel {
 }
 
 impl JinaBertModel {
-    pub fn load(vb: VarBuilder, config: &Config, pool: Pool) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &Config, model_type: ModelType) -> Result<Self> {
         let alibi = match config.position_embedding_type {
             PositionEmbeddingType::Alibi => Some(build_alibi_tensor(
                 config.max_position_embeddings,
                 config.num_attention_heads,
-                &vb.device(),
+                vb.device(),
                 vb.dtype(),
             )?),
             PositionEmbeddingType::Absolute => None,
+        };
+
+        let pool = match model_type {
+            // Classifier models always use CLS pooling
+            ModelType::Classifier => {
+                candle::bail!("`classifier` model type is not supported for Jina")
+            }
+            ModelType::Embedding(pool) => pool,
         };
 
         // Check pool type
@@ -586,7 +594,7 @@ impl JinaBertModel {
     }
 }
 
-impl EmbeddingModel for JinaBertModel {
+impl Model for JinaBertModel {
     fn embed(&self, batch: Batch) -> Result<Tensor> {
         self.forward(batch)
     }

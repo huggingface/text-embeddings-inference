@@ -16,7 +16,7 @@
 use candle::{DType, Device, Result, Tensor};
 
 fn get_slopes_power_of_2(n: usize) -> Vec<f64> {
-    let start: f64 = 2_f64.powf(-2_f64.powf(-((n as f64).log2() - 3_f64)));
+    let start: f64 = 2_f64.powf(-(2_f64.powf(-((n as f64).log2() - 3_f64))));
 
     (0..n).map(|i| start * start.powi(i as i32)).collect()
 }

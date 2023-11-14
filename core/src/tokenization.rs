@@ -1,7 +1,7 @@
 /// Payload tokenization logic
 use crate::TextEmbeddingsError;
 use tokenizers::tokenizer::Tokenizer;
-use tokenizers::TruncationDirection;
+use tokenizers::{EncodeInput, TruncationDirection, TruncationParams, TruncationStrategy};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{instrument, Span};
 
@@ -61,7 +61,7 @@ impl Tokenization {
     #[instrument(skip_all)]
     pub async fn encode(
         &self,
-        inputs: String,
+        inputs: EncodingInput,
         truncate: bool,
     ) -> Result<Encoding, TextEmbeddingsError> {
         // Check if inputs is empty
@@ -81,13 +81,13 @@ impl Tokenization {
 
         // Await on response channel
         // Unwrap is safe here
-        Ok(response_receiver.await.expect("Tokenization background task dropped the sender without sending a response. This is a bug.")?)
+        response_receiver.await.expect("Tokenization background task dropped the sender without sending a response. This is a bug.")
     }
 }
 
 /// Start tokenization workers
 fn tokenizer_worker(
-    tokenizer: Tokenizer,
+    mut tokenizer: Tokenizer,
     max_input_length: usize,
     position_offset: usize,
     mut receiver: mpsc::UnboundedReceiver<TokenizerRequest>,
@@ -103,7 +103,7 @@ fn tokenizer_worker(
                     truncate,
                     max_input_length,
                     position_offset,
-                    &tokenizer,
+                    &mut tokenizer,
                 ));
             }
         })
@@ -112,26 +112,34 @@ fn tokenizer_worker(
 
 /// Get input length and optionally truncate it
 fn encode_input(
-    inputs: String,
+    inputs: EncodingInput,
     truncate: bool,
     max_input_length: usize,
     position_offset: usize,
-    tokenizer: &Tokenizer,
+    tokenizer: &mut Tokenizer,
 ) -> Result<Encoding, TextEmbeddingsError> {
-    // Get the number of tokens in the input
-    let mut encoding = tokenizer.encode(inputs.clone(), true)?;
+    // Default truncation params
+    let truncate_params = truncate.then_some(TruncationParams {
+        direction: TruncationDirection::Right,
+        max_length: max_input_length,
+        strategy: TruncationStrategy::LongestFirst,
+        stride: 0,
+    });
 
-    let mut seq_len = encoding.len();
+    let inputs: EncodeInput = match inputs {
+        EncodingInput::Single(s) => s.into(),
+        EncodingInput::Dual(s1, s2) => (s1, s2).into(),
+    };
+
+    let encoding = tokenizer
+        .with_truncation(truncate_params)?
+        .encode(inputs, true)?;
+    let seq_len = encoding.len();
 
     if seq_len > max_input_length {
-        if truncate {
-            encoding.truncate(max_input_length, 0, TruncationDirection::Right);
-            seq_len = max_input_length;
-        } else {
-            return Err(TextEmbeddingsError::Validation(format!(
-                "`inputs` must have less than {max_input_length} tokens. Given: {seq_len}"
-            )));
-        }
+        return Err(TextEmbeddingsError::Validation(format!(
+            "`inputs` must have less than {max_input_length} tokens. Given: {seq_len}"
+        )));
     }
 
     metrics::histogram!("te_request_input_length", seq_len as f64);
@@ -151,8 +159,29 @@ pub struct Encoding {
     pub position_ids: Vec<u32>,
 }
 
+#[derive(Debug)]
+pub enum EncodingInput {
+    Single(String),
+    Dual(String, String),
+}
+
+impl EncodingInput {
+    fn is_empty(&self) -> bool {
+        match self {
+            EncodingInput::Single(s) => s.is_empty(),
+            EncodingInput::Dual(s1, s2) => s1.is_empty() && s2.is_empty(),
+        }
+    }
+}
+
+impl From<String> for EncodingInput {
+    fn from(value: String) -> Self {
+        Self::Single(value)
+    }
+}
+
 type TokenizerRequest = (
-    String,
+    EncodingInput,
     bool,
     oneshot::Sender<Result<Encoding, TextEmbeddingsError>>,
     Span,

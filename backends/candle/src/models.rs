@@ -5,10 +5,8 @@ extern crate intel_mkl_src;
 extern crate accelerate_src;
 
 mod bert;
-mod bert_quant;
 
 pub use bert::{BertModel, Config, PositionEmbeddingType};
-pub use bert_quant::QuantBertModel;
 use candle::{Result, Tensor};
 pub use jina::JinaBertModel;
 use text_embeddings_backend_core::Batch;
@@ -20,6 +18,12 @@ mod jina;
 #[cfg(feature = "cuda")]
 pub use flash_bert::FlashBertModel;
 
-pub(crate) trait EmbeddingModel {
-    fn embed(&self, batch: Batch) -> Result<Tensor>;
+pub(crate) trait Model {
+    fn embed(&self, _batch: Batch) -> Result<Tensor> {
+        candle::bail!("`embed` is not implemented for this model");
+    }
+
+    fn predict(&self, _batch: Batch) -> Result<Tensor> {
+        candle::bail!("`predict is not implemented for this model");
+    }
 }
