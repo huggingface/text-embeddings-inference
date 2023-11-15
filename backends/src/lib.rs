@@ -70,7 +70,7 @@ impl Backend {
             )
         } else {
             // The backend is un-healthy or only just started. Do a more advanced health check
-            // by sending an embedding request.
+            // by calling the model forward on a test batch
 
             let batch = Batch {
                 input_ids: vec![0],
@@ -80,24 +80,8 @@ impl Backend {
                 max_length: 1,
             };
             match &self.model_type {
-                ModelType::Classifier => {
-                    let (sender, receiver) = oneshot::channel();
-                    self.backend_sender
-                        .send(BackendCommand::Predict(batch, Span::current(), sender))
-                        .expect("No backend receiver. This is a bug.");
-                    receiver.await.expect(
-                        "Backend blocking task dropped the sender without sending a response. This is a bug.",
-                    ).map(|_| ())
-                }
-                ModelType::Embedding(_) => {
-                    let (sender, receiver) = oneshot::channel();
-                    self.backend_sender
-                        .send(BackendCommand::Embed(batch, Span::current(), sender))
-                        .expect("No backend receiver. This is a bug.");
-                    receiver.await.expect(
-                        "Backend blocking task dropped the sender without sending a response. This is a bug.",
-                    ).map(|_| ())
-                }
+                ModelType::Classifier => self.predict(batch).await.map(|_| ()),
+                ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
             }
         };
 
