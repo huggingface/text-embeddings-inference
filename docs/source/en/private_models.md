@@ -37,5 +37,5 @@ model=<your private model>
 volume=$PWD/data
 token=<your cli Hugging Face Hub token>
 
-docker run --gpus all -e HUGGING_FACE_HUB_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.2.2 --model-id $model
+docker run --gpus all -e HUGGING_FACE_HUB_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.4.0 --model-id $model
 ```

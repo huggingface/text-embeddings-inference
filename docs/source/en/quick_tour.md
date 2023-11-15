@@ -34,7 +34,7 @@ model=BAAI/bge-large-en-v1.5
 revision=refs/pr/5
 volume=$PWD/data 
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.2.2 --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.4.0 --model-id $model --revision $revision
 ```
 
 <Tip>
@@ -67,7 +67,7 @@ model=BAAI/bge-reranker-large
 revision=refs/pr/4
 volume=$PWD/data 
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.3.0 --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.4.0 --model-id $model --revision $revision
 ```
 
 Once you have deployed a model you can use the `predict` endpoint and rank the similarity between a pair of inputs:
@@ -85,7 +85,7 @@ You can also use classic Sequence Classification models like `SamLowe/roberta-ba
 model=SamLowe/roberta-base-go_emotions
 volume=$PWD/data 
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.3.0 --model-id $model 
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.4.0 --model-id $model 
 ```
 
 Once you have deployed the model you can use the `predict` endpoint to get the emotions most associated with an input:

@@ -68,13 +68,15 @@ NVIDIA drivers with CUDA version 12.2 or higher.
 
 Find the appropriate Docker image for your hardware in the following table:
 
-| Architecture                        | Image                                                      |
-|-------------------------------------|------------------------------------------------------------|
-| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-0.2.2    |
-| Volta                               | NOT SUPPORTED                                              |
-| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-0.2.2 |
-| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:0.2.2        |
-| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-0.2.2     |
-| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-0.2.2     |
-| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-0.2.2 |
+| Architecture                        | Image                                                                     |
+|-------------------------------------|---------------------------------------------------------------------------|
+| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-0.4.0                   |
+| Volta                               | NOT SUPPORTED                                                             |
+| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-0.4.0 (experimental) |
+| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:0.4.0                       |
+| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-0.4.0                    |
+| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-0.4.0                    |
+| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-0.4.0 (experimental) |
 
+**Warning**: Flash Attention is turned off by default for the Turing image as it suffers from precision issues.
+You can turn Flash Attention v1 ON by using the `USE_FLASH_ATTENTION=True` environment variable.
