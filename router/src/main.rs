@@ -132,8 +132,8 @@ pub struct ModelConfig {
     #[serde(alias = "n_positions")]
     pub max_position_embeddings: usize,
     pub pad_token_id: usize,
-    pub id2label: HashMap<String, String>,
-    pub label2id: HashMap<String, usize>,
+    pub id2label: Option<HashMap<String, String>>,
+    pub label2id: Option<HashMap<String, usize>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -236,8 +236,12 @@ async fn main() -> Result<()> {
     // Info model type
     let model_type = match &backend_model_type {
         text_embeddings_backend::ModelType::Classifier => ModelType::Classifier(ClassifierModel {
-            id2label: config.id2label,
-            label2id: config.label2id,
+            id2label: config
+                .id2label
+                .context("`config.json` does not contain `id2label`")?,
+            label2id: config
+                .label2id
+                .context("`config.json` does not contain `label2id`")?,
         }),
         text_embeddings_backend::ModelType::Embedding(pool) => {
             ModelType::Embedding(EmbeddingModel {

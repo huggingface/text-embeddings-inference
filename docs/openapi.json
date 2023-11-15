@@ -17,8 +17,8 @@
         "tags": [
           "Text Embeddings Inference"
         ],
-        "summary": "Get Embeddings",
-        "description": "Get Embeddings",
+        "summary": "Get Embeddings. Returns a 424 status code if the model is not an embedding model.",
+        "description": "Get Embeddings. Returns a 424 status code if the model is not an embedding model.",
         "operationId": "embed",
         "requestBody": {
           "content": {
@@ -100,86 +100,13 @@
         }
       }
     },
-    "/health": {
-      "get": {
-        "tags": [
-          "Text Embeddings Inference"
-        ],
-        "summary": "Health check method",
-        "description": "Health check method",
-        "operationId": "health",
-        "responses": {
-          "200": {
-            "description": "Everything is working fine"
-          },
-          "503": {
-            "description": "Text embeddings Inference is down",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
-                "example": {
-                  "error": "unhealthy",
-                  "error_type": "unhealthy"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/info": {
-      "get": {
-        "tags": [
-          "Text Embeddings Inference"
-        ],
-        "summary": "Text Embeddings Inference endpoint info",
-        "description": "Text Embeddings Inference endpoint info",
-        "operationId": "get_model_info",
-        "responses": {
-          "200": {
-            "description": "Served model info",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Info"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/metrics": {
-      "get": {
-        "tags": [
-          "Text Embeddings Inference"
-        ],
-        "summary": "Prometheus metrics scrape endpoint",
-        "description": "Prometheus metrics scrape endpoint",
-        "operationId": "metrics",
-        "responses": {
-          "200": {
-            "description": "Prometheus Metrics",
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/openai": {
+    "/embeddings": {
       "post": {
         "tags": [
           "Text Embeddings Inference"
         ],
-        "summary": "OpenAI compatible route",
-        "description": "OpenAI compatible route",
+        "summary": "OpenAI compatible route. Returns a 424 status code if the model is not an embedding model.",
+        "description": "OpenAI compatible route. Returns a 424 status code if the model is not an embedding model.",
         "operationId": "openai_embed",
         "requestBody": {
           "content": {
@@ -260,10 +187,199 @@
           }
         }
       }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Health check method",
+        "description": "Health check method",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Everything is working fine"
+          },
+          "503": {
+            "description": "Text embeddings Inference is down",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "unhealthy",
+                  "error_type": "unhealthy"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/info": {
+      "get": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Text Embeddings Inference endpoint info",
+        "description": "Text Embeddings Inference endpoint info",
+        "operationId": "get_model_info",
+        "responses": {
+          "200": {
+            "description": "Served model info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Info"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Prometheus metrics scrape endpoint",
+        "description": "Prometheus metrics scrape endpoint",
+        "operationId": "metrics",
+        "responses": {
+          "200": {
+            "description": "Prometheus Metrics",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/predict": {
+      "post": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Get Predictions. Returns a 424 status code if the model is not a Sequence Classification model",
+        "description": "Get Predictions. Returns a 424 status code if the model is not a Sequence Classification model",
+        "operationId": "predict",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PredictRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Predictions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PredictResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Prediction Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Inference failed",
+                  "error_type": "backend"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Model is overloaded",
+                  "error_type": "overloaded"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "ClassifierModel": {
+        "type": "object",
+        "required": [
+          "id2label",
+          "label2id"
+        ],
+        "properties": {
+          "id2label": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "example": {
+              "0": "LABEL"
+            }
+          },
+          "label2id": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "example": {
+              "LABEL": "0"
+            }
+          }
+        }
+      },
       "EmbedRequest": {
         "type": "object",
         "required": [
@@ -272,6 +388,11 @@
         "properties": {
           "inputs": {
             "$ref": "#/components/schemas/Input"
+          },
+          "normalize": {
+            "type": "boolean",
+            "default": "true",
+            "example": "true"
           },
           "truncate": {
             "type": "boolean",
@@ -296,6 +417,18 @@
             "2.0"
           ]
         ]
+      },
+      "EmbeddingModel": {
+        "type": "object",
+        "required": [
+          "pooling"
+        ],
+        "properties": {
+          "pooling": {
+            "type": "string",
+            "example": "cls"
+          }
+        }
       },
       "ErrorResponse": {
         "type": "object",
@@ -327,7 +460,7 @@
         "required": [
           "model_id",
           "model_dtype",
-          "model_pooling",
+          "model_type",
           "max_concurrent_requests",
           "max_input_length",
           "max_batch_tokens",
@@ -378,14 +511,13 @@
             "description": "Model info",
             "example": "thenlper/gte-base"
           },
-          "model_pooling": {
-            "type": "string",
-            "example": "cls"
-          },
           "model_sha": {
             "type": "string",
             "example": "fca14538aa9956a46526bd1d0d11d69e19b5a101",
             "nullable": true
+          },
+          "model_type": {
+            "$ref": "#/components/schemas/ModelType"
           },
           "sha": {
             "type": "string",
@@ -413,6 +545,32 @@
             "type": "array",
             "items": {
               "type": "string"
+            }
+          }
+        ]
+      },
+      "ModelType": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "classifier"
+            ],
+            "properties": {
+              "classifier": {
+                "$ref": "#/components/schemas/ClassifierModel"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "embedding"
+            ],
+            "properties": {
+              "embedding": {
+                "$ref": "#/components/schemas/EmbeddingModel"
+              }
             }
           }
         ]
@@ -536,6 +694,67 @@
             "minimum": 0
           }
         }
+      },
+      "PredictRequest": {
+        "type": "object",
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "inputs": {
+            "$ref": "#/components/schemas/Sequence"
+          },
+          "raw_scores": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false"
+          },
+          "truncate": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false"
+          }
+        }
+      },
+      "PredictResponse": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/Prediction"
+        }
+      },
+      "Prediction": {
+        "type": "object",
+        "required": [
+          "score",
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "example": "admiration"
+          },
+          "score": {
+            "type": "number",
+            "format": "float",
+            "example": "0.5"
+          }
+        }
+      },
+      "Sequence": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "",
+            "maxItems": 2,
+            "minItems": 2
+          }
+        ]
       }
     }
   },

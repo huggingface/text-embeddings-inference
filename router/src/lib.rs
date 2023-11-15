@@ -92,7 +92,7 @@ pub(crate) struct PredictRequest {
     pub truncate: bool,
     #[serde(default)]
     #[schema(default = "false", example = "false")]
-    pub softmax: bool,
+    pub raw_scores: bool,
 }
 
 #[derive(Serialize, ToSchema)]

@@ -55,15 +55,15 @@ async fn health(infer: Extension<Infer>) -> Result<(), (StatusCode, Json<ErrorRe
     }
 }
 
-/// Get Predictions
+/// Get Predictions. Returns a 424 status code if the model is not a Sequence Classification model
 #[utoipa::path(
 post,
 tag = "Text Embeddings Inference",
 path = "/predict",
 request_body = PredictRequest,
 responses(
-(status = 200, description = "Embeddings", body = PredictResponse),
-(status = 424, description = "Embedding Error", body = ErrorResponse,
+(status = 200, description = "Predictions", body = PredictResponse),
+(status = 424, description = "Prediction Error", body = ErrorResponse,
 example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 (status = 429, description = "Model is overloaded", body = ErrorResponse,
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
@@ -101,7 +101,7 @@ async fn predict(
     };
 
     let mut predictions: Vec<Prediction> = {
-        if req.softmax {
+        if !req.raw_scores {
             // Softmax
             if response.results.len() > 1 {
                 let max = *response
@@ -204,7 +204,7 @@ async fn predict(
     Ok((headers, Json(PredictResponse(predictions))))
 }
 
-/// Get Embeddings
+/// Get Embeddings. Returns a 424 status code if the model is not an embedding model.
 #[utoipa::path(
 post,
 tag = "Text Embeddings Inference",
@@ -381,11 +381,11 @@ async fn embed(
     Ok((headers, Json(response)))
 }
 
-/// OpenAI compatible route
+/// OpenAI compatible route. Returns a 424 status code if the model is not an embedding model.
 #[utoipa::path(
 post,
 tag = "Text Embeddings Inference",
-path = "/openai",
+path = "/embeddings",
 request_body = OpenAICompatRequest,
 responses(
 (status = 200, description = "Embeddings", body = OpenAICompatResponse),
@@ -693,7 +693,7 @@ pub async fn run(
         .route("/embed", post(embed))
         .route("/predict", post(predict))
         // OpenAI compat route
-        .route("/openai", post(openai_embed))
+        .route("/embeddings", post(openai_embed))
         // Base Health route
         .route("/health", get(health))
         // Inference API health route
