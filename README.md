@@ -9,9 +9,10 @@
   <img alt="Swagger API documentation" src="https://img.shields.io/badge/API-Swagger-informational">
 </a>
 
-A blazing fast inference solution for text embeddings models. 
+A blazing fast inference solution for text embeddings models.
 
-Benchmark for [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5) on an Nvidia A10 with a sequence length of 512 tokens:
+Benchmark for [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5) on an Nvidia A10 with a sequence
+length of 512 tokens:
 
 <p>
   <img src="assets/bs1-lat.png" width="400" />
@@ -27,33 +28,37 @@ Benchmark for [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1
 ## Table of contents
 
 - [Get Started](#get-started)
-  - [Supported Models](#supported-models)
-  - [Docker](#docker)
-  - [Docker Images](#docker-images)
-  - [API Documentation](#api-documentation)
-  - [Using a private or gated model](#using-a-private-or-gated-model)
-  - [Distributed Tracing](#distributed-tracing)
+    - [Supported Models](#supported-models)
+    - [Docker](#docker)
+    - [Docker Images](#docker-images)
+    - [API Documentation](#api-documentation)
+    - [Using a private or gated model](#using-a-private-or-gated-model)
+    - [Using Sequence Classification models](#using-sequence-classification-models)
+    - [Distributed Tracing](#distributed-tracing)
 - [Local Install](#local-install)
 - [Docker Build](#docker-build)
 
-Text Embeddings Inference (TEI) is a toolkit for deploying and serving open source text embeddings models. TEI enables
-high-performance extraction for the most popular models, including FlagEmbedding, Ember, GTE and E5. TEI implements many features
-such as:
+Text Embeddings Inference (TEI) is a toolkit for deploying and serving open source text embeddings and sequence
+classification models. TEI enables high-performance extraction for the most popular models, including FlagEmbedding,
+Ember, GTE and E5. TEI implements many features such as:
 
 * No model graph compilation step
 * Small docker images and fast boot times. Get ready for true serverless!
 * Token based dynamic batching
 * Optimized transformers code for inference using [Flash Attention](https://github.com/HazyResearch/flash-attention),
-[Candle](https://github.com/huggingface/candle) and [cuBLASLt](https://docs.nvidia.com/cuda/cublas/#using-the-cublaslt-api)
+  [Candle](https://github.com/huggingface/candle)
+  and [cuBLASLt](https://docs.nvidia.com/cuda/cublas/#using-the-cublaslt-api)
 * [Safetensors](https://github.com/huggingface/safetensors) weight loading
 * Production ready (distributed tracing with Open Telemetry, Prometheus metrics)
-
 
 ## Get Started
 
 ### Supported Models
 
-You can use any JinaBERT model with Alibi or absolute positions or any BERT, CamemBERT, RoBERTa, or XLM-RoBERTa model with absolute positions in `text-embeddings-inference`.
+#### Text Embeddings
+
+You can use any JinaBERT model with Alibi or absolute positions or any BERT, CamemBERT, RoBERTa, or XLM-RoBERTa model
+with absolute positions in `text-embeddings-inference`.
 
 **Support for other model types will be added in the future.**
 
@@ -73,8 +78,20 @@ Examples of supported models:
 | N/A       | JinaBERT    | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)   |
 | N/A       | JinaBERT    | [jinaai/jina-embeddings-v2-small-en](https://hf.co/jinaai/jina-embeddings-v2-small-en) |
 
+You can explore the list of best performing text embeddings
+models [here](https://huggingface.co/spaces/mteb/leaderboard).
 
-You can explore the list of best performing text embeddings models [here](https://huggingface.co/spaces/mteb/leaderboard).
+#### Sequence Classification and Re-Ranking
+
+`text-embeddings-inference` v0.4.0 added support for CamemBERT, RoBERTa and XLM-RoBERTa Sequence Classification models.
+
+Example of supported sequence classification models:
+
+| Task               | Model Type  | Model ID                                                                                    | Revision    |
+|--------------------|-------------|---------------------------------------------------------------------------------------------|-------------|
+| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-large](https://huggingface.co/BAAI/bge-reranker-large)                   | `refs/pr/4` |
+| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)                     | `refs/pr/5` |
+| Sentiment Analysis | RoBERTa     | [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions) |             |
 
 ### Docker
 
@@ -95,7 +112,8 @@ curl 127.0.0.1:8080/embed \
     -H 'Content-Type: application/json'
 ```
 
-**Note:** To use GPUs, you need to install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
+**Note:** To use GPUs, you need to install
+the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
 We also recommend using NVIDIA drivers with CUDA version 12.0 or higher.
 
 To see all options to serve your models:
@@ -130,20 +148,18 @@ Options:
 
       --dtype <DTYPE>
           The dtype to be forced upon the model
-          
-          If `dtype` is not set, it defaults to float32 on accelerate, and float16 for all other architectures
 
           [env: DTYPE=]
           [possible values: float16, float32]
 
       --pooling <POOLING>
-          Optionally control the pooling method. 
-          
-          If `pooling` is not set, the pooling configuration will be parsed from the model `1_Pooling/config.json`
-          configuration. 
-          
+          Optionally control the pooling method for embedding models.
+
+          If `pooling` is not set, the pooling configuration will be parsed from the model `1_Pooling/config.json` 
+          configuration.
+
           If `pooling` is set, it will override the model pooling configuration
-          
+
           [env: POOLING=]
           [possible values: cls, mean]
 
@@ -241,7 +257,8 @@ You can turn Flash Attention v1 ON by using the `USE_FLASH_ATTENTION=True` envir
 ### API documentation
 
 You can consult the OpenAPI documentation of the `text-embeddings-inference` REST API using the `/docs` route.
-The Swagger UI is also available at: [https://huggingface.github.io/text-embeddings-inference](https://huggingface.github.io/text-embeddings-inference).
+The Swagger UI is also available
+at: [https://huggingface.github.io/text-embeddings-inference](https://huggingface.github.io/text-embeddings-inference).
 
 ### Using a private or gated model
 
@@ -262,6 +279,48 @@ volume=$PWD/data # share a volume with the Docker container to avoid downloading
 token=<your cli READ token>
 
 docker run --gpus all -e HUGGING_FACE_HUB_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.3.0 --model-id $model
+```
+
+### Using Sequence Classification models
+
+`text-embeddings-inference` v0.4.0 added support for CamemBERT, RoBERTa and XLM-RoBERTa Sequence Classification models.
+See [this blogpost](https://blog.llamaindex.ai/boosting-rag-picking-the-best-embedding-reranker-models-42d079022e83) by
+the LlamaIndex team to understand how you can use Sequence Classification models in your RAG pipeline to improve
+downstream performance.
+
+```shell
+model=BAAI/bge-reranker-large
+revision=refs/pr/4
+volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
+
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.3.0 --model-id $model --revision $revision
+```
+
+And then you can rank the similarity between a pair of inputs with:
+
+```bash
+curl 127.0.0.1:8080/predict \
+    -X POST \
+    -d '{"inputs":["What is Deep Learning?", "Deep learning is..."], "raw_scores": true}' \
+    -H 'Content-Type: application/json'
+```
+
+You can also use classic Sequence Classification models like `SamLowe/roberta-base-go_emotions`:
+
+```shell
+model=SamLowe/roberta-base-go_emotions
+volume=$PWD/data 
+
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.3.0 --model-id $model 
+```
+
+Once you have deployed the model you can use the `predict` endpoint to get the emotions most associated with an input:
+
+```bash
+curl 127.0.0.1:8080/predict \
+    -X POST \
+    -d '{"inputs":"I like you."}' \
+    -H 'Content-Type: application/json'
 ```
 
 ### Distributed Tracing
@@ -290,7 +349,7 @@ cargo install --path router -F candle -F mkl
 cargo install --path router -F candle -F accelerate
 ```
 
-You can now launch Text Embeddings Inference on CPU with: 
+You can now launch Text Embeddings Inference on CPU with:
 
 ```shell
 model=BAAI/bge-large-en-v1.5
@@ -309,7 +368,8 @@ sudo apt-get install libssl-dev gcc -y
 
 GPUs with Cuda compute capabilities < 7.5 are not supported (V100, Titan V, GTX 1000 series, ...).
 
-Make sure you have Cuda and the nvidia drivers installed. We recommend using NVIDIA drivers with CUDA version 12.0 or higher. 
+Make sure you have Cuda and the nvidia drivers installed. We recommend using NVIDIA drivers with CUDA version 12.0 or
+higher.
 You also need to add the nvidia binaries to your path:
 
 ```shell

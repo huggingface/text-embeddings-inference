@@ -10,21 +10,23 @@ mod models;
 use crate::compute_cap::{incompatible_compute_cap, COMPILE_COMPUTE_CAP, RUNTIME_COMPUTE_CAP};
 #[cfg(feature = "cuda")]
 use crate::models::FlashBertModel;
-use crate::models::{
-    BertModel, EmbeddingModel, JinaBertModel, PositionEmbeddingType, QuantBertModel,
-};
+use crate::models::{BertModel, JinaBertModel, Model, PositionEmbeddingType};
 use candle::{DType, Device};
 use candle_nn::VarBuilder;
 use models::Config;
 use std::path::PathBuf;
-use text_embeddings_backend_core::{BackendError, Batch, Embedding, EmbeddingBackend, Pool};
+use text_embeddings_backend_core::{Backend, BackendError, Batch, Embedding, ModelType};
 
 pub struct CandleBackend {
-    model: Box<dyn EmbeddingModel + Send>,
+    model: Box<dyn Model + Send>,
 }
 
 impl CandleBackend {
-    pub fn new(model_path: PathBuf, dtype: String, pool: Pool) -> Result<Self, BackendError> {
+    pub fn new(
+        model_path: PathBuf,
+        dtype: String,
+        model_type: ModelType,
+    ) -> Result<Self, BackendError> {
         // Load config
         let config: String = std::fs::read_to_string(model_path.join("config.json"))
             .map_err(|err| BackendError::Start(err.to_string()))?;
@@ -49,49 +51,39 @@ impl CandleBackend {
             )));
         }
 
-        let model: Box<dyn EmbeddingModel + Send> = match device {
+        // Get candle dtype
+        let dtype = if &dtype == "float32" {
+            Ok(DType::F32)
+        } else if &dtype == "float16" {
+            Ok(DType::F16)
+        } else {
+            Err(BackendError::Start(format!(
+                "DType {dtype} is not supported"
+            )))
+        }?;
+
+        let safetensors_path = model_path.join("model.safetensors");
+        let vb = if safetensors_path.exists() {
+            unsafe {
+                VarBuilder::from_mmaped_safetensors(
+                    &[model_path.join("model.safetensors")],
+                    dtype,
+                    &device,
+                )
+            }
+        } else {
+            VarBuilder::from_pth(model_path.join("pytorch_model.bin"), dtype, &device)
+        }
+        .s()?;
+
+        let model: Box<dyn Model + Send> = match device {
             Device::Cpu => {
-                if &dtype == "float32" || &dtype == "float16" {
-                    let dtype = if &dtype == "float32" {
-                        DType::F32
-                    } else {
-                        DType::F16
-                    };
-
-                    let safetensors_path = model_path.join("model.safetensors");
-                    let vb = if safetensors_path.exists() {
-                        unsafe {
-                            VarBuilder::from_mmaped_safetensors(
-                                &[model_path.join("model.safetensors")],
-                                dtype,
-                                &device,
-                            )
-                        }
-                    } else {
-                        VarBuilder::from_pth(model_path.join("pytorch_model.bin"), dtype, &device)
-                    }
-                    .s()?;
-
-                    if config.position_embedding_type == PositionEmbeddingType::Alibi {
-                        tracing::info!("Starting JinaBert model on CPU");
-                        Box::new(JinaBertModel::load(vb, &config, pool).s()?)
-                    } else {
-                        tracing::info!("Starting Bert model on CPU");
-                        Box::new(BertModel::load(vb, &config, pool).s()?)
-                    }
-                } else if &dtype == "q6k" {
-                    let vb = candle_transformers::quantized_var_builder::VarBuilder::from_gguf(
-                        model_path.join("ggml-model-q6k.bin"),
-                    )
-                    .map_err(|err| BackendError::Start(err.to_string()))?;
-                    tracing::info!("vb");
-
-                    tracing::info!("Starting QuantBert model on CPU");
-                    Box::new(QuantBertModel::load(vb, &config, pool).s()?)
+                if config.position_embedding_type == PositionEmbeddingType::Alibi {
+                    tracing::info!("Starting JinaBert model on CPU");
+                    Box::new(JinaBertModel::load(vb, &config, model_type).s()?)
                 } else {
-                    return Err(BackendError::Start(format!(
-                        "dtype {dtype} is not supported"
-                    )));
+                    tracing::info!("Starting Bert model on CPU");
+                    Box::new(BertModel::load(vb, &config, model_type).s()?)
                 }
             }
             Device::Cuda(_) => {
@@ -101,31 +93,6 @@ impl CandleBackend {
                 ));
                 #[cfg(feature = "cuda")]
                 {
-                    // Get candle dtype
-                    let dtype = if &dtype == "float32" {
-                        Ok(DType::F32)
-                    } else if &dtype == "float16" {
-                        Ok(DType::F16)
-                    } else {
-                        Err(BackendError::Start(format!(
-                            "DType {dtype} is not supported"
-                        )))
-                    }?;
-
-                    let safetensors_path = model_path.join("model.safetensors");
-                    let vb = if safetensors_path.exists() {
-                        unsafe {
-                            VarBuilder::from_mmaped_safetensors(
-                                &[model_path.join("model.safetensors")],
-                                dtype,
-                                &device,
-                            )
-                        }
-                    } else {
-                        VarBuilder::from_pth(model_path.join("pytorch_model.bin"), dtype, &device)
-                    }
-                    .s()?;
-
                     if incompatible_compute_cap() {
                         return Err(BackendError::Start(format!("Runtime compute cap {} is not compatible with compile time compute cap {}", *RUNTIME_COMPUTE_CAP, *COMPILE_COMPUTE_CAP)));
                     }
@@ -138,13 +105,13 @@ impl CandleBackend {
                         && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
                     {
                         tracing::info!("Starting FlashBert model on Cuda");
-                        Box::new(FlashBertModel::load(vb, &config, pool).s()?)
+                        Box::new(FlashBertModel::load(vb, &config, model_type).s()?)
                     } else if config.position_embedding_type == PositionEmbeddingType::Alibi {
                         tracing::info!("Starting JinaBert model on Cuda");
-                        Box::new(JinaBertModel::load(vb, &config, pool).s()?)
+                        Box::new(JinaBertModel::load(vb, &config, model_type).s()?)
                     } else {
                         tracing::info!("Starting Bert model on Cuda");
-                        Box::new(BertModel::load(vb, &config, pool).s()?)
+                        Box::new(BertModel::load(vb, &config, model_type).s()?)
                     }
                 }
             }
@@ -154,7 +121,7 @@ impl CandleBackend {
     }
 }
 
-impl EmbeddingBackend for CandleBackend {
+impl Backend for CandleBackend {
     fn health(&self) -> Result<(), BackendError> {
         Ok(())
     }
@@ -165,8 +132,10 @@ impl EmbeddingBackend for CandleBackend {
         Ok(results)
     }
 
-    fn max_batch_size(&self) -> Option<usize> {
-        None
+    fn predict(&self, batch: Batch) -> Result<Vec<Vec<f32>>, BackendError> {
+        let results = self.model.predict(batch).e()?;
+        let results = results.to_dtype(DType::F32).e()?.to_vec2().e()?;
+        Ok(results)
     }
 }
 

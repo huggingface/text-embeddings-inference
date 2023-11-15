@@ -1,10 +1,10 @@
 use crate::layers::{HiddenAct, LayerNorm, Linear, CUBLASLT};
-use crate::models::EmbeddingModel;
+use crate::models::Model;
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{Embedding, VarBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
-use text_embeddings_backend_core::{Batch, Pool};
+use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 // https://github.com/huggingface/transformers/blob/6eedfa6dd15dc1e22a55ae036f681914e5a0d9a1/src/transformers/models/bert/configuration_bert.py#L1
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -357,10 +357,54 @@ impl BertEncoder {
     }
 }
 
+struct BertClassificationHead {
+    intermediate: Linear,
+    output: Linear,
+    span: tracing::Span,
+}
+
+impl BertClassificationHead {
+    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+        let n_classes = match &config.id2label {
+            None => candle::bail!("`id2label` must be set for classifier models"),
+            Some(id2label) => id2label.len(),
+        };
+
+        let intermediate_weight = vb
+            .pp("dense")
+            .get((config.hidden_size, config.hidden_size), "weight")?;
+        let intermediate_bias = vb.pp("dense").get(config.hidden_size, "bias")?;
+        let intermediate = Linear::new(intermediate_weight, Some(intermediate_bias), None);
+
+        let output_weight = vb
+            .pp("out_proj")
+            .get((n_classes, config.hidden_size), "weight")?;
+        let output_bias = vb.pp("out_proj").get(n_classes, "bias")?;
+        let output = Linear::new(output_weight, Some(output_bias), None);
+
+        Ok(Self {
+            intermediate,
+            output,
+            span: tracing::span!(tracing::Level::TRACE, "classifier"),
+        })
+    }
+
+    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let hidden_states = self.intermediate.forward(hidden_states)?;
+        let hidden_states = hidden_states.tanh()?;
+        let hidden_states = self.output.forward(&hidden_states)?;
+
+        Ok(hidden_states)
+    }
+}
+
 pub struct BertModel {
     embeddings: BertEmbeddings,
     encoder: BertEncoder,
     pool: Pool,
+    classifier: Option<BertClassificationHead>,
 
     num_attention_heads: usize,
 
@@ -371,11 +415,25 @@ pub struct BertModel {
 }
 
 impl BertModel {
-    pub fn load(vb: VarBuilder, config: &Config, pool: Pool) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &Config, model_type: ModelType) -> Result<Self> {
         // Check position embedding type
         if config.position_embedding_type != PositionEmbeddingType::Absolute {
             candle::bail!("Bert only supports absolute position embeddings")
         }
+
+        let (pool, classifier) = match model_type {
+            // Classifier models always use CLS pooling
+            ModelType::Classifier => {
+                if config.model_type == Some("bert".to_string()) {
+                    candle::bail!("`classifier` model type is not supported for Bert");
+                }
+                (
+                    Pool::Cls,
+                    Some(BertClassificationHead::load(vb.pp("classifier"), config)?),
+                )
+            }
+            ModelType::Embedding(pool) => (pool, None),
+        };
 
         // Check pool type
         if pool != Pool::Mean && pool != Pool::Cls {
@@ -396,8 +454,8 @@ impl BertModel {
                 ) {
                     (embeddings, encoder)
                 } else if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp("bert.embeddings"), config),
-                    BertEncoder::load(vb.pp("bert.encoder"), config),
+                    BertEmbeddings::load(vb.pp("roberta.embeddings"), config),
+                    BertEncoder::load(vb.pp("roberta.encoder"), config),
                 ) {
                     (embeddings, encoder)
                 } else {
@@ -410,6 +468,7 @@ impl BertModel {
             embeddings,
             encoder,
             pool,
+            classifier,
             num_attention_heads: config.num_attention_heads,
             device: vb.device().clone(),
             dtype: vb.dtype(),
@@ -558,8 +617,18 @@ impl BertModel {
     }
 }
 
-impl EmbeddingModel for BertModel {
+impl Model for BertModel {
     fn embed(&self, batch: Batch) -> Result<Tensor> {
         self.forward(batch)
+    }
+
+    fn predict(&self, batch: Batch) -> Result<Tensor> {
+        match &self.classifier {
+            None => candle::bail!("`predict` is not implemented for this model"),
+            Some(classifier) => {
+                let hidden_states = self.forward(batch)?;
+                classifier.forward(&hidden_states)
+            }
+        }
     }
 }

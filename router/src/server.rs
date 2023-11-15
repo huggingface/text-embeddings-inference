@@ -1,7 +1,8 @@
 /// HTTP Server logic
 use crate::{
-    EmbedRequest, EmbedResponse, ErrorResponse, ErrorType, Info, Input, OpenAICompatEmbedding,
-    OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage,
+    ClassifierModel, EmbedRequest, EmbedResponse, EmbeddingModel, ErrorResponse, ErrorType, Info,
+    Input, ModelType, OpenAICompatEmbedding, OpenAICompatErrorResponse, OpenAICompatRequest,
+    OpenAICompatResponse, OpenAICompatUsage, PredictRequest, PredictResponse, Prediction, Sequence,
 };
 use axum::extract::Extension;
 use axum::http::{HeaderMap, Method, StatusCode};
@@ -54,7 +55,156 @@ async fn health(infer: Extension<Infer>) -> Result<(), (StatusCode, Json<ErrorRe
     }
 }
 
-/// Get Embeddings
+/// Get Predictions. Returns a 424 status code if the model is not a Sequence Classification model
+#[utoipa::path(
+post,
+tag = "Text Embeddings Inference",
+path = "/predict",
+request_body = PredictRequest,
+responses(
+(status = 200, description = "Predictions", body = PredictResponse),
+(status = 424, description = "Prediction Error", body = ErrorResponse,
+example = json ! ({"error": "Inference failed", "error_type": "backend"})),
+(status = 429, description = "Model is overloaded", body = ErrorResponse,
+example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
+(status = 422, description = "Tokenization error", body = ErrorResponse,
+example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 413, description = "Batch size error", body = ErrorResponse,
+example = json ! ({"error": "Batch size error", "error_type": "validation"})),
+)
+)]
+#[instrument(
+    skip_all,
+    fields(total_time, tokenization_time, queue_time, inference_time,)
+)]
+async fn predict(
+    infer: Extension<Infer>,
+    info: Extension<Info>,
+    Json(req): Json<PredictRequest>,
+) -> Result<(HeaderMap, Json<PredictResponse>), (StatusCode, Json<ErrorResponse>)> {
+    let span = tracing::Span::current();
+    let start_time = Instant::now();
+
+    metrics::increment_counter!("te_request_count", "method" => "single");
+
+    let compute_chars = req.inputs.count_chars();
+
+    let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+    let mut response = infer
+        .predict(req.inputs, req.truncate, permit)
+        .await
+        .map_err(ErrorResponse::from)?;
+
+    let id2label = match &info.model_type {
+        ModelType::Classifier(classifier) => &classifier.id2label,
+        _ => panic!(),
+    };
+
+    let mut predictions: Vec<Prediction> = {
+        if !req.raw_scores {
+            // Softmax
+            if response.results.len() > 1 {
+                let max = *response
+                    .results
+                    .iter()
+                    .max_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap())
+                    .unwrap();
+
+                let mut den = 0.0;
+                for v in response.results.iter_mut() {
+                    *v = (*v - max).exp();
+                    den += *v;
+                }
+                for v in response.results.iter_mut() {
+                    *v /= den;
+                }
+            }
+            // Sigmoid
+            else {
+                response.results[0] = 1.0 / (1.0 + (-response.results[0]).exp());
+            }
+        }
+
+        // Map score to label
+        response
+            .results
+            .into_iter()
+            .enumerate()
+            .map(|(i, s)| Prediction {
+                score: s,
+                label: id2label.get(&i.to_string()).unwrap().clone(),
+            })
+            .collect()
+    };
+    // Reverse sort
+    predictions.sort_by(|x, y| x.score.partial_cmp(&y.score).unwrap());
+    predictions.reverse();
+
+    metrics::increment_counter!("te_request_success", "method" => "predict");
+
+    let compute_tokens = response.prompt_tokens;
+    let tokenization_time = response.tokenization;
+    let queue_time = response.queue;
+    let inference_time = response.inference;
+
+    let total_time = start_time.elapsed();
+
+    // Tracing metadata
+    span.record("total_time", format!("{total_time:?}"));
+    span.record("tokenization_time", format!("{tokenization_time:?}"));
+    span.record("queue_time", format!("{queue_time:?}"));
+    span.record("inference_time", format!("{inference_time:?}"));
+
+    // Headers
+    let mut headers = HeaderMap::new();
+    headers.insert("x-compute-type", "gpu+optimized".parse().unwrap());
+    headers.insert(
+        "x-compute-time",
+        total_time.as_millis().to_string().parse().unwrap(),
+    );
+    headers.insert(
+        "x-compute-characters",
+        compute_chars.to_string().parse().unwrap(),
+    );
+    headers.insert(
+        "x-compute-tokens",
+        compute_tokens.to_string().parse().unwrap(),
+    );
+    headers.insert(
+        "x-total-time",
+        total_time.as_millis().to_string().parse().unwrap(),
+    );
+    headers.insert(
+        "x-tokenization-time",
+        tokenization_time.as_millis().to_string().parse().unwrap(),
+    );
+    headers.insert(
+        "x-queue-time",
+        queue_time.as_millis().to_string().parse().unwrap(),
+    );
+    headers.insert(
+        "x-inference-time",
+        inference_time.as_millis().to_string().parse().unwrap(),
+    );
+
+    // Metrics
+    metrics::histogram!("te_request_duration", total_time.as_secs_f64());
+    metrics::histogram!(
+        "te_request_tokenization_duration",
+        tokenization_time.as_secs_f64()
+    );
+    metrics::histogram!("te_request_queue_duration", queue_time.as_secs_f64());
+    metrics::histogram!(
+        "te_request_inference_duration",
+        inference_time.as_secs_f64()
+    );
+
+    tracing::info!("Success");
+
+    Ok((headers, Json(PredictResponse(predictions))))
+}
+
+/// Get Embeddings. Returns a 424 status code if the model is not an embedding model.
 #[utoipa::path(
 post,
 tag = "Text Embeddings Inference",
@@ -105,7 +255,7 @@ async fn embed(
                     response.tokenization,
                     response.queue,
                     response.inference,
-                    EmbedResponse(vec![response.embeddings]),
+                    EmbedResponse(vec![response.results]),
                 )
             }
             Input::Batch(inputs) => {
@@ -157,7 +307,7 @@ async fn embed(
                     total_queue_time += r.queue.as_nanos() as u64;
                     total_inference_time += r.inference.as_nanos() as u64;
                     total_compute_tokens += r.prompt_tokens;
-                    embeddings.push(r.embeddings);
+                    embeddings.push(r.results);
                 }
                 let batch_size = batch_size as u64;
 
@@ -220,7 +370,7 @@ async fn embed(
         "te_request_tokenization_duration",
         tokenization_time.as_secs_f64()
     );
-    metrics::histogram!("e_request_queue_duration", queue_time.as_secs_f64());
+    metrics::histogram!("te_request_queue_duration", queue_time.as_secs_f64());
     metrics::histogram!(
         "te_request_inference_duration",
         inference_time.as_secs_f64()
@@ -231,11 +381,11 @@ async fn embed(
     Ok((headers, Json(response)))
 }
 
-/// OpenAI compatible route
+/// OpenAI compatible route. Returns a 424 status code if the model is not an embedding model.
 #[utoipa::path(
 post,
 tag = "Text Embeddings Inference",
-path = "/openai",
+path = "/embeddings",
 request_body = OpenAICompatRequest,
 responses(
 (status = 200, description = "Embeddings", body = OpenAICompatResponse),
@@ -285,7 +435,7 @@ async fn openai_embed(
                     response.inference,
                     vec![OpenAICompatEmbedding {
                         object: "embedding",
-                        embedding: response.embeddings,
+                        embedding: response.results,
                         index: 0,
                     }],
                 )
@@ -339,7 +489,7 @@ async fn openai_embed(
                     total_compute_tokens += r.prompt_tokens;
                     embeddings.push(OpenAICompatEmbedding {
                         object: "embedding",
-                        embedding: r.embeddings,
+                        embedding: r.results,
                         index: i,
                     });
                 }
@@ -404,7 +554,7 @@ async fn openai_embed(
         "te_request_tokenization_duration",
         tokenization_time.as_secs_f64()
     );
-    metrics::histogram!("e_request_queue_duration", queue_time.as_secs_f64());
+    metrics::histogram!("te_request_queue_duration", queue_time.as_secs_f64());
     metrics::histogram!(
         "te_request_inference_duration",
         inference_time.as_secs_f64()
@@ -448,14 +598,22 @@ pub async fn run(
     paths(
     get_model_info,
     health,
+    predict,
     embed,
     openai_embed,
     metrics,
     ),
     components(
     schemas(
+    Sequence,
     Input,
     Info,
+    ModelType,
+    ClassifierModel,
+    EmbeddingModel,
+    PredictRequest,
+    Prediction,
+    PredictResponse,
     OpenAICompatRequest,
     OpenAICompatEmbedding,
     OpenAICompatUsage,
@@ -531,13 +689,11 @@ pub async fn run(
     let app = Router::new()
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", ApiDoc::openapi()))
         // Base routes
-        .route("/", post(embed))
         .route("/info", get(get_model_info))
         .route("/embed", post(embed))
+        .route("/predict", post(predict))
         // OpenAI compat route
-        .route("/openai", post(openai_embed))
-        // AWS Sagemaker route
-        .route("/invocations", post(embed))
+        .route("/embeddings", post(openai_embed))
         // Base Health route
         .route("/health", get(health))
         // Inference API health route
@@ -545,7 +701,23 @@ pub async fn run(
         // AWS Sagemaker health route
         .route("/ping", get(health))
         // Prometheus metrics route
-        .route("/metrics", get(metrics))
+        .route("/metrics", get(metrics));
+
+    // Set default routes
+    let app = match infer.is_classifier() {
+        true => {
+            app.route("/", post(predict))
+                // AWS Sagemaker route
+                .route("/invocations", post(predict))
+        }
+        false => {
+            app.route("/", post(embed))
+                // AWS Sagemaker route
+                .route("/invocations", post(embed))
+        }
+    };
+
+    let app = app
         .layer(Extension(infer))
         .layer(Extension(info))
         .layer(Extension(prom_handle.clone()))

@@ -2,7 +2,7 @@ mod logging;
 mod management;
 
 use backend_grpc_client::Client;
-use text_embeddings_backend_core::{BackendError, Batch, Embedding, EmbeddingBackend, Pool};
+use text_embeddings_backend_core::{Backend, BackendError, Batch, Embedding, ModelType, Pool};
 use tokio::runtime::Runtime;
 
 pub struct PythonBackend {
@@ -15,10 +15,19 @@ impl PythonBackend {
     pub fn new(
         model_path: String,
         dtype: String,
-        pool: Pool,
+        model_type: ModelType,
         uds_path: String,
         otlp_endpoint: Option<String>,
     ) -> Result<Self, BackendError> {
+        let pool = match model_type {
+            ModelType::Classifier => {
+                return Err(BackendError::Start(
+                    "`classifier` model type is not supported".to_string(),
+                ))
+            }
+            ModelType::Embedding(pool) => pool,
+        };
+
         if pool != Pool::Cls {
             return Err(BackendError::Start(format!("{pool:?} is not supported")));
         }
@@ -44,7 +53,7 @@ impl PythonBackend {
     }
 }
 
-impl EmbeddingBackend for PythonBackend {
+impl Backend for PythonBackend {
     fn health(&self) -> Result<(), BackendError> {
         if self
             .tokio_runtime
@@ -68,5 +77,11 @@ impl EmbeddingBackend for PythonBackend {
             ))
             .map_err(|err| BackendError::Inference(err.to_string()))?;
         Ok(results.into_iter().map(|r| r.values).collect())
+    }
+
+    fn predict(&self, _batch: Batch) -> Result<Vec<Vec<f32>>, BackendError> {
+        Err(BackendError::Inference(
+            "`predict` is not implemented".to_string(),
+        ))
     }
 }

@@ -16,28 +16,45 @@ rendered properly in your Markdown viewer.
 
 # Supported models and hardware
 
-## Supported models
-
-Text Embeddings Inference currently supports BERT, CamemBERT, and XLM-RoBERTa models with absolute positions. 
 We are continually expanding our support for other model types and plan to include them in future updates.
+
+## Supported embeddings models
+
+Text Embeddings Inference currently supports BERT, CamemBERT, XLM-RoBERTa models with absolute positions and JinaBERT 
+model with Alibi positions. 
 
 Below are some examples of the currently supported models:
 
-| MTEB Rank | Model Type   | Model ID                                                                       | 
-|-----------|--------------|--------------------------------------------------------------------------------|
-| 1         | Bert         | [BAAI/bge-large-en-v1.5](https://hf.co/BAAI/bge-large-en-v1.5)                 |
-| 2         |              | [BAAI/bge-base-en-v1.5](https://hf.co/BAAI/bge-base-en-v1.5)                   |
-| 3         |              | [llmrails/ember-v1](https://hf.co/llmrails/ember-v1)                           |
-| 4         |              | [thenlper/gte-large](https://hf.co/thenlper/gte-large)                         |
-| 5         |              | [thenlper/gte-base](https://hf.co/thenlper/gte-base)                           |
-| 6         |              | [intfloat/e5-large-v2](https://hf.co/intfloat/e5-large-v2)                     |
-| 7         |              | [BAAI/bge-small-en-v1.5](https://hf.co/BAAI/bge-small-en-v1.5)                 |
-| 10        |              | [intfloat/e5-base-v2](https://hf.co/intfloat/e5-base-v2)                       |
-| 11        | XLM-RoBERTa  | [intfloat/multilingual-e5-large](https://hf.co/intfloat/multilingual-e5-large) |
+
+| MTEB Rank | Model Type  | Model ID                                                                               | 
+|-----------|-------------|----------------------------------------------------------------------------------------|
+| 1         | Bert        | [BAAI/bge-large-en-v1.5](https://hf.co/BAAI/bge-large-en-v1.5)                         |
+| 2         |             | [BAAI/bge-base-en-v1.5](https://hf.co/BAAI/bge-base-en-v1.5)                           |
+| 3         |             | [llmrails/ember-v1](https://hf.co/llmrails/ember-v1)                                   |
+| 4         |             | [thenlper/gte-large](https://hf.co/thenlper/gte-large)                                 |
+| 5         |             | [thenlper/gte-base](https://hf.co/thenlper/gte-base)                                   |
+| 6         |             | [intfloat/e5-large-v2](https://hf.co/intfloat/e5-large-v2)                             |
+| 7         |             | [BAAI/bge-small-en-v1.5](https://hf.co/BAAI/bge-small-en-v1.5)                         |
+| 10        |             | [intfloat/e5-base-v2](https://hf.co/intfloat/e5-base-v2)                               |
+| 11        | XLM-RoBERTa | [intfloat/multilingual-e5-large](https://hf.co/intfloat/multilingual-e5-large)         |
+| N/A       | JinaBERT    | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)   |
+| N/A       | JinaBERT    | [jinaai/jina-embeddings-v2-small-en](https://hf.co/jinaai/jina-embeddings-v2-small-en) |
 
 
 To explore the list of best performing text embeddings models, visit the 
 [Massive Text Embedding Benchmark (MTEB) Leaderboard](https://huggingface.co/spaces/mteb/leaderboard).
+
+## Supported sequence classification models
+
+Text Embeddings Inference currently supports CamemBERT, and XLM-RoBERTa Sequence Classification models with absolute positions. 
+
+Below are some examples of the currently supported models:
+
+| Task               | Model Type  | Model ID                                                                                    | Revision    |
+|--------------------|-------------|---------------------------------------------------------------------------------------------|-------------|
+| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-large](https://huggingface.co/BAAI/bge-reranker-large)                   | `refs/pr/4` |
+| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)                     | `refs/pr/5` |
+| Sentiment Analysis | RoBERTa     | [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions) |             |
 
 ## Supported hardware
 

@@ -41,7 +41,7 @@ export default function () {
     });
 
     const headers = {'Content-Type': 'application/json'};
-    const res = http.post(`http://${host}/embed`, payload, {
+    const res = http.post(`http://${host}`, payload, {
         headers, timeout: '20m'
     });
 

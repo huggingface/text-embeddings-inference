@@ -3,12 +3,12 @@ mod dtype;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use text_embeddings_backend_core::EmbeddingBackend;
+use text_embeddings_backend_core::Backend as CoreBackend;
 use tokio::sync::oneshot;
 use tracing::{instrument, Span};
 
 pub use crate::dtype::DType;
-pub use text_embeddings_backend_core::{BackendError, Batch, Embedding, Pool};
+pub use text_embeddings_backend_core::{BackendError, Batch, Embedding, ModelType, Pool};
 
 #[cfg(feature = "candle")]
 use text_embeddings_backend_candle::CandleBackend;
@@ -23,19 +23,26 @@ pub struct Backend {
     /// Health status
     health: Arc<AtomicBool>,
     pub max_batch_size: Option<usize>,
+    pub model_type: ModelType,
 }
 
 impl Backend {
     pub fn new(
         model_path: PathBuf,
         dtype: DType,
-        pool: Pool,
+        model_type: ModelType,
         uds_path: String,
         otlp_endpoint: Option<String>,
     ) -> Result<Self, BackendError> {
         let (backend_sender, backend_receiver) = flume::unbounded();
 
-        let backend = init_backend(model_path, dtype, pool, uds_path, otlp_endpoint)?;
+        let backend = init_backend(
+            model_path,
+            dtype,
+            model_type.clone(),
+            uds_path,
+            otlp_endpoint,
+        )?;
         let max_batch_size = backend.max_batch_size();
 
         tokio::task::spawn_blocking(move || backend_blocking_task(backend, backend_receiver));
@@ -44,6 +51,7 @@ impl Backend {
             backend_sender,
             health: Arc::new(AtomicBool::new(false)),
             max_batch_size,
+            model_type,
         })
     }
 
@@ -62,7 +70,7 @@ impl Backend {
             )
         } else {
             // The backend is un-healthy or only just started. Do a more advanced health check
-            // by sending an embedding request.
+            // by calling the model forward on a test batch
 
             let batch = Batch {
                 input_ids: vec![0],
@@ -71,13 +79,10 @@ impl Backend {
                 cumulative_seq_lengths: vec![0, 1],
                 max_length: 1,
             };
-            let (sender, receiver) = oneshot::channel();
-            self.backend_sender
-                .send(BackendCommand::Embed(batch, Span::current(), sender))
-                .expect("No backend receiver. This is a bug.");
-            receiver.await.expect(
-                "Backend blocking task dropped the sender without sending a response. This is a bug.",
-            ).map(|_| ())
+            match &self.model_type {
+                ModelType::Classifier => self.predict(batch).await.map(|_| ()),
+                ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+            }
         };
 
         // Update health
@@ -100,22 +105,38 @@ impl Backend {
         self.health.store(result.is_ok(), Ordering::SeqCst);
         result
     }
+
+    #[instrument(skip_all)]
+    pub async fn predict(&self, batch: Batch) -> Result<Vec<Vec<f32>>, BackendError> {
+        let (sender, receiver) = oneshot::channel();
+
+        self.backend_sender
+            .send(BackendCommand::Predict(batch, Span::current(), sender))
+            .expect("No backend receiver. This is a bug.");
+        let result = receiver.await.expect(
+            "Backend blocking task dropped the sender without send a response. This is a bug.",
+        );
+
+        // Update health
+        self.health.store(result.is_ok(), Ordering::SeqCst);
+        result
+    }
 }
 
 #[allow(unused)]
 fn init_backend(
     model_path: PathBuf,
     dtype: DType,
-    pool: Pool,
+    model_type: ModelType,
     uds_path: String,
     otlp_endpoint: Option<String>,
-) -> Result<Box<dyn EmbeddingBackend + Send>, BackendError> {
+) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     if cfg!(feature = "candle") {
         #[cfg(feature = "candle")]
         return Ok(Box::new(CandleBackend::new(
             model_path,
             dtype.to_string(),
-            pool,
+            model_type,
         )?));
     } else if cfg!(feature = "python") {
         #[cfg(feature = "python")]
@@ -127,7 +148,7 @@ fn init_backend(
                     PythonBackend::new(
                         model_path.to_str().unwrap().to_string(),
                         dtype.to_string(),
-                        pool,
+                        model_type,
                         uds_path,
                         otlp_endpoint,
                     )
@@ -141,7 +162,7 @@ fn init_backend(
 }
 
 fn backend_blocking_task(
-    backend: Box<dyn EmbeddingBackend + Send>,
+    backend: Box<dyn CoreBackend + Send>,
     command_receiver: flume::Receiver<BackendCommand>,
 ) {
     while let Ok(cmd) = command_receiver.recv() {
@@ -154,6 +175,10 @@ fn backend_blocking_task(
                 let _span = span.entered();
                 let _ = sender.send(backend.embed(batch));
             }
+            BackendCommand::Predict(batch, span, sender) => {
+                let _span = span.entered();
+                let _ = sender.send(backend.predict(batch));
+            }
         }
     }
 }
@@ -164,5 +189,10 @@ enum BackendCommand {
         Batch,
         Span,
         oneshot::Sender<Result<Vec<Embedding>, BackendError>>,
+    ),
+    Predict(
+        Batch,
+        Span,
+        oneshot::Sender<Result<Vec<Vec<f32>>, BackendError>>,
     ),
 }

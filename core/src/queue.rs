@@ -29,8 +29,6 @@ pub struct Metadata {
     pub queue_time: Instant,
     /// Number of tokens in the prompt
     pub prompt_tokens: usize,
-    /// Normalize the embeddings
-    pub normalize: bool,
 }
 
 /// Request Queue

@@ -48,20 +48,18 @@ Options:
 
       --dtype <DTYPE>
           The dtype to be forced upon the model
-          
-          If `dtype` is not set, it defaults to float32 on accelerate, and float16 for all other architectures
 
           [env: DTYPE=]
-          [possible values: float16]
+          [possible values: float16, float32]
 
       --pooling <POOLING>
-          Optionally control the pooling method. 
-          
-          If `pooling` is not set, the pooling configuration will be parsed from the model `1_Pooling/config.json`
-          configuration. 
-          
+          Optionally control the pooling method for embedding models.
+
+          If `pooling` is not set, the pooling configuration will be parsed from the model `1_Pooling/config.json` 
+          configuration.
+
           If `pooling` is set, it will override the model pooling configuration
-          
+
           [env: POOLING=]
           [possible values: cls, mean]
 

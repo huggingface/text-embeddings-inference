@@ -9,16 +9,16 @@ use opentelemetry::sdk::{trace, Resource};
 use opentelemetry::{global, KeyValue};
 use opentelemetry_otlp::WithExportConfig;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use text_embeddings_backend::DType;
-use text_embeddings_backend::{Backend, Pool};
 use text_embeddings_core::download::{download_artifacts, download_pool_config};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
 use text_embeddings_core::tokenization::Tokenization;
-use text_embeddings_router::{server, Info};
+use text_embeddings_router::{server, ClassifierModel, EmbeddingModel, Info, ModelType};
 use tokenizers::Tokenizer;
 use tower_http::cors::AllowOrigin;
 use tracing_subscriber::layer::SubscriberExt;
@@ -54,14 +54,14 @@ struct Args {
     #[clap(long, env, value_enum)]
     dtype: Option<DType>,
 
-    /// Optionally control the pooling method.
+    /// Optionally control the pooling method for embedding models.
     ///
     /// If `pooling` is not set, the pooling configuration will be parsed from the
     /// model `1_Pooling/config.json` configuration.
     ///
     /// If `pooling` is set, it will override the model pooling configuration
     #[clap(long, env, value_enum)]
-    pooling: Option<Pool>,
+    pooling: Option<text_embeddings_backend::Pool>,
 
     /// The maximum amount of concurrent requests for this particular deployment.
     /// Having a low limit will refuse clients requests instead of having them
@@ -127,10 +127,13 @@ struct Args {
 
 #[derive(Debug, Deserialize)]
 pub struct ModelConfig {
+    pub architectures: Vec<String>,
     pub model_type: String,
     #[serde(alias = "n_positions")]
     pub max_position_embeddings: usize,
     pub pad_token_id: usize,
+    pub id2label: Option<HashMap<String, String>>,
+    pub label2id: Option<HashMap<String, usize>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -173,7 +176,8 @@ async fn main() -> Result<()> {
 
         // Optionally download the pooling config.
         if args.pooling.is_none() {
-            download_pool_config(&api_repo).await.context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.")?;
+            // If a pooling config exist, download it
+            let _ = download_pool_config(&api_repo).await;
         }
 
         // Download model from the Hub
@@ -188,22 +192,61 @@ async fn main() -> Result<()> {
     let config: ModelConfig =
         serde_json::from_str(&config).context("Failed to parse `config.json`")?;
 
-    // Set pooling
-    let pool = match args.pooling {
-        Some(pool) => pool,
-        None => {
-            // Load pooling config
-            let config_path = model_root.join("1_Pooling/config.json");
-            let config = fs::read_to_string(config_path).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.")?;
-            let config: PoolConfig =
-                serde_json::from_str(&config).context("Failed to parse `1_Pooling/config.json`")?;
-            if config.pooling_mode_cls_token {
-                Pool::Cls
-            } else if config.pooling_mode_mean_tokens {
-                Pool::Mean
-            } else {
-                return Err(anyhow!("Pooling config {config:?} is not supported"));
+    // Set model type from config
+    let backend_model_type = {
+        // Check if the model is a classifier
+        let mut classifier = false;
+        for arch in &config.architectures {
+            if arch.ends_with("Classification") {
+                classifier = true;
+                break;
             }
+        }
+
+        if classifier {
+            if args.pooling.is_some() {
+                tracing::warn!(
+                    "`--pooling` arg is set but model is a classifier. Ignoring `--pooling` arg."
+                );
+            }
+            text_embeddings_backend::ModelType::Classifier
+        } else {
+            // Set pooling
+            let pool = match args.pooling {
+                Some(pool) => pool,
+                None => {
+                    // Load pooling config
+                    let config_path = model_root.join("1_Pooling/config.json");
+                    let config = fs::read_to_string(config_path).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.")?;
+                    let config: PoolConfig = serde_json::from_str(&config)
+                        .context("Failed to parse `1_Pooling/config.json`")?;
+                    if config.pooling_mode_cls_token {
+                        text_embeddings_backend::Pool::Cls
+                    } else if config.pooling_mode_mean_tokens {
+                        text_embeddings_backend::Pool::Mean
+                    } else {
+                        return Err(anyhow!("Pooling config {config:?} is not supported"));
+                    }
+                }
+            };
+            text_embeddings_backend::ModelType::Embedding(pool)
+        }
+    };
+
+    // Info model type
+    let model_type = match &backend_model_type {
+        text_embeddings_backend::ModelType::Classifier => ModelType::Classifier(ClassifierModel {
+            id2label: config
+                .id2label
+                .context("`config.json` does not contain `id2label`")?,
+            label2id: config
+                .label2id
+                .context("`config.json` does not contain `label2id`")?,
+        }),
+        text_embeddings_backend::ModelType::Embedding(pool) => {
+            ModelType::Embedding(EmbeddingModel {
+                pooling: pool.to_string(),
+            })
         }
     };
 
@@ -251,10 +294,10 @@ async fn main() -> Result<()> {
 
     // Create backend
     tracing::info!("Starting model backend");
-    let backend = Backend::new(
+    let backend = text_embeddings_backend::Backend::new(
         model_root,
         dtype.clone(),
-        pool.clone(),
+        backend_model_type,
         args.uds_path,
         args.otlp_endpoint,
     )
@@ -285,7 +328,7 @@ async fn main() -> Result<()> {
         model_id: args.model_id,
         model_sha: args.revision,
         model_dtype: dtype.to_string(),
-        model_pooling: pool.to_string(),
+        model_type,
         max_concurrent_requests: args.max_concurrent_requests,
         max_input_length: config.max_position_embeddings,
         max_batch_tokens: args.max_batch_tokens,

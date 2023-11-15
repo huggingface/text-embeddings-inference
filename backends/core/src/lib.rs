@@ -14,18 +14,25 @@ pub struct Batch {
 
 pub type Embedding = Vec<f32>;
 
-pub trait EmbeddingBackend {
+pub trait Backend {
     fn health(&self) -> Result<(), BackendError>;
-
-    fn embed(&self, batch: Batch) -> Result<Vec<Embedding>, BackendError>;
-
     fn max_batch_size(&self) -> Option<usize> {
         None
     }
+
+    fn embed(&self, batch: Batch) -> Result<Vec<Embedding>, BackendError>;
+
+    fn predict(&self, batch: Batch) -> Result<Vec<Vec<f32>>, BackendError>;
 }
 
-#[derive(Debug, PartialEq)]
-#[cfg_attr(feature = "clap", derive(Clone, ValueEnum))]
+#[derive(Debug, PartialEq, Clone)]
+pub enum ModelType {
+    Classifier,
+    Embedding(Pool),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+#[cfg_attr(feature = "clap", derive(ValueEnum))]
 pub enum Pool {
     Cls,
     Mean,

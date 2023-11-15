@@ -8,6 +8,9 @@ pub async fn download_artifacts(api: &ApiRepo) -> Result<PathBuf, ApiError> {
 
     tracing::info!("Starting download");
 
+    api.get("config.json").await?;
+    api.get("tokenizer.json").await?;
+
     let model_root = match api.get("model.safetensors").await {
         Ok(p) => p,
         Err(_) => {
@@ -19,8 +22,6 @@ pub async fn download_artifacts(api: &ApiRepo) -> Result<PathBuf, ApiError> {
         .parent()
         .unwrap()
         .to_path_buf();
-    api.get("config.json").await?;
-    api.get("tokenizer.json").await?;
 
     tracing::info!("Model artifacts downloaded in {:?}", start.elapsed());
     Ok(model_root)

@@ -2,7 +2,30 @@
 pub mod server;
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use text_embeddings_core::tokenization::EncodingInput;
 use utoipa::ToSchema;
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct EmbeddingModel {
+    #[schema(example = "cls")]
+    pub pooling: String,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub struct ClassifierModel {
+    #[schema(example = json!({"0": "LABEL"}))]
+    pub id2label: HashMap<String, String>,
+    #[schema(example = json!({"LABEL": "0"}))]
+    pub label2id: HashMap<String, usize>,
+}
+
+#[derive(Clone, Debug, Serialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelType {
+    Classifier(ClassifierModel),
+    Embedding(EmbeddingModel),
+}
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
 pub struct Info {
@@ -13,8 +36,7 @@ pub struct Info {
     pub model_sha: Option<String>,
     #[schema(example = "float16")]
     pub model_dtype: String,
-    #[schema(example = "cls")]
-    pub model_pooling: String,
+    pub model_type: ModelType,
     /// Router Parameters
     #[schema(example = "128")]
     pub max_concurrent_requests: usize,
@@ -36,6 +58,53 @@ pub struct Info {
     #[schema(nullable = true, example = "null")]
     pub docker_label: Option<&'static str>,
 }
+
+#[derive(Deserialize, ToSchema, Debug)]
+#[serde(untagged)]
+pub(crate) enum Sequence {
+    Single(String),
+    Pair(String, String),
+}
+
+impl Sequence {
+    pub(crate) fn count_chars(&self) -> usize {
+        match self {
+            Sequence::Single(s) => s.chars().count(),
+            Sequence::Pair(s1, s2) => s1.chars().count() + s2.chars().count(),
+        }
+    }
+}
+
+impl From<Sequence> for EncodingInput {
+    fn from(value: Sequence) -> Self {
+        match value {
+            Sequence::Single(s) => Self::Single(s),
+            Sequence::Pair(s1, s2) => Self::Dual(s1, s2),
+        }
+    }
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct PredictRequest {
+    pub inputs: Sequence,
+    #[serde(default)]
+    #[schema(default = "false", example = "false")]
+    pub truncate: bool,
+    #[serde(default)]
+    #[schema(default = "false", example = "false")]
+    pub raw_scores: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct Prediction {
+    #[schema(example = "0.5")]
+    score: f32,
+    #[schema(example = "admiration")]
+    label: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct PredictResponse(Vec<Prediction>);
 
 #[derive(Deserialize, ToSchema)]
 #[serde(untagged)]
