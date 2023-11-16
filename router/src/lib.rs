@@ -1,9 +1,13 @@
 /// Text Embedding Inference Webserver
 pub mod server;
 
-use serde::{Deserialize, Serialize};
+use serde::de::{SeqAccess, Visitor};
+use serde::{de, Deserialize, Deserializer, Serialize};
+use serde_json::json;
 use std::collections::HashMap;
+use std::fmt::Formatter;
 use text_embeddings_core::tokenization::EncodingInput;
+use utoipa::openapi::{RefOr, Schema};
 use utoipa::ToSchema;
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -59,8 +63,7 @@ pub struct Info {
     pub docker_label: Option<&'static str>,
 }
 
-#[derive(Deserialize, ToSchema, Debug)]
-#[serde(untagged)]
+#[derive(Debug)]
 pub(crate) enum Sequence {
     Single(String),
     Pair(String, String),
@@ -75,6 +78,62 @@ impl Sequence {
     }
 }
 
+impl<'de> Deserialize<'de> for Sequence {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+    {
+        struct SequenceVisitor;
+
+        impl<'de> Visitor<'de> for SequenceVisitor {
+            type Value = Sequence;
+
+            fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
+                formatter.write_str(
+                    "a string or [string], or a pair of strings [string, string]"
+                )
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+                where
+                    E: de::Error,
+            {
+                Ok(Sequence::Single(v.to_string()))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+                where
+                    A: SeqAccess<'de>,
+            {
+                // Get first element
+                let first = seq.next_element()?
+                    .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+
+                // Option get second element
+                let second = seq.next_element()?;
+
+                // Option get third element
+                if let Some(_) = seq.next_element::<String>()? {
+                    // Error as we do not accept > 2 elements
+                    return Err(de::Error::invalid_length(3, &self));
+                }
+
+                if let Some(second) = second {
+                    // Second element exists
+                    // This is a pair
+                    Ok(Sequence::Pair(first, second))
+                } else {
+                    // Second element does not exist
+                    Ok(Sequence::Single(first))
+                }
+            }
+        }
+
+        deserializer.deserialize_any(SequenceVisitor)
+    }
+}
+
+
 impl From<Sequence> for EncodingInput {
     fn from(value: Sequence) -> Self {
         match value {
@@ -84,9 +143,147 @@ impl From<Sequence> for EncodingInput {
     }
 }
 
+#[derive(Debug)]
+pub(crate) enum PredictInput {
+    Single(Sequence),
+    Batch(Vec<Sequence>),
+}
+
+
+impl<'de> Deserialize<'de> for PredictInput {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Internal {
+            Single(String),
+            Multiple(Vec<String>)
+        }
+
+        struct PredictInputVisitor;
+
+        impl<'de> Visitor<'de> for PredictInputVisitor {
+            type Value = PredictInput;
+
+            fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
+                formatter.write_str(
+                    "a string,\
+                    a pair of strings [string, string]\
+                    or a batch of mixed strings and pairs [[string], [string, string], ...]"
+                )
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+                where
+                    E: de::Error,
+            {
+                Ok(PredictInput::Single(Sequence::Single(v.to_string())))
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+                where
+                    A: SeqAccess<'de>,
+            {
+                // Get first element
+                // This will determine if input is a batch or not
+                match seq.next_element::<Internal>()?
+                    .ok_or_else(|| de::Error::invalid_length(0, &self))? {
+                    // Input is not a batch
+                    // Return early
+                    Internal::Single(value) => return Ok(PredictInput::Single(Sequence::Single(value))),
+                    // Input is a batch
+                    Internal::Multiple(value) => {
+                        // Validate that value is correct
+
+                    }
+                }
+
+                // Option get second element
+                let second = seq.next_element()?;
+
+                // Option get third element
+                if let Some(_) = seq.next_element::<String>()? {
+                    // Error as we do not accept > 2 elements
+                    return Err(de::Error::invalid_length(3, &self));
+                }
+
+                if let Some(second) = second {
+                    // Second element exists
+                    // This is a pair
+                    Ok(Sequence::Pair(first, second))
+                } else {
+                    // Second element does not exist
+                    Ok(Sequence::Single(first))
+                }
+            }
+        }
+
+        deserializer.deserialize_any(PredictInputVisitor)
+    }
+}
+
+
+impl<'__s> ToSchema<'__s> for PredictInput {
+    fn schema() -> (&'__s str, RefOr<Schema>) {
+        (
+            "PredictInput",
+            utoipa::openapi::OneOfBuilder::new()
+                .item(
+                    utoipa::openapi::ObjectBuilder::new()
+                        .schema_type(utoipa::openapi::SchemaType::String)
+                        .description(Some("A single string")),
+                )
+                .item(
+                    utoipa::openapi::ArrayBuilder::new()
+                        .items(
+                            utoipa::openapi::ObjectBuilder::new()
+                                .schema_type(utoipa::openapi::SchemaType::String),
+                        )
+                        .description(Some("A pair of string"))
+                        .min_items(Some(2))
+                        .max_items(Some(2)),
+                )
+                .item(
+                    utoipa::openapi::ArrayBuilder::new().items(
+                        utoipa::openapi::OneOfBuilder::new()
+                            .item(
+                                utoipa::openapi::ArrayBuilder::new()
+                                    .items(
+                                        utoipa::openapi::ObjectBuilder::new()
+                                            .schema_type(utoipa::openapi::SchemaType::String),
+                                    )
+                                    .description(Some("A single string"))
+                                    .min_items(Some(1))
+                                    .max_items(Some(1)),
+                            )
+                            .item(
+                                utoipa::openapi::ArrayBuilder::new()
+                                    .items(
+                                        utoipa::openapi::ObjectBuilder::new()
+                                            .schema_type(utoipa::openapi::SchemaType::String),
+                                    )
+                                    .description(Some("A pair of string"))
+                                    .min_items(Some(2))
+                                    .max_items(Some(2)),
+                            )
+                    ).description(Some("A batch")),
+                )
+                .description(Some(
+                    "Model input. \
+                Can be either a single string, a pair of strings, a batch of single strings or \
+                a batch of pairs of strings",
+                ))
+                .example(Some(json!("What is Deep Learning?")))
+                .into(),
+        )
+    }
+}
+
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct PredictRequest {
-    pub inputs: Sequence,
+    pub inputs: PredictInput,
     #[serde(default)]
     #[schema(default = "false", example = "false")]
     pub truncate: bool,
