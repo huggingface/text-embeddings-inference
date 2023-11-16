@@ -17,6 +17,8 @@ use text_embeddings_backend_core::Batch;
 mod flash_bert;
 mod jina;
 
+mod bloom;
+
 #[cfg(feature = "cuda")]
 pub use flash_bert::FlashBertModel;
 
