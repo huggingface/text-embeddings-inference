@@ -695,6 +695,51 @@
           }
         }
       },
+      "PredictInput": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "A single string"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "A pair of strings",
+            "maxItems": 2,
+            "minItems": 2
+          },
+          {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "A single string",
+                  "maxItems": 1,
+                  "minItems": 1
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "A pair of strings",
+                  "maxItems": 2,
+                  "minItems": 2
+                }
+              ]
+            },
+            "description": "A batch"
+          }
+        ],
+        "description": "Model input. Can be either a single string, a pair of strings or a batch of mixed single and pairs of strings.",
+        "example": "What is Deep Learning?"
+      },
       "PredictRequest": {
         "type": "object",
         "required": [
@@ -702,7 +747,7 @@
         ],
         "properties": {
           "inputs": {
-            "$ref": "#/components/schemas/Sequence"
+            "$ref": "#/components/schemas/PredictInput"
           },
           "raw_scores": {
             "type": "boolean",
@@ -717,10 +762,23 @@
         }
       },
       "PredictResponse": {
-        "type": "array",
-        "items": {
-          "$ref": "#/components/schemas/Prediction"
-        }
+        "oneOf": [
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Prediction"
+            }
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Prediction"
+              }
+            }
+          }
+        ]
       },
       "Prediction": {
         "type": "object",
@@ -739,22 +797,6 @@
             "example": "0.5"
           }
         }
-      },
-      "Sequence": {
-        "oneOf": [
-          {
-            "type": "string"
-          },
-          {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "",
-            "maxItems": 2,
-            "minItems": 2
-          }
-        ]
       }
     }
   },
