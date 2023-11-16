@@ -2,7 +2,8 @@
 use crate::{
     ClassifierModel, EmbedRequest, EmbedResponse, EmbeddingModel, ErrorResponse, ErrorType, Info,
     Input, ModelType, OpenAICompatEmbedding, OpenAICompatErrorResponse, OpenAICompatRequest,
-    OpenAICompatResponse, OpenAICompatUsage, PredictRequest, PredictResponse, Prediction, Sequence,
+    OpenAICompatResponse, OpenAICompatUsage, PredictInput, PredictRequest, PredictResponse,
+    Prediction, Sequence,
 };
 use axum::extract::Extension;
 use axum::http::{HeaderMap, Method, StatusCode};
@@ -85,67 +86,133 @@ async fn predict(
     let span = tracing::Span::current();
     let start_time = Instant::now();
 
-    metrics::increment_counter!("te_request_count", "method" => "single");
+    // Closure for predict
+    let predict_inner = move |inputs: Sequence,
+                              truncate: bool,
+                              raw_scores: bool,
+                              infer: Infer,
+                              info: Info| async move {
+        let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+        let response = infer
+            .predict(inputs, truncate, raw_scores, permit)
+            .await
+            .map_err(ErrorResponse::from)?;
 
-    let compute_chars = req.inputs.count_chars();
+        let id2label = match &info.model_type {
+            ModelType::Classifier(classifier) => &classifier.id2label,
+            _ => panic!(),
+        };
 
-    let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
-    let mut response = infer
-        .predict(req.inputs, req.truncate, permit)
-        .await
-        .map_err(ErrorResponse::from)?;
+        let mut predictions: Vec<Prediction> = {
+            // Map score to label
+            response
+                .results
+                .into_iter()
+                .enumerate()
+                .map(|(i, s)| Prediction {
+                    score: s,
+                    label: id2label.get(&i.to_string()).unwrap().clone(),
+                })
+                .collect()
+        };
+        // Reverse sort
+        predictions.sort_by(|x, y| x.score.partial_cmp(&y.score).unwrap());
+        predictions.reverse();
 
-    let id2label = match &info.model_type {
-        ModelType::Classifier(classifier) => &classifier.id2label,
-        _ => panic!(),
+        Ok::<(usize, Duration, Duration, Duration, Vec<Prediction>), ErrorResponse>((
+            response.prompt_tokens,
+            response.tokenization,
+            response.queue,
+            response.inference,
+            predictions,
+        ))
     };
 
-    let mut predictions: Vec<Prediction> = {
-        if !req.raw_scores {
-            // Softmax
-            if response.results.len() > 1 {
-                let max = *response
-                    .results
-                    .iter()
-                    .max_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap())
-                    .unwrap();
+    let (compute_chars, compute_tokens, tokenization_time, queue_time, inference_time, response) =
+        match req.inputs {
+            PredictInput::Single(inputs) => {
+                metrics::increment_counter!("te_request_count", "method" => "single");
 
-                let mut den = 0.0;
-                for v in response.results.iter_mut() {
-                    *v = (*v - max).exp();
-                    den += *v;
-                }
-                for v in response.results.iter_mut() {
-                    *v /= den;
-                }
+                let compute_chars = inputs.count_chars();
+                let (prompt_tokens, tokenization, queue, inference, predictions) =
+                    predict_inner(inputs, req.truncate, req.raw_scores, infer.0, info.0).await?;
+
+                metrics::increment_counter!("te_request_success", "method" => "single");
+
+                (
+                    compute_chars,
+                    prompt_tokens,
+                    tokenization,
+                    queue,
+                    inference,
+                    PredictResponse::Single(predictions),
+                )
             }
-            // Sigmoid
-            else {
-                response.results[0] = 1.0 / (1.0 + (-response.results[0]).exp());
+            PredictInput::Batch(inputs) => {
+                metrics::increment_counter!("te_request_count", "method" => "batch");
+
+                let batch_size = inputs.len();
+                if batch_size > info.max_client_batch_size {
+                    let message = format!(
+                        "batch size {batch_size} > maximum allowed batch size {}",
+                        info.max_client_batch_size
+                    );
+                    tracing::error!("{message}");
+                    let err = ErrorResponse {
+                        error: message,
+                        error_type: ErrorType::Validation,
+                    };
+                    metrics::increment_counter!("te_request_failure", "err" => "batch_size");
+                    Err(err)?;
+                }
+
+                let mut futures = Vec::with_capacity(batch_size);
+                let mut compute_chars = 0;
+
+                for input in inputs {
+                    compute_chars += input.count_chars();
+                    let local_infer = infer.clone();
+                    let local_info = info.clone();
+                    futures.push(predict_inner(
+                        input,
+                        req.truncate,
+                        req.raw_scores,
+                        local_infer.0,
+                        local_info.0,
+                    ))
+                }
+                let results = join_all(futures).await.into_iter().collect::<Result<
+                    Vec<(usize, Duration, Duration, Duration, Vec<Prediction>)>,
+                    ErrorResponse,
+                >>()?;
+
+                let mut predictions = Vec::with_capacity(batch_size);
+                let mut total_tokenization_time = 0;
+                let mut total_queue_time = 0;
+                let mut total_inference_time = 0;
+                let mut total_compute_tokens = 0;
+
+                for r in results {
+                    total_compute_tokens += r.0;
+                    total_tokenization_time += r.1.as_nanos() as u64;
+                    total_queue_time += r.2.as_nanos() as u64;
+                    total_inference_time += r.3.as_nanos() as u64;
+                    predictions.push(r.4);
+                }
+                let batch_size = batch_size as u64;
+
+                metrics::increment_counter!("te_request_success", "method" => "batch");
+
+                (
+                    compute_chars,
+                    total_compute_tokens,
+                    Duration::from_nanos(total_tokenization_time / batch_size),
+                    Duration::from_nanos(total_queue_time / batch_size),
+                    Duration::from_nanos(total_inference_time / batch_size),
+                    PredictResponse::Batch(predictions),
+                )
             }
-        }
-
-        // Map score to label
-        response
-            .results
-            .into_iter()
-            .enumerate()
-            .map(|(i, s)| Prediction {
-                score: s,
-                label: id2label.get(&i.to_string()).unwrap().clone(),
-            })
-            .collect()
-    };
-    // Reverse sort
-    predictions.sort_by(|x, y| x.score.partial_cmp(&y.score).unwrap());
-    predictions.reverse();
-
-    metrics::increment_counter!("te_request_success", "method" => "predict");
-
-    let compute_tokens = response.prompt_tokens;
-    let tokenization_time = response.tokenization;
-    let queue_time = response.queue;
-    let inference_time = response.inference;
+        };
 
     let total_time = start_time.elapsed();
 
@@ -201,7 +268,7 @@ async fn predict(
 
     tracing::info!("Success");
 
-    Ok((headers, Json(PredictResponse(predictions))))
+    Ok((headers, Json(response)))
 }
 
 /// Get Embeddings. Returns a 424 status code if the model is not an embedding model.
@@ -605,7 +672,7 @@ pub async fn run(
     ),
     components(
     schemas(
-    Sequence,
+    PredictInput,
     Input,
     Info,
     ModelType,
