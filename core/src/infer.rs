@@ -180,6 +180,7 @@ impl Infer {
         &self,
         inputs: I,
         truncate: bool,
+        raw_scores: bool,
         _permit: OwnedSemaphorePermit,
     ) -> Result<InferResponse, TextEmbeddingsError> {
         if !self.is_classifier() {
@@ -222,7 +223,7 @@ impl Infer {
 
         self.notify_batching_task.notify_one();
 
-        let response = response_rx
+        let mut response = response_rx
             .await
             .expect(
                 "Infer batching task dropped the sender without sending a response. This is a bug.",
@@ -232,6 +233,30 @@ impl Infer {
                 tracing::error!("{err}");
                 err
             })?;
+
+        if !raw_scores {
+            // Softmax
+            if response.results.len() > 1 {
+                let max = *response
+                    .results
+                    .iter()
+                    .max_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap())
+                    .unwrap();
+
+                let mut den = 0.0;
+                for v in response.results.iter_mut() {
+                    *v = (*v - max).exp();
+                    den += *v;
+                }
+                for v in response.results.iter_mut() {
+                    *v /= den;
+                }
+            }
+            // Sigmoid
+            else {
+                response.results[0] = 1.0 / (1.0 + (-response.results[0]).exp());
+            }
+        }
 
         // Timings
         let total_time = start_time.elapsed();
