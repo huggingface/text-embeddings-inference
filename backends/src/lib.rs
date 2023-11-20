@@ -3,6 +3,7 @@ mod dtype;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use text_embeddings_backend_core::Backend as CoreBackend;
 use tokio::sync::oneshot;
 use tracing::{instrument, Span};
@@ -91,7 +92,7 @@ impl Backend {
     }
 
     #[instrument(skip_all)]
-    pub async fn embed(&self, batch: Batch) -> Result<Vec<Embedding>, BackendError> {
+    pub async fn embed(&self, batch: Batch) -> Result<(Vec<Embedding>, Duration), BackendError> {
         let (sender, receiver) = oneshot::channel();
 
         self.backend_sender
@@ -107,7 +108,7 @@ impl Backend {
     }
 
     #[instrument(skip_all)]
-    pub async fn predict(&self, batch: Batch) -> Result<Vec<Vec<f32>>, BackendError> {
+    pub async fn predict(&self, batch: Batch) -> Result<(Vec<Vec<f32>>, Duration), BackendError> {
         let (sender, receiver) = oneshot::channel();
 
         self.backend_sender
@@ -166,6 +167,7 @@ fn backend_blocking_task(
     command_receiver: flume::Receiver<BackendCommand>,
 ) {
     while let Ok(cmd) = command_receiver.recv() {
+        let start = Instant::now();
         match cmd {
             BackendCommand::Health(span, sender) => {
                 let _span = span.entered();
@@ -173,11 +175,11 @@ fn backend_blocking_task(
             }
             BackendCommand::Embed(batch, span, sender) => {
                 let _span = span.entered();
-                let _ = sender.send(backend.embed(batch));
+                let _ = sender.send(backend.embed(batch).map(|e| (e, start.elapsed())));
             }
             BackendCommand::Predict(batch, span, sender) => {
                 let _span = span.entered();
-                let _ = sender.send(backend.predict(batch));
+                let _ = sender.send(backend.predict(batch).map(|e| (e, start.elapsed())));
             }
         }
     }
@@ -188,11 +190,12 @@ enum BackendCommand {
     Embed(
         Batch,
         Span,
-        oneshot::Sender<Result<Vec<Embedding>, BackendError>>,
+        oneshot::Sender<Result<(Vec<Embedding>, Duration), BackendError>>,
     ),
     Predict(
         Batch,
         Span,
-        oneshot::Sender<Result<Vec<Vec<f32>>, BackendError>>,
+        #[allow(clippy::type_complexity)]
+        oneshot::Sender<Result<(Vec<Vec<f32>>, Duration), BackendError>>,
     ),
 }

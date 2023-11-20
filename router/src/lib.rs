@@ -276,6 +276,37 @@ pub(crate) enum PredictResponse {
 }
 
 #[derive(Deserialize, ToSchema)]
+pub(crate) struct RerankRequest {
+    #[schema(example = "What is Deep Learning?")]
+    pub query: String,
+    #[schema(example = json!(["Deep Learning is ..."]))]
+    pub passages: Vec<String>,
+    #[serde(default)]
+    #[schema(default = "false", example = "false")]
+    pub truncate: bool,
+    #[serde(default)]
+    #[schema(default = "false", example = "false")]
+    pub raw_scores: bool,
+    #[serde(default)]
+    #[schema(default = "false", example = "false")]
+    pub return_passages: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct Rank {
+    #[schema(example = "0")]
+    pub index: usize,
+    #[schema(nullable = true, example = "Deep Learning is ...", default = "null")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub passage: Option<String>,
+    #[schema(example = "1.0")]
+    pub score: f32,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct RerankResponse(Vec<Rank>);
+
+#[derive(Deserialize, ToSchema)]
 #[serde(untagged)]
 pub(crate) enum Input {
     Single(String),

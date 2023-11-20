@@ -53,11 +53,13 @@ curl 127.0.0.1:8080/embed \
     -H 'Content-Type: application/json'
 ```
 
-## Sequence Classification
+## Re-rankers
 
-TEI can also be used to deploy Sequence Classification models.
+Re-rankers models are Sequence Classification cross-encoders models with a single class that scores the similarity 
+between a query and a passage.
+
 See [this blogpost](https://blog.llamaindex.ai/boosting-rag-picking-the-best-embedding-reranker-models-42d079022e83) by
-the LlamaIndex team to understand how you can use Sequence Classification models in your RAG pipeline to improve
+the LlamaIndex team to understand how you can use re-rankers models in your RAG pipeline to improve
 downstream performance.
 
 Let's say you want to use `BAAI/bge-reranker-large`:
@@ -70,14 +72,17 @@ volume=$PWD/data
 docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.4.0 --model-id $model --revision $revision
 ```
 
-Once you have deployed a model you can use the `predict` endpoint and rank the similarity between a pair of inputs:
+Once you have deployed a model you can use the `rerank` endpoint to rank the similarity between a query and a list
+of passages:
 
 ```bash
-curl 127.0.0.1:8080/predict \
+curl 127.0.0.1:8080/rerank \
     -X POST \
-    -d '{"inputs":["What is Deep Learning?", "Deep learning is..."], "raw_scores": true}' \
+    -d '{"query":"What is Deep Learning?", "passages": ["Deep Learning is not...", "Deep learning is..."], "raw_scores": false}' \
     -H 'Content-Type: application/json'
 ```
+
+## Sequence Classification
 
 You can also use classic Sequence Classification models like `SamLowe/roberta-base-go_emotions`:
 

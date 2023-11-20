@@ -348,6 +348,94 @@
           }
         }
       }
+    },
+    "/rerank": {
+      "post": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Get Ranks. Returns a 424 status code if the model is not a Sequence Classification model with",
+        "description": "Get Ranks. Returns a 424 status code if the model is not a Sequence Classification model with\na single class.",
+        "operationId": "rerank",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RerankRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Ranks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RerankResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Rerank Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Inference failed",
+                  "error_type": "backend"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Model is overloaded",
+                  "error_type": "overloaded"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -796,6 +884,74 @@
             "format": "float",
             "example": "0.5"
           }
+        }
+      },
+      "Rank": {
+        "type": "object",
+        "required": [
+          "index",
+          "score"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "example": "0",
+            "minimum": 0
+          },
+          "passage": {
+            "type": "string",
+            "default": "null",
+            "example": "Deep Learning is ...",
+            "nullable": true
+          },
+          "score": {
+            "type": "number",
+            "format": "float",
+            "example": "1.0"
+          }
+        }
+      },
+      "RerankRequest": {
+        "type": "object",
+        "required": [
+          "query",
+          "passages"
+        ],
+        "properties": {
+          "passages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "Deep Learning is ..."
+            ]
+          },
+          "query": {
+            "type": "string",
+            "example": "What is Deep Learning?"
+          },
+          "raw_scores": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false"
+          },
+          "return_passages": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false"
+          },
+          "truncate": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false"
+          }
+        }
+      },
+      "RerankResponse": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/Rank"
         }
       }
     }

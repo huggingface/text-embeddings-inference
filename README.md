@@ -33,6 +33,7 @@ length of 512 tokens:
     - [Docker Images](#docker-images)
     - [API Documentation](#api-documentation)
     - [Using a private or gated model](#using-a-private-or-gated-model)
+    - [Using Re-rankers models](#using-re-rankers-models)
     - [Using Sequence Classification models](#using-sequence-classification-models)
     - [Distributed Tracing](#distributed-tracing)
 - [Local Install](#local-install)
@@ -281,11 +282,14 @@ token=<your cli READ token>
 docker run --gpus all -e HUGGING_FACE_HUB_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.4.0 --model-id $model
 ```
 
-### Using Sequence Classification models
+### Using Re-rankers models
 
 `text-embeddings-inference` v0.4.0 added support for CamemBERT, RoBERTa and XLM-RoBERTa Sequence Classification models.
+Re-rankers models are Sequence Classification cross-encoders models with a single class that scores the similarity
+between a query and a passage.
+
 See [this blogpost](https://blog.llamaindex.ai/boosting-rag-picking-the-best-embedding-reranker-models-42d079022e83) by
-the LlamaIndex team to understand how you can use Sequence Classification models in your RAG pipeline to improve
+the LlamaIndex team to understand how you can use re-rankers models in your RAG pipeline to improve
 downstream performance.
 
 ```shell
@@ -296,14 +300,16 @@ volume=$PWD/data # share a volume with the Docker container to avoid downloading
 docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.4.0 --model-id $model --revision $revision
 ```
 
-And then you can rank the similarity between a pair of inputs with:
+And then you can rank the similarity between a query and a list of passages with:
 
 ```bash
-curl 127.0.0.1:8080/predict \
+curl 127.0.0.1:8080/rerank \
     -X POST \
-    -d '{"inputs":["What is Deep Learning?", "Deep learning is..."], "raw_scores": true}' \
+    -d '{"query":"What is Deep Learning?", "passages": ["Deep Learning is not...", "Deep learning is..."]}' \
     -H 'Content-Type: application/json'
 ```
+
+### Using Sequence Classification models
 
 You can also use classic Sequence Classification models like `SamLowe/roberta-base-go_emotions`:
 
