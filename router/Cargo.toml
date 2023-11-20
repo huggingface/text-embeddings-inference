@@ -23,7 +23,6 @@ text-embeddings-backend = { path = "../backends", features = ["clap"] }
 text-embeddings-core = { path = "../core" }
 clap = { version = "4.1.4", features = ["derive", "env"] }
 futures = "^0.3"
-flume = "0.11.0"
 init-tracing-opentelemetry = { version = "0.14.1", features = ["opentelemetry-otlp"] }
 hf-hub = { version = "0.3.0", features = ["tokio"] }
 num_cpus = "1.16.0"

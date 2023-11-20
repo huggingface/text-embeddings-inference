@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use text_embeddings_backend_core::Backend as CoreBackend;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{instrument, Span};
 
 pub use crate::dtype::DType;
@@ -20,7 +20,7 @@ use text_embeddings_backend_python::PythonBackend;
 #[derive(Debug, Clone)]
 pub struct Backend {
     /// Channel to communicate with the background thread
-    backend_sender: flume::Sender<BackendCommand>,
+    backend_sender: mpsc::UnboundedSender<BackendCommand>,
     /// Health status
     health: Arc<AtomicBool>,
     pub max_batch_size: Option<usize>,
@@ -35,7 +35,7 @@ impl Backend {
         uds_path: String,
         otlp_endpoint: Option<String>,
     ) -> Result<Self, BackendError> {
-        let (backend_sender, backend_receiver) = flume::unbounded();
+        let (backend_sender, backend_receiver) = mpsc::unbounded_channel();
 
         let backend = init_backend(
             model_path,
@@ -164,9 +164,9 @@ fn init_backend(
 
 fn backend_blocking_task(
     backend: Box<dyn CoreBackend + Send>,
-    command_receiver: flume::Receiver<BackendCommand>,
+    mut command_receiver: mpsc::UnboundedReceiver<BackendCommand>,
 ) {
-    while let Ok(cmd) = command_receiver.recv() {
+    while let Some(cmd) = command_receiver.blocking_recv() {
         let start = Instant::now();
         match cmd {
             BackendCommand::Health(span, sender) => {
