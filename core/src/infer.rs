@@ -90,7 +90,7 @@ impl Infer {
     ) -> Result<InferResponse, TextEmbeddingsError> {
         if self.is_classifier() {
             metrics::increment_counter!("te_request_failure", "err" => "model_type");
-            let message = "model is not an embedding model".to_string();
+            let message = "Model is not an embedding model".to_string();
             tracing::error!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
@@ -185,8 +185,7 @@ impl Infer {
     ) -> Result<InferResponse, TextEmbeddingsError> {
         if !self.is_classifier() {
             metrics::increment_counter!("te_request_failure", "err" => "model_type");
-            let message = "model is not a classifier model".to_string();
-            // tracing::error!("{message}");
+            let message = "Model is not a classifier model".to_string();
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
             )));
@@ -313,7 +312,6 @@ async fn backend_task(
     mut embed_receiver: mpsc::UnboundedReceiver<(NextBatch, oneshot::Sender<()>)>,
 ) {
     while let Some((batch, _callback)) = embed_receiver.recv().await {
-        let inference_start = Instant::now();
         let results = match &backend.model_type {
             ModelType::Classifier => backend.predict(batch.1).await,
             ModelType::Embedding(_) => backend.embed(batch.1).await,
@@ -321,14 +319,14 @@ async fn backend_task(
 
         // Handle sending responses in another thread to avoid starving the backend
         tokio::task::spawn_blocking(move || match results {
-            Ok(embeddings) => {
+            Ok((embeddings, inference_duration)) => {
                 batch.0.into_iter().zip(embeddings).for_each(|(m, e)| {
                     let _ = m.response_tx.send(Ok(InferResponse {
                         results: e,
                         prompt_tokens: m.prompt_tokens,
                         tokenization: m.tokenization,
-                        queue: inference_start - m.queue_time,
-                        inference: inference_start.elapsed(),
+                        queue: m.queue_time.elapsed() - inference_duration,
+                        inference: inference_duration,
                     }));
                 });
             }

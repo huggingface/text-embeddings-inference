@@ -3,7 +3,7 @@ use crate::{
     ClassifierModel, EmbedRequest, EmbedResponse, EmbeddingModel, ErrorResponse, ErrorType, Info,
     Input, ModelType, OpenAICompatEmbedding, OpenAICompatErrorResponse, OpenAICompatRequest,
     OpenAICompatResponse, OpenAICompatUsage, PredictInput, PredictRequest, PredictResponse,
-    Prediction, Sequence,
+    Prediction, Rank, RerankRequest, RerankResponse, Sequence,
 };
 use axum::extract::Extension;
 use axum::http::{HeaderMap, Method, StatusCode};
@@ -14,6 +14,7 @@ use futures::future::join_all;
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
+use text_embeddings_backend::BackendError;
 use text_embeddings_core::infer::{Infer, InferResponse};
 use text_embeddings_core::TextEmbeddingsError;
 use tokio::signal;
@@ -213,6 +214,223 @@ async fn predict(
                 )
             }
         };
+
+    let total_time = start_time.elapsed();
+
+    // Tracing metadata
+    span.record("total_time", format!("{total_time:?}"));
+    span.record("tokenization_time", format!("{tokenization_time:?}"));
+    span.record("queue_time", format!("{queue_time:?}"));
+    span.record("inference_time", format!("{inference_time:?}"));
+
+    // Headers
+    let mut headers = HeaderMap::new();
+    headers.insert("x-compute-type", "gpu+optimized".parse().unwrap());
+    headers.insert(
+        "x-compute-time",
+        total_time.as_millis().to_string().parse().unwrap(),
+    );
+    headers.insert(
+        "x-compute-characters",
+        compute_chars.to_string().parse().unwrap(),
+    );
+    headers.insert(
+        "x-compute-tokens",
+        compute_tokens.to_string().parse().unwrap(),
+    );
+    headers.insert(
+        "x-total-time",
+        total_time.as_millis().to_string().parse().unwrap(),
+    );
+    headers.insert(
+        "x-tokenization-time",
+        tokenization_time.as_millis().to_string().parse().unwrap(),
+    );
+    headers.insert(
+        "x-queue-time",
+        queue_time.as_millis().to_string().parse().unwrap(),
+    );
+    headers.insert(
+        "x-inference-time",
+        inference_time.as_millis().to_string().parse().unwrap(),
+    );
+
+    // Metrics
+    metrics::histogram!("te_request_duration", total_time.as_secs_f64());
+    metrics::histogram!(
+        "te_request_tokenization_duration",
+        tokenization_time.as_secs_f64()
+    );
+    metrics::histogram!("te_request_queue_duration", queue_time.as_secs_f64());
+    metrics::histogram!(
+        "te_request_inference_duration",
+        inference_time.as_secs_f64()
+    );
+
+    tracing::info!("Success");
+
+    Ok((headers, Json(response)))
+}
+
+/// Get Ranks. Returns a 424 status code if the model is not a Sequence Classification model with
+/// a single class.
+#[utoipa::path(
+post,
+tag = "Text Embeddings Inference",
+path = "/rerank",
+request_body = RerankRequest,
+responses(
+(status = 200, description = "Ranks", body = RerankResponse),
+(status = 424, description = "Rerank Error", body = ErrorResponse,
+example = json ! ({"error": "Inference failed", "error_type": "backend"})),
+(status = 429, description = "Model is overloaded", body = ErrorResponse,
+example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
+(status = 422, description = "Tokenization error", body = ErrorResponse,
+example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 413, description = "Batch size error", body = ErrorResponse,
+example = json ! ({"error": "Batch size error", "error_type": "validation"})),
+)
+)]
+#[instrument(
+    skip_all,
+    fields(total_time, tokenization_time, queue_time, inference_time,)
+)]
+async fn rerank(
+    infer: Extension<Infer>,
+    info: Extension<Info>,
+    Json(req): Json<RerankRequest>,
+) -> Result<(HeaderMap, Json<RerankResponse>), (StatusCode, Json<ErrorResponse>)> {
+    let span = tracing::Span::current();
+    let start_time = Instant::now();
+
+    match &info.model_type {
+        ModelType::Classifier(classifier) => {
+            if classifier.id2label.len() > 1 {
+                metrics::increment_counter!("te_request_failure", "err" => "model_type");
+                let message = "model is not a re-ranker model".to_string();
+                Err(TextEmbeddingsError::Backend(BackendError::Inference(
+                    message,
+                )))
+            } else {
+                Ok(())
+            }
+        }
+        ModelType::Embedding(_) => {
+            metrics::increment_counter!("te_request_failure", "err" => "model_type");
+            let message = "model is not a classifier model".to_string();
+            Err(TextEmbeddingsError::Backend(BackendError::Inference(
+                message,
+            )))
+        }
+    }
+    .map_err(|err| {
+        tracing::error!("{err}");
+        ErrorResponse::from(err)
+    })?;
+
+    // Closure for rerank
+    let rerank_inner = move |query: String,
+                             passage: String,
+                             truncate: bool,
+                             raw_scores: bool,
+                             infer: Infer| async move {
+        let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+
+        let response = infer
+            .predict((query, passage), truncate, raw_scores, permit)
+            .await
+            .map_err(ErrorResponse::from)?;
+
+        let score = response.results[0];
+
+        Ok::<(usize, Duration, Duration, Duration, f32), ErrorResponse>((
+            response.prompt_tokens,
+            response.tokenization,
+            response.queue,
+            response.inference,
+            score,
+        ))
+    };
+
+    let (compute_chars, compute_tokens, tokenization_time, queue_time, inference_time, response) = {
+        metrics::increment_counter!("te_request_count", "method" => "batch");
+
+        let batch_size = req.passages.len();
+        if batch_size > info.max_client_batch_size {
+            let message = format!(
+                "batch size {batch_size} > maximum allowed batch size {}",
+                info.max_client_batch_size
+            );
+            tracing::error!("{message}");
+            let err = ErrorResponse {
+                error: message,
+                error_type: ErrorType::Validation,
+            };
+            metrics::increment_counter!("te_request_failure", "err" => "batch_size");
+            Err(err)?;
+        }
+
+        let mut futures = Vec::with_capacity(batch_size);
+        let query_chars = req.query.chars().count();
+        let mut compute_chars = query_chars * batch_size;
+
+        for passage in &req.passages {
+            compute_chars += passage.chars().count();
+            let local_infer = infer.clone();
+            futures.push(rerank_inner(
+                req.query.clone(),
+                passage.clone(),
+                req.truncate,
+                req.raw_scores,
+                local_infer.0,
+            ))
+        }
+        let results = join_all(futures)
+            .await
+            .into_iter()
+            .collect::<Result<Vec<(usize, Duration, Duration, Duration, f32)>, ErrorResponse>>()?;
+
+        let mut ranks = Vec::with_capacity(batch_size);
+        let mut total_tokenization_time = 0;
+        let mut total_queue_time = 0;
+        let mut total_inference_time = 0;
+        let mut total_compute_tokens = 0;
+
+        for (index, r) in results.into_iter().enumerate() {
+            total_compute_tokens += r.0;
+            total_tokenization_time += r.1.as_nanos() as u64;
+            total_queue_time += r.2.as_nanos() as u64;
+            total_inference_time += r.3.as_nanos() as u64;
+            let passage = if req.return_passages {
+                Some(req.passages[index].clone())
+            } else {
+                None
+            };
+
+            ranks.push(Rank {
+                index,
+                passage,
+                score: r.4,
+            })
+        }
+
+        // Reverse sort
+        ranks.sort_by(|x, y| x.score.partial_cmp(&y.score).unwrap());
+        ranks.reverse();
+
+        let batch_size = batch_size as u64;
+
+        metrics::increment_counter!("te_request_success", "method" => "batch");
+
+        (
+            compute_chars,
+            total_compute_tokens,
+            Duration::from_nanos(total_tokenization_time / batch_size),
+            Duration::from_nanos(total_queue_time / batch_size),
+            Duration::from_nanos(total_inference_time / batch_size),
+            RerankResponse(ranks),
+        )
+    };
 
     let total_time = start_time.elapsed();
 
@@ -666,6 +884,7 @@ pub async fn run(
     get_model_info,
     health,
     predict,
+    rerank,
     embed,
     openai_embed,
     metrics,
@@ -685,6 +904,9 @@ pub async fn run(
     OpenAICompatEmbedding,
     OpenAICompatUsage,
     OpenAICompatResponse,
+    RerankRequest,
+    Rank,
+    RerankResponse,
     EmbedRequest,
     EmbedResponse,
     ErrorResponse,
@@ -759,6 +981,7 @@ pub async fn run(
         .route("/info", get(get_model_info))
         .route("/embed", post(embed))
         .route("/predict", post(predict))
+        .route("/rerank", post(rerank))
         // OpenAI compat route
         .route("/embeddings", post(openai_embed))
         // Base Health route
@@ -771,13 +994,19 @@ pub async fn run(
         .route("/metrics", get(metrics));
 
     // Set default routes
-    let app = match infer.is_classifier() {
-        true => {
-            app.route("/", post(predict))
-                // AWS Sagemaker route
-                .route("/invocations", post(predict))
+    let app = match &info.model_type {
+        ModelType::Classifier(classifier) => {
+            if classifier.id2label.len() > 1 {
+                app.route("/", post(predict))
+                    // AWS Sagemaker route
+                    .route("/invocations", post(predict))
+            } else {
+                app.route("/", post(rerank))
+                    // AWS Sagemaker route
+                    .route("/invocations", post(rerank))
+            }
         }
-        false => {
+        ModelType::Embedding(_) => {
             app.route("/", post(embed))
                 // AWS Sagemaker route
                 .route("/invocations", post(embed))

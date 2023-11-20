@@ -180,6 +180,12 @@ impl From<String> for EncodingInput {
     }
 }
 
+impl From<(String, String)> for EncodingInput {
+    fn from(value: (String, String)) -> Self {
+        Self::Dual(value.0, value.1)
+    }
+}
+
 type TokenizerRequest = (
     EncodingInput,
     bool,

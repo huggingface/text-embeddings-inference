@@ -53,7 +53,7 @@ pub enum BackendError {
     NoBackend,
     #[error("Could not start backend: {0}")]
     Start(String),
-    #[error("Inference error: {0}")]
+    #[error("{0}")]
     Inference(String),
     #[error("Backend is unhealthy")]
     Unhealthy,
