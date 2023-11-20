@@ -305,7 +305,7 @@ And then you can rank the similarity between a query and a list of passages with
 ```bash
 curl 127.0.0.1:8080/rerank \
     -X POST \
-    -d '{"query":"What is Deep Learning?", "passages": ["Deep Learning is not...", "Deep learning is..."], "raw_scores": false}' \
+    -d '{"query":"What is Deep Learning?", "passages": ["Deep Learning is not...", "Deep learning is..."]}' \
     -H 'Content-Type: application/json'
 ```
 
