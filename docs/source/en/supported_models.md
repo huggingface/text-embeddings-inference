@@ -44,7 +44,7 @@ Below are some examples of the currently supported models:
 To explore the list of best performing text embeddings models, visit the 
 [Massive Text Embedding Benchmark (MTEB) Leaderboard](https://huggingface.co/spaces/mteb/leaderboard).
 
-## Supported sequence classification models
+## Supported re-rankers and sequence classification models
 
 Text Embeddings Inference currently supports CamemBERT, and XLM-RoBERTa Sequence Classification models with absolute positions. 
 
