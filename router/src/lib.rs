@@ -280,7 +280,7 @@ pub(crate) struct RerankRequest {
     #[schema(example = "What is Deep Learning?")]
     pub query: String,
     #[schema(example = json!(["Deep Learning is ..."]))]
-    pub passages: Vec<String>,
+    pub texts: Vec<String>,
     #[serde(default)]
     #[schema(default = "false", example = "false")]
     pub truncate: bool,
@@ -289,7 +289,7 @@ pub(crate) struct RerankRequest {
     pub raw_scores: bool,
     #[serde(default)]
     #[schema(default = "false", example = "false")]
-    pub return_passages: bool,
+    pub return_text: bool,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -298,7 +298,7 @@ pub(crate) struct Rank {
     pub index: usize,
     #[schema(nullable = true, example = "Deep Learning is ...", default = "null")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub passage: Option<String>,
+    pub text: Option<String>,
     #[schema(example = "1.0")]
     pub score: f32,
 }

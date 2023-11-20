@@ -286,7 +286,7 @@ docker run --gpus all -e HUGGING_FACE_HUB_TOKEN=$token -p 8080:80 -v $volume:/da
 
 `text-embeddings-inference` v0.4.0 added support for CamemBERT, RoBERTa and XLM-RoBERTa Sequence Classification models.
 Re-rankers models are Sequence Classification cross-encoders models with a single class that scores the similarity
-between a query and a passage.
+between a query and a text.
 
 See [this blogpost](https://blog.llamaindex.ai/boosting-rag-picking-the-best-embedding-reranker-models-42d079022e83) by
 the LlamaIndex team to understand how you can use re-rankers models in your RAG pipeline to improve
@@ -300,12 +300,12 @@ volume=$PWD/data # share a volume with the Docker container to avoid downloading
 docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.5 --model-id $model --revision $revision
 ```
 
-And then you can rank the similarity between a query and a list of passages with:
+And then you can rank the similarity between a query and a list of texts with:
 
 ```bash
 curl 127.0.0.1:8080/rerank \
     -X POST \
-    -d '{"query":"What is Deep Learning?", "passages": ["Deep Learning is not...", "Deep learning is..."]}' \
+    -d '{"query":"What is Deep Learning?", "texts": ["Deep Learning is not...", "Deep learning is..."]}' \
     -H 'Content-Type: application/json'
 ```
 

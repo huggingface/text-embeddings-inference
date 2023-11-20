@@ -898,7 +898,7 @@
             "example": "0",
             "minimum": 0
           },
-          "passage": {
+          "text": {
             "type": "string",
             "default": "null",
             "example": "Deep Learning is ...",
@@ -915,10 +915,10 @@
         "type": "object",
         "required": [
           "query",
-          "passages"
+          "texts"
         ],
         "properties": {
-          "passages": {
+          "texts": {
             "type": "array",
             "items": {
               "type": "string"
@@ -936,7 +936,7 @@
             "default": "false",
             "example": "false"
           },
-          "return_passages": {
+          "return_text": {
             "type": "boolean",
             "default": "false",
             "example": "false"

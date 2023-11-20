@@ -56,7 +56,7 @@ curl 127.0.0.1:8080/embed \
 ## Re-rankers
 
 Re-rankers models are Sequence Classification cross-encoders models with a single class that scores the similarity 
-between a query and a passage.
+between a query and a text.
 
 See [this blogpost](https://blog.llamaindex.ai/boosting-rag-picking-the-best-embedding-reranker-models-42d079022e83) by
 the LlamaIndex team to understand how you can use re-rankers models in your RAG pipeline to improve
@@ -73,12 +73,12 @@ docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingf
 ```
 
 Once you have deployed a model you can use the `rerank` endpoint to rank the similarity between a query and a list
-of passages:
+of texts:
 
 ```bash
 curl 127.0.0.1:8080/rerank \
     -X POST \
-    -d '{"query":"What is Deep Learning?", "passages": ["Deep Learning is not...", "Deep learning is..."], "raw_scores": false}' \
+    -d '{"query":"What is Deep Learning?", "texts": ["Deep Learning is not...", "Deep learning is..."], "raw_scores": false}' \
     -H 'Content-Type: application/json'
 ```
 

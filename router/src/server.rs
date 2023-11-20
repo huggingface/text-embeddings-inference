@@ -330,14 +330,14 @@ async fn rerank(
 
     // Closure for rerank
     let rerank_inner = move |query: String,
-                             passage: String,
+                             text: String,
                              truncate: bool,
                              raw_scores: bool,
                              infer: Infer| async move {
         let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
 
         let response = infer
-            .predict((query, passage), truncate, raw_scores, permit)
+            .predict((query, text), truncate, raw_scores, permit)
             .await
             .map_err(ErrorResponse::from)?;
 
@@ -355,7 +355,7 @@ async fn rerank(
     let (compute_chars, compute_tokens, tokenization_time, queue_time, inference_time, response) = {
         metrics::increment_counter!("te_request_count", "method" => "batch");
 
-        let batch_size = req.passages.len();
+        let batch_size = req.texts.len();
         if batch_size > info.max_client_batch_size {
             let message = format!(
                 "batch size {batch_size} > maximum allowed batch size {}",
@@ -374,12 +374,12 @@ async fn rerank(
         let query_chars = req.query.chars().count();
         let mut compute_chars = query_chars * batch_size;
 
-        for passage in &req.passages {
-            compute_chars += passage.chars().count();
+        for text in &req.texts {
+            compute_chars += text.chars().count();
             let local_infer = infer.clone();
             futures.push(rerank_inner(
                 req.query.clone(),
-                passage.clone(),
+                text.clone(),
                 req.truncate,
                 req.raw_scores,
                 local_infer.0,
@@ -401,15 +401,15 @@ async fn rerank(
             total_tokenization_time += r.1.as_nanos() as u64;
             total_queue_time += r.2.as_nanos() as u64;
             total_inference_time += r.3.as_nanos() as u64;
-            let passage = if req.return_passages {
-                Some(req.passages[index].clone())
+            let text = if req.return_text {
+                Some(req.texts[index].clone())
             } else {
                 None
             };
 
             ranks.push(Rank {
                 index,
-                passage,
+                text,
                 score: r.4,
             })
         }
