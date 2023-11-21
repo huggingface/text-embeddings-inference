@@ -2,8 +2,12 @@ name: Build documentation
 
 on:
   push:
+    paths:
+      - "docs/source/**"
     branches:
       - main
+      - doc-builder*
+      - v*-release
 
 jobs:
    build:
