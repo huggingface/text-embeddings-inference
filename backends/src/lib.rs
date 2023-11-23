@@ -60,7 +60,7 @@ impl Backend {
 
     #[instrument(skip(self))]
     pub async fn health(&self) -> Result<(), BackendError> {
-        let result = if *self.health_receiver.borrow() {
+        if *self.health_receiver.borrow() {
             // The backend is healthy. Only do a basic health check by calling the
             // the underlying health method.
 
@@ -86,9 +86,7 @@ impl Backend {
                 ModelType::Classifier => self.predict(batch).await.map(|_| ()),
                 ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
             }
-        };
-
-        result
+        }
     }
 
     #[instrument(skip(self))]
@@ -103,11 +101,9 @@ impl Backend {
         self.backend_sender
             .send(BackendCommand::Embed(batch, Span::current(), sender))
             .expect("No backend receiver. This is a bug.");
-        let result = receiver.await.expect(
+        receiver.await.expect(
             "Backend blocking task dropped the sender without send a response. This is a bug.",
-        );
-
-        result
+        )
     }
 
     #[instrument(skip_all)]
@@ -117,11 +113,9 @@ impl Backend {
         self.backend_sender
             .send(BackendCommand::Predict(batch, Span::current(), sender))
             .expect("No backend receiver. This is a bug.");
-        let result = receiver.await.expect(
+        receiver.await.expect(
             "Backend blocking task dropped the sender without send a response. This is a bug.",
-        );
-
-        result
+        )
     }
 }
 

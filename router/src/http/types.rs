@@ -1,3 +1,4 @@
+use crate::ErrorType;
 use serde::de::{SeqAccess, Visitor};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::json;
@@ -313,21 +314,6 @@ fn default_normalize() -> bool {
 #[derive(Serialize, ToSchema)]
 #[schema(example = json!([["0.0", "1.0", "2.0"]]))]
 pub(crate) struct EmbedResponse(pub Vec<Vec<f32>>);
-
-#[derive(Serialize, ToSchema)]
-pub(crate) enum ErrorType {
-    Unhealthy,
-    Backend,
-    Overloaded,
-    Validation,
-    Tokenizer,
-}
-
-#[derive(Serialize, ToSchema)]
-pub(crate) struct ErrorResponse {
-    pub error: String,
-    pub error_type: ErrorType,
-}
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct OpenAICompatErrorResponse {

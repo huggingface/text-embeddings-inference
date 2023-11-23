@@ -1,12 +1,10 @@
 /// HTTP Server logic
 use crate::http::types::{
-    EmbedRequest, EmbedResponse, ErrorResponse, ErrorType, Input, OpenAICompatEmbedding,
-    OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage,
-    PredictInput, PredictRequest, PredictResponse, Prediction, Rank, RerankRequest, RerankResponse,
-    Sequence,
+    EmbedRequest, EmbedResponse, Input, OpenAICompatEmbedding, OpenAICompatErrorResponse,
+    OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage, PredictInput, PredictRequest,
+    PredictResponse, Prediction, Rank, RerankRequest, RerankResponse, Sequence,
 };
-use crate::prometheus::prometheus_builer;
-use crate::{ClassifierModel, EmbeddingModel, Info, ModelType};
+use crate::{shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType};
 use anyhow::Context;
 use axum::extract::Extension;
 use axum::http::HeaderValue;
@@ -15,14 +13,13 @@ use axum::routing::{get, post};
 use axum::{http, Json, Router};
 use axum_tracing_opentelemetry::middleware::OtelAxumLayer;
 use futures::future::join_all;
-use metrics_exporter_prometheus::PrometheusHandle;
+use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use std::env;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::BackendError;
 use text_embeddings_core::infer::{Infer, InferResponse};
 use text_embeddings_core::TextEmbeddingsError;
-use tokio::signal;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::instrument;
 use utoipa::OpenApi;
@@ -106,6 +103,7 @@ async fn predict(
 
         let id2label = match &info.model_type {
             ModelType::Classifier(classifier) => &classifier.id2label,
+            ModelType::Reranker(classifier) => &classifier.id2label,
             _ => panic!(),
         };
 
@@ -309,17 +307,14 @@ async fn rerank(
     let start_time = Instant::now();
 
     match &info.model_type {
-        ModelType::Classifier(classifier) => {
-            if classifier.id2label.len() > 1 {
-                metrics::increment_counter!("te_request_failure", "err" => "model_type");
-                let message = "model is not a re-ranker model".to_string();
-                Err(TextEmbeddingsError::Backend(BackendError::Inference(
-                    message,
-                )))
-            } else {
-                Ok(())
-            }
+        ModelType::Classifier(_) => {
+            metrics::increment_counter!("te_request_failure", "err" => "model_type");
+            let message = "model is not a re-ranker model".to_string();
+            Err(TextEmbeddingsError::Backend(BackendError::Inference(
+                message,
+            )))
         }
+        ModelType::Reranker(_) => Ok(()),
         ModelType::Embedding(_) => {
             metrics::increment_counter!("te_request_failure", "err" => "model_type");
             let message = "model is not a classifier model".to_string();
@@ -880,6 +875,7 @@ pub async fn run(
     infer: Infer,
     info: Info,
     addr: SocketAddr,
+    prom_builder: PrometheusBuilder,
 ) -> Result<(), anyhow::Error> {
     // OpenAPI documentation
     #[derive(OpenApi)]
@@ -935,16 +931,13 @@ pub async fn run(
     // Finally, convert to AllowOrigin
     let allow_origin: Option<AllowOrigin> =
         env::var("CORS_ALLOW_ORIGIN").ok().map(|cors_allow_origin| {
-            let cors_allow_origin = cors_allow_origin.split(",");
+            let cors_allow_origin = cors_allow_origin.split(',');
             AllowOrigin::list(
                 cors_allow_origin.map(|origin| origin.parse::<HeaderValue>().unwrap()),
             )
         });
 
-    let prometheus_builder =
-        prometheus_builer(info.max_input_length).context("failed to build prometheus exporter")?;
-
-    let prom_handle = prometheus_builder
+    let prom_handle = prom_builder
         .install_recorder()
         .context("failed to install metrics recorder")?;
 
@@ -976,16 +969,15 @@ pub async fn run(
 
     // Set default routes
     let app = match &info.model_type {
-        ModelType::Classifier(classifier) => {
-            if classifier.id2label.len() > 1 {
-                app.route("/", post(predict))
-                    // AWS Sagemaker route
-                    .route("/invocations", post(predict))
-            } else {
-                app.route("/", post(rerank))
-                    // AWS Sagemaker route
-                    .route("/invocations", post(rerank))
-            }
+        ModelType::Classifier(_) => {
+            app.route("/", post(predict))
+                // AWS Sagemaker route
+                .route("/invocations", post(predict))
+        }
+        ModelType::Reranker(_) => {
+            app.route("/", post(rerank))
+                // AWS Sagemaker route
+                .route("/invocations", post(rerank))
         }
         ModelType::Embedding(_) => {
             app.route("/", post(embed))
@@ -1005,53 +997,10 @@ pub async fn run(
     axum::Server::bind(&addr)
         .serve(app.into_make_service())
         // Wait until all requests are finished to shut down
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown::shutdown_signal())
         .await?;
 
     Ok(())
-}
-
-/// Shutdown signal handler
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
-
-    tracing::info!("signal received, starting graceful shutdown");
-    opentelemetry::global::shutdown_tracer_provider();
-}
-
-impl From<TextEmbeddingsError> for ErrorResponse {
-    fn from(err: TextEmbeddingsError) -> Self {
-        let error_type = match err {
-            TextEmbeddingsError::Tokenizer(_) => ErrorType::Tokenizer,
-            TextEmbeddingsError::Validation(_) => ErrorType::Validation,
-            TextEmbeddingsError::Overloaded(_) => ErrorType::Overloaded,
-            TextEmbeddingsError::Backend(_) => ErrorType::Backend,
-        };
-        Self {
-            error: err.to_string(),
-            error_type,
-        }
-    }
 }
 
 impl From<&ErrorType> for StatusCode {

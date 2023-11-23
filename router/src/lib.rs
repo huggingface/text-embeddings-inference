@@ -4,6 +4,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use text_embeddings_core::infer::Infer;
+use text_embeddings_core::TextEmbeddingsError;
 
 mod prometheus;
 
@@ -12,12 +13,22 @@ mod http;
 
 #[cfg(feature = "grpc")]
 mod grpc;
+mod shutdown;
 
 pub async fn run(infer: Infer, info: Info, addr: SocketAddr) -> Result<()> {
+    let prom_builder = prometheus::prometheus_builer(info.max_input_length)?;
+
     if cfg!(feature = "http") {
         #[cfg(feature = "http")]
         {
-            return http::server::run(infer, info, addr).await;
+            return http::server::run(infer, info, addr, prom_builder).await;
+        }
+    }
+
+    if cfg!(feature = "grpc") {
+        #[cfg(feature = "grpc")]
+        {
+            return grpc::server::run(infer, info, addr, prom_builder).await;
         }
     }
 
@@ -27,16 +38,16 @@ pub async fn run(infer: Infer, info: Info, addr: SocketAddr) -> Result<()> {
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
 pub struct EmbeddingModel {
-    #[schema(example = "cls")]
+    #[cfg_attr(feature = "http", schema(example = "cls"))]
     pub pooling: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
 pub struct ClassifierModel {
-    #[schema(example = json!({"0": "LABEL"}))]
+    #[cfg_attr(feature = "http", schema(example = json!({"0": "LABEL"})))]
     pub id2label: HashMap<String, String>,
-    #[schema(example = json!({"LABEL": 0}))]
+    #[cfg_attr(feature = "http", schema(example = json!({"LABEL": 0})))]
     pub label2id: HashMap<String, usize>,
 }
 
@@ -46,37 +57,76 @@ pub struct ClassifierModel {
 pub enum ModelType {
     Classifier(ClassifierModel),
     Embedding(EmbeddingModel),
+    Reranker(ClassifierModel),
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
 pub struct Info {
     /// Model info
-    #[schema(example = "thenlper/gte-base")]
+    #[cfg_attr(feature = "http", schema(example = "thenlper/gte-base"))]
     pub model_id: String,
-    #[schema(nullable = true, example = "fca14538aa9956a46526bd1d0d11d69e19b5a101")]
+    #[cfg_attr(
+        feature = "http",
+        schema(nullable = true, example = "fca14538aa9956a46526bd1d0d11d69e19b5a101")
+    )]
     pub model_sha: Option<String>,
-    #[schema(example = "float16")]
+    #[cfg_attr(feature = "http", schema(example = "float16"))]
     pub model_dtype: String,
     pub model_type: ModelType,
     /// Router Parameters
-    #[schema(example = "128")]
+    #[cfg_attr(feature = "http", schema(example = "128"))]
     pub max_concurrent_requests: usize,
-    #[schema(example = "512")]
+    #[cfg_attr(feature = "http", schema(example = "512"))]
     pub max_input_length: usize,
-    #[schema(example = "2048")]
+    #[cfg_attr(feature = "http", schema(example = "2048"))]
     pub max_batch_tokens: usize,
-    #[schema(nullable = true, example = "null", default = "null")]
+    #[cfg_attr(
+        feature = "http",
+        schema(nullable = true, example = "null", default = "null")
+    )]
     pub max_batch_requests: Option<usize>,
-    #[schema(example = "32")]
+    #[cfg_attr(feature = "http", schema(example = "32"))]
     pub max_client_batch_size: usize,
-    #[schema(example = "4")]
+    #[cfg_attr(feature = "http", schema(example = "4"))]
     pub tokenization_workers: usize,
     /// Router Info
-    #[schema(example = "0.5.0")]
+    #[cfg_attr(feature = "http", schema(example = "0.5.0"))]
     pub version: &'static str,
-    #[schema(nullable = true, example = "null")]
+    #[cfg_attr(feature = "http", schema(nullable = true, example = "null"))]
     pub sha: Option<&'static str>,
-    #[schema(nullable = true, example = "null")]
+    #[cfg_attr(feature = "http", schema(nullable = true, example = "null"))]
     pub docker_label: Option<&'static str>,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
+pub enum ErrorType {
+    Unhealthy,
+    Backend,
+    Overloaded,
+    Validation,
+    Tokenizer,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
+pub struct ErrorResponse {
+    pub error: String,
+    pub error_type: ErrorType,
+}
+
+impl From<TextEmbeddingsError> for ErrorResponse {
+    fn from(err: TextEmbeddingsError) -> Self {
+        let error_type = match err {
+            TextEmbeddingsError::Tokenizer(_) => ErrorType::Tokenizer,
+            TextEmbeddingsError::Validation(_) => ErrorType::Validation,
+            TextEmbeddingsError::Overloaded(_) => ErrorType::Overloaded,
+            TextEmbeddingsError::Backend(_) => ErrorType::Backend,
+        };
+        Self {
+            error: err.to_string(),
+            error_type,
+        }
+    }
 }

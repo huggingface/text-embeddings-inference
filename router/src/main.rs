@@ -231,14 +231,23 @@ async fn main() -> Result<()> {
 
     // Info model type
     let model_type = match &backend_model_type {
-        text_embeddings_backend::ModelType::Classifier => ModelType::Classifier(ClassifierModel {
-            id2label: config
+        text_embeddings_backend::ModelType::Classifier => {
+            let id2label = config
                 .id2label
-                .context("`config.json` does not contain `id2label`")?,
-            label2id: config
-                .label2id
-                .context("`config.json` does not contain `label2id`")?,
-        }),
+                .context("`config.json` does not contain `id2label`")?;
+            let n_classes = id2label.len();
+            let classifier_model = ClassifierModel {
+                id2label,
+                label2id: config
+                    .label2id
+                    .context("`config.json` does not contain `label2id`")?,
+            };
+            if n_classes > 1 {
+                ModelType::Classifier(classifier_model)
+            } else {
+                ModelType::Reranker(classifier_model)
+            }
+        }
         text_embeddings_backend::ModelType::Embedding(pool) => {
             ModelType::Embedding(EmbeddingModel {
                 pooling: pool.to_string(),
@@ -314,7 +323,7 @@ async fn main() -> Result<()> {
         dtype.clone(),
         backend_model_type,
         args.uds_path,
-        args.otlp_endpoint,
+        args.otlp_endpoint.clone(),
     )
     .context("Could not create backend")?;
     backend
@@ -345,7 +354,7 @@ async fn main() -> Result<()> {
         model_dtype: dtype.to_string(),
         model_type,
         max_concurrent_requests: args.max_concurrent_requests,
-        max_input_length: config.max_position_embeddings,
+        max_input_length,
         max_batch_tokens: args.max_batch_tokens,
         tokenization_workers,
         max_batch_requests,
@@ -369,6 +378,12 @@ async fn main() -> Result<()> {
     text_embeddings_router::run(infer, info, addr)
         .await
         .unwrap();
+
+    if args.otlp_endpoint.is_some() {
+        // Shutdown tracer
+        global::shutdown_tracer_provider();
+    }
+
     Ok(())
 }
 

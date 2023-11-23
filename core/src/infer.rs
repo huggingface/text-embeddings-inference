@@ -8,7 +8,7 @@ use tokio::sync::{mpsc, oneshot, watch, Notify, OwnedSemaphorePermit, Semaphore}
 use tracing::{instrument, Span};
 
 /// Inference struct
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Infer {
     tokenization: Tokenization,
     queue: Queue,
