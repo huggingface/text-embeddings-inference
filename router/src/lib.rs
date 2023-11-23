@@ -1,18 +1,38 @@
 /// Text Embedding Inference Webserver
-mod http;
 
-pub use http::server;
 use serde::Serialize;
 use std::collections::HashMap;
-use utoipa::ToSchema;
+use std::net::SocketAddr;
+use text_embeddings_core::infer::Infer;
 
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[cfg(feature = "http")]
+mod http;
+
+pub async fn run(
+    infer: Infer,
+    info: Info,
+    addr: SocketAddr,
+) -> Result<(), BoxError> {
+    if cfg!(feature = "http") {
+        #[cfg(feature = "http")]
+        {
+            return http::server::run(infer, info, addr).await;
+        }
+    }
+    panic!();
+}
+
+pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
 pub struct EmbeddingModel {
     #[schema(example = "cls")]
     pub pooling: String,
 }
 
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
 pub struct ClassifierModel {
     #[schema(example = json!({"0": "LABEL"}))]
     pub id2label: HashMap<String, String>,
@@ -20,14 +40,16 @@ pub struct ClassifierModel {
     pub label2id: HashMap<String, usize>,
 }
 
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum ModelType {
     Classifier(ClassifierModel),
     Embedding(EmbeddingModel),
 }
 
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
 pub struct Info {
     /// Model info
     #[schema(example = "thenlper/gte-base")]

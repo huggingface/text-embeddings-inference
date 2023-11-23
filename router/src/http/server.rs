@@ -1,3 +1,4 @@
+use std::env;
 /// HTTP Server logic
 use crate::http::types::{
     EmbedRequest, EmbedResponse, ErrorResponse, ErrorType, Input, OpenAICompatEmbedding,
@@ -23,6 +24,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::instrument;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
+use axum::http::HeaderValue;
 
 ///Text Embeddings Inference endpoint info
 #[utoipa::path(
@@ -876,7 +878,7 @@ pub async fn run(
     infer: Infer,
     info: Info,
     addr: SocketAddr,
-    allow_origin: Option<AllowOrigin>,
+    // allow_origin: Option<AllowOrigin>,
 ) -> Result<(), axum::BoxError> {
     // OpenAPI documentation
     #[derive(OpenApi)]
@@ -926,6 +928,17 @@ pub async fn run(
     )
     )]
     struct ApiDoc;
+
+    // CORS allowed origins
+    // map to go inside the option and then map to parse from String to HeaderValue
+    // Finally, convert to AllowOrigin
+    let allow_origin: Option<AllowOrigin> = env::var("CORS_ALLOW_ORIGIN").ok().map(|cors_allow_origin| {
+        let cors_allow_origin = cors_allow_origin.split(",");
+        AllowOrigin::list(
+            cors_allow_origin
+                .map(|origin| origin.parse::<HeaderValue>().unwrap()),
+        )
+    });
 
     // Duration buckets
     let duration_matcher = Matcher::Suffix(String::from("duration"));

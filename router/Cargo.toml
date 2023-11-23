@@ -16,13 +16,12 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.71"
-async-stream = "0.3.3"
-axum = { version = "0.6.4", features = ["json"] }
-axum-tracing-opentelemetry = "0.14.1"
+axum = { version = "0.6.4", features = ["json"], optional = true }
+axum-tracing-opentelemetry = { version = "0.14.1", optional = true }
 text-embeddings-backend = { path = "../backends", features = ["clap"] }
 text-embeddings-core = { path = "../core" }
 clap = { version = "4.1.4", features = ["derive", "env"] }
-futures = "^0.3"
+futures = { version = "^0.3", optional = true }
 init-tracing-opentelemetry = { version = "0.14.1", features = ["opentelemetry-otlp"] }
 hf-hub = { version = "0.3.0", features = ["tokio"] }
 num_cpus = "1.16.0"
@@ -36,20 +35,20 @@ serde_json = "1.0.93"
 thiserror = "1.0.38"
 tokenizers = { version = "0.15.0", default-features=false, features=["onig", "esaxx_fast"] }
 tokio = { version = "1.25.0", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync"] }
-tower-http = { version = "0.4.0", features = ["cors"] }
+tower-http = { version = "0.4.0", features = ["cors"], optional = true }
 tracing = "0.1.37"
-tracing-chrome = "0.7.1"
 tracing-opentelemetry = "0.21.0"
 tracing-subscriber = { version = "0.3.16", features = ["json", "env-filter"] }
-utoipa = { version = "4.0.0", features = ["axum_extras"] }
-utoipa-swagger-ui = { version = "4.0.0", features = ["axum"] }
+utoipa = { version = "4.0.0", features = ["axum_extras"], optional = true }
+utoipa-swagger-ui = { version = "4.0.0", features = ["axum"], optional = true }
 veil = "0.1.6"
 
 [build-dependencies]
 vergen = { version = "8.0.0", features = ["build", "git", "gitcl"] }
 
 [features]
-default = ["candle"]
+default = ["candle", "http"]
+http = ["dep:axum", "dep:axum-tracing-opentelemetry", "dep:futures", "dep:tower-http", "dep:utoipa", "dep:utoipa-swagger-ui"]
 mkl = ["text-embeddings-backend/mkl"]
 mkl-dynamic = ["text-embeddings-backend/mkl-dynamic"]
 accelerate = ["text-embeddings-backend/accelerate"]

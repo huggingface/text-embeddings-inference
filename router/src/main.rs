@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Context, Result};
-use axum::http::HeaderValue;
 use clap::Parser;
 use hf_hub::api::tokio::ApiBuilder;
 use hf_hub::{Repo, RepoType};
@@ -18,10 +17,9 @@ use text_embeddings_core::download::{download_artifacts, download_pool_config};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
 use text_embeddings_core::tokenization::Tokenization;
-use text_embeddings_router::{server, ClassifierModel, EmbeddingModel, Info, ModelType};
+use text_embeddings_router::{ClassifierModel, EmbeddingModel, Info, ModelType};
 use tokenizers::decoders::metaspace::PrependScheme;
 use tokenizers::{PreTokenizerWrapper, Tokenizer};
-use tower_http::cors::AllowOrigin;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
@@ -121,9 +119,6 @@ struct Args {
 
     #[clap(long, env)]
     otlp_endpoint: Option<String>,
-
-    #[clap(long, env)]
-    cors_allow_origin: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -368,21 +363,10 @@ async fn main() -> Result<()> {
         }
     };
 
-    // CORS allowed origins
-    // map to go inside the option and then map to parse from String to HeaderValue
-    // Finally, convert to AllowOrigin
-    let cors_allow_origin: Option<AllowOrigin> = args.cors_allow_origin.map(|cors_allow_origin| {
-        AllowOrigin::list(
-            cors_allow_origin
-                .iter()
-                .map(|origin| origin.parse::<HeaderValue>().unwrap()),
-        )
-    });
-
     tracing::info!("Ready");
 
     // Run axum server
-    server::run(infer, info, addr, cors_allow_origin)
+    text_embeddings_router::run(infer, info, addr)
         .await
         .unwrap();
     Ok(())
