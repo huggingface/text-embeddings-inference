@@ -1,10 +1,11 @@
 /// HTTP Server logic
-use crate::{
-    ClassifierModel, EmbedRequest, EmbedResponse, EmbeddingModel, ErrorResponse, ErrorType, Info,
-    Input, ModelType, OpenAICompatEmbedding, OpenAICompatErrorResponse, OpenAICompatRequest,
-    OpenAICompatResponse, OpenAICompatUsage, PredictInput, PredictRequest, PredictResponse,
-    Prediction, Rank, RerankRequest, RerankResponse, Sequence,
+use crate::http::types::{
+    EmbedRequest, EmbedResponse, ErrorResponse, ErrorType, Input, OpenAICompatEmbedding,
+    OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage,
+    PredictInput, PredictRequest, PredictResponse, Prediction, Rank, RerankRequest, RerankResponse,
+    Sequence,
 };
+use crate::{ClassifierModel, EmbeddingModel, Info, ModelType};
 use axum::extract::Extension;
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::routing::{get, post};
