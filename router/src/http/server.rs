@@ -1,4 +1,3 @@
-use std::env;
 /// HTTP Server logic
 use crate::http::types::{
     EmbedRequest, EmbedResponse, ErrorResponse, ErrorType, Input, OpenAICompatEmbedding,
@@ -6,14 +5,18 @@ use crate::http::types::{
     PredictInput, PredictRequest, PredictResponse, Prediction, Rank, RerankRequest, RerankResponse,
     Sequence,
 };
+use crate::prometheus::prometheus_builer;
 use crate::{ClassifierModel, EmbeddingModel, Info, ModelType};
+use anyhow::Context;
 use axum::extract::Extension;
+use axum::http::HeaderValue;
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::routing::{get, post};
 use axum::{http, Json, Router};
 use axum_tracing_opentelemetry::middleware::OtelAxumLayer;
 use futures::future::join_all;
-use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
+use metrics_exporter_prometheus::PrometheusHandle;
+use std::env;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::BackendError;
@@ -24,7 +27,6 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::instrument;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
-use axum::http::HeaderValue;
 
 ///Text Embeddings Inference endpoint info
 #[utoipa::path(
@@ -878,8 +880,7 @@ pub async fn run(
     infer: Infer,
     info: Info,
     addr: SocketAddr,
-    // allow_origin: Option<AllowOrigin>,
-) -> Result<(), axum::BoxError> {
+) -> Result<(), anyhow::Error> {
     // OpenAPI documentation
     #[derive(OpenApi)]
     #[openapi(
@@ -932,54 +933,20 @@ pub async fn run(
     // CORS allowed origins
     // map to go inside the option and then map to parse from String to HeaderValue
     // Finally, convert to AllowOrigin
-    let allow_origin: Option<AllowOrigin> = env::var("CORS_ALLOW_ORIGIN").ok().map(|cors_allow_origin| {
-        let cors_allow_origin = cors_allow_origin.split(",");
-        AllowOrigin::list(
-            cors_allow_origin
-                .map(|origin| origin.parse::<HeaderValue>().unwrap()),
-        )
-    });
+    let allow_origin: Option<AllowOrigin> =
+        env::var("CORS_ALLOW_ORIGIN").ok().map(|cors_allow_origin| {
+            let cors_allow_origin = cors_allow_origin.split(",");
+            AllowOrigin::list(
+                cors_allow_origin.map(|origin| origin.parse::<HeaderValue>().unwrap()),
+            )
+        });
 
-    // Duration buckets
-    let duration_matcher = Matcher::Suffix(String::from("duration"));
-    let n_duration_buckets = 35;
-    let mut duration_buckets = Vec::with_capacity(n_duration_buckets);
-    // Minimum duration in seconds
-    let mut value = 0.00001;
-    for _ in 0..n_duration_buckets {
-        // geometric sequence
-        value *= 1.5;
-        duration_buckets.push(value);
-    }
+    let prometheus_builder =
+        prometheus_builer(info.max_input_length).context("failed to build prometheus exporter")?;
 
-    // Input Length buckets
-    let input_length_matcher = Matcher::Full(String::from("te_request_input_length"));
-    let input_length_buckets: Vec<f64> = (0..100)
-        .map(|x| (info.max_input_length as f64 / 100.0) * (x + 1) as f64)
-        .collect();
-
-    // Batch size buckets
-    let batch_size_matcher = Matcher::Full(String::from("te_batch_next_size"));
-    let batch_size_buckets: Vec<f64> = (0..2048).map(|x| (x + 1) as f64).collect();
-
-    // Batch tokens buckets
-    let batch_tokens_matcher = Matcher::Full(String::from("te_batch_next_tokens"));
-    let batch_tokens_buckets: Vec<f64> = (0..100_000).map(|x| (x + 1) as f64).collect();
-
-    // Prometheus handler
-    let builder = PrometheusBuilder::new()
-        .set_buckets_for_metric(duration_matcher, &duration_buckets)
-        .unwrap()
-        .set_buckets_for_metric(input_length_matcher, &input_length_buckets)
-        .unwrap()
-        .set_buckets_for_metric(batch_size_matcher, &batch_size_buckets)
-        .unwrap()
-        .set_buckets_for_metric(batch_tokens_matcher, &batch_tokens_buckets)
-        .unwrap();
-
-    let prom_handle = builder
+    let prom_handle = prometheus_builder
         .install_recorder()
-        .expect("failed to install metrics recorder");
+        .context("failed to install metrics recorder")?;
 
     // CORS layer
     let allow_origin = allow_origin.unwrap_or(AllowOrigin::any());

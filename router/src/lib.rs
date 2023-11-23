@@ -1,28 +1,28 @@
+use anyhow::Result;
 /// Text Embedding Inference Webserver
-
 use serde::Serialize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use text_embeddings_core::infer::Infer;
 
+mod prometheus;
+
 #[cfg(feature = "http")]
 mod http;
 
-pub async fn run(
-    infer: Infer,
-    info: Info,
-    addr: SocketAddr,
-) -> Result<(), BoxError> {
+#[cfg(feature = "grpc")]
+mod grpc;
+
+pub async fn run(infer: Infer, info: Info, addr: SocketAddr) -> Result<()> {
     if cfg!(feature = "http") {
         #[cfg(feature = "http")]
         {
             return http::server::run(infer, info, addr).await;
         }
     }
-    panic!();
-}
 
-pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+    anyhow::bail!("You must use one of `http` or `grpc`");
+}
 
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
