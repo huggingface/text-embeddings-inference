@@ -22,6 +22,7 @@ candle = { git = "https://github.com/OlivierDehaene/candle", rev = "9f2b4081b83a
 candle-nn = { git = "https://github.com/OlivierDehaene/candle", rev = "9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e", package = "candle-nn" }
 candle-transformers = { git = "https://github.com/OlivierDehaene/candle", rev = "9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e", package = "candle-transformers" }
 candle-flash-attn = { git = "https://github.com/OlivierDehaene/candle", rev = "9f2b4081b83a0e47ec1b12caa71d3cac7cc2161e", package = "candle-flash-attn" }
+hf-hub = { git = "https://github.com/huggingface/hf-hub", rev = "b167f69692be5f49eb8003788f7f8a499a98b096" }
 
 [profile.release]
 debug = 1
