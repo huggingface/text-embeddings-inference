@@ -20,7 +20,7 @@ pub struct EmbeddingModel {
 pub struct ClassifierModel {
     #[schema(example = json!({"0": "LABEL"}))]
     pub id2label: HashMap<String, String>,
-    #[schema(example = json!({"LABEL": "0"}))]
+    #[schema(example = json!({"LABEL": 0}))]
     pub label2id: HashMap<String, usize>,
 }
 
@@ -328,7 +328,7 @@ pub(crate) struct OpenAICompatRequest {
 pub(crate) struct OpenAICompatEmbedding {
     #[schema(example = "embedding")]
     object: &'static str,
-    #[schema(example = json!(["0.0", "1.0", "2.0"]))]
+    #[schema(example = json!([0.0, 1.0, 2.0]))]
     embedding: Vec<f32>,
     #[schema(example = "0")]
     index: usize,
@@ -368,7 +368,7 @@ fn default_normalize() -> bool {
 }
 
 #[derive(Serialize, ToSchema)]
-#[schema(example = json!([["0.0", "1.0", "2.0"]]))]
+#[schema(example = json!([[0.0, 1.0, 2.0]]))]
 pub(crate) struct EmbedResponse(Vec<Vec<f32>>);
 
 #[derive(Serialize, ToSchema)]
