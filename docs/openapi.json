@@ -9,7 +9,7 @@
     "license": {
       "name": "HFOIL"
     },
-    "version": "0.5"
+    "version": "0.5.0"
   },
   "paths": {
     "/embed": {
@@ -463,7 +463,7 @@
               "minimum": 0
             },
             "example": {
-              "LABEL": "0"
+              "LABEL": 0
             }
           }
         }
@@ -500,9 +500,9 @@
         },
         "example": [
           [
-            "0.0",
-            "1.0",
-            "2.0"
+            0.0,
+            1.0,
+            2.0
           ]
         ]
       },
@@ -678,9 +678,9 @@
               "format": "float"
             },
             "example": [
-              "0.0",
-              "1.0",
-              "2.0"
+              0.0,
+              1.0,
+              2.0
             ]
           },
           "index": {
@@ -898,16 +898,16 @@
             "example": "0",
             "minimum": 0
           },
+          "score": {
+            "type": "number",
+            "format": "float",
+            "example": "1.0"
+          },
           "text": {
             "type": "string",
             "default": "null",
             "example": "Deep Learning is ...",
             "nullable": true
-          },
-          "score": {
-            "type": "number",
-            "format": "float",
-            "example": "1.0"
           }
         }
       },
@@ -918,15 +918,6 @@
           "texts"
         ],
         "properties": {
-          "texts": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "example": [
-              "Deep Learning is ..."
-            ]
-          },
           "query": {
             "type": "string",
             "example": "What is Deep Learning?"
@@ -940,6 +931,15 @@
             "type": "boolean",
             "default": "false",
             "example": "false"
+          },
+          "texts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "Deep Learning is ..."
+            ]
           },
           "truncate": {
             "type": "boolean",
