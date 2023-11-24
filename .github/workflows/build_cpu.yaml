@@ -97,3 +97,36 @@
            labels: ${{ steps.meta-cpu.outputs.labels }}
            cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-cpu,mode=max
            cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-cpu,mode=max
+       - name: Extract metadata (tags, labels) for Docker
+         id: meta-cpu-grpc
+         uses: docker/metadata-action@v4.3.0
+         with:
+           images: |
+             registry.internal.huggingface.tech/api-inference/text-embeddings-inference
+             ghcr.io/huggingface/text-embeddings-inference
+           flavor: |
+             latest=false
+           tags: |
+             type=semver,pattern=cpu-{{version}}+grpc
+             type=semver,pattern=cpu-{{major}}.{{minor}}+grpc
+             type=raw,value=cpu-latest+grpc
+             type=raw,value=cpu-sha-${{ env.GITHUB_SHA_SHORT }}+grpc
+       - name: Build and push Docker image
+         id: build-and-push-cpu-grpc
+         uses: docker/build-push-action@v4
+         with:
+           context: .
+           target: grpc
+           file: Dockerfile
+           push: ${{ github.event_name != 'pull_request' }}
+           platforms: 'linux/amd64'
+           build-args: |
+             SCCACHE_GHA_ENABLED=on
+             ACTIONS_CACHE_URL=${{ env.ACTIONS_CACHE_URL }}
+             ACTIONS_RUNTIME_TOKEN=${{ env.ACTIONS_RUNTIME_TOKEN }}
+             GIT_SHA=${{ env.GITHUB_SHA }}
+             DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
+           tags: ${{ steps.meta-cpu-grpc.outputs.tags }}
+           labels: ${{ steps.meta-cpu-grpc.outputs.labels }}
+           cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-cpu,mode=max
+
