@@ -3456,7 +3456,7 @@ dependencies = [
  "base64 0.21.5",
  "bytes",
  "h2",
- "http",
+ "http 0.2.11",
  "http-body",
  "hyper",
  "hyper-timeout",

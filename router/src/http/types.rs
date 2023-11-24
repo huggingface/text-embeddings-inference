@@ -272,7 +272,7 @@ pub(crate) struct OpenAICompatRequest {
 pub(crate) struct OpenAICompatEmbedding {
     #[schema(example = "embedding")]
     pub object: &'static str,
-    #[schema(example = json!(["0.0", "1.0", "2.0"]))]
+    #[schema(example = json!([0.0, 1.0, 2.0]))]
     pub embedding: Vec<f32>,
     #[schema(example = "0")]
     pub index: usize,
@@ -312,7 +312,7 @@ fn default_normalize() -> bool {
 }
 
 #[derive(Serialize, ToSchema)]
-#[schema(example = json!([["0.0", "1.0", "2.0"]]))]
+#[schema(example = json!([[0.0, 1.0, 2.0]]))]
 pub(crate) struct EmbedResponse(pub Vec<Vec<f32>>);
 
 #[derive(Serialize, ToSchema)]
