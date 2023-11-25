@@ -10,14 +10,17 @@ service Info {
 
 service Embed {
     rpc Embed (EmbedRequest) returns (EmbedResponse);
+    //rpc EmbedStream (stream EmbedRequest) returns (stream EmbedResponse);
 }
 
 service Predict {
     rpc Predict (PredictRequest) returns (PredictResponse);
+    //rpc PredictStream (stream PredictRequest) returns (stream PredictResponse);
 }
 
 service Rerank {
     rpc Rerank (RerankRequest) returns (RerankResponse);
+    //rpc RerankStream (stream RerankRequest) returns (stream RerankResponse);
 }
 
 message InfoRequest {}
