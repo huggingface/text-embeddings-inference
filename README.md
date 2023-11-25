@@ -36,6 +36,7 @@ length of 512 tokens:
     - [Using Re-rankers models](#using-re-rankers-models)
     - [Using Sequence Classification models](#using-sequence-classification-models)
     - [Distributed Tracing](#distributed-tracing)
+    - [gRPC](#grpc)
 - [Local Install](#local-install)
 - [Docker Build](#docker-build)
 
@@ -333,6 +334,25 @@ curl 127.0.0.1:8080/predict \
 
 `text-embeddings-inference` is instrumented with distributed tracing using OpenTelemetry. You can use this feature
 by setting the address to an OTLP collector with the `--otlp-endpoint` argument.
+
+### gRPC
+
+`text-embeddings-inference` offers a gRPC API as an alternative to the default HTTP API for high performance
+deployments. The API protobuf definition can be found [here](https://github.com/huggingface/text-embeddings-inference/blob/main/proto/tei.proto).
+
+You can use the gRPC API by adding the `+grpc` tag to any TEI Docker image. For example:
+
+```shell
+model=BAAI/bge-large-en-v1.5
+revision=refs/pr/5
+volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
+
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.5+grpc --model-id $model --revision $revision
+```
+
+```shell
+grpcurl -d '{"inputs": "What is Deep Learning"}' -plaintext 0.0.0.0:8080 tei.v1.Embed/Embed
+```
 
 ## Local install
 

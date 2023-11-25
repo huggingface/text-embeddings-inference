@@ -10,18 +10,20 @@ use std::time::{Duration, Instant};
 use text_embeddings_core::infer::Infer;
 use tonic::codegen::http::HeaderMap;
 use tonic::metadata::MetadataMap;
+use tonic::server::NamedService;
 use tonic::transport::Server;
 use tonic::{Code, Extensions, Request, Response, Status};
+use tonic_health::ServingStatus;
 use tracing::instrument;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct TextEmbeddingsService {
     infer: Infer,
     info: Info,
 }
 
 #[tonic::async_trait]
-impl grpc::text_embeddings_server::TextEmbeddings for TextEmbeddingsService {
+impl grpc::info_server::Info for TextEmbeddingsService {
     async fn info(&self, _request: Request<InfoRequest>) -> Result<Response<InfoResponse>, Status> {
         let model_type = match self.info.model_type {
             ModelType::Classifier(_) => grpc::ModelType::Classifier,
@@ -45,6 +47,10 @@ impl grpc::text_embeddings_server::TextEmbeddings for TextEmbeddingsService {
             tokenization_workers: self.info.tokenization_workers as u32,
         }))
     }
+}
+
+#[tonic::async_trait]
+impl grpc::embed_server::Embed for TextEmbeddingsService {
     #[instrument(
         skip_all,
         fields(total_time, tokenization_time, queue_time, inference_time,)
@@ -154,6 +160,10 @@ impl grpc::text_embeddings_server::TextEmbeddings for TextEmbeddingsService {
             Extensions::default(),
         ))
     }
+}
+
+#[tonic::async_trait]
+impl grpc::predict_server::Predict for TextEmbeddingsService {
     #[instrument(
         skip_all,
         fields(total_time, tokenization_time, queue_time, inference_time,)
@@ -302,6 +312,10 @@ impl grpc::text_embeddings_server::TextEmbeddings for TextEmbeddingsService {
             Extensions::default(),
         ))
     }
+}
+
+#[tonic::async_trait]
+impl grpc::rerank_server::Rerank for TextEmbeddingsService {
     #[instrument(
         skip_all,
         fields(total_time, tokenization_time, queue_time, inference_time,)
@@ -516,27 +530,80 @@ pub async fn run(
 
     // Liveness service
     let (mut health_reporter, health_service) = tonic_health::server::health_reporter();
+    // Info is always serving
     health_reporter
-        .set_serving::<grpc::TextEmbeddingsServer<TextEmbeddingsService>>()
+        .set_serving::<grpc::InfoServer<TextEmbeddingsService>>()
+        .await;
+    // Set all other services to not serving
+    // Their health will be updated in the task below
+    health_reporter
+        .set_not_serving::<grpc::EmbedServer<TextEmbeddingsService>>()
+        .await;
+    health_reporter
+        .set_not_serving::<grpc::RerankServer<TextEmbeddingsService>>()
+        .await;
+    health_reporter
+        .set_not_serving::<grpc::PredictServer<TextEmbeddingsService>>()
         .await;
 
+    // Backend health watcher
     let mut health_watcher = infer.health_watcher();
 
+    // Clone model_type and move it to the task
+    let health_watcher_model_type = info.model_type.clone();
+
+    // Update services health
     tokio::spawn(async move {
         while health_watcher.changed().await.is_ok() {
             let health = *health_watcher.borrow_and_update();
-            match health {
-                true => {
+            let status = match health {
+                true => ServingStatus::Serving,
+                false => ServingStatus::NotServing,
+            };
+
+            // Match on model type and set the health of the correct service(s)
+            //
+            // If Reranker, we have both a predict and rerank service
+            //
+            // This logic hints back to the user that if they try using the wrong service
+            // given the model type, it will always return an error.
+            //
+            // For example if the model type is `Embedding`, sending requests to `Rerank` will
+            // always return an `UNIMPLEMENTED` Status and both the `Rerank` and `Predict` services
+            // will have a `NOT_SERVING` ServingStatus.
+            match health_watcher_model_type {
+                ModelType::Classifier(_) => {
                     health_reporter
-                        .set_serving::<grpc::TextEmbeddingsServer<TextEmbeddingsService>>()
+                        .set_service_status(
+                            <grpc::PredictServer<TextEmbeddingsService>>::NAME,
+                            status,
+                        )
                         .await
                 }
-                false => {
+                ModelType::Embedding(_) => {
                     health_reporter
-                        .set_not_serving::<grpc::TextEmbeddingsServer<TextEmbeddingsService>>()
+                        .set_service_status(
+                            <grpc::EmbedServer<TextEmbeddingsService>>::NAME,
+                            status,
+                        )
                         .await
                 }
-            }
+                ModelType::Reranker(_) => {
+                    // Reranker has both a predict and rerank service
+                    health_reporter
+                        .set_service_status(
+                            <grpc::PredictServer<TextEmbeddingsService>>::NAME,
+                            status,
+                        )
+                        .await;
+                    health_reporter
+                        .set_service_status(
+                            <grpc::RerankServer<TextEmbeddingsService>>::NAME,
+                            status,
+                        )
+                        .await;
+                }
+            };
         }
     });
 
@@ -554,9 +621,13 @@ pub async fn run(
     Server::builder()
         .add_service(health_service)
         .add_service(reflection_service)
-        .add_service(grpc::TextEmbeddingsServer::new(service))
+        .add_service(grpc::InfoServer::new(service.clone()))
+        .add_service(grpc::EmbedServer::new(service.clone()))
+        .add_service(grpc::PredictServer::new(service.clone()))
+        .add_service(grpc::RerankServer::new(service))
         .serve_with_shutdown(addr, shutdown::shutdown_signal())
         .await?;
+
     Ok(())
 }
 

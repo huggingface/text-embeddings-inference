@@ -1,15 +1,23 @@
 syntax = "proto3";
 
-package text_embeddings.v1;
+package tei.v1;
 
-service TextEmbeddings {
+service Info {
     rpc Info (InfoRequest) returns (InfoResponse) {
         option idempotency_level = IDEMPOTENT;
     };
+}
 
-    rpc Embed(EmbedRequest) returns (EmbedResponse);
-    rpc Predict(PredictRequest) returns (PredictResponse);
-    rpc Rerank(RerankRequest) returns (RerankResponse);
+service Embed {
+    rpc Embed (EmbedRequest) returns (EmbedResponse);
+}
+
+service Predict {
+    rpc Predict (PredictRequest) returns (PredictResponse);
+}
+
+service Rerank {
+    rpc Rerank (RerankRequest) returns (RerankResponse);
 }
 
 message InfoRequest {}

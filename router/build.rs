@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .file_descriptor_set_path(out_dir.join("descriptor.bin"))
             .out_dir("src/grpc/pb")
             .include_file("mod.rs")
-            .compile(&["../proto/text_embeddings.proto"], &["../proto"])
+            .compile(&["../proto/tei.proto"], &["../proto"])
             .unwrap_or_else(|e| panic!("protobuf compilation failed: {}", e));
     }
 
