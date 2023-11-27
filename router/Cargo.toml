@@ -46,11 +46,12 @@ utoipa = { version = "4.0.0", features = ["axum_extras"], optional = true }
 utoipa-swagger-ui = { version = "4.0.0", features = ["axum"], optional = true }
 
 # gRPC dependencies
+async-stream = { version = "0.3.5", optional = true }
 prost = { version = "0.12.1", optional = true }
-prost-types = { version = "0.12.1", optional = true }
 tonic = { version = "0.10.2", optional = true }
 tonic-health = { version = "0.10.2", optional = true }
 tonic-reflection = { version = "0.10.2", optional = true }
+tokio-stream = { version = "0.1.14", optional = true }
 
 [build-dependencies]
 vergen = { version = "8.0.0", features = ["build", "git", "gitcl"] }
@@ -59,7 +60,7 @@ tonic-build = { version = "0.10.2", optional = true }
 [features]
 default = ["candle", "http"]
 http = ["dep:axum", "dep:axum-tracing-opentelemetry", "dep:tower-http", "dep:utoipa", "dep:utoipa-swagger-ui"]
-grpc = ["metrics-exporter-prometheus/http-listener", "dep:prost", "dep:prost-types", "dep:tonic", "dep:tonic-health", "dep:tonic-reflection", "dep:tonic-build"]
+grpc = ["metrics-exporter-prometheus/http-listener", "dep:prost", "dep:tonic", "dep:tonic-health", "dep:tonic-reflection", "dep:tonic-build", "dep:async-stream", "dep:tokio-stream"]
 mkl = ["text-embeddings-backend/mkl"]
 mkl-dynamic = ["text-embeddings-backend/mkl-dynamic"]
 accelerate = ["text-embeddings-backend/accelerate"]

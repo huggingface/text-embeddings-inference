@@ -3190,6 +3190,7 @@ name = "text-embeddings-router"
 version = "0.5.0"
 dependencies = [
  "anyhow",
+ "async-stream",
  "axum",
  "axum-tracing-opentelemetry",
  "clap",
@@ -3202,7 +3203,6 @@ dependencies = [
  "opentelemetry 0.20.0",
  "opentelemetry-otlp",
  "prost 0.12.3",
- "prost-types 0.12.3",
  "reqwest",
  "serde",
  "serde_json",
@@ -3211,6 +3211,7 @@ dependencies = [
  "thiserror",
  "tokenizers",
  "tokio",
+ "tokio-stream",
  "tonic 0.10.2",
  "tonic-build 0.10.2",
  "tonic-health",

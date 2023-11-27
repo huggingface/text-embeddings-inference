@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 use text_embeddings_backend::BackendError;
 use text_embeddings_core::infer::{Infer, InferResponse};
 use text_embeddings_core::TextEmbeddingsError;
+use tokio::sync::OwnedSemaphorePermit;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::instrument;
 use utoipa::OpenApi;
@@ -94,8 +95,13 @@ async fn predict(
                               truncate: bool,
                               raw_scores: bool,
                               infer: Infer,
-                              info: Info| async move {
-        let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+                              info: Info,
+                              permit: Option<OwnedSemaphorePermit>| async move {
+        let permit = match permit {
+            None => infer.acquire_permit().await,
+            Some(permit) => permit,
+        };
+
         let response = infer
             .predict(inputs, truncate, raw_scores, permit)
             .await
@@ -138,8 +144,16 @@ async fn predict(
                 metrics::increment_counter!("te_request_count", "method" => "single");
 
                 let compute_chars = inputs.count_chars();
-                let (prompt_tokens, tokenization, queue, inference, predictions) =
-                    predict_inner(inputs, req.truncate, req.raw_scores, infer.0, info.0).await?;
+                let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+                let (prompt_tokens, tokenization, queue, inference, predictions) = predict_inner(
+                    inputs,
+                    req.truncate,
+                    req.raw_scores,
+                    infer.0,
+                    info.0,
+                    Some(permit),
+                )
+                .await?;
 
                 metrics::increment_counter!("te_request_success", "method" => "single");
 
@@ -183,6 +197,7 @@ async fn predict(
                         req.raw_scores,
                         local_infer.0,
                         local_info.0,
+                        None,
                     ))
                 }
                 let results = join_all(futures).await.into_iter().collect::<Result<
@@ -334,7 +349,7 @@ async fn rerank(
                              truncate: bool,
                              raw_scores: bool,
                              infer: Infer| async move {
-        let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+        let permit = infer.acquire_permit().await;
 
         let response = infer
             .predict((query, text), truncate, raw_scores, permit)
