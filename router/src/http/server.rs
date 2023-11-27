@@ -4,7 +4,10 @@ use crate::http::types::{
     OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage, PredictInput, PredictRequest,
     PredictResponse, Prediction, Rank, RerankRequest, RerankResponse, Sequence,
 };
-use crate::{shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType};
+use crate::{
+    shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
+    ResponseMetadata,
+};
 use anyhow::Context;
 use axum::extract::Extension;
 use axum::http::HeaderValue;
@@ -138,152 +141,110 @@ async fn predict(
         ))
     };
 
-    let (compute_chars, compute_tokens, tokenization_time, queue_time, inference_time, response) =
-        match req.inputs {
-            PredictInput::Single(inputs) => {
-                metrics::increment_counter!("te_request_count", "method" => "single");
+    let (response, metadata) = match req.inputs {
+        PredictInput::Single(inputs) => {
+            metrics::increment_counter!("te_request_count", "method" => "single");
 
-                let compute_chars = inputs.count_chars();
-                let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
-                let (prompt_tokens, tokenization, queue, inference, predictions) = predict_inner(
-                    inputs,
-                    req.truncate,
-                    req.raw_scores,
-                    infer.0,
-                    info.0,
-                    Some(permit),
-                )
-                .await?;
+            let compute_chars = inputs.count_chars();
+            let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+            let (prompt_tokens, tokenization, queue, inference, predictions) = predict_inner(
+                inputs,
+                req.truncate,
+                req.raw_scores,
+                infer.0,
+                info.0,
+                Some(permit),
+            )
+            .await?;
 
-                metrics::increment_counter!("te_request_success", "method" => "single");
+            metrics::increment_counter!("te_request_success", "method" => "single");
 
-                (
+            (
+                PredictResponse::Single(predictions),
+                ResponseMetadata::new(
                     compute_chars,
                     prompt_tokens,
+                    start_time,
                     tokenization,
                     queue,
                     inference,
-                    PredictResponse::Single(predictions),
-                )
+                ),
+            )
+        }
+        PredictInput::Batch(inputs) => {
+            metrics::increment_counter!("te_request_count", "method" => "batch");
+
+            let batch_size = inputs.len();
+            if batch_size > info.max_client_batch_size {
+                let message = format!(
+                    "batch size {batch_size} > maximum allowed batch size {}",
+                    info.max_client_batch_size
+                );
+                tracing::error!("{message}");
+                let err = ErrorResponse {
+                    error: message,
+                    error_type: ErrorType::Validation,
+                };
+                metrics::increment_counter!("te_request_failure", "err" => "batch_size");
+                Err(err)?;
             }
-            PredictInput::Batch(inputs) => {
-                metrics::increment_counter!("te_request_count", "method" => "batch");
 
-                let batch_size = inputs.len();
-                if batch_size > info.max_client_batch_size {
-                    let message = format!(
-                        "batch size {batch_size} > maximum allowed batch size {}",
-                        info.max_client_batch_size
-                    );
-                    tracing::error!("{message}");
-                    let err = ErrorResponse {
-                        error: message,
-                        error_type: ErrorType::Validation,
-                    };
-                    metrics::increment_counter!("te_request_failure", "err" => "batch_size");
-                    Err(err)?;
-                }
+            let mut futures = Vec::with_capacity(batch_size);
+            let mut compute_chars = 0;
 
-                let mut futures = Vec::with_capacity(batch_size);
-                let mut compute_chars = 0;
+            for input in inputs {
+                compute_chars += input.count_chars();
+                let local_infer = infer.clone();
+                let local_info = info.clone();
+                futures.push(predict_inner(
+                    input,
+                    req.truncate,
+                    req.raw_scores,
+                    local_infer.0,
+                    local_info.0,
+                    None,
+                ))
+            }
+            let results = join_all(futures).await.into_iter().collect::<Result<
+                Vec<(usize, Duration, Duration, Duration, Vec<Prediction>)>,
+                ErrorResponse,
+            >>()?;
 
-                for input in inputs {
-                    compute_chars += input.count_chars();
-                    let local_infer = infer.clone();
-                    let local_info = info.clone();
-                    futures.push(predict_inner(
-                        input,
-                        req.truncate,
-                        req.raw_scores,
-                        local_infer.0,
-                        local_info.0,
-                        None,
-                    ))
-                }
-                let results = join_all(futures).await.into_iter().collect::<Result<
-                    Vec<(usize, Duration, Duration, Duration, Vec<Prediction>)>,
-                    ErrorResponse,
-                >>()?;
+            let mut predictions = Vec::with_capacity(batch_size);
+            let mut total_tokenization_time = 0;
+            let mut total_queue_time = 0;
+            let mut total_inference_time = 0;
+            let mut total_compute_tokens = 0;
 
-                let mut predictions = Vec::with_capacity(batch_size);
-                let mut total_tokenization_time = 0;
-                let mut total_queue_time = 0;
-                let mut total_inference_time = 0;
-                let mut total_compute_tokens = 0;
+            for r in results {
+                total_compute_tokens += r.0;
+                total_tokenization_time += r.1.as_nanos() as u64;
+                total_queue_time += r.2.as_nanos() as u64;
+                total_inference_time += r.3.as_nanos() as u64;
+                predictions.push(r.4);
+            }
+            let batch_size = batch_size as u64;
 
-                for r in results {
-                    total_compute_tokens += r.0;
-                    total_tokenization_time += r.1.as_nanos() as u64;
-                    total_queue_time += r.2.as_nanos() as u64;
-                    total_inference_time += r.3.as_nanos() as u64;
-                    predictions.push(r.4);
-                }
-                let batch_size = batch_size as u64;
+            metrics::increment_counter!("te_request_success", "method" => "batch");
 
-                metrics::increment_counter!("te_request_success", "method" => "batch");
-
-                (
+            (
+                PredictResponse::Batch(predictions),
+                ResponseMetadata::new(
                     compute_chars,
                     total_compute_tokens,
+                    start_time,
                     Duration::from_nanos(total_tokenization_time / batch_size),
                     Duration::from_nanos(total_queue_time / batch_size),
                     Duration::from_nanos(total_inference_time / batch_size),
-                    PredictResponse::Batch(predictions),
-                )
-            }
-        };
+                ),
+            )
+        }
+    };
 
-    let total_time = start_time.elapsed();
+    metadata.record_span(&span);
+    metadata.record_metrics();
 
-    // Tracing metadata
-    span.record("total_time", format!("{total_time:?}"));
-    span.record("tokenization_time", format!("{tokenization_time:?}"));
-    span.record("queue_time", format!("{queue_time:?}"));
-    span.record("inference_time", format!("{inference_time:?}"));
-
-    // Headers
-    let mut headers = HeaderMap::new();
-    headers.insert("x-compute-type", "gpu+optimized".parse().unwrap());
-    headers.insert(
-        "x-compute-time",
-        total_time.as_millis().to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-compute-characters",
-        compute_chars.to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-compute-tokens",
-        compute_tokens.to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-total-time",
-        total_time.as_millis().to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-tokenization-time",
-        tokenization_time.as_millis().to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-queue-time",
-        queue_time.as_millis().to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-inference-time",
-        inference_time.as_millis().to_string().parse().unwrap(),
-    );
-
-    // Metrics
-    metrics::histogram!("te_request_duration", total_time.as_secs_f64());
-    metrics::histogram!(
-        "te_request_tokenization_duration",
-        tokenization_time.as_secs_f64()
-    );
-    metrics::histogram!("te_request_queue_duration", queue_time.as_secs_f64());
-    metrics::histogram!(
-        "te_request_inference_duration",
-        inference_time.as_secs_f64()
-    );
+    let headers = HeaderMap::from(metadata);
 
     tracing::info!("Success");
 
@@ -367,7 +328,7 @@ async fn rerank(
         ))
     };
 
-    let (compute_chars, compute_tokens, tokenization_time, queue_time, inference_time, response) = {
+    let (response, metadata) = {
         metrics::increment_counter!("te_request_count", "method" => "batch");
 
         let batch_size = req.texts.len();
@@ -438,66 +399,22 @@ async fn rerank(
         metrics::increment_counter!("te_request_success", "method" => "batch");
 
         (
-            compute_chars,
-            total_compute_tokens,
-            Duration::from_nanos(total_tokenization_time / batch_size),
-            Duration::from_nanos(total_queue_time / batch_size),
-            Duration::from_nanos(total_inference_time / batch_size),
             RerankResponse(ranks),
+            ResponseMetadata::new(
+                compute_chars,
+                total_compute_tokens,
+                start_time,
+                Duration::from_nanos(total_tokenization_time / batch_size),
+                Duration::from_nanos(total_queue_time / batch_size),
+                Duration::from_nanos(total_inference_time / batch_size),
+            ),
         )
     };
 
-    let total_time = start_time.elapsed();
+    metadata.record_span(&span);
+    metadata.record_metrics();
 
-    // Tracing metadata
-    span.record("total_time", format!("{total_time:?}"));
-    span.record("tokenization_time", format!("{tokenization_time:?}"));
-    span.record("queue_time", format!("{queue_time:?}"));
-    span.record("inference_time", format!("{inference_time:?}"));
-
-    // Headers
-    let mut headers = HeaderMap::new();
-    headers.insert("x-compute-type", "gpu+optimized".parse().unwrap());
-    headers.insert(
-        "x-compute-time",
-        total_time.as_millis().to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-compute-characters",
-        compute_chars.to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-compute-tokens",
-        compute_tokens.to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-total-time",
-        total_time.as_millis().to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-tokenization-time",
-        tokenization_time.as_millis().to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-queue-time",
-        queue_time.as_millis().to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-inference-time",
-        inference_time.as_millis().to_string().parse().unwrap(),
-    );
-
-    // Metrics
-    metrics::histogram!("te_request_duration", total_time.as_secs_f64());
-    metrics::histogram!(
-        "te_request_tokenization_duration",
-        tokenization_time.as_secs_f64()
-    );
-    metrics::histogram!("te_request_queue_duration", queue_time.as_secs_f64());
-    metrics::histogram!(
-        "te_request_inference_duration",
-        inference_time.as_secs_f64()
-    );
+    let headers = HeaderMap::from(metadata);
 
     tracing::info!("Success");
 
@@ -534,147 +451,105 @@ async fn embed(
     let span = tracing::Span::current();
     let start_time = Instant::now();
 
-    let (compute_chars, compute_tokens, tokenization_time, queue_time, inference_time, response) =
-        match req.inputs {
-            Input::Single(input) => {
-                metrics::increment_counter!("te_request_count", "method" => "single");
+    let (response, metadata) = match req.inputs {
+        Input::Single(input) => {
+            metrics::increment_counter!("te_request_count", "method" => "single");
 
-                let compute_chars = input.chars().count();
+            let compute_chars = input.chars().count();
 
-                let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
-                let response = infer
-                    .embed(input, req.truncate, req.normalize, permit)
-                    .await
-                    .map_err(ErrorResponse::from)?;
+            let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+            let response = infer
+                .embed(input, req.truncate, req.normalize, permit)
+                .await
+                .map_err(ErrorResponse::from)?;
 
-                metrics::increment_counter!("te_request_success", "method" => "single");
+            metrics::increment_counter!("te_request_success", "method" => "single");
 
-                (
+            (
+                EmbedResponse(vec![response.results]),
+                ResponseMetadata::new(
                     compute_chars,
                     response.prompt_tokens,
+                    start_time,
                     response.tokenization,
                     response.queue,
                     response.inference,
-                    EmbedResponse(vec![response.results]),
-                )
+                ),
+            )
+        }
+        Input::Batch(inputs) => {
+            metrics::increment_counter!("te_request_count", "method" => "batch");
+
+            let batch_size = inputs.len();
+            if batch_size > info.max_client_batch_size {
+                let message = format!(
+                    "batch size {batch_size} > maximum allowed batch size {}",
+                    info.max_client_batch_size
+                );
+                tracing::error!("{message}");
+                let err = ErrorResponse {
+                    error: message,
+                    error_type: ErrorType::Validation,
+                };
+                metrics::increment_counter!("te_request_failure", "err" => "batch_size");
+                Err(err)?;
             }
-            Input::Batch(inputs) => {
-                metrics::increment_counter!("te_request_count", "method" => "batch");
 
-                let batch_size = inputs.len();
-                if batch_size > info.max_client_batch_size {
-                    let message = format!(
-                        "batch size {batch_size} > maximum allowed batch size {}",
-                        info.max_client_batch_size
-                    );
-                    tracing::error!("{message}");
-                    let err = ErrorResponse {
-                        error: message,
-                        error_type: ErrorType::Validation,
-                    };
-                    metrics::increment_counter!("te_request_failure", "err" => "batch_size");
-                    Err(err)?;
-                }
+            let mut futures = Vec::with_capacity(batch_size);
+            let mut compute_chars = 0;
 
-                let mut futures = Vec::with_capacity(batch_size);
-                let mut compute_chars = 0;
+            for input in inputs {
+                compute_chars += input.chars().count();
 
-                for input in inputs {
-                    compute_chars += input.chars().count();
+                let local_infer = infer.clone();
+                futures.push(async move {
+                    let permit = local_infer.acquire_permit().await;
+                    local_infer
+                        .embed(input, req.truncate, req.normalize, permit)
+                        .await
+                })
+            }
+            let results = join_all(futures)
+                .await
+                .into_iter()
+                .collect::<Result<Vec<InferResponse>, TextEmbeddingsError>>()
+                .map_err(ErrorResponse::from)?;
 
-                    let local_infer = infer.clone();
-                    futures.push(async move {
-                        let permit = local_infer.acquire_permit().await;
-                        local_infer
-                            .embed(input, req.truncate, req.normalize, permit)
-                            .await
-                    })
-                }
-                let results = join_all(futures)
-                    .await
-                    .into_iter()
-                    .collect::<Result<Vec<InferResponse>, TextEmbeddingsError>>()
-                    .map_err(ErrorResponse::from)?;
+            let mut embeddings = Vec::with_capacity(batch_size);
+            let mut total_tokenization_time = 0;
+            let mut total_queue_time = 0;
+            let mut total_inference_time = 0;
+            let mut total_compute_tokens = 0;
 
-                let mut embeddings = Vec::with_capacity(batch_size);
-                let mut total_tokenization_time = 0;
-                let mut total_queue_time = 0;
-                let mut total_inference_time = 0;
-                let mut total_compute_tokens = 0;
+            for r in results {
+                total_tokenization_time += r.tokenization.as_nanos() as u64;
+                total_queue_time += r.queue.as_nanos() as u64;
+                total_inference_time += r.inference.as_nanos() as u64;
+                total_compute_tokens += r.prompt_tokens;
+                embeddings.push(r.results);
+            }
+            let batch_size = batch_size as u64;
 
-                for r in results {
-                    total_tokenization_time += r.tokenization.as_nanos() as u64;
-                    total_queue_time += r.queue.as_nanos() as u64;
-                    total_inference_time += r.inference.as_nanos() as u64;
-                    total_compute_tokens += r.prompt_tokens;
-                    embeddings.push(r.results);
-                }
-                let batch_size = batch_size as u64;
+            metrics::increment_counter!("te_request_success", "method" => "batch");
 
-                metrics::increment_counter!("te_request_success", "method" => "batch");
-
-                (
+            (
+                EmbedResponse(embeddings),
+                ResponseMetadata::new(
                     compute_chars,
                     total_compute_tokens,
+                    start_time,
                     Duration::from_nanos(total_tokenization_time / batch_size),
                     Duration::from_nanos(total_queue_time / batch_size),
                     Duration::from_nanos(total_inference_time / batch_size),
-                    EmbedResponse(embeddings),
-                )
-            }
-        };
+                ),
+            )
+        }
+    };
 
-    let total_time = start_time.elapsed();
+    metadata.record_span(&span);
+    metadata.record_metrics();
 
-    // Tracing metadata
-    span.record("total_time", format!("{total_time:?}"));
-    span.record("tokenization_time", format!("{tokenization_time:?}"));
-    span.record("queue_time", format!("{queue_time:?}"));
-    span.record("inference_time", format!("{inference_time:?}"));
-
-    // Headers
-    let mut headers = HeaderMap::new();
-    headers.insert("x-compute-type", "gpu+optimized".parse().unwrap());
-    headers.insert(
-        "x-compute-time",
-        total_time.as_millis().to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-compute-characters",
-        compute_chars.to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-compute-tokens",
-        compute_tokens.to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-total-time",
-        total_time.as_millis().to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-tokenization-time",
-        tokenization_time.as_millis().to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-queue-time",
-        queue_time.as_millis().to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-inference-time",
-        inference_time.as_millis().to_string().parse().unwrap(),
-    );
-
-    // Metrics
-    metrics::histogram!("te_request_duration", total_time.as_secs_f64());
-    metrics::histogram!(
-        "te_request_tokenization_duration",
-        tokenization_time.as_secs_f64()
-    );
-    metrics::histogram!("te_request_queue_duration", queue_time.as_secs_f64());
-    metrics::histogram!(
-        "te_request_inference_duration",
-        inference_time.as_secs_f64()
-    );
+    let headers = HeaderMap::from(metadata);
 
     tracing::info!("Success");
 
@@ -712,153 +587,112 @@ async fn openai_embed(
     let span = tracing::Span::current();
     let start_time = Instant::now();
 
-    let (compute_chars, compute_tokens, tokenization_time, queue_time, inference_time, embeddings) =
-        match req.input {
-            Input::Single(input) => {
-                metrics::increment_counter!("te_request_count", "method" => "single");
+    let (embeddings, metadata) = match req.input {
+        Input::Single(input) => {
+            metrics::increment_counter!("te_request_count", "method" => "single");
 
-                let compute_chars = input.chars().count();
+            let compute_chars = input.chars().count();
 
-                let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
-                let response = infer
-                    .embed(input, false, true, permit)
-                    .await
-                    .map_err(ErrorResponse::from)?;
+            let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+            let response = infer
+                .embed(input, false, true, permit)
+                .await
+                .map_err(ErrorResponse::from)?;
 
-                metrics::increment_counter!("te_request_success", "method" => "single");
+            metrics::increment_counter!("te_request_success", "method" => "single");
 
-                (
+            (
+                vec![OpenAICompatEmbedding {
+                    object: "embedding",
+                    embedding: response.results,
+                    index: 0,
+                }],
+                ResponseMetadata::new(
                     compute_chars,
                     response.prompt_tokens,
+                    start_time,
                     response.tokenization,
                     response.queue,
                     response.inference,
-                    vec![OpenAICompatEmbedding {
-                        object: "embedding",
-                        embedding: response.results,
-                        index: 0,
-                    }],
-                )
+                ),
+            )
+        }
+        Input::Batch(inputs) => {
+            metrics::increment_counter!("te_request_count", "method" => "batch");
+
+            let batch_size = inputs.len();
+            if batch_size > info.max_client_batch_size {
+                let message = format!(
+                    "batch size {batch_size} > maximum allowed batch size {}",
+                    info.max_client_batch_size
+                );
+                tracing::error!("{message}");
+                let err = ErrorResponse {
+                    error: message,
+                    error_type: ErrorType::Validation,
+                };
+                metrics::increment_counter!("te_request_failure", "err" => "batch_size");
+                Err(err)?;
             }
-            Input::Batch(inputs) => {
-                metrics::increment_counter!("te_request_count", "method" => "batch");
 
-                let batch_size = inputs.len();
-                if batch_size > info.max_client_batch_size {
-                    let message = format!(
-                        "batch size {batch_size} > maximum allowed batch size {}",
-                        info.max_client_batch_size
-                    );
-                    tracing::error!("{message}");
-                    let err = ErrorResponse {
-                        error: message,
-                        error_type: ErrorType::Validation,
-                    };
-                    metrics::increment_counter!("te_request_failure", "err" => "batch_size");
-                    Err(err)?;
-                }
+            let mut futures = Vec::with_capacity(batch_size);
+            let mut compute_chars = 0;
 
-                let mut futures = Vec::with_capacity(batch_size);
-                let mut compute_chars = 0;
+            for input in inputs {
+                compute_chars += input.chars().count();
 
-                for input in inputs {
-                    compute_chars += input.chars().count();
+                let local_infer = infer.clone();
+                futures.push(async move {
+                    let permit = local_infer.acquire_permit().await;
+                    local_infer.embed(input, false, true, permit).await
+                })
+            }
+            let results = join_all(futures)
+                .await
+                .into_iter()
+                .collect::<Result<Vec<InferResponse>, TextEmbeddingsError>>()
+                .map_err(ErrorResponse::from)?;
 
-                    let local_infer = infer.clone();
-                    futures.push(async move {
-                        let permit = local_infer.acquire_permit().await;
-                        local_infer.embed(input, false, true, permit).await
-                    })
-                }
-                let results = join_all(futures)
-                    .await
-                    .into_iter()
-                    .collect::<Result<Vec<InferResponse>, TextEmbeddingsError>>()
-                    .map_err(ErrorResponse::from)?;
+            let mut embeddings = Vec::with_capacity(batch_size);
+            let mut total_tokenization_time = 0;
+            let mut total_queue_time = 0;
+            let mut total_inference_time = 0;
+            let mut total_compute_tokens = 0;
 
-                let mut embeddings = Vec::with_capacity(batch_size);
-                let mut total_tokenization_time = 0;
-                let mut total_queue_time = 0;
-                let mut total_inference_time = 0;
-                let mut total_compute_tokens = 0;
+            for (i, r) in results.into_iter().enumerate() {
+                total_tokenization_time += r.tokenization.as_nanos() as u64;
+                total_queue_time += r.queue.as_nanos() as u64;
+                total_inference_time += r.inference.as_nanos() as u64;
+                total_compute_tokens += r.prompt_tokens;
+                embeddings.push(OpenAICompatEmbedding {
+                    object: "embedding",
+                    embedding: r.results,
+                    index: i,
+                });
+            }
+            let batch_size = batch_size as u64;
 
-                for (i, r) in results.into_iter().enumerate() {
-                    total_tokenization_time += r.tokenization.as_nanos() as u64;
-                    total_queue_time += r.queue.as_nanos() as u64;
-                    total_inference_time += r.inference.as_nanos() as u64;
-                    total_compute_tokens += r.prompt_tokens;
-                    embeddings.push(OpenAICompatEmbedding {
-                        object: "embedding",
-                        embedding: r.results,
-                        index: i,
-                    });
-                }
-                let batch_size = batch_size as u64;
+            metrics::increment_counter!("te_request_success", "method" => "batch");
 
-                metrics::increment_counter!("te_request_success", "method" => "batch");
-
-                (
+            (
+                embeddings,
+                ResponseMetadata::new(
                     compute_chars,
                     total_compute_tokens,
+                    start_time,
                     Duration::from_nanos(total_tokenization_time / batch_size),
                     Duration::from_nanos(total_queue_time / batch_size),
                     Duration::from_nanos(total_inference_time / batch_size),
-                    embeddings,
-                )
-            }
-        };
+                ),
+            )
+        }
+    };
 
-    let total_time = start_time.elapsed();
+    metadata.record_span(&span);
+    metadata.record_metrics();
 
-    // Tracing metadata
-    span.record("total_time", format!("{total_time:?}"));
-    span.record("tokenization_time", format!("{tokenization_time:?}"));
-    span.record("queue_time", format!("{queue_time:?}"));
-    span.record("inference_time", format!("{inference_time:?}"));
-
-    // Headers
-    let mut headers = HeaderMap::new();
-    headers.insert("x-compute-type", "gpu+optimized".parse().unwrap());
-    headers.insert(
-        "x-compute-time",
-        total_time.as_millis().to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-compute-characters",
-        compute_chars.to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-compute-tokens",
-        compute_tokens.to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-total-time",
-        total_time.as_millis().to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-tokenization-time",
-        tokenization_time.as_millis().to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-queue-time",
-        queue_time.as_millis().to_string().parse().unwrap(),
-    );
-    headers.insert(
-        "x-inference-time",
-        inference_time.as_millis().to_string().parse().unwrap(),
-    );
-
-    // Metrics
-    metrics::histogram!("te_request_duration", total_time.as_secs_f64());
-    metrics::histogram!(
-        "te_request_tokenization_duration",
-        tokenization_time.as_secs_f64()
-    );
-    metrics::histogram!("te_request_queue_duration", queue_time.as_secs_f64());
-    metrics::histogram!(
-        "te_request_inference_duration",
-        inference_time.as_secs_f64()
-    );
+    let compute_tokens = metadata.compute_tokens;
+    let headers = HeaderMap::from(metadata);
 
     tracing::info!("Success");
 

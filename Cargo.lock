@@ -3196,6 +3196,7 @@ dependencies = [
  "clap",
  "futures",
  "hf-hub",
+ "http 0.2.11",
  "init-tracing-opentelemetry",
  "metrics",
  "metrics-exporter-prometheus",

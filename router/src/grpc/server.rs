@@ -3,13 +3,14 @@ use crate::grpc::{
     EmbedRequest, EmbedResponse, InfoRequest, InfoResponse, PredictRequest, PredictResponse,
     Prediction, Rank, RerankRequest, RerankResponse,
 };
+use crate::ResponseMetadata;
 use crate::{grpc, shutdown, ErrorResponse, ErrorType, Info, ModelType};
 use futures::future::join_all;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
-use text_embeddings_core::infer::{Infer, InferResponse};
-use tokio::sync::{mpsc, OwnedSemaphorePermit};
+use text_embeddings_core::infer::Infer;
+use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_stream::StreamExt;
 use tonic::codegen::http::HeaderMap;
@@ -19,114 +20,6 @@ use tonic::transport::Server;
 use tonic::{Code, Extensions, Request, Response, Status, Streaming};
 use tonic_health::ServingStatus;
 use tracing::{instrument, Span};
-
-struct ResponseMetadata {
-    compute_chars: usize,
-    compute_tokens: usize,
-    start_time: Instant,
-    tokenization_time: Duration,
-    queue_time: Duration,
-    inference_time: Duration,
-}
-
-impl ResponseMetadata {
-    fn new(compute_chars: usize, start_time: Instant, response: &InferResponse) -> Self {
-        Self {
-            compute_chars,
-            compute_tokens: response.prompt_tokens,
-            start_time,
-            tokenization_time: response.tokenization,
-            queue_time: response.queue,
-            inference_time: response.inference,
-        }
-    }
-
-    fn record_span(&self, span: &Span) {
-        // Tracing metadata
-        span.record("compute_chars", self.compute_chars);
-        span.record("compute_tokens", self.compute_tokens);
-        span.record("total_time", format!("{:?}", self.start_time.elapsed()));
-        span.record("tokenization_time", format!("{:?}", self.tokenization_time));
-        span.record("queue_time", format!("{:?}", self.queue_time));
-        span.record("inference_time", format!("{:?}", self.inference_time));
-    }
-
-    fn record_metrics(&self) {
-        // Metrics
-        metrics::histogram!(
-            "te_request_duration",
-            self.start_time.elapsed().as_secs_f64()
-        );
-        metrics::histogram!(
-            "te_request_tokenization_duration",
-            self.tokenization_time.as_secs_f64()
-        );
-        metrics::histogram!("te_request_queue_duration", self.queue_time.as_secs_f64());
-        metrics::histogram!(
-            "te_request_inference_duration",
-            self.inference_time.as_secs_f64()
-        );
-    }
-}
-
-impl From<ResponseMetadata> for HeaderMap {
-    fn from(value: ResponseMetadata) -> Self {
-        // Headers
-        let mut headers = HeaderMap::new();
-        headers.insert("x-compute-type", "gpu+optimized".parse().unwrap());
-        headers.insert(
-            "x-compute-time",
-            value
-                .start_time
-                .elapsed()
-                .as_millis()
-                .to_string()
-                .parse()
-                .unwrap(),
-        );
-        headers.insert(
-            "x-compute-characters",
-            value.compute_chars.to_string().parse().unwrap(),
-        );
-        headers.insert(
-            "x-compute-tokens",
-            value.compute_tokens.to_string().parse().unwrap(),
-        );
-        headers.insert(
-            "x-total-time",
-            value
-                .start_time
-                .elapsed()
-                .as_millis()
-                .to_string()
-                .parse()
-                .unwrap(),
-        );
-        headers.insert(
-            "x-tokenization-time",
-            value
-                .tokenization_time
-                .as_millis()
-                .to_string()
-                .parse()
-                .unwrap(),
-        );
-        headers.insert(
-            "x-queue-time",
-            value.queue_time.as_millis().to_string().parse().unwrap(),
-        );
-        headers.insert(
-            "x-inference-time",
-            value
-                .inference_time
-                .as_millis()
-                .to_string()
-                .parse()
-                .unwrap(),
-        );
-        headers
-    }
-}
 
 impl From<&ResponseMetadata> for grpc::Metadata {
     fn from(value: &ResponseMetadata) -> Self {
@@ -187,7 +80,14 @@ impl TextEmbeddingsService {
             .await
             .map_err(ErrorResponse::from)?;
 
-        let response_metadata = ResponseMetadata::new(compute_chars, start_time, &response);
+        let response_metadata = ResponseMetadata::new(
+            compute_chars,
+            response.prompt_tokens,
+            start_time,
+            response.tokenization,
+            response.queue,
+            response.inference,
+        );
         response_metadata.record_span(&span);
         response_metadata.record_metrics();
 
@@ -234,7 +134,14 @@ impl TextEmbeddingsService {
             _ => panic!(),
         };
 
-        let response_metadata = ResponseMetadata::new(compute_chars, start_time, &response);
+        let response_metadata = ResponseMetadata::new(
+            compute_chars,
+            response.prompt_tokens,
+            start_time,
+            response.tokenization,
+            response.queue,
+            response.inference,
+        );
 
         let mut predictions: Vec<Prediction> = {
             // Map score to label
@@ -332,46 +239,77 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
 
         // Create bounded channel to have an upper bound of spawned tasks
         // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
-        let (embed_sender, mut embed_receiver) = mpsc::channel(self.max_parallel_stream_requests);
-
-        // Final channel for the outputs
-        let (response_sender, response_receiver) = mpsc::unbounded_channel();
+        let (embed_sender, mut embed_receiver) = mpsc::channel::<(
+            EmbedRequest,
+            oneshot::Sender<Result<EmbedResponse, Status>>,
+        )>(self.max_parallel_stream_requests);
 
         // Required for the async move below
         let local = self.clone();
 
         // Background task that uses the bounded channel
         tokio::spawn(async move {
-            while let Some(request) = embed_receiver.recv().await {
+            while let Some((request, mut sender)) = embed_receiver.recv().await {
                 // Wait on permit before spawning the task to avoid creating more tasks than needed
                 let permit = local.infer.acquire_permit().await;
 
                 // Required for the async move below
                 let task_local = local.clone();
-                let task_response_sender = response_sender.clone();
 
                 // Create async task for this specific input
                 tokio::spawn(async move {
                     // Select on closed to cancel work if the stream was closed
                     tokio::select! {
                     response = task_local.embed_inner(request, permit) => {
-                        let _ = task_response_sender.send(response.map(|(r, _m)| r));
+                        let _ = sender.send(response.map(|(r, _m)| r));
                     }
-                    _ = task_response_sender.closed() => {}
+                    _ = sender.closed() => {}
                     }
                 });
             }
         });
 
-        // Iterate on input
-        while let Some(request) = request_stream.next().await {
-            embed_sender
-                .send(request?)
-                .await
-                .expect("`embed_receiver` was dropped. This is a bug.");
-        }
-        // Drop the sender
-        drop(embed_sender);
+        // Intermediate channels
+        // Required to keep the order of the requests
+        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            // Iterate on input
+            while let Some(request) = request_stream.next().await {
+                // Create return channel
+                let (result_sender, result_receiver) = oneshot::channel();
+                // Push to intermediate channel and preserve ordering
+                intermediate_sender
+                    .send(result_receiver)
+                    .expect("`intermediate_receiver` was dropped. This is a bug.");
+
+                match request {
+                    Ok(request) => embed_sender
+                        .send((request, result_sender))
+                        .await
+                        .expect("`embed_receiver` was dropped. This is a bug."),
+                    Err(status) => {
+                        // Request is malformed
+                        let _ = result_sender.send(Err(status));
+                    }
+                };
+            }
+        });
+
+        // Final channel for the outputs
+        let (response_sender, response_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            while let Some(result_receiver) = intermediate_receiver.recv().await {
+                // Select on closed to cancel work if the stream was closed
+                tokio::select! {
+                response = result_receiver => {
+                    let _ = response_sender.send(response.expect("`result_sender` was dropped. This is a bug."));
+                }
+                _ = response_sender.closed() => {}
+                }
+            }
+        });
 
         Ok(Response::new(UnboundedReceiverStream::new(
             response_receiver,
@@ -417,47 +355,77 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
 
         // Create bounded channel to have an upper bound of spawned tasks
         // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
-        let (predict_sender, mut predict_receiver) =
-            mpsc::channel(self.max_parallel_stream_requests);
-
-        // Final channel for the outputs
-        let (response_sender, response_receiver) = mpsc::unbounded_channel();
+        let (predict_sender, mut predict_receiver) = mpsc::channel::<(
+            PredictRequest,
+            oneshot::Sender<Result<PredictResponse, Status>>,
+        )>(self.max_parallel_stream_requests);
 
         // Required for the async move below
         let local = self.clone();
 
         // Background task that uses the bounded channel
         tokio::spawn(async move {
-            while let Some(request) = predict_receiver.recv().await {
+            while let Some((request, mut sender)) = predict_receiver.recv().await {
                 // Wait on permit before spawning the task to avoid creating more tasks than needed
                 let permit = local.infer.acquire_permit().await;
 
                 // Required for the async move below
                 let task_local = local.clone();
-                let task_response_sender = response_sender.clone();
 
                 // Create async task for this specific input
                 tokio::spawn(async move {
                     // Select on closed to cancel work if the stream was closed
                     tokio::select! {
                     response = task_local.predict_inner(request, permit) => {
-                        let _ = task_response_sender.send(response.map(|(r, _m)| r));
+                        let _ = sender.send(response.map(|(r, _m)| r));
                     }
-                    _ = task_response_sender.closed() => {}
+                    _ = sender.closed() => {}
                     }
                 });
             }
         });
 
-        // Iterate on input
-        while let Some(request) = request_stream.next().await {
-            predict_sender
-                .send(request?)
-                .await
-                .expect("`predict_receiver` was dropped. This is a bug.");
-        }
-        // Drop the sender
-        drop(predict_sender);
+        // Intermediate channels
+        // Required to keep the order of the requests
+        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            // Iterate on input
+            while let Some(request) = request_stream.next().await {
+                // Create return channel
+                let (result_sender, result_receiver) = oneshot::channel();
+                // Push to intermediate channel and preserve ordering
+                intermediate_sender
+                    .send(result_receiver)
+                    .expect("`intermediate_receiver` was dropped. This is a bug.");
+
+                match request {
+                    Ok(request) => predict_sender
+                        .send((request, result_sender))
+                        .await
+                        .expect("`predict_receiver` was dropped. This is a bug."),
+                    Err(status) => {
+                        // Request is malformed
+                        let _ = result_sender.send(Err(status));
+                    }
+                };
+            }
+        });
+
+        // Final channel for the outputs
+        let (response_sender, response_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            while let Some(result_receiver) = intermediate_receiver.recv().await {
+                // Select on closed to cancel work if the stream was closed
+                tokio::select! {
+                response = result_receiver => {
+                    let _ = response_sender.send(response.expect("`result_sender` was dropped. This is a bug."));
+                }
+                _ = response_sender.closed() => {}
+                }
+            }
+        });
 
         Ok(Response::new(UnboundedReceiverStream::new(
             response_receiver,
@@ -596,14 +564,14 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
 
         metrics::increment_counter!("te_request_success", "method" => "batch");
 
-        let response_metadata = ResponseMetadata {
-            compute_chars: total_compute_chars,
-            compute_tokens: total_compute_tokens,
+        let response_metadata = ResponseMetadata::new(
+            total_compute_chars,
+            total_compute_tokens,
             start_time,
-            tokenization_time: Duration::from_nanos(total_tokenization_time / batch_size),
-            queue_time: Duration::from_nanos(total_queue_time / batch_size),
-            inference_time: Duration::from_nanos(total_inference_time / batch_size),
-        };
+            Duration::from_nanos(total_tokenization_time / batch_size),
+            Duration::from_nanos(total_queue_time / batch_size),
+            Duration::from_nanos(total_inference_time / batch_size),
+        );
         response_metadata.record_span(&span);
         response_metadata.record_metrics();
 
@@ -690,24 +658,25 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
 
         // Create bounded channel to have an upper bound of spawned tasks
         // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
-        let (rerank_sender, mut rerank_receiver) = mpsc::channel(self.max_parallel_stream_requests);
-
-        // Final channel for the outputs
-        let (response_sender, mut response_receiver) = mpsc::unbounded_channel();
+        let (rerank_sender, mut rerank_receiver) = mpsc::channel::<(
+            (usize, String, String, bool, bool),
+            oneshot::Sender<
+                Result<(usize, usize, Duration, Duration, Duration, f32, String), ErrorResponse>,
+            >,
+        )>(self.max_parallel_stream_requests);
 
         // Required for the async move below
         let local_infer = self.infer.clone();
 
         // Background task that uses the bounded channel
         tokio::spawn(async move {
-            while let Some((index, query, text, truncate, raw_scores)) =
+            while let Some(((index, query, text, truncate, raw_scores), mut sender)) =
                 rerank_receiver.recv().await
             {
                 // Wait on permit before spawning the task to avoid creating more tasks than needed
                 let permit = local_infer.acquire_permit().await;
 
                 // Required for the async move below
-                let task_response_sender = response_sender.clone();
                 let task_infer = local_infer.clone();
 
                 // Create async task for this specific input
@@ -715,9 +684,9 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
                     // Select on closed to cancel work if the stream was closed
                     tokio::select! {
                     result = rerank_inner(index, query, text, truncate, raw_scores, task_infer, permit) => {
-                        let _ = task_response_sender.send(result);
+                        let _ = sender.send(result);
                     }
-                    _ = task_response_sender.closed() => {}
+                    _ = sender.closed() => {}
                     }
                 });
             }
@@ -730,8 +699,19 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
         let mut raw_scores = None;
         let mut return_text = None;
 
+        // Intermediate channels
+        // Required to keep the order of the requests
+        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
+
         while let Some(request) = request_stream.next().await {
             let request = request?;
+
+            // Create return channel
+            let (result_sender, result_receiver) = oneshot::channel();
+            // Push to intermediate channel and preserve ordering
+            intermediate_sender
+                .send(result_receiver)
+                .expect("`intermediate_receiver` was dropped. This is a bug.");
 
             // Set `raw_scores` and `return_text` using the values in the first request
             if raw_scores.is_none() && return_text.is_none() {
@@ -744,11 +724,14 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
 
             rerank_sender
                 .send((
-                    index,
-                    request.query,
-                    request.text,
-                    request.truncate,
-                    raw_scores.unwrap(),
+                    (
+                        index,
+                        request.query,
+                        request.text,
+                        request.truncate,
+                        raw_scores.unwrap(),
+                    ),
+                    result_sender,
                 ))
                 .await
                 .expect("`rerank_receiver` was dropped. This is a bug.");
@@ -768,8 +751,10 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
         let mut total_compute_tokens = 0;
 
         // Iterate on result stream
-        while let Some(r) = response_receiver.recv().await {
-            let r = r?;
+        while let Some(result_receiver) = intermediate_receiver.recv().await {
+            let r = result_receiver
+                .await
+                .expect("`result_sender` was dropped. This is a bug.")?;
 
             total_compute_tokens += r.1;
             total_tokenization_time += r.2.as_nanos() as u64;
@@ -808,14 +793,14 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
 
         metrics::increment_counter!("te_request_success", "method" => "batch");
 
-        let response_metadata = ResponseMetadata {
-            compute_chars: total_compute_chars,
-            compute_tokens: total_compute_tokens,
+        let response_metadata = ResponseMetadata::new(
+            total_compute_chars,
+            total_compute_tokens,
             start_time,
-            tokenization_time: Duration::from_nanos(total_tokenization_time / batch_size),
-            queue_time: Duration::from_nanos(total_queue_time / batch_size),
-            inference_time: Duration::from_nanos(total_inference_time / batch_size),
-        };
+            Duration::from_nanos(total_tokenization_time / batch_size),
+            Duration::from_nanos(total_queue_time / batch_size),
+            Duration::from_nanos(total_inference_time / batch_size),
+        );
         response_metadata.record_span(&span);
         response_metadata.record_metrics();
 

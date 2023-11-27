@@ -1,8 +1,9 @@
 import grpc from 'k6/experimental/grpc';
-import {Trend} from 'k6/metrics';
+import {Counter, Trend} from 'k6/metrics';
 
 const host = __ENV.HOST || '127.0.0.1:3000';
 
+const streamCounter = new Counter('stream_counter');
 const totalTime = new Trend('total_time', true);
 const tokenizationTIme = new Trend('tokenization_time', true);
 const queueTime = new Trend('queue_time', true);
@@ -52,8 +53,8 @@ export default function () {
         truncate: true,
     };
 
-    // send 128 requests
-    for (let i = 0; i < 64000; i++) {
+    // send 10000 requests
+    for (let i = 0; i < 10000; i++) {
         stream.write(payload);
     }
 

@@ -137,8 +137,6 @@ fn init_backend(
     } else if cfg!(feature = "python") {
         #[cfg(feature = "python")]
         {
-            use std::thread;
-
             return Ok(Box::new(
                 thread::spawn(move || {
                     PythonBackend::new(

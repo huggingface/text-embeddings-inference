@@ -18,8 +18,8 @@ export const options = {
     scenarios: {
         // throughput: {
         //     executor: 'shared-iterations',
-        //     vus: 1000,
-        //     iterations: 1000,
+        //     vus: 10000,
+        //     iterations: 10000,
         //     maxDuration: '2m',
         //     gracefulStop: '1s',
         // },

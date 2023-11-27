@@ -22,6 +22,7 @@ clap = { version = "4.1.4", features = ["derive", "env"] }
 futures = "^0.3"
 init-tracing-opentelemetry = { version = "0.14.1", features = ["opentelemetry-otlp"] }
 hf-hub = { version = "0.3.0", features = ["tokio"] }
+http = "0.2.9"
 num_cpus = "1.16.0"
 metrics = "0.21.0"
 metrics-exporter-prometheus = { version = "0.12.1", features = [] }
