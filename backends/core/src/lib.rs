@@ -20,6 +20,8 @@ pub trait Backend {
         None
     }
 
+    fn is_padded(&self) -> bool;
+
     fn embed(&self, batch: Batch) -> Result<Vec<Embedding>, BackendError>;
 
     fn predict(&self, batch: Batch) -> Result<Vec<Vec<f32>>, BackendError>;

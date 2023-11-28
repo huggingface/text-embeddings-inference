@@ -331,14 +331,18 @@ async fn main() -> Result<()> {
         .await
         .context("Model backend is not healthy")?;
 
-    let max_batch_requests = backend.max_batch_size.map(|s| {
-        tracing::warn!("Backend does not support a batch size > {s}");
-        tracing::warn!("forcing `max_batch_requests={s}`");
-        s
-    });
+    let max_batch_requests = backend
+        .max_batch_size
+        .map(|s| {
+            tracing::warn!("Backend does not support a batch size > {s}");
+            tracing::warn!("forcing `max_batch_requests={s}`");
+            s
+        })
+        .or(args.max_batch_requests);
 
     // Queue logic
     let queue = Queue::new(
+        backend.padded_model,
         args.max_batch_tokens,
         max_batch_requests,
         args.max_concurrent_requests,
