@@ -618,6 +618,10 @@ impl BertModel {
 }
 
 impl Model for BertModel {
+    fn is_padded(&self) -> bool {
+        true
+    }
+
     fn embed(&self, batch: Batch) -> Result<Tensor> {
         self.forward(batch)
     }

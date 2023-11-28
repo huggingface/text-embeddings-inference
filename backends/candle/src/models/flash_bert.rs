@@ -447,6 +447,9 @@ impl FlashBertModel {
 }
 
 impl Model for FlashBertModel {
+    fn is_padded(&self) -> bool {
+        false
+    }
     fn embed(&self, batch: Batch) -> Result<Tensor> {
         self.forward(batch)
     }

@@ -40,6 +40,7 @@ pub struct Queue {
 
 impl Queue {
     pub fn new(
+        padded_model: bool,
         max_batch_tokens: usize,
         max_batch_requests: Option<usize>,
         max_concurrent_requests: usize,
@@ -50,6 +51,7 @@ impl Queue {
         // Launch background queue task
         tokio::task::spawn_blocking(move || {
             queue_blocking_task(
+                padded_model,
                 max_batch_tokens,
                 max_batch_requests,
                 max_concurrent_requests,
@@ -93,6 +95,7 @@ impl Queue {
 
 // Background task responsible of the queue state
 fn queue_blocking_task(
+    padded_model: bool,
     max_batch_tokens: usize,
     max_batch_requests: Option<usize>,
     max_concurrent_requests: usize,
@@ -136,7 +139,14 @@ fn queue_blocking_task(
 
                     let entry_tokens = entry.encoding.input_ids.len();
 
-                    if current_tokens + entry_tokens > max_batch_tokens {
+                    let total_tokens = if padded_model {
+                        (max(max_length, entry_tokens as u32) * (metadata.len() + 1) as u32)
+                            as usize
+                    } else {
+                        current_tokens + entry_tokens
+                    };
+
+                    if total_tokens > max_batch_tokens {
                         entries.push_front(entry);
                         break;
                     }

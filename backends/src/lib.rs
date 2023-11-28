@@ -21,6 +21,7 @@ pub struct Backend {
     backend_sender: mpsc::UnboundedSender<BackendCommand>,
     /// Health status
     health_receiver: watch::Receiver<bool>,
+    pub padded_model: bool,
     pub max_batch_size: Option<usize>,
     pub model_type: ModelType,
 }
@@ -42,6 +43,7 @@ impl Backend {
             uds_path,
             otlp_endpoint,
         )?;
+        let padded_model = backend.is_padded();
         let max_batch_size = backend.max_batch_size();
 
         let (health_sender, health_receiver) = watch::channel(false);
@@ -53,6 +55,7 @@ impl Backend {
         Ok(Self {
             backend_sender,
             health_receiver,
+            padded_model,
             max_batch_size,
             model_type,
         })

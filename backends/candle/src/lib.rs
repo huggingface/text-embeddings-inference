@@ -126,6 +126,10 @@ impl Backend for CandleBackend {
         Ok(())
     }
 
+    fn is_padded(&self) -> bool {
+        self.model.is_padded()
+    }
+
     fn embed(&self, batch: Batch) -> Result<Vec<Embedding>, BackendError> {
         let results = self.model.embed(batch).e()?;
         let results = results.to_dtype(DType::F32).e()?.to_vec2().e()?;
