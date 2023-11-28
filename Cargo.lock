@@ -227,12 +227,12 @@ name = "backend-grpc-client"
 version = "0.5.0"
 dependencies = [
  "grpc-metadata",
- "prost",
- "prost-build",
+ "prost 0.11.9",
+ "prost-build 0.11.9",
  "thiserror",
  "tokio",
- "tonic",
- "tonic-build",
+ "tonic 0.9.2",
+ "tonic-build 0.9.2",
  "tower",
  "tracing",
 ]
@@ -1186,7 +1186,7 @@ name = "grpc-metadata"
 version = "0.1.0"
 dependencies = [
  "opentelemetry 0.19.0",
- "tonic",
+ "tonic 0.9.2",
  "tracing",
  "tracing-opentelemetry 0.19.0",
 ]
@@ -2041,10 +2041,10 @@ dependencies = [
  "opentelemetry-semantic-conventions",
  "opentelemetry_api 0.20.0",
  "opentelemetry_sdk 0.20.0",
- "prost",
+ "prost 0.11.9",
  "thiserror",
  "tokio",
- "tonic",
+ "tonic 0.9.2",
 ]
 
 [[package]]
@@ -2055,8 +2055,8 @@ checksum = "b1e3f814aa9f8c905d0ee4bde026afd3b2577a97c10e1699912e3e44f0c4cbeb"
 dependencies = [
  "opentelemetry_api 0.20.0",
  "opentelemetry_sdk 0.20.0",
- "prost",
- "tonic",
+ "prost 0.11.9",
+ "tonic 0.9.2",
 ]
 
 [[package]]
@@ -2276,6 +2276,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "prettyplease"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae005bd773ab59b4725093fd7df83fd7892f7d8eafb48dbd7de6e024e4215f9d"
+dependencies = [
+ "proc-macro2",
+ "syn 2.0.39",
+]
+
+[[package]]
 name = "proc-macro-error"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2315,7 +2325,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b82eaa1d779e9a4bc1c3217db8ffbeabaae1dca241bf70183242128d48681cd"
 dependencies = [
  "bytes",
- "prost-derive",
+ "prost-derive 0.11.9",
+]
+
+[[package]]
+name = "prost"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "146c289cda302b98a28d40c8b3b90498d6e526dd24ac2ecea73e4e491685b94a"
+dependencies = [
+ "bytes",
+ "prost-derive 0.12.3",
 ]
 
 [[package]]
@@ -2331,11 +2351,33 @@ dependencies = [
  "log",
  "multimap",
  "petgraph",
- "prettyplease",
- "prost",
- "prost-types",
+ "prettyplease 0.1.25",
+ "prost 0.11.9",
+ "prost-types 0.11.9",
  "regex",
  "syn 1.0.109",
+ "tempfile",
+ "which",
+]
+
+[[package]]
+name = "prost-build"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c55e02e35260070b6f716a2423c2ff1c3bb1642ddca6f99e1f26d06268a0e2d2"
+dependencies = [
+ "bytes",
+ "heck",
+ "itertools 0.11.0",
+ "log",
+ "multimap",
+ "once_cell",
+ "petgraph",
+ "prettyplease 0.2.15",
+ "prost 0.12.3",
+ "prost-types 0.12.3",
+ "regex",
+ "syn 2.0.39",
  "tempfile",
  "which",
 ]
@@ -2354,12 +2396,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "prost-derive"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "efb6c9a1dd1def8e2124d17e83a20af56f1570d6c2d2bd9e266ccb768df3840e"
+dependencies = [
+ "anyhow",
+ "itertools 0.11.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.39",
+]
+
+[[package]]
 name = "prost-types"
 version = "0.11.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "213622a1460818959ac1181aaeb2dc9c7f63df720db7d788b3e24eacd1983e13"
 dependencies = [
- "prost",
+ "prost 0.11.9",
+]
+
+[[package]]
+name = "prost-types"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "193898f59edcf43c26227dcd4c8427f00d99d61e95dcde58dabd49fa291d470e"
+dependencies = [
+ "prost 0.12.3",
 ]
 
 [[package]]
@@ -3132,12 +3196,14 @@ dependencies = [
  "clap",
  "futures",
  "hf-hub",
+ "http 0.2.11",
  "init-tracing-opentelemetry",
  "metrics",
  "metrics-exporter-prometheus",
  "num_cpus",
  "opentelemetry 0.20.0",
  "opentelemetry-otlp",
+ "prost 0.12.3",
  "reqwest",
  "serde",
  "serde_json",
@@ -3146,9 +3212,13 @@ dependencies = [
  "thiserror",
  "tokenizers",
  "tokio",
+ "tokio-stream",
+ "tonic 0.10.2",
+ "tonic-build 0.10.2",
+ "tonic-health",
+ "tonic-reflection",
  "tower-http",
  "tracing",
- "tracing-chrome",
  "tracing-opentelemetry 0.21.0",
  "tracing-subscriber",
  "utoipa",
@@ -3367,7 +3437,34 @@ dependencies = [
  "hyper-timeout",
  "percent-encoding",
  "pin-project",
- "prost",
+ "prost 0.11.9",
+ "tokio",
+ "tokio-stream",
+ "tower",
+ "tower-layer",
+ "tower-service",
+ "tracing",
+]
+
+[[package]]
+name = "tonic"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d560933a0de61cf715926b9cac824d4c883c2c43142f787595e48280c40a1d0e"
+dependencies = [
+ "async-stream",
+ "async-trait",
+ "axum",
+ "base64 0.21.5",
+ "bytes",
+ "h2",
+ "http 0.2.11",
+ "http-body",
+ "hyper",
+ "hyper-timeout",
+ "percent-encoding",
+ "pin-project",
+ "prost 0.12.3",
  "tokio",
  "tokio-stream",
  "tower",
@@ -3382,11 +3479,50 @@ version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a6fdaae4c2c638bb70fe42803a26fbd6fc6ac8c72f5c59f67ecc2a2dcabf4b07"
 dependencies = [
- "prettyplease",
+ "prettyplease 0.1.25",
  "proc-macro2",
- "prost-build",
+ "prost-build 0.11.9",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "tonic-build"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d021fc044c18582b9a2408cd0dd05b1596e3ecdb5c4df822bb0183545683889"
+dependencies = [
+ "prettyplease 0.2.15",
+ "proc-macro2",
+ "prost-build 0.12.3",
+ "quote",
+ "syn 2.0.39",
+]
+
+[[package]]
+name = "tonic-health"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f80db390246dfb46553481f6024f0082ba00178ea495dbb99e70ba9a4fafb5e1"
+dependencies = [
+ "async-stream",
+ "prost 0.12.3",
+ "tokio",
+ "tokio-stream",
+ "tonic 0.10.2",
+]
+
+[[package]]
+name = "tonic-reflection"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fa37c513df1339d197f4ba21d28c918b9ef1ac1768265f11ecb6b7f1cba1b76"
+dependencies = [
+ "prost 0.12.3",
+ "prost-types 0.12.3",
+ "tokio",
+ "tokio-stream",
+ "tonic 0.10.2",
 ]
 
 [[package]]
@@ -3460,17 +3596,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.39",
-]
-
-[[package]]
-name = "tracing-chrome"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "496b3cd5447f7ff527bbbf19b071ad542a000adf297d4127078b4dfdb931f41a"
-dependencies = [
- "serde_json",
- "tracing-core",
- "tracing-subscriber",
 ]
 
 [[package]]

@@ -1,378 +1,111 @@
+use ::http::HeaderMap;
 /// Text Embedding Inference Webserver
-pub mod server;
-
-use serde::de::{SeqAccess, Visitor};
-use serde::{de, Deserialize, Deserializer, Serialize};
-use serde_json::json;
+use anyhow::Result;
+use serde::Serialize;
 use std::collections::HashMap;
-use std::fmt::Formatter;
-use text_embeddings_core::tokenization::EncodingInput;
-use utoipa::openapi::{RefOr, Schema};
-use utoipa::ToSchema;
+use std::net::SocketAddr;
+use std::time::{Duration, Instant};
+use text_embeddings_core::infer::Infer;
+use text_embeddings_core::TextEmbeddingsError;
+use tracing::Span;
 
-#[derive(Clone, Debug, Serialize, ToSchema)]
+mod prometheus;
+
+#[cfg(feature = "http")]
+mod http;
+
+#[cfg(feature = "grpc")]
+mod grpc;
+mod shutdown;
+
+/// Crate entrypoint
+pub async fn run(infer: Infer, info: Info, addr: SocketAddr) -> Result<()> {
+    let prom_builder = prometheus::prometheus_builer(info.max_input_length)?;
+
+    if cfg!(feature = "http") {
+        #[cfg(feature = "http")]
+        {
+            return http::server::run(infer, info, addr, prom_builder).await;
+        }
+    }
+
+    if cfg!(feature = "grpc") {
+        #[cfg(feature = "grpc")]
+        {
+            return grpc::server::run(infer, info, addr, prom_builder).await;
+        }
+    }
+
+    anyhow::bail!("You must use one of `http` or `grpc`");
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
 pub struct EmbeddingModel {
-    #[schema(example = "cls")]
+    #[cfg_attr(feature = "http", schema(example = "cls"))]
     pub pooling: String,
 }
 
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
 pub struct ClassifierModel {
-    #[schema(example = json!({"0": "LABEL"}))]
+    #[cfg_attr(feature = "http", schema(example = json!({"0": "LABEL"})))]
     pub id2label: HashMap<String, String>,
-    #[schema(example = json!({"LABEL": 0}))]
+    #[cfg_attr(feature = "http", schema(example = json!({"LABEL": 0})))]
     pub label2id: HashMap<String, usize>,
 }
 
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum ModelType {
     Classifier(ClassifierModel),
     Embedding(EmbeddingModel),
+    Reranker(ClassifierModel),
 }
 
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
 pub struct Info {
     /// Model info
-    #[schema(example = "thenlper/gte-base")]
+    #[cfg_attr(feature = "http", schema(example = "thenlper/gte-base"))]
     pub model_id: String,
-    #[schema(nullable = true, example = "fca14538aa9956a46526bd1d0d11d69e19b5a101")]
+    #[cfg_attr(
+        feature = "http",
+        schema(nullable = true, example = "fca14538aa9956a46526bd1d0d11d69e19b5a101")
+    )]
     pub model_sha: Option<String>,
-    #[schema(example = "float16")]
+    #[cfg_attr(feature = "http", schema(example = "float16"))]
     pub model_dtype: String,
     pub model_type: ModelType,
     /// Router Parameters
-    #[schema(example = "128")]
+    #[cfg_attr(feature = "http", schema(example = "128"))]
     pub max_concurrent_requests: usize,
-    #[schema(example = "512")]
+    #[cfg_attr(feature = "http", schema(example = "512"))]
     pub max_input_length: usize,
-    #[schema(example = "2048")]
+    #[cfg_attr(feature = "http", schema(example = "2048"))]
     pub max_batch_tokens: usize,
-    #[schema(nullable = true, example = "null", default = "null")]
+    #[cfg_attr(
+        feature = "http",
+        schema(nullable = true, example = "null", default = "null")
+    )]
     pub max_batch_requests: Option<usize>,
-    #[schema(example = "32")]
+    #[cfg_attr(feature = "http", schema(example = "32"))]
     pub max_client_batch_size: usize,
-    #[schema(example = "4")]
+    #[cfg_attr(feature = "http", schema(example = "4"))]
     pub tokenization_workers: usize,
     /// Router Info
-    #[schema(example = "0.5.0")]
+    #[cfg_attr(feature = "http", schema(example = "0.5.0"))]
     pub version: &'static str,
-    #[schema(nullable = true, example = "null")]
+    #[cfg_attr(feature = "http", schema(nullable = true, example = "null"))]
     pub sha: Option<&'static str>,
-    #[schema(nullable = true, example = "null")]
+    #[cfg_attr(feature = "http", schema(nullable = true, example = "null"))]
     pub docker_label: Option<&'static str>,
 }
 
-#[derive(Debug)]
-pub(crate) enum Sequence {
-    Single(String),
-    Pair(String, String),
-}
-
-impl Sequence {
-    pub(crate) fn count_chars(&self) -> usize {
-        match self {
-            Sequence::Single(s) => s.chars().count(),
-            Sequence::Pair(s1, s2) => s1.chars().count() + s2.chars().count(),
-        }
-    }
-}
-
-impl From<Sequence> for EncodingInput {
-    fn from(value: Sequence) -> Self {
-        match value {
-            Sequence::Single(s) => Self::Single(s),
-            Sequence::Pair(s1, s2) => Self::Dual(s1, s2),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum PredictInput {
-    Single(Sequence),
-    Batch(Vec<Sequence>),
-}
-
-impl<'de> Deserialize<'de> for PredictInput {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Internal {
-            Single(String),
-            Multiple(Vec<String>),
-        }
-
-        struct PredictInputVisitor;
-
-        impl<'de> Visitor<'de> for PredictInputVisitor {
-            type Value = PredictInput;
-
-            fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
-                formatter.write_str(
-                    "a string, \
-                    a pair of strings [string, string] \
-                    or a batch of mixed strings and pairs [[string], [string, string], ...]",
-                )
-            }
-
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: de::Error,
-            {
-                Ok(PredictInput::Single(Sequence::Single(v.to_string())))
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'de>,
-            {
-                let sequence_from_vec = |mut value: Vec<String>| {
-                    // Validate that value is correct
-                    match value.len() {
-                        1 => Ok(Sequence::Single(value.pop().unwrap())),
-                        2 => {
-                            // Second element is last
-                            let second = value.pop().unwrap();
-                            let first = value.pop().unwrap();
-                            Ok(Sequence::Pair(first, second))
-                        }
-                        // Sequence can only be a single string or a pair of strings
-                        _ => Err(de::Error::invalid_length(value.len(), &self)),
-                    }
-                };
-
-                // Get first element
-                // This will determine if input is a batch or not
-                let s = match seq
-                    .next_element::<Internal>()?
-                    .ok_or_else(|| de::Error::invalid_length(0, &self))?
-                {
-                    // Input is not a batch
-                    // Return early
-                    Internal::Single(value) => {
-                        // Option get second element
-                        let second = seq.next_element()?;
-
-                        if seq.next_element::<String>()?.is_some() {
-                            // Error as we do not accept > 2 elements
-                            return Err(de::Error::invalid_length(3, &self));
-                        }
-
-                        if let Some(second) = second {
-                            // Second element exists
-                            // This is a pair
-                            return Ok(PredictInput::Single(Sequence::Pair(value, second)));
-                        } else {
-                            // Second element does not exist
-                            return Ok(PredictInput::Single(Sequence::Single(value)));
-                        }
-                    }
-                    // Input is a batch
-                    Internal::Multiple(value) => sequence_from_vec(value),
-                }?;
-
-                let mut batch = Vec::with_capacity(32);
-                // Push first sequence
-                batch.push(s);
-
-                // Iterate on all sequences
-                while let Some(value) = seq.next_element::<Vec<String>>()? {
-                    // Validate sequence
-                    let s = sequence_from_vec(value)?;
-                    // Push to batch
-                    batch.push(s);
-                }
-                Ok(PredictInput::Batch(batch))
-            }
-        }
-
-        deserializer.deserialize_any(PredictInputVisitor)
-    }
-}
-
-impl<'__s> ToSchema<'__s> for PredictInput {
-    fn schema() -> (&'__s str, RefOr<Schema>) {
-        (
-            "PredictInput",
-            utoipa::openapi::OneOfBuilder::new()
-                .item(
-                    utoipa::openapi::ObjectBuilder::new()
-                        .schema_type(utoipa::openapi::SchemaType::String)
-                        .description(Some("A single string")),
-                )
-                .item(
-                    utoipa::openapi::ArrayBuilder::new()
-                        .items(
-                            utoipa::openapi::ObjectBuilder::new()
-                                .schema_type(utoipa::openapi::SchemaType::String),
-                        )
-                        .description(Some("A pair of strings"))
-                        .min_items(Some(2))
-                        .max_items(Some(2)),
-                )
-                .item(
-                    utoipa::openapi::ArrayBuilder::new().items(
-                        utoipa::openapi::OneOfBuilder::new()
-                            .item(
-                                utoipa::openapi::ArrayBuilder::new()
-                                    .items(
-                                        utoipa::openapi::ObjectBuilder::new()
-                                            .schema_type(utoipa::openapi::SchemaType::String),
-                                    )
-                                    .description(Some("A single string"))
-                                    .min_items(Some(1))
-                                    .max_items(Some(1)),
-                            )
-                            .item(
-                                utoipa::openapi::ArrayBuilder::new()
-                                    .items(
-                                        utoipa::openapi::ObjectBuilder::new()
-                                            .schema_type(utoipa::openapi::SchemaType::String),
-                                    )
-                                    .description(Some("A pair of strings"))
-                                    .min_items(Some(2))
-                                    .max_items(Some(2)),
-                            )
-                    ).description(Some("A batch")),
-                )
-                .description(Some(
-                    "Model input. \
-                Can be either a single string, a pair of strings or a batch of mixed single and pairs \
-                of strings.",
-                ))
-                .example(Some(json!("What is Deep Learning?")))
-                .into(),
-        )
-    }
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(crate) struct PredictRequest {
-    pub inputs: PredictInput,
-    #[serde(default)]
-    #[schema(default = "false", example = "false")]
-    pub truncate: bool,
-    #[serde(default)]
-    #[schema(default = "false", example = "false")]
-    pub raw_scores: bool,
-}
-
-#[derive(Serialize, ToSchema)]
-pub(crate) struct Prediction {
-    #[schema(example = "0.5")]
-    score: f32,
-    #[schema(example = "admiration")]
-    label: String,
-}
-
-#[derive(Serialize, ToSchema)]
-#[serde(untagged)]
-pub(crate) enum PredictResponse {
-    Single(Vec<Prediction>),
-    Batch(Vec<Vec<Prediction>>),
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(crate) struct RerankRequest {
-    #[schema(example = "What is Deep Learning?")]
-    pub query: String,
-    #[schema(example = json!(["Deep Learning is ..."]))]
-    pub texts: Vec<String>,
-    #[serde(default)]
-    #[schema(default = "false", example = "false")]
-    pub truncate: bool,
-    #[serde(default)]
-    #[schema(default = "false", example = "false")]
-    pub raw_scores: bool,
-    #[serde(default)]
-    #[schema(default = "false", example = "false")]
-    pub return_text: bool,
-}
-
-#[derive(Serialize, ToSchema)]
-pub(crate) struct Rank {
-    #[schema(example = "0")]
-    pub index: usize,
-    #[schema(nullable = true, example = "Deep Learning is ...", default = "null")]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
-    #[schema(example = "1.0")]
-    pub score: f32,
-}
-
-#[derive(Serialize, ToSchema)]
-pub(crate) struct RerankResponse(Vec<Rank>);
-
-#[derive(Deserialize, ToSchema)]
-#[serde(untagged)]
-pub(crate) enum Input {
-    Single(String),
-    Batch(Vec<String>),
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(crate) struct OpenAICompatRequest {
-    pub input: Input,
-    #[allow(dead_code)]
-    #[schema(nullable = true, example = "null")]
-    model: Option<String>,
-    #[allow(dead_code)]
-    #[schema(nullable = true, example = "null")]
-    user: Option<String>,
-}
-
-#[derive(Serialize, ToSchema)]
-pub(crate) struct OpenAICompatEmbedding {
-    #[schema(example = "embedding")]
-    object: &'static str,
-    #[schema(example = json!([0.0, 1.0, 2.0]))]
-    embedding: Vec<f32>,
-    #[schema(example = "0")]
-    index: usize,
-}
-
-#[derive(Serialize, ToSchema)]
-pub(crate) struct OpenAICompatUsage {
-    #[schema(example = "512")]
-    prompt_tokens: usize,
-    #[schema(example = "512")]
-    total_tokens: usize,
-}
-
-#[derive(Serialize, ToSchema)]
-pub(crate) struct OpenAICompatResponse {
-    #[schema(example = "list")]
-    object: &'static str,
-    data: Vec<OpenAICompatEmbedding>,
-    #[schema(example = "thenlper/gte-base")]
-    model: String,
-    usage: OpenAICompatUsage,
-}
-
-#[derive(Deserialize, ToSchema)]
-pub(crate) struct EmbedRequest {
-    pub inputs: Input,
-    #[serde(default)]
-    #[schema(default = "false", example = "false")]
-    pub truncate: bool,
-    #[serde(default = "default_normalize")]
-    #[schema(default = "true", example = "true")]
-    pub normalize: bool,
-}
-
-fn default_normalize() -> bool {
-    true
-}
-
-#[derive(Serialize, ToSchema)]
-#[schema(example = json!([[0.0, 1.0, 2.0]]))]
-pub(crate) struct EmbedResponse(Vec<Vec<f32>>);
-
-#[derive(Serialize, ToSchema)]
-pub(crate) enum ErrorType {
+#[derive(Serialize)]
+#[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
+pub enum ErrorType {
     Unhealthy,
     Backend,
     Overloaded,
@@ -380,16 +113,139 @@ pub(crate) enum ErrorType {
     Tokenizer,
 }
 
-#[derive(Serialize, ToSchema)]
-pub(crate) struct ErrorResponse {
+#[derive(Serialize)]
+#[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
+pub struct ErrorResponse {
     pub error: String,
     pub error_type: ErrorType,
 }
 
-#[derive(Serialize, ToSchema)]
-pub(crate) struct OpenAICompatErrorResponse {
-    pub message: String,
-    pub code: u16,
-    #[serde(rename(serialize = "type"))]
-    pub error_type: ErrorType,
+impl From<TextEmbeddingsError> for ErrorResponse {
+    fn from(err: TextEmbeddingsError) -> Self {
+        let error_type = match err {
+            TextEmbeddingsError::Tokenizer(_) => ErrorType::Tokenizer,
+            TextEmbeddingsError::Validation(_) => ErrorType::Validation,
+            TextEmbeddingsError::Overloaded(_) => ErrorType::Overloaded,
+            TextEmbeddingsError::Backend(_) => ErrorType::Backend,
+        };
+        Self {
+            error: err.to_string(),
+            error_type,
+        }
+    }
+}
+
+struct ResponseMetadata {
+    compute_chars: usize,
+    compute_tokens: usize,
+    start_time: Instant,
+    tokenization_time: Duration,
+    queue_time: Duration,
+    inference_time: Duration,
+}
+
+impl ResponseMetadata {
+    fn new(
+        compute_chars: usize,
+        compute_tokens: usize,
+        start_time: Instant,
+        tokenization_time: Duration,
+        queue_time: Duration,
+        inference_time: Duration,
+    ) -> Self {
+        Self {
+            compute_chars,
+            compute_tokens,
+            start_time,
+            tokenization_time,
+            queue_time,
+            inference_time,
+        }
+    }
+
+    fn record_span(&self, span: &Span) {
+        // Tracing metadata
+        span.record("compute_chars", self.compute_chars);
+        span.record("compute_tokens", self.compute_tokens);
+        span.record("total_time", format!("{:?}", self.start_time.elapsed()));
+        span.record("tokenization_time", format!("{:?}", self.tokenization_time));
+        span.record("queue_time", format!("{:?}", self.queue_time));
+        span.record("inference_time", format!("{:?}", self.inference_time));
+    }
+
+    fn record_metrics(&self) {
+        // Metrics
+        metrics::histogram!(
+            "te_request_duration",
+            self.start_time.elapsed().as_secs_f64()
+        );
+        metrics::histogram!(
+            "te_request_tokenization_duration",
+            self.tokenization_time.as_secs_f64()
+        );
+        metrics::histogram!("te_request_queue_duration", self.queue_time.as_secs_f64());
+        metrics::histogram!(
+            "te_request_inference_duration",
+            self.inference_time.as_secs_f64()
+        );
+    }
+}
+
+impl From<ResponseMetadata> for HeaderMap {
+    fn from(value: ResponseMetadata) -> Self {
+        // Headers
+        let mut headers = HeaderMap::new();
+        headers.insert("x-compute-type", "gpu+optimized".parse().unwrap());
+        headers.insert(
+            "x-compute-time",
+            value
+                .start_time
+                .elapsed()
+                .as_millis()
+                .to_string()
+                .parse()
+                .unwrap(),
+        );
+        headers.insert(
+            "x-compute-characters",
+            value.compute_chars.to_string().parse().unwrap(),
+        );
+        headers.insert(
+            "x-compute-tokens",
+            value.compute_tokens.to_string().parse().unwrap(),
+        );
+        headers.insert(
+            "x-total-time",
+            value
+                .start_time
+                .elapsed()
+                .as_millis()
+                .to_string()
+                .parse()
+                .unwrap(),
+        );
+        headers.insert(
+            "x-tokenization-time",
+            value
+                .tokenization_time
+                .as_millis()
+                .to_string()
+                .parse()
+                .unwrap(),
+        );
+        headers.insert(
+            "x-queue-time",
+            value.queue_time.as_millis().to_string().parse().unwrap(),
+        );
+        headers.insert(
+            "x-inference-time",
+            value
+                .inference_time
+                .as_millis()
+                .to_string()
+                .parse()
+                .unwrap(),
+        );
+        headers
+    }
 }

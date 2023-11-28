@@ -1,5 +1,5 @@
 import {check} from 'k6';
-import http from 'k6/http';
+import grpc from 'k6/experimental/grpc';
 import {Trend} from 'k6/metrics';
 
 const host = __ENV.HOST || '127.0.0.1:3000';
@@ -18,8 +18,8 @@ export const options = {
     scenarios: {
         // throughput: {
         //     executor: 'shared-iterations',
-        //     vus: 5000,
-        //     iterations: 5000,
+        //     vus: 10000,
+        //     iterations: 10000,
         //     maxDuration: '2m',
         //     gracefulStop: '1s',
         // },
@@ -34,26 +34,34 @@ export const options = {
     },
 };
 
+
+const client = new grpc.Client();
+
+client.load([], '../proto/tei.proto');
+
 export default function () {
-    const payload = JSON.stringify({
+    if (__ITER == 0) {
+        client.connect(host, {
+            plaintext: true
+        });
+    }
+
+    const payload = {
         inputs: inputs,
         truncate: true,
-    });
+    };
 
-    const headers = {'Content-Type': 'application/json'};
-    const res = http.post(`http://${host}`, payload, {
-        headers, timeout: '20m'
-    });
+    const res = client.invoke('tei.v1.Embed/Embed', payload);
 
     check(res, {
-        'Post status is 200': (r) => res.status === 200,
+        'status is OK': (r) => r && r.status === grpc.StatusOK,
     });
 
-    if (res.status === 200) {
-        totalTime.add(res.headers["X-Total-Time"]);
-        tokenizationTIme.add(res.headers["X-Tokenization-Time"]);
-        queueTime.add(res.headers["X-Queue-Time"]);
-        inferenceTime.add(res.headers["X-Inference-Time"]);
+    if (res.status === grpc.StatusOK) {
+        totalTime.add(res.headers["x-total-time"]);
+        tokenizationTIme.add(res.headers["x-tokenization-time"]);
+        queueTime.add(res.headers["x-queue-time"]);
+        inferenceTime.add(res.headers["x-inference-time"]);
     } else {
         console.log(res.error);
     }

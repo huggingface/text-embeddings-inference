@@ -4,11 +4,11 @@ use crate::TextEmbeddingsError;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{Backend, BackendError, ModelType};
-use tokio::sync::{mpsc, oneshot, Notify, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{mpsc, oneshot, watch, Notify, OwnedSemaphorePermit, Semaphore};
 use tracing::{instrument, Span};
 
 /// Inference struct
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Infer {
     tokenization: Tokenization,
     queue: Queue,
@@ -284,6 +284,11 @@ impl Infer {
     #[instrument(skip(self))]
     pub async fn health(&self) -> bool {
         self.backend.health().await.is_ok()
+    }
+
+    #[instrument(skip(self))]
+    pub fn health_watcher(&self) -> watch::Receiver<bool> {
+        self.backend.health_watcher()
     }
 }
 

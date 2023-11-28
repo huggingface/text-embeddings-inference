@@ -51,9 +51,23 @@ COPY router router
 COPY Cargo.toml ./
 COPY Cargo.lock ./
 
+FROM builder as http-builder
+
 RUN cargo build --release --bin text-embeddings-router -F candle -F mkl-dynamic --no-default-features && sccache -s
 
-FROM debian:bookworm-slim
+FROM builder as grpc-builder
+
+RUN PROTOC_ZIP=protoc-21.12-linux-x86_64.zip && \
+    curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v21.12/$PROTOC_ZIP && \
+    unzip -o $PROTOC_ZIP -d /usr/local bin/protoc && \
+    unzip -o $PROTOC_ZIP -d /usr/local 'include/*' && \
+    rm -f $PROTOC_ZIP
+
+COPY proto proto
+
+RUN cargo build --release --bin text-embeddings-router -F grpc -F candle -F mkl-dynamic --no-default-features && sccache -s
+
+FROM debian:bookworm-slim as base
 
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80 \
@@ -80,7 +94,16 @@ COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_avx2.so.2 /u
 COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_avx512.so.2 /usr/local/lib/libmkl_avx512.so.2
 COPY --from=builder /usr/src/libfakeintel.so /usr/local/libfakeintel.so
 
-COPY --from=builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
+FROM base as grpc
+
+COPY --from=grpc-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
+
+ENTRYPOINT ["text-embeddings-router"]
+CMD ["--json-output"]
+
+FROM base
+
+COPY --from=http-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
 
 ENTRYPOINT ["text-embeddings-router"]
 CMD ["--json-output"]

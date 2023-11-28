@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package tei.v1;
+
+service Info {
+    rpc Info (InfoRequest) returns (InfoResponse) {
+        option idempotency_level = IDEMPOTENT;
+    };
+}
+
+service Embed {
+    rpc Embed (EmbedRequest) returns (EmbedResponse);
+    rpc EmbedStream (stream EmbedRequest) returns (stream EmbedResponse);
+}
+
+service Predict {
+    rpc Predict (PredictRequest) returns (PredictResponse);
+    rpc PredictStream (stream PredictRequest) returns (stream PredictResponse);
+}
+
+service Rerank {
+    rpc Rerank (RerankRequest) returns (RerankResponse);
+    rpc RerankStream (stream RerankStreamRequest) returns (RerankResponse);
+}
+
+message InfoRequest {}
+
+enum ModelType {
+    MODEL_TYPE_EMBEDDING = 0;
+    MODEL_TYPE_CLASSIFIER = 1;
+    MODEL_TYPE_RERANKER = 2;
+}
+
+message InfoResponse {
+    string version = 1;
+    optional string sha = 2;
+    optional string docker_label = 3;
+    string model_id = 4;
+    optional string model_sha = 5;
+    string model_dtype = 6;
+    ModelType model_type = 7;
+    uint32 max_concurrent_requests = 8;
+    uint32 max_input_length = 9;
+    uint32 max_batch_tokens = 10;
+    optional uint32 max_batch_requests = 11;
+    uint32 max_client_batch_size = 12;
+    uint32 tokenization_workers = 13;
+}
+
+message Metadata {
+    uint32 compute_chars = 1;
+    uint32 compute_tokens = 2;
+    uint64 total_time_ns = 3;
+    uint64 tokenization_time_ns = 4;
+    uint64 queue_time_ns = 5;
+    uint64 inference_time_ns = 6;
+}
+
+message EmbedRequest {
+    string inputs = 1;
+    bool truncate = 2;
+    bool normalize = 3;
+}
+
+message EmbedResponse {
+    repeated float embeddings = 1;
+    Metadata metadata = 2;
+}
+
+message PredictRequest {
+    string inputs = 1;
+    bool truncate = 2;
+    bool raw_scores = 3;
+}
+
+message Prediction {
+    float score = 1;
+    string label = 2;
+}
+
+message PredictResponse {
+    repeated Prediction predictions = 1;
+    Metadata metadata = 2;
+}
+
+message RerankRequest {
+    string query = 1;
+    repeated string texts = 2;
+    bool truncate = 3;
+    bool raw_scores = 4;
+    bool return_text = 5;
+}
+
+message RerankStreamRequest{
+    string query = 1;
+    string text = 2;
+    bool truncate = 3;
+    // The server will only consider the first value
+    bool raw_scores = 4;
+    // The server will only consider the first value
+    bool return_text = 5;
+}
+
+message Rank {
+    uint32 index = 1;
+    optional string text = 2;
+    float score = 3;
+}
+
+message RerankResponse {
+    repeated Rank ranks = 1;
+    Metadata metadata = 2;
+}

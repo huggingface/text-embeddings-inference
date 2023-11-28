@@ -1,11 +1,9 @@
 mod dtype;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use text_embeddings_backend_core::Backend as CoreBackend;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{instrument, Span};
 
 pub use crate::dtype::DType;
@@ -22,7 +20,7 @@ pub struct Backend {
     /// Channel to communicate with the background thread
     backend_sender: mpsc::UnboundedSender<BackendCommand>,
     /// Health status
-    health: Arc<AtomicBool>,
+    health_receiver: watch::Receiver<bool>,
     pub max_batch_size: Option<usize>,
     pub model_type: ModelType,
 }
@@ -46,11 +44,15 @@ impl Backend {
         )?;
         let max_batch_size = backend.max_batch_size();
 
-        tokio::task::spawn_blocking(move || backend_blocking_task(backend, backend_receiver));
+        let (health_sender, health_receiver) = watch::channel(false);
+
+        tokio::task::spawn_blocking(move || {
+            backend_blocking_task(backend, backend_receiver, health_sender)
+        });
 
         Ok(Self {
             backend_sender,
-            health: Arc::new(AtomicBool::new(false)),
+            health_receiver,
             max_batch_size,
             model_type,
         })
@@ -58,7 +60,7 @@ impl Backend {
 
     #[instrument(skip(self))]
     pub async fn health(&self) -> Result<(), BackendError> {
-        let result = if self.health.load(Ordering::SeqCst) {
+        if *self.health_receiver.borrow() {
             // The backend is healthy. Only do a basic health check by calling the
             // the underlying health method.
 
@@ -84,11 +86,12 @@ impl Backend {
                 ModelType::Classifier => self.predict(batch).await.map(|_| ()),
                 ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
             }
-        };
+        }
+    }
 
-        // Update health
-        self.health.store(result.is_ok(), Ordering::SeqCst);
-        result
+    #[instrument(skip(self))]
+    pub fn health_watcher(&self) -> watch::Receiver<bool> {
+        self.health_receiver.clone()
     }
 
     #[instrument(skip_all)]
@@ -98,13 +101,9 @@ impl Backend {
         self.backend_sender
             .send(BackendCommand::Embed(batch, Span::current(), sender))
             .expect("No backend receiver. This is a bug.");
-        let result = receiver.await.expect(
+        receiver.await.expect(
             "Backend blocking task dropped the sender without send a response. This is a bug.",
-        );
-
-        // Update health
-        self.health.store(result.is_ok(), Ordering::SeqCst);
-        result
+        )
     }
 
     #[instrument(skip_all)]
@@ -114,13 +113,9 @@ impl Backend {
         self.backend_sender
             .send(BackendCommand::Predict(batch, Span::current(), sender))
             .expect("No backend receiver. This is a bug.");
-        let result = receiver.await.expect(
+        receiver.await.expect(
             "Backend blocking task dropped the sender without send a response. This is a bug.",
-        );
-
-        // Update health
-        self.health.store(result.is_ok(), Ordering::SeqCst);
-        result
+        )
     }
 }
 
@@ -142,8 +137,6 @@ fn init_backend(
     } else if cfg!(feature = "python") {
         #[cfg(feature = "python")]
         {
-            use std::thread;
-
             return Ok(Box::new(
                 thread::spawn(move || {
                     PythonBackend::new(
@@ -165,23 +158,32 @@ fn init_backend(
 fn backend_blocking_task(
     backend: Box<dyn CoreBackend + Send>,
     mut command_receiver: mpsc::UnboundedReceiver<BackendCommand>,
+    health_sender: watch::Sender<bool>,
 ) {
     while let Some(cmd) = command_receiver.blocking_recv() {
         let start = Instant::now();
+        let mut healthy = false;
         match cmd {
             BackendCommand::Health(span, sender) => {
                 let _span = span.entered();
-                let _ = sender.send(backend.health());
+                let _ = sender.send(backend.health().map(|_| healthy = true));
             }
             BackendCommand::Embed(batch, span, sender) => {
                 let _span = span.entered();
-                let _ = sender.send(backend.embed(batch).map(|e| (e, start.elapsed())));
+                let _ = sender.send(backend.embed(batch).map(|e| {
+                    healthy = true;
+                    (e, start.elapsed())
+                }));
             }
             BackendCommand::Predict(batch, span, sender) => {
                 let _span = span.entered();
-                let _ = sender.send(backend.predict(batch).map(|e| (e, start.elapsed())));
+                let _ = sender.send(backend.predict(batch).map(|e| {
+                    healthy = true;
+                    (e, start.elapsed())
+                }));
             }
-        }
+        };
+        let _ = health_sender.send(healthy);
     }
 }
 

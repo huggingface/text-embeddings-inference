@@ -16,15 +16,13 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.71"
-async-stream = "0.3.3"
-axum = { version = "0.6.4", features = ["json"] }
-axum-tracing-opentelemetry = "0.14.1"
 text-embeddings-backend = { path = "../backends", features = ["clap"] }
 text-embeddings-core = { path = "../core" }
 clap = { version = "4.1.4", features = ["derive", "env"] }
 futures = "^0.3"
 init-tracing-opentelemetry = { version = "0.14.1", features = ["opentelemetry-otlp"] }
 hf-hub = { version = "0.3.0", features = ["tokio"] }
+http = "0.2.9"
 num_cpus = "1.16.0"
 metrics = "0.21.0"
 metrics-exporter-prometheus = { version = "0.12.1", features = [] }
@@ -36,20 +34,34 @@ serde_json = "1.0.93"
 thiserror = "1.0.38"
 tokenizers = { version = "0.15.0", default-features=false, features=["onig", "esaxx_fast"] }
 tokio = { version = "1.25.0", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync"] }
-tower-http = { version = "0.4.0", features = ["cors"] }
 tracing = "0.1.37"
-tracing-chrome = "0.7.1"
 tracing-opentelemetry = "0.21.0"
 tracing-subscriber = { version = "0.3.16", features = ["json", "env-filter"] }
-utoipa = { version = "4.0.0", features = ["axum_extras"] }
-utoipa-swagger-ui = { version = "4.0.0", features = ["axum"] }
 veil = "0.1.6"
+
+# HTTP dependencies
+axum = { version = "0.6.4", features = ["json"], optional = true }
+axum-tracing-opentelemetry = { version = "0.14.1", optional = true }
+tower-http = { version = "0.4.0", features = ["cors"], optional = true }
+utoipa = { version = "4.0.0", features = ["axum_extras"], optional = true }
+utoipa-swagger-ui = { version = "4.0.0", features = ["axum"], optional = true }
+
+# gRPC dependencies
+async-stream = { version = "0.3.5", optional = true }
+prost = { version = "0.12.1", optional = true }
+tonic = { version = "0.10.2", optional = true }
+tonic-health = { version = "0.10.2", optional = true }
+tonic-reflection = { version = "0.10.2", optional = true }
+tokio-stream = { version = "0.1.14", optional = true }
 
 [build-dependencies]
 vergen = { version = "8.0.0", features = ["build", "git", "gitcl"] }
+tonic-build = { version = "0.10.2", optional = true }
 
 [features]
-default = ["candle"]
+default = ["candle", "http"]
+http = ["dep:axum", "dep:axum-tracing-opentelemetry", "dep:tower-http", "dep:utoipa", "dep:utoipa-swagger-ui"]
+grpc = ["metrics-exporter-prometheus/http-listener", "dep:prost", "dep:tonic", "dep:tonic-health", "dep:tonic-reflection", "dep:tonic-build", "dep:async-stream", "dep:tokio-stream"]
 mkl = ["text-embeddings-backend/mkl"]
 mkl-dynamic = ["text-embeddings-backend/mkl-dynamic"]
 accelerate = ["text-embeddings-backend/accelerate"]

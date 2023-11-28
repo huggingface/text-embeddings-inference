@@ -22,5 +22,24 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("cargo:rustc-env=DOCKER_LABEL={label}");
     }
 
+    #[cfg(feature = "grpc")]
+    {
+        use std::env;
+        use std::fs;
+        use std::path::PathBuf;
+
+        fs::create_dir("src/grpc/pb").unwrap_or(());
+
+        let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+        tonic_build::configure()
+            .build_client(false)
+            .build_server(true)
+            .file_descriptor_set_path(out_dir.join("descriptor.bin"))
+            .out_dir("src/grpc/pb")
+            .include_file("mod.rs")
+            .compile(&["../proto/tei.proto"], &["../proto"])
+            .unwrap_or_else(|e| panic!("protobuf compilation failed: {}", e));
+    }
+
     Ok(())
 }

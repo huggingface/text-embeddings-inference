@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Context, Result};
-use axum::http::HeaderValue;
 use clap::Parser;
 use hf_hub::api::tokio::ApiBuilder;
 use hf_hub::{Repo, RepoType};
@@ -18,10 +17,9 @@ use text_embeddings_core::download::{download_artifacts, download_pool_config};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
 use text_embeddings_core::tokenization::Tokenization;
-use text_embeddings_router::{server, ClassifierModel, EmbeddingModel, Info, ModelType};
+use text_embeddings_router::{ClassifierModel, EmbeddingModel, Info, ModelType};
 use tokenizers::decoders::metaspace::PrependScheme;
 use tokenizers::{PreTokenizerWrapper, Tokenizer};
-use tower_http::cors::AllowOrigin;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
@@ -121,9 +119,6 @@ struct Args {
 
     #[clap(long, env)]
     otlp_endpoint: Option<String>,
-
-    #[clap(long, env)]
-    cors_allow_origin: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -236,14 +231,23 @@ async fn main() -> Result<()> {
 
     // Info model type
     let model_type = match &backend_model_type {
-        text_embeddings_backend::ModelType::Classifier => ModelType::Classifier(ClassifierModel {
-            id2label: config
+        text_embeddings_backend::ModelType::Classifier => {
+            let id2label = config
                 .id2label
-                .context("`config.json` does not contain `id2label`")?,
-            label2id: config
-                .label2id
-                .context("`config.json` does not contain `label2id`")?,
-        }),
+                .context("`config.json` does not contain `id2label`")?;
+            let n_classes = id2label.len();
+            let classifier_model = ClassifierModel {
+                id2label,
+                label2id: config
+                    .label2id
+                    .context("`config.json` does not contain `label2id`")?,
+            };
+            if n_classes > 1 {
+                ModelType::Classifier(classifier_model)
+            } else {
+                ModelType::Reranker(classifier_model)
+            }
+        }
         text_embeddings_backend::ModelType::Embedding(pool) => {
             ModelType::Embedding(EmbeddingModel {
                 pooling: pool.to_string(),
@@ -319,7 +323,7 @@ async fn main() -> Result<()> {
         dtype.clone(),
         backend_model_type,
         args.uds_path,
-        args.otlp_endpoint,
+        args.otlp_endpoint.clone(),
     )
     .context("Could not create backend")?;
     backend
@@ -350,7 +354,7 @@ async fn main() -> Result<()> {
         model_dtype: dtype.to_string(),
         model_type,
         max_concurrent_requests: args.max_concurrent_requests,
-        max_input_length: config.max_position_embeddings,
+        max_input_length,
         max_batch_tokens: args.max_batch_tokens,
         tokenization_workers,
         max_batch_requests,
@@ -368,23 +372,18 @@ async fn main() -> Result<()> {
         }
     };
 
-    // CORS allowed origins
-    // map to go inside the option and then map to parse from String to HeaderValue
-    // Finally, convert to AllowOrigin
-    let cors_allow_origin: Option<AllowOrigin> = args.cors_allow_origin.map(|cors_allow_origin| {
-        AllowOrigin::list(
-            cors_allow_origin
-                .iter()
-                .map(|origin| origin.parse::<HeaderValue>().unwrap()),
-        )
-    });
-
     tracing::info!("Ready");
 
     // Run axum server
-    server::run(infer, info, addr, cors_allow_origin)
+    text_embeddings_router::run(infer, info, addr)
         .await
         .unwrap();
+
+    if args.otlp_endpoint.is_some() {
+        // Shutdown tracer
+        global::shutdown_tracer_provider();
+    }
+
     Ok(())
 }
 
