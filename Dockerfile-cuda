@@ -74,9 +74,9 @@ FROM builder as http-builder
 
 RUN if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
     then \
-        cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F static-linking --no-default-features && sccache -s; \
+        cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F static-linking -F http --no-default-features && sccache -s; \
     else \
-        cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking --no-default-features && sccache -s; \
+        cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F http --no-default-features && sccache -s; \
     fi;
 
 FROM builder as grpc-builder
