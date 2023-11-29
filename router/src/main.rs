@@ -19,6 +19,7 @@ use text_embeddings_core::queue::Queue;
 use text_embeddings_core::tokenization::Tokenization;
 use text_embeddings_router::{ClassifierModel, EmbeddingModel, Info, ModelType};
 use tokenizers::decoders::metaspace::PrependScheme;
+use tokenizers::pre_tokenizers::sequence::Sequence;
 use tokenizers::{PreTokenizerWrapper, Tokenizer};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -268,14 +269,34 @@ async fn main() -> Result<()> {
             m.set_prepend_scheme(PrependScheme::First);
             tokenizer.with_pre_tokenizer(PreTokenizerWrapper::Metaspace(m));
         } else if let PreTokenizerWrapper::Sequence(s) = pre_tokenizer {
-            // We are forced to clone since `Tokenizer` does not have a `get_mut` for `pre_tokenizer`
-            let mut s = s.clone();
-            for pre_tokenizer in s.get_pre_tokenizers_mut() {
-                if let PreTokenizerWrapper::Metaspace(m) = pre_tokenizer {
-                    m.set_prepend_scheme(PrependScheme::First);
+            let pre_tokenizers = s.get_pre_tokenizers();
+            // Check if we have a Metaspace pre tokenizer in the sequence
+            let has_metaspace = pre_tokenizers
+                .iter()
+                .find(|t| matches!(t, PreTokenizerWrapper::Metaspace(_)))
+                .is_some();
+
+            if has_metaspace {
+                let mut new_pre_tokenizers = Vec::with_capacity(s.get_pre_tokenizers().len());
+
+                for pre_tokenizer in pre_tokenizers {
+                    if let PreTokenizerWrapper::WhitespaceSplit(_) = pre_tokenizer {
+                        // Remove WhitespaceSplit
+                        // This will be done by the Metaspace pre tokenizer
+                        continue;
+                    }
+
+                    let mut pre_tokenizer = pre_tokenizer.clone();
+
+                    if let PreTokenizerWrapper::Metaspace(ref mut m) = pre_tokenizer {
+                        m.set_prepend_scheme(PrependScheme::First);
+                    }
+                    new_pre_tokenizers.push(pre_tokenizer);
                 }
+                tokenizer.with_pre_tokenizer(PreTokenizerWrapper::Sequence(Sequence::new(
+                    new_pre_tokenizers,
+                )));
             }
-            tokenizer.with_pre_tokenizer(PreTokenizerWrapper::Sequence(s));
         }
     }
 
