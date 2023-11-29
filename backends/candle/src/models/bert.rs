@@ -1,4 +1,4 @@
-use crate::layers::{HiddenAct, LayerNorm, Linear, CUBLASLT};
+use crate::layers::{get_cublas_lt_wrapper, HiddenAct, LayerNorm, Linear};
 use crate::models::Model;
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{Embedding, VarBuilder};
@@ -185,7 +185,9 @@ impl BertAttention {
         let value_layer = &qkv[2];
 
         #[allow(unused_variables)]
-        let context_layer = if let (Device::Cuda(_), Some(cublaslt)) = (device, &*CUBLASLT) {
+        let context_layer = if let (Device::Cuda(_), Some(cublaslt)) =
+            (device, get_cublas_lt_wrapper())
+        {
             #[cfg(feature = "cuda")]
             {
                 // cuBLASLt batch matmul implementation requires inputs to be dims3

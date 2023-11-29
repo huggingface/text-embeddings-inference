@@ -1,4 +1,4 @@
-use crate::layers::CUBLASLT;
+use crate::layers::cublaslt::get_cublas_lt_wrapper;
 use candle::{Device, Result, Tensor, D};
 use serde::Deserialize;
 
@@ -33,7 +33,7 @@ impl Linear {
         let _enter = self.span.enter();
 
         #[allow(unused)]
-        if let (Device::Cuda(_), Some(cublaslt)) = (x.device(), &*CUBLASLT) {
+        if let (Device::Cuda(_), Some(cublaslt)) = (x.device(), get_cublas_lt_wrapper()) {
             // fused matmul requires x to be dims2
             let mut final_shape = x.dims().to_vec();
             final_shape.pop();

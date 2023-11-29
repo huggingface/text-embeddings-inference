@@ -49,7 +49,7 @@ impl Queue {
         let (queue_sender, queue_receiver) = mpsc::unbounded_channel();
 
         // Launch background queue task
-        tokio::task::spawn_blocking(move || {
+        std::thread::spawn(move || {
             queue_blocking_task(
                 padded_model,
                 max_batch_tokens,

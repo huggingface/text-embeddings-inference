@@ -1,4 +1,4 @@
-use crate::compute_cap::RUNTIME_COMPUTE_CAP;
+use crate::compute_cap::get_runtime_compute_cap;
 use candle::Tensor;
 
 #[allow(clippy::too_many_arguments, unused)]
@@ -13,7 +13,9 @@ pub(crate) fn flash_attn_varlen(
     softmax_scale: f32,
     causal: bool,
 ) -> Result<Tensor, candle::Error> {
-    if *RUNTIME_COMPUTE_CAP == 75 {
+    let runtime_compute_cap = get_runtime_compute_cap();
+
+    if runtime_compute_cap == 75 {
         #[cfg(feature = "flash-attn-v1")]
         {
             use candle_flash_attn_v1::flash_attn_varlen;
@@ -31,7 +33,7 @@ pub(crate) fn flash_attn_varlen(
         }
         #[cfg(not(feature = "flash-attn-v1"))]
         candle::bail!("Flash attention v1 is not installed. Use `flash-attn-v1` feature.")
-    } else if (80..90).contains(&*RUNTIME_COMPUTE_CAP) {
+    } else if (80..90).contains(&runtime_compute_cap) {
         #[cfg(feature = "flash-attn")]
         {
             use candle_flash_attn::flash_attn_varlen;
@@ -49,7 +51,7 @@ pub(crate) fn flash_attn_varlen(
         }
         #[cfg(not(feature = "flash-attn"))]
         candle::bail!("Flash attention is not installed. Use `flash-attn-v1` feature.")
-    } else if *RUNTIME_COMPUTE_CAP == 90 {
+    } else if runtime_compute_cap == 90 {
         #[cfg(feature = "flash-attn")]
         {
             use candle_flash_attn::flash_attn_varlen;
@@ -70,6 +72,6 @@ pub(crate) fn flash_attn_varlen(
     }
     candle::bail!(
         "GPU with CUDA capability {} is not supported",
-        *RUNTIME_COMPUTE_CAP
+        runtime_compute_cap
     );
 }

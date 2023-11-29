@@ -1,28 +1,34 @@
 use crate::layers::HiddenAct;
 use candle::{Device, Result, Tensor};
-use lazy_static::lazy_static;
+use std::sync::Once;
 
 #[cfg(feature = "cuda")]
 use candle_cublaslt::{fused_batch_matmul, fused_matmul, Activation, CublasLt};
 
-lazy_static! {
-    pub static ref CUBLASLT: Option<CublasLtWrapper> = {
-        match Device::cuda_if_available(0) {
-            Ok(device) => {
-                #[cfg(feature = "cuda")]
-                {
-                    Some(CublasLtWrapper {
-                        cublaslt: CublasLt::new(&device).unwrap(),
-                    })
+static INIT: Once = Once::new();
+static mut CUBLASLT: Option<CublasLtWrapper> = None;
+
+pub fn get_cublas_lt_wrapper() -> Option<&'static CublasLtWrapper> {
+    unsafe {
+        INIT.call_once(|| {
+            CUBLASLT = match Device::cuda_if_available(0) {
+                Ok(device) => {
+                    #[cfg(feature = "cuda")]
+                    {
+                        Some(CublasLtWrapper {
+                            cublaslt: CublasLt::new(&device).unwrap(),
+                        })
+                    }
+                    #[cfg(not(feature = "cuda"))]
+                    {
+                        None
+                    }
                 }
-                #[cfg(not(feature = "cuda"))]
-                {
-                    None
-                }
-            }
-            Err(_) => None,
-        }
-    };
+                Err(_) => None,
+            };
+        });
+        CUBLASLT.as_ref()
+    }
 }
 
 #[derive(Debug, Clone)]
