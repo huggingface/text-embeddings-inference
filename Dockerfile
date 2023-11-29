@@ -53,7 +53,7 @@ COPY Cargo.lock ./
 
 FROM builder as http-builder
 
-RUN cargo build --release --bin text-embeddings-router -F candle -F mkl-dynamic --no-default-features && sccache -s
+RUN cargo build --release --bin text-embeddings-router -F candle -F mkl-dynamic -F http --no-default-features && sccache -s
 
 FROM builder as grpc-builder
 
