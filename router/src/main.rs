@@ -19,8 +19,8 @@ use text_embeddings_core::queue::Queue;
 use text_embeddings_core::tokenization::Tokenization;
 use text_embeddings_router::{ClassifierModel, EmbeddingModel, Info, ModelType};
 use tokenizers::decoders::metaspace::PrependScheme;
-use tokenizers::{PreTokenizerWrapper, Tokenizer};
 use tokenizers::pre_tokenizers::sequence::Sequence;
+use tokenizers::{PreTokenizerWrapper, Tokenizer};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
@@ -271,7 +271,10 @@ async fn main() -> Result<()> {
         } else if let PreTokenizerWrapper::Sequence(s) = pre_tokenizer {
             let pre_tokenizers = s.get_pre_tokenizers();
             // Check if we have a Metaspace pre tokenizer in the sequence
-            let has_metaspace = pre_tokenizers.iter().find(|t| matches!(t, PreTokenizerWrapper::Metaspace(_))).is_some();
+            let has_metaspace = pre_tokenizers
+                .iter()
+                .find(|t| matches!(t, PreTokenizerWrapper::Metaspace(_)))
+                .is_some();
 
             if has_metaspace {
                 let mut new_pre_tokenizers = Vec::with_capacity(s.get_pre_tokenizers().len());
@@ -290,7 +293,9 @@ async fn main() -> Result<()> {
                     }
                     new_pre_tokenizers.push(pre_tokenizer);
                 }
-                tokenizer.with_pre_tokenizer(PreTokenizerWrapper::Sequence(Sequence::new(new_pre_tokenizers)));
+                tokenizer.with_pre_tokenizer(PreTokenizerWrapper::Sequence(Sequence::new(
+                    new_pre_tokenizers,
+                )));
             }
         }
     }
@@ -341,7 +346,7 @@ async fn main() -> Result<()> {
         args.uds_path,
         args.otlp_endpoint.clone(),
     )
-        .context("Could not create backend")?;
+    .context("Could not create backend")?;
     backend
         .health()
         .await
