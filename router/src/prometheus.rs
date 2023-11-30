@@ -1,6 +1,6 @@
 use metrics_exporter_prometheus::{BuildError, Matcher, PrometheusBuilder};
 
-pub fn prometheus_builer(max_input_length: usize) -> Result<PrometheusBuilder, BuildError> {
+pub(crate) fn prometheus_builer(max_input_length: usize) -> Result<PrometheusBuilder, BuildError> {
     // Duration buckets
     let duration_matcher = Matcher::Suffix(String::from("duration"));
     let n_duration_buckets = 35;

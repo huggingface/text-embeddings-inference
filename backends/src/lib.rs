@@ -143,7 +143,7 @@ fn init_backend(
         #[cfg(feature = "python")]
         {
             return Ok(Box::new(
-                thread::spawn(move || {
+                std::thread::spawn(move || {
                     PythonBackend::new(
                         model_path.to_str().unwrap().to_string(),
                         dtype.to_string(),
