@@ -70,12 +70,12 @@ Find the appropriate Docker image for your hardware in the following table:
 
 | Architecture                        | Image                                                                     |
 |-------------------------------------|---------------------------------------------------------------------------|
-| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-0.5                     |
+| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-0.6                     |
 | Volta                               | NOT SUPPORTED                                                             |
-| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-0.5 (experimental)   |
-| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:0.5                         |
-| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-0.5                      |
-| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-0.5                      |
+| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-0.6 (experimental)   |
+| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:0.6                         |
+| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-0.6                      |
+| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-0.6                      |
 | Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-0.4.0 (experimental) |
 
 **Warning**: Flash Attention is turned off by default for the Turing image as it suffers from precision issues.

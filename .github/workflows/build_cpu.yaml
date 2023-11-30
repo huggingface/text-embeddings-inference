@@ -107,10 +107,10 @@
            flavor: |
              latest=false
            tags: |
-             type=semver,pattern=cpu-{{version}}+grpc
-             type=semver,pattern=cpu-{{major}}.{{minor}}+grpc
-             type=raw,value=cpu-latest+grpc
-             type=raw,value=cpu-sha-${{ env.GITHUB_SHA_SHORT }}+grpc
+             type=semver,pattern=cpu-{{version}}-grpc
+             type=semver,pattern=cpu-{{major}}.{{minor}}-grpc
+             type=raw,value=cpu-latest-grpc
+             type=raw,value=cpu-sha-${{ env.GITHUB_SHA_SHORT }}-grpc
        - name: Build and push Docker image
          id: build-and-push-cpu-grpc
          uses: docker/build-push-action@v4

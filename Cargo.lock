@@ -224,7 +224,7 @@ dependencies = [
 
 [[package]]
 name = "backend-grpc-client"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "grpc-metadata",
  "prost 0.11.9",
@@ -3190,7 +3190,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "clap",
  "text-embeddings-backend-candle",
@@ -3202,7 +3202,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend-candle"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "accelerate-src",
  "anyhow",
@@ -3230,7 +3230,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "clap",
  "thiserror",
@@ -3238,7 +3238,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend-python"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "backend-grpc-client",
  "serde",
@@ -3251,7 +3251,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hf-hub",
  "metrics",
@@ -3264,7 +3264,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-router"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "async-stream",

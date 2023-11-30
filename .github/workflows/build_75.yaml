@@ -109,10 +109,10 @@
            flavor: |
              latest=false
            tags: |
-             type=semver,pattern=turing-{{version}}+grpc
-             type=semver,pattern=turing-{{major}}.{{minor}}+grpc
-             type=raw,value=turing-latest+grpc
-             type=raw,value=turing-sha-${{ env.GITHUB_SHA_SHORT }}+grpc
+             type=semver,pattern=turing-{{version}}-grpc
+             type=semver,pattern=turing-{{major}}.{{minor}}-grpc
+             type=raw,value=turing-latest-grpc
+             type=raw,value=turing-sha-${{ env.GITHUB_SHA_SHORT }}-grpc
        - name: Build and push Docker image
          id: build-and-push-75-grpc
          uses: docker/build-push-action@v4

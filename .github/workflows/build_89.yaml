@@ -108,10 +108,10 @@
            flavor: |
              latest=false
            tags: |
-             type=semver,pattern=89-{{version}}+grpc
-             type=semver,pattern=89-{{major}}.{{minor}}+grpc
-             type=raw,value=89-latest+grpc
-             type=raw,value=89-sha-${{ env.GITHUB_SHA_SHORT }}+grpc
+             type=semver,pattern=89-{{version}}-grpc
+             type=semver,pattern=89-{{major}}.{{minor}}-grpc
+             type=raw,value=89-latest-grpc
+             type=raw,value=89-sha-${{ env.GITHUB_SHA_SHORT }}-grpc
        - name: Build and push Docker image
          id: build-and-push-89-grpc
          uses: docker/build-push-action@v4
