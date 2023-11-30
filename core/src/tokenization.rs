@@ -32,7 +32,7 @@ impl Tokenization {
             senders.push(tokenizer_sender);
 
             // Spawn worker
-            tokio::task::spawn_blocking(move || {
+            std::thread::spawn(move || {
                 tokenizer_worker(
                     tokenizer_clone,
                     max_input_length,

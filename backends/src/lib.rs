@@ -1,6 +1,8 @@
 mod dtype;
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use text_embeddings_backend_core::Backend as CoreBackend;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -21,6 +23,7 @@ pub struct Backend {
     backend_sender: mpsc::UnboundedSender<BackendCommand>,
     /// Health status
     health_receiver: watch::Receiver<bool>,
+    _backend_thread: Arc<BackendThread>,
     pub padded_model: bool,
     pub max_batch_size: Option<usize>,
     pub model_type: ModelType,
@@ -47,14 +50,13 @@ impl Backend {
         let max_batch_size = backend.max_batch_size();
 
         let (health_sender, health_receiver) = watch::channel(false);
-
-        tokio::task::spawn_blocking(move || {
-            backend_blocking_task(backend, backend_receiver, health_sender)
-        });
+        let _backend_thread =
+            Arc::new(BackendThread::new(backend, backend_receiver, health_sender));
 
         Ok(Self {
             backend_sender,
             health_receiver,
+            _backend_thread,
             padded_model,
             max_batch_size,
             model_type,
@@ -141,7 +143,7 @@ fn init_backend(
         #[cfg(feature = "python")]
         {
             return Ok(Box::new(
-                thread::spawn(move || {
+                std::thread::spawn(move || {
                     PythonBackend::new(
                         model_path.to_str().unwrap().to_string(),
                         dtype.to_string(),
@@ -158,35 +160,49 @@ fn init_backend(
     Err(BackendError::NoBackend)
 }
 
-fn backend_blocking_task(
-    backend: Box<dyn CoreBackend + Send>,
-    mut command_receiver: mpsc::UnboundedReceiver<BackendCommand>,
-    health_sender: watch::Sender<bool>,
-) {
-    while let Some(cmd) = command_receiver.blocking_recv() {
-        let start = Instant::now();
-        let mut healthy = false;
-        match cmd {
-            BackendCommand::Health(span, sender) => {
-                let _span = span.entered();
-                let _ = sender.send(backend.health().map(|_| healthy = true));
+#[derive(Debug)]
+struct BackendThread(Option<JoinHandle<()>>);
+
+impl BackendThread {
+    fn new(
+        backend: Box<dyn CoreBackend + Send>,
+        mut backend_receiver: mpsc::UnboundedReceiver<BackendCommand>,
+        health_sender: watch::Sender<bool>,
+    ) -> Self {
+        let handle = std::thread::spawn(move || {
+            while let Some(cmd) = backend_receiver.blocking_recv() {
+                let start = Instant::now();
+                let mut healthy = false;
+                match cmd {
+                    BackendCommand::Health(span, sender) => {
+                        let _span = span.entered();
+                        let _ = sender.send(backend.health().map(|_| healthy = true));
+                    }
+                    BackendCommand::Embed(batch, span, sender) => {
+                        let _span = span.entered();
+                        let _ = sender.send(backend.embed(batch).map(|e| {
+                            healthy = true;
+                            (e, start.elapsed())
+                        }));
+                    }
+                    BackendCommand::Predict(batch, span, sender) => {
+                        let _span = span.entered();
+                        let _ = sender.send(backend.predict(batch).map(|e| {
+                            healthy = true;
+                            (e, start.elapsed())
+                        }));
+                    }
+                };
+                let _ = health_sender.send(healthy);
             }
-            BackendCommand::Embed(batch, span, sender) => {
-                let _span = span.entered();
-                let _ = sender.send(backend.embed(batch).map(|e| {
-                    healthy = true;
-                    (e, start.elapsed())
-                }));
-            }
-            BackendCommand::Predict(batch, span, sender) => {
-                let _span = span.entered();
-                let _ = sender.send(backend.predict(batch).map(|e| {
-                    healthy = true;
-                    (e, start.elapsed())
-                }));
-            }
-        };
-        let _ = health_sender.send(healthy);
+        });
+        Self(Some(handle))
+    }
+}
+
+impl Drop for BackendThread {
+    fn drop(&mut self) {
+        self.0.take().unwrap().join().unwrap();
     }
 }
 

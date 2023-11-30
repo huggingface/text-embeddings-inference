@@ -1,5 +1,5 @@
-use crate::layers::CUBLASLT;
-use candle::{Device, Result, Tensor, D};
+use crate::layers::cublaslt::get_cublas_lt_wrapper;
+use candle::{Device, Result, Tensor};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, PartialEq, Clone)]
@@ -33,23 +33,27 @@ impl Linear {
         let _enter = self.span.enter();
 
         #[allow(unused)]
-        if let (Device::Cuda(_), Some(cublaslt)) = (x.device(), &*CUBLASLT) {
-            // fused matmul requires x to be dims2
-            let mut final_shape = x.dims().to_vec();
-            final_shape.pop();
-            final_shape.push(self.weight.dims()[0]);
-
-            let x = x.flatten_to(D::Minus2)?;
-            let result = cublaslt.matmul(
-                &self.weight,
-                &x,
-                None,
-                None,
-                None,
-                self.bias.as_ref(),
-                self.act.clone(),
-            )?;
-            result.reshape(final_shape)
+        if let (Device::Cuda(_), Some(cublaslt)) = (x.device(), get_cublas_lt_wrapper()) {
+            match x.dims() {
+                &[bsize, _, _] => cublaslt.batch_matmul(
+                    &self.weight.broadcast_left(bsize)?,
+                    x,
+                    None,
+                    None,
+                    None,
+                    self.bias.as_ref(),
+                    self.act.clone(),
+                ),
+                _ => cublaslt.matmul(
+                    &self.weight,
+                    x,
+                    None,
+                    None,
+                    None,
+                    self.bias.as_ref(),
+                    self.act.clone(),
+                ),
+            }
         } else {
             let w = match x.dims() {
                 &[bsize, _, _] => self.weight.broadcast_left(bsize)?.t()?,

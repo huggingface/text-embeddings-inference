@@ -323,7 +323,7 @@ async fn backend_task(
         };
 
         // Handle sending responses in another thread to avoid starving the backend
-        tokio::task::spawn_blocking(move || match results {
+        std::thread::spawn(move || match results {
             Ok((embeddings, inference_duration)) => {
                 batch.0.into_iter().zip(embeddings).for_each(|(m, e)| {
                     let _ = m.response_tx.send(Ok(InferResponse {
