@@ -111,6 +111,8 @@ ENV HUGGINGFACE_HUB_CACHE=/data \
 # Amazon SageMaker compatible image
 FROM base AS sagemaker
 
+COPY --from=http-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
+
 COPY sagemaker-entrypoint.sh entrypoint.sh
 RUN chmod +x entrypoint.sh
 
