@@ -100,7 +100,7 @@
         }
       }
     },
-    "/embeddings": {
+    "v1/embeddings": {
       "post": {
         "tags": [
           "Text Embeddings Inference"
