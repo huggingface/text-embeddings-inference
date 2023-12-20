@@ -30,7 +30,7 @@ async fn test_embeddings() -> Result<()> {
     let matcher = YamlMatcher::<Vec<Vec<Score>>>::new();
     insta::assert_yaml_snapshot!("embeddings_single", embeddings_single, &matcher);
 
-    let test_tokens = vec![[101, 3231, 102]];
+    let test_tokens = vec![[101, 3231, 102]]; // tokenized "test"
     let request = json!({"inputs": &test_tokens});
     let res = client
         .post("http://0.0.0.0:8090/embed")

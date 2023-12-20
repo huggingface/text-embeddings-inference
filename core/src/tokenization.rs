@@ -127,7 +127,7 @@ fn encode_input(
     });
     if inputs.is_encoded() {
         let seq_len = inputs.len();
-        if inputs.len() > max_input_length {
+        if seq_len > max_input_length {
             return Err(TextEmbeddingsError::Validation(format!(
                 "`inputs` must have less than {max_input_length} tokens. Given: {seq_len}"
             )));
