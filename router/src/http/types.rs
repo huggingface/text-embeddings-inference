@@ -250,11 +250,36 @@ pub(crate) struct Rank {
 #[derive(Serialize, ToSchema)]
 pub(crate) struct RerankResponse(pub Vec<Rank>);
 
+#[derive(Deserialize, ToSchema, Debug)]
+#[serde(untagged)]
+pub(crate) enum InputType {
+    SingleString(String),
+    SingleInt(u32),
+    VectorInt(Vec<u32>),
+}
+impl InputType {
+    pub(crate) fn count_chars(&self) -> usize {
+        match self {
+            InputType::SingleString(s) => s.chars().count(),
+            InputType::SingleInt(_) => 1,
+            InputType::VectorInt(v) => v.len(),
+        }
+    }
+}
+impl From<InputType> for EncodingInput {
+    fn from(value: InputType) -> Self {
+        match value {
+            InputType::SingleString(s) => Self::Single(s),
+            InputType::SingleInt(i) => Self::Vector(vec![i]),
+            InputType::VectorInt(v) => Self::Vector(v),
+        }
+    }
+}
 #[derive(Deserialize, ToSchema)]
 #[serde(untagged)]
 pub(crate) enum Input {
-    Single(String),
-    Batch(Vec<String>),
+    Single(InputType),
+    Batch(Vec<InputType>),
 }
 
 #[derive(Deserialize, ToSchema)]

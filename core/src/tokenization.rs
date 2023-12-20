@@ -125,12 +125,23 @@ fn encode_input(
         strategy: TruncationStrategy::LongestFirst,
         stride: 0,
     });
+    if inputs.is_encoded() {
+        let seq_len = inputs.len();
+        if inputs.len() > max_input_length {
+            return Err(TextEmbeddingsError::Validation(format!(
+                "`inputs` must have less than {max_input_length} tokens. Given: {seq_len}"
+            )));
+        }
+        return inputs.try_into_encoding(position_offset);
+    }
 
     let inputs: EncodeInput = match inputs {
         EncodingInput::Single(s) => s.into(),
         EncodingInput::Dual(s1, s2) => (s1, s2).into(),
+        _ => Err(TextEmbeddingsError::Validation(
+            "`inputs` must be a string or a tuple of strings".to_string(),
+        ))?,
     };
-
     let encoding = tokenizer
         .with_truncation(truncate_params)?
         .encode(inputs, true)?;
@@ -143,7 +154,6 @@ fn encode_input(
     }
 
     metrics::histogram!("te_request_input_length", seq_len as f64);
-
     Ok(Encoding {
         input_ids: encoding.get_ids().to_vec(),
         token_type_ids: encoding.get_type_ids().to_vec(),
@@ -163,6 +173,7 @@ pub struct Encoding {
 pub enum EncodingInput {
     Single(String),
     Dual(String, String),
+    Vector(Vec<u32>),
 }
 
 impl EncodingInput {
@@ -170,6 +181,37 @@ impl EncodingInput {
         match self {
             EncodingInput::Single(s) => s.is_empty(),
             EncodingInput::Dual(s1, s2) => s1.is_empty() && s2.is_empty(),
+            EncodingInput::Vector(v) => v.is_empty(),
+        }
+    }
+
+    fn is_encoded(&self) -> bool {
+        match self {
+            EncodingInput::Single(_) => false,
+            EncodingInput::Dual(_, _) => false,
+            EncodingInput::Vector(_) => true,
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            EncodingInput::Single(s) => s.len(),
+            EncodingInput::Dual(s1, s2) => s1.len() + s2.len(),
+            EncodingInput::Vector(v) => v.len(),
+        }
+    }
+
+    fn try_into_encoding(&self, position_offset: usize) -> Result<Encoding, TextEmbeddingsError> {
+        match self {
+            EncodingInput::Vector(v) => Ok(Encoding {
+                input_ids: v.clone(),
+                token_type_ids: vec![0; v.len()],
+                position_ids: (position_offset as u32..(v.len() + position_offset) as u32)
+                    .collect::<Vec<_>>(),
+            }),
+            _ => Err(TextEmbeddingsError::Validation(
+                "`inputs` must be a vector of input_ids".to_string(),
+            )),
         }
     }
 }
