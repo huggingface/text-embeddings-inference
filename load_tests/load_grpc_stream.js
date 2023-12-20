@@ -1,7 +1,7 @@
 import grpc from 'k6/experimental/grpc';
 import {Counter, Trend} from 'k6/metrics';
 
-const host = __ENV.HOST || '127.0.0.1:3000';
+const host = __ENV.HOST || '127.0.0.1:8080';
 
 const streamCounter = new Counter('stream_counter');
 const totalTime = new Trend('total_time', true);

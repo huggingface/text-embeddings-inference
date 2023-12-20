@@ -2,7 +2,7 @@ import {check} from 'k6';
 import http from 'k6/http';
 import {Trend} from 'k6/metrics';
 
-const host = __ENV.HOST || '127.0.0.1:3000';
+const host = __ENV.HOST || '127.0.0.1:8080';
 
 const totalTime = new Trend('total_time', true);
 const tokenizationTIme = new Trend('tokenization_time', true);
@@ -41,7 +41,7 @@ export default function () {
     });
 
     const headers = {'Content-Type': 'application/json'};
-    const res = http.post(`http://${host}`, payload, {
+    const res = http.post(`http://${host}/predict`, payload, {
         headers, timeout: '20m'
     });
 
