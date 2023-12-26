@@ -1,7 +1,10 @@
 /// Payload tokenization logic
 use crate::TextEmbeddingsError;
-use tokenizers::tokenizer::Tokenizer;
-use tokenizers::{EncodeInput, TruncationDirection, TruncationParams, TruncationStrategy};
+use tokenizers::tokenizer::{PreTokenizedString, Tokenizer};
+use tokenizers::{
+    Encoding as TokenizersEncoding, OffsetReferential, OffsetType, PreTokenizer, Token,
+    TruncationDirection, TruncationParams, TruncationStrategy,
+};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{instrument, Span};
 
@@ -125,26 +128,41 @@ fn encode_input(
         strategy: TruncationStrategy::LongestFirst,
         stride: 0,
     });
-    if inputs.is_encoded() {
-        let seq_len = inputs.len();
-        if seq_len > max_input_length {
-            return Err(TextEmbeddingsError::Validation(format!(
-                "`inputs` must have less than {max_input_length} tokens. Given: {seq_len}"
-            )));
-        }
-        return inputs.try_into_encoding(position_offset);
-    }
 
-    let inputs: EncodeInput = match inputs {
-        EncodingInput::Single(s) => s.into(),
-        EncodingInput::Dual(s1, s2) => (s1, s2).into(),
-        _ => Err(TextEmbeddingsError::Validation(
-            "`inputs` must be a string or a tuple of strings".to_string(),
-        ))?,
+    let encoding: TokenizersEncoding = match inputs {
+        // encode input
+        EncodingInput::Single(s) => tokenizer
+            .with_truncation(truncate_params)?
+            .encode::<String>(s.into(), true)?,
+        EncodingInput::Dual(s1, s2) => {
+            tokenizer
+                .with_truncation(truncate_params)?
+                .encode::<(String, String)>((s1, s2).into(), true)?
+        }
+        // input is encoded -> convert to tokenizers encoding
+        EncodingInput::Vector(v) => {
+            let decoded = tokenizer.decode(&v, false)?;
+            let pretokenizer = tokenizer.get_pre_tokenizer().unwrap();
+            let mut pre_tokenized_string = PreTokenizedString::from(decoded);
+            pretokenizer.pre_tokenize(&mut pre_tokenized_string)?;
+            let string_vec =
+                pre_tokenized_string.get_splits(OffsetReferential::Original, OffsetType::Byte);
+            let (tokens, token_type_ids): (Vec<_>, Vec<_>) = string_vec
+                .iter()
+                .enumerate()
+                .map(|(idx, (value, offset, _))| {
+                    let token_value = value.to_string();
+                    let token = Token::new(v[idx], token_value.clone(), offset.clone());
+                    let token_type_id = if token_value == "[SEP]" { 1 } else { 0 };
+                    (token, token_type_id)
+                })
+                .unzip();
+            let mut encoding = TokenizersEncoding::from_tokens(tokens, 0u32);
+            encoding.set_type_ids(token_type_ids);
+            encoding
+        }
     };
-    let encoding = tokenizer
-        .with_truncation(truncate_params)?
-        .encode(inputs, true)?;
+
     let seq_len = encoding.len();
 
     if seq_len > max_input_length {
@@ -182,36 +200,6 @@ impl EncodingInput {
             EncodingInput::Single(s) => s.is_empty(),
             EncodingInput::Dual(s1, s2) => s1.is_empty() && s2.is_empty(),
             EncodingInput::Vector(v) => v.is_empty(),
-        }
-    }
-
-    fn is_encoded(&self) -> bool {
-        match self {
-            EncodingInput::Single(_) => false,
-            EncodingInput::Dual(_, _) => false,
-            EncodingInput::Vector(_) => true,
-        }
-    }
-
-    fn len(&self) -> usize {
-        match self {
-            EncodingInput::Single(s) => s.len(),
-            EncodingInput::Dual(s1, s2) => s1.len() + s2.len(),
-            EncodingInput::Vector(v) => v.len(),
-        }
-    }
-
-    fn try_into_encoding(&self, position_offset: usize) -> Result<Encoding, TextEmbeddingsError> {
-        match self {
-            EncodingInput::Vector(v) => Ok(Encoding {
-                input_ids: v.clone(),
-                token_type_ids: vec![0; v.len()],
-                position_ids: (position_offset as u32..(v.len() + position_offset) as u32)
-                    .collect::<Vec<_>>(),
-            }),
-            _ => Err(TextEmbeddingsError::Validation(
-                "`inputs` must be a vector of input_ids".to_string(),
-            )),
         }
     }
 }
