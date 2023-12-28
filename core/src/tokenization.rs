@@ -1,9 +1,9 @@
 /// Payload tokenization logic
 use crate::TextEmbeddingsError;
-use tokenizers::tokenizer::{PreTokenizedString, Tokenizer};
+use tokenizers::tokenizer::Tokenizer;
 use tokenizers::{
-    Encoding as TokenizersEncoding, OffsetReferential, OffsetType, PreTokenizer, Token,
-    TruncationDirection, TruncationParams, TruncationStrategy,
+    Encoding as TokenizersEncoding, Token, TruncationDirection, TruncationParams,
+    TruncationStrategy,
 };
 use tokio::sync::{mpsc, oneshot};
 use tracing::{instrument, Span};
@@ -139,24 +139,9 @@ fn encode_input(
                 .with_truncation(truncate_params)?
                 .encode::<(String, String)>((s1, s2).into(), true)?
         }
-        // input is encoded -> convert to tokenizers encoding
+        // input is encoded -> convert to tokenizers Encoding
         EncodingInput::Vector(v) => {
-            let decoded = tokenizer.decode(&v, false)?;
-            let pretokenizer = tokenizer.get_pre_tokenizer().unwrap();
-            let mut pre_tokenized_string = PreTokenizedString::from(decoded);
-            pretokenizer.pre_tokenize(&mut pre_tokenized_string)?;
-            let string_vec =
-                pre_tokenized_string.get_splits(OffsetReferential::Original, OffsetType::Byte);
-            let (tokens, token_type_ids): (Vec<_>, Vec<_>) = string_vec
-                .iter()
-                .enumerate()
-                .map(|(idx, (value, offset, _))| {
-                    let token_value = value.to_string();
-                    let token = Token::new(v[idx], token_value.clone(), offset.clone());
-                    let token_type_id = if token_value == "[SEP]" { 1 } else { 0 };
-                    (token, token_type_id)
-                })
-                .unzip();
+            let (tokens, token_type_ids) = create_tokens_and_type_ids(tokenizer, v)?;
             let mut encoding = TokenizersEncoding::from_tokens(tokens, 0u32);
             encoding.set_type_ids(token_type_ids);
             encoding
@@ -170,7 +155,6 @@ fn encode_input(
             "`inputs` must have less than {max_input_length} tokens. Given: {seq_len}"
         )));
     }
-
     metrics::histogram!("te_request_input_length", seq_len as f64);
     Ok(Encoding {
         input_ids: encoding.get_ids().to_vec(),
@@ -178,6 +162,36 @@ fn encode_input(
         position_ids: (position_offset as u32..(seq_len + position_offset) as u32)
             .collect::<Vec<_>>(),
     })
+}
+
+// decode ids into tokens and assign token_type_ids
+fn create_tokens_and_type_ids(
+    tokenizer: &mut Tokenizer,
+    ids: Vec<u32>,
+) -> Result<(Vec<Token>, Vec<u32>), TextEmbeddingsError> {
+    let decoded = tokenizer.decode(&ids, false)?;
+    let splits = decoded.split(' ').map(|x| x.to_owned()).collect::<Vec<_>>();
+    let offsets: Vec<_> = splits
+        .iter()
+        .scan(0, |state, x| {
+            let res = (*state, *state + x.len());
+            *state += x.len() + 1;
+            Some(res)
+        })
+        .collect();
+    let mut sep_flag = false;
+    let (tokens, token_type_ids): (Vec<_>, Vec<_>) = splits
+        .iter()
+        .zip(ids.iter())
+        .zip(offsets.iter())
+        .map(|((value, id), offset)| {
+            let token = Token::new(*id, value.clone(), *offset);
+            let token_type_id = if sep_flag { 1 } else { 0 };
+            sep_flag = sep_flag || value == "[SEP]";
+            (token, token_type_id)
+        })
+        .unzip();
+    Ok((tokens, token_type_ids))
 }
 
 #[derive(Debug)]
