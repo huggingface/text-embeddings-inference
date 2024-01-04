@@ -80,6 +80,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     libomp-dev \
     ca-certificates \
     libssl-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy a lot of the Intel shared objects because of the mkl_serv_intel_cpu_true patch...
