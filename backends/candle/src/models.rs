@@ -6,17 +6,23 @@ extern crate accelerate_src;
 
 mod bert;
 
+#[cfg(feature = "cuda")]
+mod flash_bert;
+
+#[cfg(feature = "cuda")]
+mod flash_jina;
+mod jina;
+
 pub use bert::{BertModel, Config, PositionEmbeddingType};
 use candle::{Result, Tensor};
 pub use jina::JinaBertModel;
 use text_embeddings_backend_core::Batch;
 
 #[cfg(feature = "cuda")]
-mod flash_bert;
-mod jina;
+pub use flash_bert::FlashBertModel;
 
 #[cfg(feature = "cuda")]
-pub use flash_bert::FlashBertModel;
+pub use flash_jina::FlashJinaBertModel;
 
 pub(crate) trait Model {
     fn is_padded(&self) -> bool;

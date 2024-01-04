@@ -21,7 +21,7 @@ fn get_slopes_power_of_2(n: usize) -> Vec<f64> {
     (0..n).map(|i| start * start.powi(i as i32)).collect()
 }
 
-fn alibi_head_slopes(num_attention_heads: usize) -> Vec<f64> {
+pub fn alibi_head_slopes(num_attention_heads: usize) -> Vec<f64> {
     if (num_attention_heads as f64).log2().fract() == 0.0 {
         // `num_attention_heads` is a power of 2
         get_slopes_power_of_2(num_attention_heads)

@@ -67,6 +67,7 @@ tonic-build = { version = "0.10.2", optional = true }
 default = ["candle", "http"]
 http = ["dep:axum", "dep:axum-tracing-opentelemetry", "dep:tower-http", "dep:utoipa", "dep:utoipa-swagger-ui"]
 grpc = ["metrics-exporter-prometheus/http-listener", "dep:prost", "dep:tonic", "dep:tonic-health", "dep:tonic-reflection", "dep:tonic-build", "dep:async-stream", "dep:tokio-stream"]
+metal = ["text-embeddings-backend/metal"]
 mkl = ["text-embeddings-backend/mkl"]
 mkl-dynamic = ["text-embeddings-backend/mkl-dynamic"]
 accelerate = ["text-embeddings-backend/accelerate"]
