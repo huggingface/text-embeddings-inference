@@ -23,7 +23,7 @@ The easiest way to get started with TEI is to use one of the official Docker con
 
 After making sure that your hardware is supported, install the 
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) if you 
-plan on utilizing GPUs. We also recommend using NVIDIA drivers with CUDA version 12.2 or higher. 
+plan on utilizing GPUs. NVIDIA drivers on your device need to be compatible with CUDA version 12.2 or higher.
 
 Next, install Docker following their [installation instructions](https://docs.docker.com/get-docker/).
 

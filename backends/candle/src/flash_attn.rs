@@ -6,6 +6,7 @@ pub(crate) fn flash_attn_varlen(
     q: &Tensor,
     k: &Tensor,
     v: &Tensor,
+    alibi_slopes: Option<&Tensor>,
     seqlens_q: &Tensor,
     seqlens_k: &Tensor,
     max_seqlen_q: usize,
@@ -16,6 +17,10 @@ pub(crate) fn flash_attn_varlen(
     let runtime_compute_cap = get_runtime_compute_cap();
 
     if runtime_compute_cap == 75 {
+        if alibi_slopes.is_some() {
+            candle::bail!("Flash attention v1 does not support alibi");
+        }
+
         #[cfg(feature = "flash-attn-v1")]
         {
             use candle_flash_attn_v1::flash_attn_varlen;

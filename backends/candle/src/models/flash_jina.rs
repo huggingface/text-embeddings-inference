@@ -4,7 +4,6 @@ use crate::layers::{HiddenAct, LayerNorm, Linear};
 use crate::models::bert::{Config, PositionEmbeddingType};
 use crate::models::Model;
 use candle::{DType, Device, IndexOp, Result, Tensor};
-use candle_flash_attn::flash_attn_varlen_alibi;
 use candle_nn::{Embedding, Module, VarBuilder};
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
@@ -161,32 +160,18 @@ impl AlibiBertAttention {
         let qkv = qkv.reshape(new_qkv_shape.as_slice())?;
         let qkv = qkv.chunk(3, 1)?;
 
-        let attention = if let Some(alibi_slopes) = &self.alibi_slopes {
-            flash_attn_varlen_alibi(
-                &qkv[0],
-                &qkv[1],
-                &qkv[2],
-                alibi_slopes,
-                cu_seqlens,
-                cu_seqlens,
-                max_s,
-                max_s,
-                self.softmax_scale,
-                false,
-            )
-        } else {
-            flash_attn_varlen(
-                &qkv[0],
-                &qkv[1],
-                &qkv[2],
-                cu_seqlens,
-                cu_seqlens,
-                max_s,
-                max_s,
-                self.softmax_scale,
-                false,
-            )
-        }?;
+        let attention = flash_attn_varlen(
+            &qkv[0],
+            &qkv[1],
+            &qkv[2],
+            self.alibi_slopes.as_ref(),
+            cu_seqlens,
+            cu_seqlens,
+            max_s,
+            max_s,
+            self.softmax_scale,
+            false,
+        )?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
         let hidden_states = self.dense.forward(&attention)?;

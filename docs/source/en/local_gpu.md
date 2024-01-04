@@ -21,7 +21,7 @@ To make sure that your hardware is supported, check out the [Supported models an
 
 ## Step 1: CUDA and NVIDIA drivers
 
-Make sure you have CUDA and the NVIDIA drivers installed - we recommend using NVIDIA drivers with CUDA version 12.2 or higher. 
+Make sure you have CUDA and the NVIDIA drivers installed - NVIDIA drivers on your device need to be compatible with CUDA version 12.2 or higher.
 
 Add the NVIDIA binaries to your path:
 
