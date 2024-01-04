@@ -45,6 +45,7 @@ classification models. TEI enables high-performance extraction for the most popu
 Ember, GTE and E5. TEI implements many features such as:
 
 * No model graph compilation step
+* Metal support for local execution on Macs
 * Small docker images and fast boot times. Get ready for true serverless!
 * Token based dynamic batching
 * Optimized transformers code for inference using [Flash Attention](https://github.com/HazyResearch/flash-attention),
@@ -372,7 +373,7 @@ Then run:
 # On x86
 cargo install --path router -F candle -F mkl
 # On M1 or M2
-cargo install --path router -F candle -F accelerate
+cargo install --path router -F candle -F metal
 ```
 
 You can now launch Text Embeddings Inference on CPU with:
