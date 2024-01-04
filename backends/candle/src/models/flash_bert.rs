@@ -155,6 +155,7 @@ impl BertAttention {
             &qkv[0],
             &qkv[1],
             &qkv[2],
+            None,
             cu_seqlens,
             cu_seqlens,
             max_s,

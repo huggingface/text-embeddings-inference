@@ -32,6 +32,7 @@ RUN cargo chef prepare  --recipe-path recipe.json
 FROM base-builder AS builder
 
 ARG CUDA_COMPUTE_CAP=80
+ARG RAYON_NUM_THREADS=4
 ARG GIT_SHA
 ARG DOCKER_LABEL
 
