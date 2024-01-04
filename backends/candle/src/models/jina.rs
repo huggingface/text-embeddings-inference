@@ -440,7 +440,7 @@ impl JinaBertModel {
                         input_ids.push(batch.input_ids[j]);
                         type_ids.push(batch.token_type_ids[j]);
                         position_ids.push(batch.position_ids[j]);
-                        attention_mask.push(1.0);
+                        attention_mask.push(1.0_f32);
                         attention_bias.push(0.0);
                     }
 
@@ -453,7 +453,7 @@ impl JinaBertModel {
                             input_ids.push(0);
                             type_ids.push(0);
                             position_ids.push(0);
-                            attention_mask.push(0.0);
+                            attention_mask.push(0.0_f32);
                             attention_bias.push(f32::NEG_INFINITY);
                         }
                     }

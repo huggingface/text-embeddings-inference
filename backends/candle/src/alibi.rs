@@ -52,8 +52,9 @@ pub fn build_alibi_tensor(
     device: &Device,
     dtype: DType,
 ) -> Result<Tensor> {
-    let context_positions = Tensor::arange(0.0, num_positions as f64, device)?.unsqueeze(1)?;
-    let memory_positions = Tensor::arange(0.0, num_positions as f64, device)?.unsqueeze(0)?;
+    let context_positions =
+        Tensor::arange(0.0, num_positions as f64, &Device::Cpu)?.unsqueeze(1)?;
+    let memory_positions = Tensor::arange(0.0, num_positions as f64, &Device::Cpu)?.unsqueeze(0)?;
 
     let relative_positions = memory_positions.broadcast_sub(&context_positions)?.abs()?;
     // [num_heads, num_positions, num_positions]
@@ -63,13 +64,17 @@ pub fn build_alibi_tensor(
             .expand((num_heads, num_positions, num_positions))?;
 
     // [num_heads, 1, 1]
-    let slopes =
-        (Tensor::from_vec(alibi_head_slopes(num_heads), (num_heads, 1, 1), device)? * -1_f64)?;
+    let slopes = (Tensor::from_vec(
+        alibi_head_slopes(num_heads),
+        (num_heads, 1, 1),
+        &Device::Cpu,
+    )? * -1_f64)?;
 
     // [num_heads, num_positions, num_positions]
     let alibi = relative_positions.broadcast_mul(&slopes)?;
 
     alibi
         .reshape((1, num_heads, num_positions, num_positions))?
-        .to_dtype(dtype)
+        .to_dtype(dtype)?
+        .to_device(device)
 }
