@@ -27,7 +27,7 @@ impl LayerNorm {
         let _enter = self.span.enter();
 
         match hidden_states.device() {
-            Device::Cpu => {
+            Device::Cpu | Device::Metal(_) => {
                 let hidden_states = hidden_states.add(residual)?;
                 let hidden_states_dtype = hidden_states.dtype();
                 let internal_dtype = match hidden_states_dtype {
@@ -61,7 +61,7 @@ impl LayerNorm {
                         &hidden_states,
                         &residual,
                         &self.weight,
-                        &self.bias,
+                        Some(&self.bias),
                         self.epsilon,
                     )?;
                     result.reshape(original_shape)

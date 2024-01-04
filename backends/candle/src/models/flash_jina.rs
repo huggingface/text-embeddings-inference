@@ -1,8 +1,10 @@
+use crate::alibi::alibi_head_slopes;
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{LayerNorm, Linear};
+use crate::layers::{HiddenAct, LayerNorm, Linear};
 use crate::models::bert::{Config, PositionEmbeddingType};
 use crate::models::Model;
-use candle::{DType, Device, Result, Tensor};
+use candle::{DType, Device, IndexOp, Result, Tensor};
+use candle_flash_attn::flash_attn_varlen_alibi;
 use candle_nn::{Embedding, Module, VarBuilder};
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
@@ -10,16 +12,25 @@ use text_embeddings_backend_core::{Batch, ModelType, Pool};
 struct BertEmbeddings {
     word_embeddings: Embedding,
     token_type_embeddings: Embedding,
-    position_embeddings: Embedding,
+    position_embeddings: Option<Embedding>,
     layer_norm: LayerNorm,
     span: tracing::Span,
 }
 
 impl BertEmbeddings {
     pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
-        if config.position_embedding_type != PositionEmbeddingType::Absolute {
-            candle::bail!("FlashBert only supports absolute position embeddings");
-        }
+        let position_embeddings =
+            if config.position_embedding_type == PositionEmbeddingType::Absolute {
+                Some(Embedding::new(
+                    vb.pp("position_embeddings").get(
+                        (config.max_position_embeddings, config.hidden_size),
+                        "weight",
+                    )?,
+                    config.hidden_size,
+                ))
+            } else {
+                None
+            };
 
         Ok(Self {
             word_embeddings: Embedding::new(
@@ -32,13 +43,7 @@ impl BertEmbeddings {
                     .get((config.type_vocab_size, config.hidden_size), "weight")?,
                 config.hidden_size,
             ),
-            position_embeddings: Embedding::new(
-                vb.pp("position_embeddings").get(
-                    (config.max_position_embeddings, config.hidden_size),
-                    "weight",
-                )?,
-                config.hidden_size,
-            ),
+            position_embeddings,
             layer_norm: LayerNorm::load(
                 vb.pp("LayerNorm"),
                 config.hidden_size,
@@ -58,20 +63,24 @@ impl BertEmbeddings {
 
         let input_embeddings = self.word_embeddings.forward(input_ids)?;
         let token_type_embeddings = self.token_type_embeddings.forward(token_type_ids)?;
-        let embeddings = input_embeddings.add(&token_type_embeddings)?;
 
-        let position_embeddings = self.position_embeddings.forward(position_ids)?;
-
-        let embeddings = self.layer_norm.forward(&embeddings, &position_embeddings)?;
-
-        Ok(embeddings)
+        if let Some(position_embeddings) = &self.position_embeddings {
+            let position_embeddings = position_embeddings.forward(position_ids)?;
+            let embeddings = input_embeddings.add(&token_type_embeddings)?;
+            self.layer_norm.forward(&embeddings, &position_embeddings)
+        } else {
+            self.layer_norm
+                .forward(&input_embeddings, &token_type_embeddings)
+        }
     }
 }
 
-struct BertAttention {
+struct AlibiBertAttention {
     qkv_linear: Linear,
     dense: Linear,
     layer_norm: LayerNorm,
+
+    alibi_slopes: Option<Tensor>,
 
     num_attention_heads: usize,
     attention_head_size: usize,
@@ -80,8 +89,8 @@ struct BertAttention {
     span: tracing::Span,
 }
 
-impl BertAttention {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+impl AlibiBertAttention {
+    pub fn load(vb: VarBuilder, config: &Config, alibi_slopes: Option<Tensor>) -> Result<Self> {
         let attention_head_size = config.hidden_size / config.num_attention_heads;
         let all_head_size = config.num_attention_heads * attention_head_size;
         let hidden_size = config.hidden_size;
@@ -124,6 +133,7 @@ impl BertAttention {
             qkv_linear,
             dense,
             layer_norm,
+            alibi_slopes,
             num_attention_heads: config.num_attention_heads,
             attention_head_size,
             softmax_scale,
@@ -151,17 +161,32 @@ impl BertAttention {
         let qkv = qkv.reshape(new_qkv_shape.as_slice())?;
         let qkv = qkv.chunk(3, 1)?;
 
-        let attention = flash_attn_varlen(
-            &qkv[0],
-            &qkv[1],
-            &qkv[2],
-            cu_seqlens,
-            cu_seqlens,
-            max_s,
-            max_s,
-            self.softmax_scale,
-            false,
-        )?;
+        let attention = if let Some(alibi_slopes) = &self.alibi_slopes {
+            flash_attn_varlen_alibi(
+                &qkv[0],
+                &qkv[1],
+                &qkv[2],
+                alibi_slopes,
+                cu_seqlens,
+                cu_seqlens,
+                max_s,
+                max_s,
+                self.softmax_scale,
+                false,
+            )
+        } else {
+            flash_attn_varlen(
+                &qkv[0],
+                &qkv[1],
+                &qkv[2],
+                cu_seqlens,
+                cu_seqlens,
+                max_s,
+                max_s,
+                self.softmax_scale,
+                false,
+            )
+        }?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
         let hidden_states = self.dense.forward(&attention)?;
@@ -171,53 +196,48 @@ impl BertAttention {
     }
 }
 
-struct BertLayer {
-    attention: BertAttention,
-    intermediate: Linear,
+struct JinaBertLayer {
+    attention: AlibiBertAttention,
+    gated: Linear,
     output: Linear,
     layer_norm: LayerNorm,
+    act: HiddenAct,
+
+    intermediate_size: usize,
+
     span: tracing::Span,
 }
 
-impl BertLayer {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
-        let attention = BertAttention::load(vb.pp("attention"), config)?;
+impl JinaBertLayer {
+    pub fn load(vb: VarBuilder, config: &Config, alibi: Option<Tensor>) -> Result<Self> {
+        let attention = AlibiBertAttention::load(vb.pp("attention"), config, alibi)?;
 
-        let intermediate_weight = vb
-            .pp("intermediate")
-            .pp("dense")
-            .get((config.intermediate_size, config.hidden_size), "weight")?;
-        let intermediate_bias = vb
-            .pp("intermediate")
-            .pp("dense")
-            .get(config.intermediate_size, "bias")?;
-        let intermediate = Linear::new(
-            intermediate_weight,
-            Some(intermediate_bias),
-            Some(config.hidden_act.clone()),
-        );
+        let gated_weight = vb
+            .pp("mlp")
+            .pp("gated_layers")
+            .get((config.intermediate_size * 2, config.hidden_size), "weight")?;
+        let gated = Linear::new(gated_weight, None, None);
 
         let output_weight = vb
-            .pp("output")
-            .pp("dense")
+            .pp("mlp")
+            .pp("wo")
             .get((config.hidden_size, config.intermediate_size), "weight")?;
-        let output_bias = vb
-            .pp("output")
-            .pp("dense")
-            .get(config.hidden_size, "bias")?;
+        let output_bias = vb.pp("mlp").pp("wo").get(config.hidden_size, "bias")?;
         let output = Linear::new(output_weight, Some(output_bias), None);
 
         let layer_norm = LayerNorm::load(
-            vb.pp("output").pp("LayerNorm"),
+            vb.pp("mlp").pp("layernorm"),
             config.hidden_size,
             config.layer_norm_eps as f32,
         )?;
 
         Ok(Self {
             attention,
-            intermediate,
+            gated,
             output,
             layer_norm,
+            act: config.hidden_act.clone(),
+            intermediate_size: config.intermediate_size,
             span: tracing::span!(tracing::Level::TRACE, "layer"),
         })
     }
@@ -233,7 +253,16 @@ impl BertLayer {
         let hidden_states = self.attention.forward(hidden_states, cu_seqlens, max_s)?;
         let residual = hidden_states.clone();
 
-        let hidden_states = self.intermediate.forward(&hidden_states)?;
+        let hidden_states = self.gated.forward(&hidden_states)?;
+        let gated = hidden_states.i((.., 0..self.intermediate_size))?;
+        let gated = match self.act {
+            HiddenAct::Gelu => gated.gelu(),
+            HiddenAct::Relu => gated.relu(),
+        }?;
+
+        let non_gated = hidden_states.i((.., self.intermediate_size..))?;
+        let hidden_states = (gated * non_gated)?;
+
         let hidden_states = self.output.forward(&hidden_states)?;
         let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
 
@@ -242,14 +271,16 @@ impl BertLayer {
 }
 
 struct BertEncoder {
-    layers: Vec<BertLayer>,
+    layers: Vec<JinaBertLayer>,
     span: tracing::Span,
 }
 
 impl BertEncoder {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &Config, alibi: Option<Tensor>) -> Result<Self> {
         let layers = (0..config.num_hidden_layers)
-            .map(|index| BertLayer::load(vb.pp(format!("layer.{index}")), config))
+            .map(|index| {
+                JinaBertLayer::load(vb.pp(format!("layer.{index}")), config, alibi.clone())
+            })
             .collect::<Result<Vec<_>>>()?;
         let span = tracing::span!(tracing::Level::TRACE, "encoder");
 
@@ -270,92 +301,48 @@ impl BertEncoder {
     }
 }
 
-struct BertClassificationHead {
-    intermediate: Linear,
-    output: Linear,
-    span: tracing::Span,
-}
-
-impl BertClassificationHead {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
-        let n_classes = match &config.id2label {
-            None => candle::bail!("`id2label` must be set for classifier models"),
-            Some(id2label) => id2label.len(),
-        };
-
-        let intermediate_weight = vb
-            .pp("dense")
-            .get((config.hidden_size, config.hidden_size), "weight")?;
-        let intermediate_bias = vb.pp("dense").get(config.hidden_size, "bias")?;
-        let intermediate = Linear::new(intermediate_weight, Some(intermediate_bias), None);
-
-        let output_weight = vb
-            .pp("out_proj")
-            .get((n_classes, config.hidden_size), "weight")?;
-        let output_bias = vb.pp("out_proj").get(n_classes, "bias")?;
-        let output = Linear::new(output_weight, Some(output_bias), None);
-
-        Ok(Self {
-            intermediate,
-            output,
-            span: tracing::span!(tracing::Level::TRACE, "classifier"),
-        })
-    }
-
-    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let hidden_states = self.intermediate.forward(hidden_states)?;
-        let hidden_states = hidden_states.tanh()?;
-        let hidden_states = self.output.forward(&hidden_states)?;
-
-        Ok(hidden_states)
-    }
-}
-
-pub struct FlashBertModel {
+pub struct FlashJinaBertModel {
     embeddings: BertEmbeddings,
     encoder: BertEncoder,
     pool: Pool,
-    classifier: Option<BertClassificationHead>,
     pub device: Device,
 
     span: tracing::Span,
 }
 
-impl FlashBertModel {
+impl FlashJinaBertModel {
     pub fn load(vb: VarBuilder, config: &Config, model_type: ModelType) -> Result<Self> {
+        let alibi = match config.position_embedding_type {
+            PositionEmbeddingType::Alibi => {
+                let alibi_slopes = alibi_head_slopes(config.num_attention_heads);
+                Some(
+                    Tensor::from_vec(alibi_slopes, config.num_attention_heads, vb.device())?
+                        .to_dtype(DType::F32)?,
+                )
+            }
+            PositionEmbeddingType::Absolute => None,
+        };
+
         match vb.device() {
             Device::Cuda(_) => {}
-            _ => candle::bail!("FlashBert requires Cuda"),
+            _ => candle::bail!("FlashJinaBertModel requires Cuda"),
         }
 
         if vb.dtype() != DType::F16 {
-            candle::bail!("FlashBert requires DType::F16")
+            candle::bail!("FlashJinaBertModel requires DType::F16")
         }
 
-        // Check position embedding type
-        if config.position_embedding_type != PositionEmbeddingType::Absolute {
-            candle::bail!("FlashBert only supports absolute position embeddings")
-        }
-
-        let (pool, classifier) = match model_type {
+        let pool = match model_type {
             // Classifier models always use CLS pooling
             ModelType::Classifier => {
-                if config.model_type == Some("bert".to_string()) {
-                    candle::bail!("`classifier` model type is not supported for Bert");
-                }
-                (
-                    Pool::Cls,
-                    Some(BertClassificationHead::load(vb.pp("classifier"), config)?),
-                )
+                candle::bail!("`classifier` model type is not supported for Jina")
             }
-            ModelType::Embedding(pool) => (pool, None),
+            ModelType::Embedding(pool) => pool,
         };
 
         let (embeddings, encoder) = match (
             BertEmbeddings::load(vb.pp("embeddings"), config),
-            BertEncoder::load(vb.pp("encoder"), config),
+            BertEncoder::load(vb.pp("encoder"), config, alibi.clone()),
         ) {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
@@ -363,12 +350,16 @@ impl FlashBertModel {
 
                 if let (Ok(embeddings), Ok(encoder)) = (
                     BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
-                    BertEncoder::load(vb.pp(format!("{model_type}.encoder")), config),
+                    BertEncoder::load(
+                        vb.pp(format!("{model_type}.encoder")),
+                        config,
+                        alibi.clone(),
+                    ),
                 ) {
                     (embeddings, encoder)
                 } else if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp("roberta.embeddings"), config),
-                    BertEncoder::load(vb.pp("roberta.encoder"), config),
+                    BertEmbeddings::load(vb.pp("bert.embeddings"), config),
+                    BertEncoder::load(vb.pp("bert.encoder"), config, alibi.clone()),
                 ) {
                     (embeddings, encoder)
                 } else {
@@ -381,7 +372,6 @@ impl FlashBertModel {
             embeddings,
             encoder,
             pool,
-            classifier,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
@@ -441,21 +431,11 @@ impl FlashBertModel {
     }
 }
 
-impl Model for FlashBertModel {
+impl Model for FlashJinaBertModel {
     fn is_padded(&self) -> bool {
         false
     }
     fn embed(&self, batch: Batch) -> Result<Tensor> {
         self.forward(batch)
-    }
-
-    fn predict(&self, batch: Batch) -> Result<Tensor> {
-        match &self.classifier {
-            None => candle::bail!("`predict` is not implemented for this model"),
-            Some(classifier) => {
-                let hidden_states = self.forward(batch)?;
-                classifier.forward(&hidden_states)
-            }
-        }
     }
 }

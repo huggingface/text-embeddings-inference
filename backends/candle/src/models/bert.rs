@@ -437,11 +437,6 @@ impl BertModel {
             ModelType::Embedding(pool) => (pool, None),
         };
 
-        // Check pool type
-        if pool != Pool::Mean && pool != Pool::Cls {
-            candle::bail!("Pool type {pool:?} is not supported");
-        }
-
         let (embeddings, encoder) = match (
             BertEmbeddings::load(vb.pp("embeddings"), config),
             BertEncoder::load(vb.pp("encoder"), config),

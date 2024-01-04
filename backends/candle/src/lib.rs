@@ -12,6 +12,8 @@ use crate::compute_cap::{
 };
 #[cfg(feature = "cuda")]
 use crate::models::FlashBertModel;
+#[cfg(feature = "cuda")]
+use crate::models::FlashJinaBertModel;
 use crate::models::{BertModel, JinaBertModel, Model, PositionEmbeddingType};
 use candle::{DType, Device};
 use candle_nn::VarBuilder;
@@ -36,10 +38,14 @@ impl CandleBackend {
             serde_json::from_str(&config).map_err(|err| BackendError::Start(err.to_string()))?;
 
         // Get candle device
-        let device = match Device::cuda_if_available(0) {
-            Ok(device) => device,
-            Err(err) => return Err(BackendError::Start(err.to_string())),
-        };
+        let device = if candle::utils::cuda_is_available() {
+            Device::new_cuda(0)
+        } else if candle::utils::metal_is_available() {
+            Device::new_metal(0)
+        } else {
+            Ok(Device::Cpu)
+        }
+        .map_err(|err| BackendError::Start(err.to_string()))?;
 
         // Check model type
         if config.model_type != Some("bert".to_string())
@@ -79,12 +85,12 @@ impl CandleBackend {
         .s()?;
 
         let model: Box<dyn Model + Send> = match device {
-            Device::Cpu => {
+            Device::Cpu | Device::Metal(_) => {
                 if config.position_embedding_type == PositionEmbeddingType::Alibi {
-                    tracing::info!("Starting JinaBert model on CPU");
+                    tracing::info!("Starting JinaBert model on {:?}", device);
                     Box::new(JinaBertModel::load(vb, &config, model_type).s()?)
                 } else {
-                    tracing::info!("Starting Bert model on CPU");
+                    tracing::info!("Starting Bert model on {:?}", device);
                     Box::new(BertModel::load(vb, &config, model_type).s()?)
                 }
             }
@@ -108,6 +114,16 @@ impl CandleBackend {
                     {
                         tracing::info!("Starting FlashBert model on Cuda");
                         Box::new(FlashBertModel::load(vb, &config, model_type).s()?)
+                    } else if cfg!(feature = "flash-attn")
+                        && dtype == DType::F16
+                        && config.position_embedding_type == PositionEmbeddingType::Alibi
+                        && &std::env::var("USE_FLASH_ATTENTION")
+                            .unwrap_or("True".to_string())
+                            .to_lowercase()
+                            == "true"
+                    {
+                        tracing::info!("Starting FlashJinaBertModel model on Cuda");
+                        Box::new(FlashJinaBertModel::load(vb, &config, model_type).s()?)
                     } else if config.position_embedding_type == PositionEmbeddingType::Alibi {
                         tracing::info!("Starting JinaBert model on Cuda");
                         Box::new(JinaBertModel::load(vb, &config, model_type).s()?)
