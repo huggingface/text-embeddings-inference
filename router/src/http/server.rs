@@ -560,7 +560,7 @@ async fn embed(
 #[utoipa::path(
 post,
 tag = "Text Embeddings Inference",
-path = "/embeddings",
+path = "/v1/embeddings",
 request_body = OpenAICompatRequest,
 responses(
 (status = 200, description = "Embeddings", body = OpenAICompatResponse),
@@ -806,7 +806,7 @@ pub async fn run(
         .route("/predict", post(predict))
         .route("/rerank", post(rerank))
         // OpenAI compat route
-        .route("/embeddings", post(openai_embed))
+        .route("/v1/embeddings", post(openai_embed))
         // Base Health route
         .route("/health", get(health))
         // Inference API health route
