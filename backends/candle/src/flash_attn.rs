@@ -38,39 +38,39 @@ pub(crate) fn flash_attn_varlen(
         }
         #[cfg(not(feature = "flash-attn-v1"))]
         candle::bail!("Flash attention v1 is not installed. Use `flash-attn-v1` feature.")
-    } else if (80..90).contains(&runtime_compute_cap) {
+    } else if (80..90).contains(&runtime_compute_cap) || runtime_compute_cap == 90 {
         #[cfg(feature = "flash-attn")]
         {
-            use candle_flash_attn::flash_attn_varlen;
-            return flash_attn_varlen(
-                q,
-                k,
-                v,
-                seqlens_q,
-                seqlens_k,
-                max_seqlen_q,
-                max_seqlen_k,
-                softmax_scale,
-                causal,
-            );
-        }
-        #[cfg(not(feature = "flash-attn"))]
-        candle::bail!("Flash attention is not installed. Use `flash-attn-v1` feature.")
-    } else if runtime_compute_cap == 90 {
-        #[cfg(feature = "flash-attn")]
-        {
-            use candle_flash_attn::flash_attn_varlen;
-            return flash_attn_varlen(
-                q,
-                k,
-                v,
-                seqlens_q,
-                seqlens_k,
-                max_seqlen_q,
-                max_seqlen_k,
-                softmax_scale,
-                causal,
-            );
+            use candle_flash_attn::{flash_attn_varlen, flash_attn_varlen_alibi};
+
+            let attention = if let Some(alibi_slopes) = alibi_slopes {
+                flash_attn_varlen_alibi(
+                    q,
+                    k,
+                    v,
+                    alibi_slopes,
+                    seqlens_q,
+                    seqlens_k,
+                    max_seqlen_q,
+                    max_seqlen_k,
+                    softmax_scale,
+                    causal,
+                )
+            } else {
+                flash_attn_varlen(
+                    q,
+                    k,
+                    v,
+                    seqlens_q,
+                    seqlens_k,
+                    max_seqlen_q,
+                    max_seqlen_k,
+                    softmax_scale,
+                    causal,
+                )
+            };
+
+            return attention;
         }
         #[cfg(not(feature = "flash-attn"))]
         candle::bail!("Flash attention is not installed. Use `flash-attn-v1` feature.")
