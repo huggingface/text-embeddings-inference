@@ -117,7 +117,7 @@ curl 127.0.0.1:8080/embed \
 
 **Note:** To use GPUs, you need to install
 the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
-We also recommend using NVIDIA drivers with CUDA version 12.0 or higher.
+NVIDIA drivers on your machine need to be compatible with CUDA version 12.2 or higher.
 
 To see all options to serve your models:
 
@@ -395,8 +395,7 @@ sudo apt-get install libssl-dev gcc -y
 
 GPUs with Cuda compute capabilities < 7.5 are not supported (V100, Titan V, GTX 1000 series, ...).
 
-Make sure you have Cuda and the nvidia drivers installed. We recommend using NVIDIA drivers with CUDA version 12.0 or
-higher.
+Make sure you have Cuda and the nvidia drivers installed. NVIDIA drivers on your device need to be compatible with CUDA version 12.2 or higher.
 You also need to add the nvidia binaries to your path:
 
 ```shell
