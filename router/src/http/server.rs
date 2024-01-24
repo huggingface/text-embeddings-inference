@@ -116,18 +116,21 @@ async fn predict(
             _ => panic!(),
         };
 
-        let mut predictions: Vec<Prediction> = {
+        let mut predictions = Vec::with_capacity(response.results.len());
+        for (i, s) in response.results.into_iter().enumerate() {
+            // Check that s is not NaN or the partial_cmp below will panic
+            if s.is_nan() {
+                return Err(ErrorResponse {
+                    error: "score is NaN".to_string(),
+                    error_type: ErrorType::Backend,
+                });
+            }
             // Map score to label
-            response
-                .results
-                .into_iter()
-                .enumerate()
-                .map(|(i, s)| Prediction {
-                    score: s,
-                    label: id2label.get(&i.to_string()).unwrap().clone(),
-                })
-                .collect()
-        };
+            predictions.push(Prediction {
+                score: s,
+                label: id2label.get(&i.to_string()).unwrap().clone(),
+            });
+        }
         // Reverse sort
         predictions.sort_by(|x, y| x.score.partial_cmp(&y.score).unwrap());
         predictions.reverse();
@@ -282,6 +285,17 @@ async fn rerank(
     let span = tracing::Span::current();
     let start_time = Instant::now();
 
+    if req.texts.is_empty() {
+        let message = "`texts` cannot be empty".to_string();
+        tracing::error!("{message}");
+        let err = ErrorResponse {
+            error: message,
+            error_type: ErrorType::Validation,
+        };
+        metrics::increment_counter!("te_request_failure", "err" => "validation");
+        Err(err)?;
+    }
+
     match &info.model_type {
         ModelType::Classifier(_) => {
             metrics::increment_counter!("te_request_failure", "err" => "model_type");
@@ -383,11 +397,16 @@ async fn rerank(
                 None
             };
 
-            ranks.push(Rank {
-                index,
-                text,
-                score: r.4,
-            })
+            let score = r.4;
+            // Check that s is not NaN or the partial_cmp below will panic
+            if score.is_nan() {
+                Err(ErrorResponse {
+                    error: "score is NaN".to_string(),
+                    error_type: ErrorType::Backend,
+                })?;
+            }
+
+            ranks.push(Rank { index, text, score })
         }
 
         // Reverse sort
