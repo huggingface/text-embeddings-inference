@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 fn main() {
     println!("cargo:rerun-if-env-changed=CUDA_COMPUTE_CAP");
