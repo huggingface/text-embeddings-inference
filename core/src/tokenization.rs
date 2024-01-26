@@ -1,6 +1,7 @@
 /// Payload tokenization logic
 use crate::TextEmbeddingsError;
 use tokenizers::tokenizer::Tokenizer;
+pub use tokenizers::Encoding as RawEncoding;
 use tokenizers::{EncodeInput, TruncationDirection, TruncationParams, TruncationStrategy};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{instrument, Span};
@@ -63,7 +64,7 @@ impl Tokenization {
         &self,
         inputs: EncodingInput,
         truncate: bool,
-    ) -> Result<Encoding, TextEmbeddingsError> {
+    ) -> Result<ValidEncoding, TextEmbeddingsError> {
         // Check if inputs is empty
         if inputs.is_empty() {
             return Err(TextEmbeddingsError::Validation(
@@ -76,7 +77,43 @@ impl Tokenization {
         // Send request to the background validation task
         // Unwrap is safe here
         self.sender
-            .send((inputs, truncate, response_sender, Span::current()))
+            .send(TokenizerRequest::Encode(
+                inputs,
+                truncate,
+                response_sender,
+                Span::current(),
+            ))
+            .expect("Tokenization background task dropped the receiver. This is a bug.");
+
+        // Await on response channel
+        // Unwrap is safe here
+        response_receiver.await.expect("Tokenization background task dropped the sender without sending a response. This is a bug.")
+    }
+
+    #[instrument(skip_all)]
+    pub async fn tokenize(
+        &self,
+        inputs: EncodingInput,
+        add_special_tokens: bool,
+    ) -> Result<RawEncoding, TextEmbeddingsError> {
+        // Check if inputs is empty
+        if inputs.is_empty() {
+            return Err(TextEmbeddingsError::Validation(
+                "`inputs` cannot be empty".to_string(),
+            ));
+        }
+
+        // Create response channel
+        let (response_sender, response_receiver) = oneshot::channel();
+        // Send request to the background validation task
+        // Unwrap is safe here
+        self.sender
+            .send(TokenizerRequest::Tokenize(
+                inputs,
+                add_special_tokens,
+                response_sender,
+                Span::current(),
+            ))
             .expect("Tokenization background task dropped the receiver. This is a bug.");
 
         // Await on response channel
@@ -93,21 +130,55 @@ fn tokenizer_worker(
     mut receiver: mpsc::UnboundedReceiver<TokenizerRequest>,
 ) {
     // Loop over requests
-    while let Some((inputs, truncate, response_tx, parent_span)) = receiver.blocking_recv() {
-        parent_span.in_scope(|| {
-            if !response_tx.is_closed() {
-                // It's possible that the user dropped its request resulting in a send error.
-                // We just discard the error
-                let _ = response_tx.send(encode_input(
-                    inputs,
-                    truncate,
-                    max_input_length,
-                    position_offset,
-                    &mut tokenizer,
-                ));
+    while let Some(request) = receiver.blocking_recv() {
+        match request {
+            TokenizerRequest::Encode(inputs, truncate, response_tx, parent_span) => {
+                parent_span.in_scope(|| {
+                    if !response_tx.is_closed() {
+                        // It's possible that the user dropped its request resulting in a send error.
+                        // We just discard the error
+                        let _ = response_tx.send(encode_input(
+                            inputs,
+                            truncate,
+                            max_input_length,
+                            position_offset,
+                            &mut tokenizer,
+                        ));
+                    }
+                })
             }
-        })
+            TokenizerRequest::Tokenize(inputs, add_special_tokens, response_tx, parent_span) => {
+                parent_span.in_scope(|| {
+                    if !response_tx.is_closed() {
+                        // It's possible that the user dropped its request resulting in a send error.
+                        // We just discard the error
+                        let _ = response_tx.send(tokenize_input(
+                            inputs,
+                            add_special_tokens,
+                            None,
+                            &mut tokenizer,
+                        ));
+                    }
+                })
+            }
+        }
     }
+}
+
+fn tokenize_input(
+    inputs: EncodingInput,
+    add_special_tokens: bool,
+    truncate_params: Option<TruncationParams>,
+    tokenizer: &mut Tokenizer,
+) -> Result<RawEncoding, TextEmbeddingsError> {
+    let inputs: EncodeInput = match inputs {
+        EncodingInput::Single(s) => s.into(),
+        EncodingInput::Dual(s1, s2) => (s1, s2).into(),
+    };
+
+    Ok(tokenizer
+        .with_truncation(truncate_params)?
+        .encode(inputs, add_special_tokens)?)
 }
 
 /// Get input length and optionally truncate it
@@ -117,7 +188,7 @@ fn encode_input(
     max_input_length: usize,
     position_offset: usize,
     tokenizer: &mut Tokenizer,
-) -> Result<Encoding, TextEmbeddingsError> {
+) -> Result<ValidEncoding, TextEmbeddingsError> {
     // Default truncation params
     let truncate_params = truncate.then_some(TruncationParams {
         direction: TruncationDirection::Right,
@@ -126,14 +197,7 @@ fn encode_input(
         stride: 0,
     });
 
-    let inputs: EncodeInput = match inputs {
-        EncodingInput::Single(s) => s.into(),
-        EncodingInput::Dual(s1, s2) => (s1, s2).into(),
-    };
-
-    let encoding = tokenizer
-        .with_truncation(truncate_params)?
-        .encode(inputs, true)?;
+    let encoding = tokenize_input(inputs, true, truncate_params, tokenizer)?;
     let seq_len = encoding.len();
 
     if seq_len > max_input_length {
@@ -144,7 +208,7 @@ fn encode_input(
 
     metrics::histogram!("te_request_input_length", seq_len as f64);
 
-    Ok(Encoding {
+    Ok(ValidEncoding {
         input_ids: encoding.get_ids().to_vec(),
         token_type_ids: encoding.get_type_ids().to_vec(),
         position_ids: (position_offset as u32..(seq_len + position_offset) as u32)
@@ -153,7 +217,7 @@ fn encode_input(
 }
 
 #[derive(Debug)]
-pub struct Encoding {
+pub struct ValidEncoding {
     pub input_ids: Vec<u32>,
     pub token_type_ids: Vec<u32>,
     pub position_ids: Vec<u32>,
@@ -186,9 +250,17 @@ impl From<(String, String)> for EncodingInput {
     }
 }
 
-type TokenizerRequest = (
-    EncodingInput,
-    bool,
-    oneshot::Sender<Result<Encoding, TextEmbeddingsError>>,
-    Span,
-);
+enum TokenizerRequest {
+    Encode(
+        EncodingInput,
+        bool,
+        oneshot::Sender<Result<ValidEncoding, TextEmbeddingsError>>,
+        Span,
+    ),
+    Tokenize(
+        EncodingInput,
+        bool,
+        oneshot::Sender<Result<RawEncoding, TextEmbeddingsError>>,
+        Span,
+    ),
+}

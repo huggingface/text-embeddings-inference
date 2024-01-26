@@ -1,4 +1,4 @@
-use crate::grpc::pb::tei::v1::RerankStreamRequest;
+use crate::grpc::pb::tei::v1::{EncodeRequest, EncodeResponse, RerankStreamRequest, SimpleToken};
 use crate::grpc::{
     EmbedRequest, EmbedResponse, InfoRequest, InfoResponse, PredictRequest, PredictResponse,
     Prediction, Rank, RerankRequest, RerankResponse,
@@ -174,6 +174,46 @@ impl TextEmbeddingsService {
             },
             response_metadata,
         ))
+    }
+
+    #[instrument(skip_all)]
+    async fn tokenize_inner(&self, request: EncodeRequest) -> Result<EncodeResponse, Status> {
+        let inputs = request.inputs;
+        let encoding = self
+            .infer
+            .tokenize(inputs.clone(), request.add_special_tokens)
+            .await
+            .map_err(ErrorResponse::from)?;
+        let tokens: Vec<SimpleToken> = encoding
+            .get_ids()
+            .iter()
+            .zip(encoding.get_offsets())
+            .zip(encoding.get_special_tokens_mask())
+            .zip(encoding.get_tokens())
+            .map(|(((&id, &(start, stop)), special), token)| {
+                let special = *special == 1;
+                match special {
+                    true => SimpleToken {
+                        id,
+                        text: token.clone(),
+                        special,
+                        start: None,
+                        stop: None,
+                    },
+                    false => {
+                        let text: String = inputs.chars().skip(start).take(stop - start).collect();
+                        SimpleToken {
+                            id,
+                            text,
+                            special,
+                            start: Some(start as u32),
+                            stop: Some(stop as u32),
+                        }
+                    }
+                }
+            })
+            .collect();
+        Ok(EncodeResponse { tokens })
     }
 }
 
@@ -853,6 +893,102 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
     }
 }
 
+#[tonic::async_trait]
+impl grpc::tokenize_server::Tokenize for TextEmbeddingsService {
+    async fn tokenize(
+        &self,
+        request: Request<EncodeRequest>,
+    ) -> Result<Response<EncodeResponse>, Status> {
+        let request = request.into_inner();
+        let tokens = self.tokenize_inner(request).await?;
+        Ok(Response::new(tokens))
+    }
+
+    type TokenizeStreamStream = UnboundedReceiverStream<Result<EncodeResponse, Status>>;
+
+    async fn tokenize_stream(
+        &self,
+        request: Request<Streaming<EncodeRequest>>,
+    ) -> Result<Response<Self::TokenizeStreamStream>, Status> {
+        let mut request_stream = request.into_inner();
+
+        // Create bounded channel to have an upper bound of spawned tasks
+        // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
+        let (encode_sender, mut encode_receiver) = mpsc::channel::<(
+            EncodeRequest,
+            oneshot::Sender<Result<EncodeResponse, Status>>,
+        )>(self.max_parallel_stream_requests);
+
+        // Required for the async move below
+        let local = self.clone();
+
+        // Background task that uses the bounded channel
+        tokio::spawn(async move {
+            while let Some((request, mut sender)) = encode_receiver.recv().await {
+                // Required for the async move below
+                let task_local = local.clone();
+
+                // Create async task for this specific input
+                tokio::spawn(async move {
+                    // Select on closed to cancel work if the stream was closed
+                    tokio::select! {
+                        response = task_local.tokenize_inner(request) => {
+                            let _ = sender.send(response);
+                        }
+                    _ = sender.closed() => {}
+                    }
+                });
+            }
+        });
+
+        // Intermediate channels
+        // Required to keep the order of the requests
+        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            // Iterate on input
+            while let Some(request) = request_stream.next().await {
+                // Create return channel
+                let (result_sender, result_receiver) = oneshot::channel();
+                // Push to intermediate channel and preserve ordering
+                intermediate_sender
+                    .send(result_receiver)
+                    .expect("`intermediate_receiver` was dropped. This is a bug.");
+
+                match request {
+                    Ok(request) => encode_sender
+                        .send((request, result_sender))
+                        .await
+                        .expect("`encode_receiver` was dropped. This is a bug."),
+                    Err(status) => {
+                        // Request is malformed
+                        let _ = result_sender.send(Err(status));
+                    }
+                };
+            }
+        });
+
+        // Final channel for the outputs
+        let (response_sender, response_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            while let Some(result_receiver) = intermediate_receiver.recv().await {
+                // Select on closed to cancel work if the stream was closed
+                tokio::select! {
+                response = result_receiver => {
+                    let _ = response_sender.send(response.expect("`result_sender` was dropped. This is a bug."));
+                }
+                _ = response_sender.closed() => {}
+                }
+            }
+        });
+
+        Ok(Response::new(UnboundedReceiverStream::new(
+            response_receiver,
+        )))
+    }
+}
+
 pub async fn run(
     infer: Infer,
     info: Info,
@@ -867,6 +1003,10 @@ pub async fn run(
     // Info is always serving
     health_reporter
         .set_serving::<grpc::InfoServer<TextEmbeddingsService>>()
+        .await;
+    // Tokenize is always serving
+    health_reporter
+        .set_serving::<grpc::TokenizeServer<TextEmbeddingsService>>()
         .await;
     // Set all other services to not serving
     // Their health will be updated in the task below
@@ -956,6 +1096,7 @@ pub async fn run(
         .add_service(health_service)
         .add_service(reflection_service)
         .add_service(grpc::InfoServer::new(service.clone()))
+        .add_service(grpc::TokenizeServer::new(service.clone()))
         .add_service(grpc::EmbedServer::new(service.clone()))
         .add_service(grpc::PredictServer::new(service.clone()))
         .add_service(grpc::RerankServer::new(service))

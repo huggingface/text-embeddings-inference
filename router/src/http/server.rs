@@ -2,7 +2,8 @@
 use crate::http::types::{
     EmbedRequest, EmbedResponse, Input, OpenAICompatEmbedding, OpenAICompatErrorResponse,
     OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage, PredictInput, PredictRequest,
-    PredictResponse, Prediction, Rank, RerankRequest, RerankResponse, Sequence,
+    PredictResponse, Prediction, Rank, RerankRequest, RerankResponse, Sequence, SimpleToken,
+    TokenizeRequest, TokenizeResponse,
 };
 use crate::{
     shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
@@ -749,6 +750,108 @@ async fn openai_embed(
     Ok((headers, Json(response)))
 }
 
+/// Tokenize inputs
+#[utoipa::path(
+post,
+tag = "Text Embeddings Inference",
+path = "/tokenize",
+request_body = TokenizeRequest,
+responses(
+(status = 200, description = "Tokenized ids", body = TokenizeResponse),
+(status = 422, description = "Tokenization error", body = OpenAICompatErrorResponse,
+example = json ! ({"message": "Tokenization error", "type": "tokenizer"})),
+)
+)]
+#[instrument(skip_all)]
+async fn tokenize(
+    infer: Extension<Infer>,
+    info: Extension<Info>,
+    Json(req): Json<TokenizeRequest>,
+) -> Result<Json<TokenizeResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let tokenize_inner = move |input: String, add_special_tokens: bool, infer: Infer| async move {
+        let encoding = infer
+            .tokenize(input.clone(), add_special_tokens)
+            .await
+            .map_err(ErrorResponse::from)?;
+        let tokens: Vec<SimpleToken> = encoding
+            .get_ids()
+            .iter()
+            .zip(encoding.get_offsets())
+            .zip(encoding.get_special_tokens_mask())
+            .zip(encoding.get_tokens())
+            .map(|(((&id, &(start, stop)), special), token)| {
+                let special = *special == 1;
+                match special {
+                    true => SimpleToken {
+                        id,
+                        text: token.clone(),
+                        special,
+                        start: None,
+                        stop: None,
+                    },
+                    false => {
+                        let text: String = input.chars().skip(start).take(stop - start).collect();
+                        SimpleToken {
+                            id,
+                            text,
+                            special,
+                            start: Some(start),
+                            stop: Some(stop),
+                        }
+                    }
+                }
+            })
+            .collect();
+        Ok::<Vec<SimpleToken>, ErrorResponse>(tokens)
+    };
+
+    let tokens = match req.inputs {
+        Input::Single(input) => vec![tokenize_inner(input, req.add_special_tokens, infer.0).await?],
+        Input::Batch(inputs) => {
+            if inputs.is_empty() {
+                let message = "`inputs` cannot be empty".to_string();
+                tracing::error!("{message}");
+                let err = ErrorResponse {
+                    error: message,
+                    error_type: ErrorType::Validation,
+                };
+                metrics::increment_counter!("te_request_failure", "err" => "validation");
+                Err(err)?;
+            }
+
+            let batch_size = inputs.len();
+            if batch_size > info.max_client_batch_size {
+                let message = format!(
+                    "batch size {batch_size} > maximum allowed batch size {}",
+                    info.max_client_batch_size
+                );
+                tracing::error!("{message}");
+                let err = ErrorResponse {
+                    error: message,
+                    error_type: ErrorType::Validation,
+                };
+                metrics::increment_counter!("te_request_failure", "err" => "batch_size");
+                Err(err)?;
+            }
+
+            let mut futures = Vec::with_capacity(batch_size);
+            for input in inputs {
+                futures.push(tokenize_inner(
+                    input,
+                    req.add_special_tokens,
+                    infer.0.clone(),
+                ));
+            }
+
+            join_all(futures)
+                .await
+                .into_iter()
+                .collect::<Result<Vec<Vec<SimpleToken>>, ErrorResponse>>()?
+        }
+    };
+    Ok(Json(TokenizeResponse(tokens)))
+}
+
 /// Prometheus metrics scrape endpoint
 #[utoipa::path(
 get,
@@ -777,6 +880,7 @@ pub async fn run(
     rerank,
     embed,
     openai_embed,
+    tokenize,
     metrics,
     ),
     components(
@@ -801,6 +905,9 @@ pub async fn run(
     EmbedResponse,
     ErrorResponse,
     OpenAICompatErrorResponse,
+    TokenizeRequest,
+    TokenizeResponse,
+    SimpleToken,
     ErrorType,
     )
     ),
@@ -846,6 +953,7 @@ pub async fn run(
         .route("/embed", post(embed))
         .route("/predict", post(predict))
         .route("/rerank", post(rerank))
+        .route("/tokenize", post(tokenize))
         // OpenAI compat route
         .route("/embeddings", post(openai_embed))
         // Base Health route

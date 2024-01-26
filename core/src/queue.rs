@@ -1,5 +1,5 @@
 use crate::infer::InferResponse;
-use crate::tokenization::Encoding;
+use crate::tokenization::ValidEncoding;
 use std::cmp::max;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -11,7 +11,7 @@ use tracing::{instrument, Span};
 #[derive(Debug)]
 pub struct Entry {
     /// Payload
-    pub encoding: Encoding,
+    pub encoding: ValidEncoding,
     /// Entry metadata
     pub metadata: Metadata,
 }

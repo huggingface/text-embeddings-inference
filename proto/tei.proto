@@ -23,6 +23,11 @@ service Rerank {
     rpc RerankStream (stream RerankStreamRequest) returns (RerankResponse);
 }
 
+service Tokenize {
+    rpc Tokenize (EncodeRequest) returns (EncodeResponse);
+    rpc TokenizeStream (stream EncodeRequest) returns (stream EncodeResponse);
+}
+
 message InfoRequest {}
 
 enum ModelType {
@@ -110,4 +115,21 @@ message Rank {
 message RerankResponse {
     repeated Rank ranks = 1;
     Metadata metadata = 2;
+}
+
+message EncodeRequest {
+    string inputs = 1;
+    bool add_special_tokens = 2;
+}
+
+message SimpleToken {
+    uint32 id = 1;
+    string text = 2;
+    bool special = 3;
+    optional uint32 start = 4;
+    optional uint32 stop = 5;
+}
+
+message EncodeResponse {
+    repeated SimpleToken tokens = 1;
 }
