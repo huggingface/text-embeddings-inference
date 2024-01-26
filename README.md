@@ -97,7 +97,7 @@ model=BAAI/bge-large-en-v1.5
 revision=refs/pr/5
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.6 --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.7 --model-id $model --revision $revision
 ```
 
 And then you can make requests like
@@ -242,13 +242,13 @@ Text Embeddings Inference ships with multiple Docker images that you can use to 
 
 | Architecture                        | Image                                                                   |
 |-------------------------------------|-------------------------------------------------------------------------|
-| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-0.6                   |
+| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-0.7                   |
 | Volta                               | NOT SUPPORTED                                                           |
-| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-0.6 (experimental) |
-| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:0.6                       |
-| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-0.6                    |
-| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-0.6                    |
-| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-0.6 (experimental) |
+| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-0.7 (experimental) |
+| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:0.7                       |
+| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-0.7                    |
+| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-0.7                    |
+| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-0.7 (experimental) |
 
 **Warning**: Flash Attention is turned off by default for the Turing image as it suffers from precision issues.
 You can turn Flash Attention v1 ON by using the `USE_FLASH_ATTENTION=True` environment variable.
@@ -277,7 +277,7 @@ model=<your private model>
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 token=<your cli READ token>
 
-docker run --gpus all -e HUGGING_FACE_HUB_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.6 --model-id $model
+docker run --gpus all -e HUGGING_FACE_HUB_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.7 --model-id $model
 ```
 
 ### Using Re-rankers models
@@ -295,7 +295,7 @@ model=BAAI/bge-reranker-large
 revision=refs/pr/4
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.6 --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.7 --model-id $model --revision $revision
 ```
 
 And then you can rank the similarity between a query and a list of texts with:
@@ -315,7 +315,7 @@ You can also use classic Sequence Classification models like `SamLowe/roberta-ba
 model=SamLowe/roberta-base-go_emotions
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.6 --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.7 --model-id $model 
 ```
 
 Once you have deployed the model you can use the `predict` endpoint to get the emotions most associated with an input:
@@ -344,7 +344,7 @@ model=BAAI/bge-large-en-v1.5
 revision=refs/pr/5
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.6-grpc --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.7-grpc --model-id $model --revision $revision
 ```
 
 ```shell
