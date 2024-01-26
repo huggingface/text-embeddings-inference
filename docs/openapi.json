@@ -436,6 +436,52 @@
           }
         }
       }
+    },
+    "/tokenize": {
+      "post": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Tokenize inputs",
+        "description": "Tokenize inputs",
+        "operationId": "tokenize",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenizeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Tokenized ids",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenizeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                },
+                "example": {
+                  "message": "Tokenization error",
+                  "type": "tokenizer"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -658,6 +704,17 @@
             "properties": {
               "embedding": {
                 "$ref": "#/components/schemas/EmbeddingModel"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "reranker"
+            ],
+            "properties": {
+              "reranker": {
+                "$ref": "#/components/schemas/ClassifierModel"
               }
             }
           }
@@ -953,6 +1010,78 @@
         "items": {
           "$ref": "#/components/schemas/Rank"
         }
+      },
+      "SimpleToken": {
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "special"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32",
+            "example": 0,
+            "minimum": 0
+          },
+          "special": {
+            "type": "boolean",
+            "example": "false"
+          },
+          "start": {
+            "type": "integer",
+            "example": 0,
+            "nullable": true,
+            "minimum": 0
+          },
+          "stop": {
+            "type": "integer",
+            "example": 2,
+            "nullable": true,
+            "minimum": 0
+          },
+          "text": {
+            "type": "string",
+            "example": "test"
+          }
+        }
+      },
+      "TokenizeRequest": {
+        "type": "object",
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "add_special_tokens": {
+            "type": "boolean",
+            "default": "true",
+            "example": "true"
+          },
+          "inputs": {
+            "$ref": "#/components/schemas/Input"
+          }
+        }
+      },
+      "TokenizeResponse": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/SimpleToken"
+          }
+        },
+        "example": [
+          [
+            {
+              "id": 0,
+              "special": false,
+              "start": 0,
+              "stop": 2,
+              "text": "test"
+            }
+          ]
+        ]
       }
     }
   },
