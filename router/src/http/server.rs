@@ -499,6 +499,17 @@ async fn embed(
         Input::Batch(inputs) => {
             metrics::increment_counter!("te_request_count", "method" => "batch");
 
+            if inputs.is_empty() {
+                let message = "`inputs` cannot be empty".to_string();
+                tracing::error!("{message}");
+                let err = ErrorResponse {
+                    error: message,
+                    error_type: ErrorType::Validation,
+                };
+                metrics::increment_counter!("te_request_failure", "err" => "validation");
+                Err(err)?;
+            }
+
             let batch_size = inputs.len();
             if batch_size > info.max_client_batch_size {
                 let message = format!(
@@ -638,6 +649,17 @@ async fn openai_embed(
         }
         Input::Batch(inputs) => {
             metrics::increment_counter!("te_request_count", "method" => "batch");
+
+            if inputs.is_empty() {
+                let message = "`inputs` cannot be empty".to_string();
+                tracing::error!("{message}");
+                let err = ErrorResponse {
+                    error: message,
+                    error_type: ErrorType::Validation,
+                };
+                metrics::increment_counter!("te_request_failure", "err" => "validation");
+                Err(err)?;
+            }
 
             let batch_size = inputs.len();
             if batch_size > info.max_client_batch_size {
