@@ -322,3 +322,33 @@ pub(crate) struct OpenAICompatErrorResponse {
     #[serde(rename(serialize = "type"))]
     pub error_type: ErrorType,
 }
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct TokenizeRequest {
+    pub inputs: Input,
+    #[serde(default = "default_add_special_tokens")]
+    #[schema(default = "true", example = "true")]
+    pub add_special_tokens: bool,
+}
+
+fn default_add_special_tokens() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct SimpleToken {
+    #[schema(example = 0)]
+    pub id: u32,
+    #[schema(example = "test")]
+    pub text: String,
+    #[schema(example = "false")]
+    pub special: bool,
+    #[schema(example = 0)]
+    pub start: Option<usize>,
+    #[schema(example = 2)]
+    pub stop: Option<usize>,
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(example = json!([[{"id": 0, "text": "test", "special": false, "start": 0, "stop": 2}]]))]
+pub(crate) struct TokenizeResponse(pub Vec<Vec<SimpleToken>>);

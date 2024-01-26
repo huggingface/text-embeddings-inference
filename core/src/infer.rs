@@ -1,5 +1,5 @@
 use crate::queue::{Entry, Metadata, NextBatch, Queue};
-use crate::tokenization::{EncodingInput, Tokenization};
+use crate::tokenization::{EncodingInput, RawEncoding, Tokenization};
 use crate::TextEmbeddingsError;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -56,6 +56,22 @@ impl Infer {
             limit_concurrent_requests: semaphore,
             backend,
         }
+    }
+
+    #[instrument(skip(self))]
+    pub async fn tokenize<I: Into<EncodingInput> + std::fmt::Debug>(
+        &self,
+        inputs: I,
+        add_special_tokens: bool,
+    ) -> Result<RawEncoding, TextEmbeddingsError> {
+        self.tokenization
+            .tokenize(inputs.into(), add_special_tokens)
+            .await
+            .map_err(|err| {
+                metrics::increment_counter!("te_request_failure", "err" => "tokenization");
+                tracing::error!("{err}");
+                err
+            })
     }
 
     #[instrument(skip(self))]
