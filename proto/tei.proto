@@ -11,6 +11,8 @@ service Info {
 service Embed {
     rpc Embed (EmbedRequest) returns (EmbedResponse);
     rpc EmbedStream (stream EmbedRequest) returns (stream EmbedResponse);
+    rpc EmbedRaw (EmbedRawRequest) returns (EmbedRawResponse);
+    rpc EmbedRawStream (stream EmbedRawRequest) returns (stream EmbedRawResponse);
 }
 
 service Predict {
@@ -69,6 +71,20 @@ message EmbedRequest {
 
 message EmbedResponse {
     repeated float embeddings = 1;
+    Metadata metadata = 2;
+}
+
+message EmbedRawRequest {
+    string inputs = 1;
+    bool truncate = 2;
+}
+
+message TokenEmbedding {
+    repeated float embeddings = 1;
+}
+
+message EmbedRawResponse {
+    repeated TokenEmbedding token_embeddings = 1;
     Metadata metadata = 2;
 }
 

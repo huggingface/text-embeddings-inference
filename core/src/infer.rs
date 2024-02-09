@@ -106,7 +106,7 @@ impl Infer {
         let start_time = Instant::now();
 
         let results = self
-            .embed(inputs, truncate, true, &start_time, permit)
+            .embed(inputs, truncate, false, &start_time, permit)
             .await?;
 
         let response = match results {

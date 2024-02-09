@@ -625,8 +625,7 @@ impl JinaBertModel {
             // We need to remove the padding tokens only if batch_size > 1 and there are some
             // member of the batch that require pooling
             // or if batch_size > 1 and the members of the batch have different lengths
-            if (attention_mask.is_some() || has_pooling_requests) && batch_size > 1
-            {
+            if (attention_mask.is_some() || has_pooling_requests) && batch_size > 1 {
                 let mut final_indices: Vec<u32> = Vec::with_capacity(batch_size * max_length);
 
                 for i in batch.raw_indices.into_iter() {
