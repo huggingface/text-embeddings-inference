@@ -391,7 +391,7 @@ impl FlashBertModel {
     pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         let _enter = self.span.enter();
 
-        let batch_size = batch.cumulative_seq_lengths.len() - 1;
+        let batch_size = batch.len();
         let shape = batch.input_ids.len();
 
         // Create Cuda tensors

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{Backend, BackendError, ModelType};
 use tokio::sync::{mpsc, oneshot, watch, Notify, OwnedSemaphorePermit, Semaphore};
-use tracing::{instrument, Span};
+use tracing::instrument;
 
 /// Inference struct
 #[derive(Debug, Clone)]
@@ -96,14 +96,113 @@ impl Infer {
             .expect("Semaphore has been closed. This is a bug.")
     }
 
-    #[instrument(skip(self, _permit))]
-    pub async fn embed<I: Into<EncodingInput> + std::fmt::Debug>(
+    #[instrument(skip(self, permit))]
+    pub async fn embed_raw<I: Into<EncodingInput> + std::fmt::Debug>(
+        &self,
+        inputs: I,
+        truncate: bool,
+        permit: OwnedSemaphorePermit,
+    ) -> Result<RawEmbeddingsInferResponse, TextEmbeddingsError> {
+        let start_time = Instant::now();
+
+        let results = self
+            .embed(inputs, truncate, true, &start_time, permit)
+            .await?;
+
+        let response = match results {
+            InferResult::RawEmbedding(embeddings) => embeddings,
+            _ => panic!("unexpected enum variant. this is a bug"),
+        };
+
+        // Timings
+        let total_time = start_time.elapsed();
+
+        // Metrics
+        metrics::increment_counter!("te_embed_success");
+        metrics::histogram!("te_embed_duration", total_time.as_secs_f64());
+        metrics::histogram!(
+            "te_embed_tokenization_duration",
+            response.metadata.tokenization.as_secs_f64()
+        );
+        metrics::histogram!(
+            "te_embed_queue_duration",
+            response.metadata.queue.as_secs_f64()
+        );
+        metrics::histogram!(
+            "te_embed_inference_duration",
+            response.metadata.inference.as_secs_f64()
+        );
+
+        Ok(response)
+    }
+
+    #[instrument(skip(self, permit))]
+    pub async fn embed_pooled<I: Into<EncodingInput> + std::fmt::Debug>(
         &self,
         inputs: I,
         truncate: bool,
         normalize: bool,
+        permit: OwnedSemaphorePermit,
+    ) -> Result<PooledEmbeddingsInferResponse, TextEmbeddingsError> {
+        let start_time = Instant::now();
+
+        let results = self
+            .embed(inputs, truncate, true, &start_time, permit)
+            .await?;
+
+        let response = match results {
+            InferResult::PooledEmbedding(mut embeddings) => {
+                if normalize {
+                    // Normalize embedding
+                    let scale = (1.0
+                        / embeddings
+                            .results
+                            .iter()
+                            .map(|v| {
+                                let v = *v as f64;
+                                v * v
+                            })
+                            .sum::<f64>()
+                            .sqrt()) as f32;
+                    for v in embeddings.results.iter_mut() {
+                        *v *= scale;
+                    }
+                }
+                embeddings
+            }
+            _ => panic!("unexpected enum variant. this is a bug"),
+        };
+
+        // Timings
+        let total_time = start_time.elapsed();
+
+        // Metrics
+        metrics::increment_counter!("te_embed_success");
+        metrics::histogram!("te_embed_duration", total_time.as_secs_f64());
+        metrics::histogram!(
+            "te_embed_tokenization_duration",
+            response.metadata.tokenization.as_secs_f64()
+        );
+        metrics::histogram!(
+            "te_embed_queue_duration",
+            response.metadata.queue.as_secs_f64()
+        );
+        metrics::histogram!(
+            "te_embed_inference_duration",
+            response.metadata.inference.as_secs_f64()
+        );
+
+        Ok(response)
+    }
+
+    async fn embed<I: Into<EncodingInput> + std::fmt::Debug>(
+        &self,
+        inputs: I,
+        truncate: bool,
+        pooling: bool,
+        start_time: &Instant,
         _permit: OwnedSemaphorePermit,
-    ) -> Result<InferResponse, TextEmbeddingsError> {
+    ) -> Result<InferResult, TextEmbeddingsError> {
         if self.is_classifier() {
             metrics::increment_counter!("te_request_failure", "err" => "model_type");
             let message = "Model is not an embedding model".to_string();
@@ -113,7 +212,6 @@ impl Infer {
             )));
         }
 
-        let start_time = Instant::now();
         metrics::increment_counter!("te_embed_count");
 
         // Tokenization
@@ -134,18 +232,17 @@ impl Infer {
         self.queue.append(Entry {
             metadata: Metadata {
                 response_tx,
-                span: Span::current(),
                 tokenization: start_time.elapsed(),
                 queue_time: Instant::now(),
                 prompt_tokens: encoding.input_ids.len(),
+                pooling,
             },
             encoding,
-            pooling: true,
         });
 
         self.notify_batching_task.notify_one();
 
-        let mut response = response_rx
+        let response = response_rx
             .await
             .expect(
                 "Infer batching task dropped the sender without sending a response. This is a bug.",
@@ -155,39 +252,6 @@ impl Infer {
                 tracing::error!("{err}");
                 err
             })?;
-
-        if normalize {
-            // Normalize embedding
-            let scale = (1.0
-                / response
-                    .results
-                    .iter()
-                    .map(|v| {
-                        let v = *v as f64;
-                        v * v
-                    })
-                    .sum::<f64>()
-                    .sqrt()) as f32;
-            for v in response.results.iter_mut() {
-                *v *= scale;
-            }
-        }
-
-        // Timings
-        let total_time = start_time.elapsed();
-
-        // Metrics
-        metrics::increment_counter!("te_embed_success");
-        metrics::histogram!("te_embed_duration", total_time.as_secs_f64());
-        metrics::histogram!(
-            "te_embed_tokenization_duration",
-            response.tokenization.as_secs_f64()
-        );
-        metrics::histogram!("te_embed_queue_duration", response.queue.as_secs_f64());
-        metrics::histogram!(
-            "te_embed_inference_duration",
-            response.inference.as_secs_f64()
-        );
 
         Ok(response)
     }
@@ -199,7 +263,7 @@ impl Infer {
         truncate: bool,
         raw_scores: bool,
         _permit: OwnedSemaphorePermit,
-    ) -> Result<InferResponse, TextEmbeddingsError> {
+    ) -> Result<ClassificationInferResponse, TextEmbeddingsError> {
         if !self.is_classifier() {
             metrics::increment_counter!("te_request_failure", "err" => "model_type");
             let message = "Model is not a classifier model".to_string();
@@ -229,18 +293,17 @@ impl Infer {
         self.queue.append(Entry {
             metadata: Metadata {
                 response_tx,
-                span: Span::current(),
                 tokenization: start_time.elapsed(),
                 queue_time: Instant::now(),
                 prompt_tokens: encoding.input_ids.len(),
+                pooling: true,
             },
             encoding,
-            pooling: true,
         });
 
         self.notify_batching_task.notify_one();
 
-        let mut response = response_rx
+        let response = response_rx
             .await
             .expect(
                 "Infer batching task dropped the sender without sending a response. This is a bug.",
@@ -250,6 +313,11 @@ impl Infer {
                 tracing::error!("{err}");
                 err
             })?;
+
+        let mut response = match response {
+            InferResult::Classification(response) => response,
+            _ => panic!("unexpected enum variant. this is a bug"),
+        };
 
         if !raw_scores {
             // Softmax
@@ -283,12 +351,15 @@ impl Infer {
         metrics::histogram!("te_predict_duration", total_time.as_secs_f64());
         metrics::histogram!(
             "te_predict_tokenization_duration",
-            response.tokenization.as_secs_f64()
+            response.metadata.tokenization.as_secs_f64()
         );
-        metrics::histogram!("te_predict_queue_duration", response.queue.as_secs_f64());
+        metrics::histogram!(
+            "te_predict_queue_duration",
+            response.metadata.queue.as_secs_f64()
+        );
         metrics::histogram!(
             "te_predict_inference_duration",
-            response.inference.as_secs_f64()
+            response.metadata.inference.as_secs_f64()
         );
 
         Ok(response)
@@ -335,41 +406,123 @@ async fn backend_task(
     mut embed_receiver: mpsc::UnboundedReceiver<(NextBatch, oneshot::Sender<()>)>,
 ) {
     while let Some((batch, _callback)) = embed_receiver.recv().await {
-        let results = match &backend.model_type {
-            ModelType::Classifier => backend.predict(batch.1).await,
-            ModelType::Embedding(_) => backend
-                .embed(batch.1)
-                .await
-                .map(|(e, d)| (e.pooled_embeddings, d)),
-        };
+        match &backend.model_type {
+            ModelType::Classifier => {
+                let results = backend.predict(batch.1).await;
 
-        // Handle sending responses in another thread to avoid starving the backend
-        std::thread::spawn(move || match results {
-            Ok((embeddings, inference_duration)) => {
-                batch.0.into_iter().zip(embeddings).for_each(|(m, e)| {
-                    let _ = m.response_tx.send(Ok(InferResponse {
-                        results: e,
-                        prompt_tokens: m.prompt_tokens,
-                        tokenization: m.tokenization,
-                        queue: m.queue_time.elapsed() - inference_duration,
-                        inference: inference_duration,
-                    }));
+                // Handle sending responses in another thread to avoid starving the backend
+                std::thread::spawn(move || match results {
+                    Ok((results, inference_duration)) => {
+                        batch.0.into_iter().zip(results).for_each(|(m, r)| {
+                            let infer_metadata = InferMetadata {
+                                prompt_tokens: m.prompt_tokens,
+                                tokenization: m.tokenization,
+                                queue: m.queue_time.elapsed() - inference_duration,
+                                inference: inference_duration,
+                            };
+
+                            let _ = m.response_tx.send(Ok(InferResult::Classification(
+                                ClassificationInferResponse {
+                                    results: r,
+                                    metadata: infer_metadata,
+                                },
+                            )));
+                        });
+                    }
+                    Err(err) => {
+                        batch.0.into_iter().for_each(|m| {
+                            let _ = m.response_tx.send(Err(err.clone()));
+                        });
+                    }
                 });
             }
-            Err(err) => {
-                batch.0.into_iter().for_each(|m| {
-                    let _ = m.response_tx.send(Err(err.clone()));
+            ModelType::Embedding(_) => {
+                let input_lengths: Vec<usize> = (0..batch.1.len())
+                    .map(|i| {
+                        (batch.1.cumulative_seq_lengths[i + 1] - batch.1.cumulative_seq_lengths[i])
+                            as usize
+                    })
+                    .collect();
+
+                let results = backend.embed(batch.1).await;
+
+                // Handle sending responses in another thread to avoid starving the backend
+                std::thread::spawn(move || match results {
+                    Ok((embeddings, inference_duration)) => {
+                        // Required to correctly index in the embeddings
+                        let mut pooled_index = 0;
+                        let mut raw_cumulative_length = 0;
+
+                        for (i, m) in batch.0.into_iter().enumerate() {
+                            let infer_metadata = InferMetadata {
+                                prompt_tokens: m.prompt_tokens,
+                                tokenization: m.tokenization,
+                                queue: m.queue_time.elapsed() - inference_duration,
+                                inference: inference_duration,
+                            };
+
+                            let results = if m.pooling {
+                                let results = embeddings.pooled_embeddings[pooled_index].clone();
+                                pooled_index += 1;
+                                InferResult::PooledEmbedding(PooledEmbeddingsInferResponse {
+                                    results,
+                                    metadata: infer_metadata,
+                                })
+                            } else {
+                                let length = input_lengths[i];
+                                let results = embeddings.raw_embeddings
+                                    [raw_cumulative_length..raw_cumulative_length + length]
+                                    .to_vec();
+                                raw_cumulative_length += length;
+                                InferResult::RawEmbedding(RawEmbeddingsInferResponse {
+                                    results,
+                                    metadata: infer_metadata,
+                                })
+                            };
+
+                            let _ = m.response_tx.send(Ok(results));
+                        }
+                    }
+                    Err(err) => {
+                        batch.0.into_iter().for_each(|m| {
+                            let _ = m.response_tx.send(Err(err.clone()));
+                        });
+                    }
                 });
             }
-        });
+        };
     }
 }
 
 #[derive(Debug)]
-pub struct InferResponse {
-    pub results: Vec<f32>,
+pub struct InferMetadata {
     pub prompt_tokens: usize,
     pub tokenization: Duration,
     pub queue: Duration,
     pub inference: Duration,
+}
+
+#[derive(Debug)]
+pub(crate) enum InferResult {
+    Classification(ClassificationInferResponse),
+    PooledEmbedding(PooledEmbeddingsInferResponse),
+    RawEmbedding(RawEmbeddingsInferResponse),
+}
+
+#[derive(Debug)]
+pub struct ClassificationInferResponse {
+    pub results: Vec<f32>,
+    pub metadata: InferMetadata,
+}
+
+#[derive(Debug)]
+pub struct PooledEmbeddingsInferResponse {
+    pub results: Vec<f32>,
+    pub metadata: InferMetadata,
+}
+
+#[derive(Debug)]
+pub struct RawEmbeddingsInferResponse {
+    pub results: Vec<Vec<f32>>,
+    pub metadata: InferMetadata,
 }

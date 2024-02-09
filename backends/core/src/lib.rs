@@ -14,6 +14,16 @@ pub struct Batch {
     pub raw_indices: Vec<u32>,
 }
 
+impl Batch {
+    pub fn len(&self) -> usize {
+        self.cumulative_seq_lengths.len() - 1
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 pub type Embedding = Vec<f32>;
 
 pub struct Embeddings {

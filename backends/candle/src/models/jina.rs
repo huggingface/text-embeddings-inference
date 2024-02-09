@@ -410,7 +410,7 @@ impl JinaBertModel {
     pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         let _enter = self.span.enter();
 
-        let batch_size = batch.cumulative_seq_lengths.len() - 1;
+        let batch_size = batch.len();
         let max_length = batch.max_length as usize;
 
         let shape = (batch_size, max_length);
@@ -625,8 +625,7 @@ impl JinaBertModel {
             // We need to remove the padding tokens only if batch_size > 1 and there are some
             // member of the batch that require pooling
             // or if batch_size > 1 and the members of the batch have different lengths
-            if (batch_size > 1 && has_pooling_requests)
-                || (batch_size > 1 && attention_mask.is_some())
+            if (attention_mask.is_some() || has_pooling_requests) && batch_size > 1
             {
                 let mut final_indices: Vec<u32> = Vec::with_capacity(batch_size * max_length);
 

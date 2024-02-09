@@ -22,7 +22,7 @@ use std::env;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::BackendError;
-use text_embeddings_core::infer::{Infer, InferResponse};
+use text_embeddings_core::infer::{Infer, PooledEmbeddingsInferResponse};
 use text_embeddings_core::TextEmbeddingsError;
 use tokio::sync::OwnedSemaphorePermit;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -137,10 +137,10 @@ async fn predict(
         predictions.reverse();
 
         Ok::<(usize, Duration, Duration, Duration, Vec<Prediction>), ErrorResponse>((
-            response.prompt_tokens,
-            response.tokenization,
-            response.queue,
-            response.inference,
+            response.metadata.prompt_tokens,
+            response.metadata.tokenization,
+            response.metadata.queue,
+            response.metadata.inference,
             predictions,
         ))
     };
@@ -335,10 +335,10 @@ async fn rerank(
         let score = response.results[0];
 
         Ok::<(usize, Duration, Duration, Duration, f32), ErrorResponse>((
-            response.prompt_tokens,
-            response.tokenization,
-            response.queue,
-            response.inference,
+            response.metadata.prompt_tokens,
+            response.metadata.tokenization,
+            response.metadata.queue,
+            response.metadata.inference,
             score,
         ))
     };
@@ -479,7 +479,7 @@ async fn embed(
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
-                .embed(input, req.truncate, req.normalize, permit)
+                .embed_pooled(input, req.truncate, req.normalize, permit)
                 .await
                 .map_err(ErrorResponse::from)?;
 
@@ -489,11 +489,11 @@ async fn embed(
                 EmbedResponse(vec![response.results]),
                 ResponseMetadata::new(
                     compute_chars,
-                    response.prompt_tokens,
+                    response.metadata.prompt_tokens,
                     start_time,
-                    response.tokenization,
-                    response.queue,
-                    response.inference,
+                    response.metadata.tokenization,
+                    response.metadata.queue,
+                    response.metadata.inference,
                 ),
             )
         }
@@ -536,14 +536,14 @@ async fn embed(
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
                     local_infer
-                        .embed(input, req.truncate, req.normalize, permit)
+                        .embed_pooled(input, req.truncate, req.normalize, permit)
                         .await
                 })
             }
             let results = join_all(futures)
                 .await
                 .into_iter()
-                .collect::<Result<Vec<InferResponse>, TextEmbeddingsError>>()
+                .collect::<Result<Vec<PooledEmbeddingsInferResponse>, TextEmbeddingsError>>()
                 .map_err(ErrorResponse::from)?;
 
             let mut embeddings = Vec::with_capacity(batch_size);
@@ -553,10 +553,10 @@ async fn embed(
             let mut total_compute_tokens = 0;
 
             for r in results {
-                total_tokenization_time += r.tokenization.as_nanos() as u64;
-                total_queue_time += r.queue.as_nanos() as u64;
-                total_inference_time += r.inference.as_nanos() as u64;
-                total_compute_tokens += r.prompt_tokens;
+                total_tokenization_time += r.metadata.tokenization.as_nanos() as u64;
+                total_queue_time += r.metadata.queue.as_nanos() as u64;
+                total_inference_time += r.metadata.inference.as_nanos() as u64;
+                total_compute_tokens += r.metadata.prompt_tokens;
                 embeddings.push(r.results);
             }
             let batch_size = batch_size as u64;
@@ -626,7 +626,7 @@ async fn openai_embed(
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
-                .embed(input, false, true, permit)
+                .embed_pooled(input, false, true, permit)
                 .await
                 .map_err(ErrorResponse::from)?;
 
@@ -640,11 +640,11 @@ async fn openai_embed(
                 }],
                 ResponseMetadata::new(
                     compute_chars,
-                    response.prompt_tokens,
+                    response.metadata.prompt_tokens,
                     start_time,
-                    response.tokenization,
-                    response.queue,
-                    response.inference,
+                    response.metadata.tokenization,
+                    response.metadata.queue,
+                    response.metadata.inference,
                 ),
             )
         }
@@ -686,13 +686,13 @@ async fn openai_embed(
                 let local_infer = infer.clone();
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
-                    local_infer.embed(input, false, true, permit).await
+                    local_infer.embed_pooled(input, false, true, permit).await
                 })
             }
             let results = join_all(futures)
                 .await
                 .into_iter()
-                .collect::<Result<Vec<InferResponse>, TextEmbeddingsError>>()
+                .collect::<Result<Vec<PooledEmbeddingsInferResponse>, TextEmbeddingsError>>()
                 .map_err(ErrorResponse::from)?;
 
             let mut embeddings = Vec::with_capacity(batch_size);
@@ -702,10 +702,10 @@ async fn openai_embed(
             let mut total_compute_tokens = 0;
 
             for (i, r) in results.into_iter().enumerate() {
-                total_tokenization_time += r.tokenization.as_nanos() as u64;
-                total_queue_time += r.queue.as_nanos() as u64;
-                total_inference_time += r.inference.as_nanos() as u64;
-                total_compute_tokens += r.prompt_tokens;
+                total_tokenization_time += r.metadata.tokenization.as_nanos() as u64;
+                total_queue_time += r.metadata.queue.as_nanos() as u64;
+                total_inference_time += r.metadata.inference.as_nanos() as u64;
+                total_compute_tokens += r.metadata.prompt_tokens;
                 embeddings.push(OpenAICompatEmbedding {
                     object: "embedding",
                     embedding: r.results,
