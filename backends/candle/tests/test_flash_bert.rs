@@ -1,4 +1,5 @@
 #![allow(dead_code, unused_imports)]
+
 mod common;
 
 use crate::common::SnapshotScores;
@@ -23,26 +24,94 @@ fn test_flash_mini() -> Result<()> {
         ModelType::Embedding(Pool::Mean),
     )?;
 
-    let input_batch = batch(vec![
-        tokenizer.encode("What is Deep Learning?", true).unwrap(),
-        tokenizer.encode("Deep Learning is...", true).unwrap(),
-        tokenizer.encode("What is Deep Learning?", true).unwrap(),
-    ]);
+    let input_batch = batch(
+        vec![
+            tokenizer.encode("What is Deep Learning?", true).unwrap(),
+            tokenizer.encode("Deep Learning is...", true).unwrap(),
+            tokenizer.encode("What is Deep Learning?", true).unwrap(),
+        ],
+        [0, 1, 2].to_vec(),
+        vec![],
+    );
 
     let matcher = relative_matcher();
 
-    let embeddings_batch = SnapshotScores::from(backend.embed(input_batch)?);
+    let embeddings_batch = SnapshotScores::from(backend.embed(input_batch)?.pooled_embeddings);
     insta::assert_yaml_snapshot!("mini_batch", embeddings_batch, &matcher);
 
-    let input_single = batch(vec![tokenizer
-        .encode("What is Deep Learning?", true)
-        .unwrap()]);
+    let input_single = batch(
+        vec![tokenizer.encode("What is Deep Learning?", true).unwrap()],
+        [0].to_vec(),
+        vec![],
+    );
 
-    let embeddings_single = SnapshotScores::from(backend.embed(input_single)?);
+    let embeddings_single = SnapshotScores::from(backend.embed(input_single)?.pooled_embeddings);
 
     insta::assert_yaml_snapshot!("mini_single", embeddings_single, &matcher);
     assert_eq!(embeddings_batch[0], embeddings_single[0]);
     assert_eq!(embeddings_batch[2], embeddings_single[0]);
+
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+#[cfg(all(
+    feature = "cuda",
+    any(feature = "flash-attn", feature = "flash-attn-v1")
+))]
+fn test_flash_mini_pooled_raw() -> Result<()> {
+    let model_root = download_artifacts("sentence-transformers/all-MiniLM-L6-v2")?;
+    let tokenizer = load_tokenizer(&model_root)?;
+
+    let backend = CandleBackend::new(
+        model_root,
+        "float16".to_string(),
+        ModelType::Embedding(Pool::Cls),
+    )?;
+
+    let input_batch = batch(
+        vec![
+            tokenizer.encode("What is Deep Learning?", true).unwrap(),
+            tokenizer.encode("What is Deep Learning?", true).unwrap(),
+            tokenizer.encode("What is Deep Learning?", true).unwrap(),
+            tokenizer.encode("What is Deep Learning?", true).unwrap(),
+        ],
+        [0, 2].to_vec(),
+        [1, 3].to_vec(),
+    );
+
+    let matcher = relative_matcher();
+
+    let embeddings = backend.embed(input_batch)?;
+
+    let embeddings_batch = SnapshotScores::from(embeddings.pooled_embeddings);
+    insta::assert_yaml_snapshot!("mini_batch_pooled", embeddings_batch, &matcher);
+
+    let embeddings_batch = SnapshotScores::from(embeddings.raw_embeddings);
+    insta::assert_yaml_snapshot!("mini_batch_raw", embeddings_batch, &matcher);
+
+    let input_single = batch(
+        vec![tokenizer.encode("What is Deep Learning?", true).unwrap()],
+        [0].to_vec(),
+        vec![],
+    );
+
+    let embeddings_single = SnapshotScores::from(backend.embed(input_single)?.pooled_embeddings);
+    insta::assert_yaml_snapshot!("mini_single_pooled", embeddings_single, &matcher);
+    // assert_eq!(embeddings_batch[0], embeddings_single[0]);
+    // assert_eq!(embeddings_batch[1], embeddings_single[0]);
+
+    let input_single = batch(
+        vec![tokenizer.encode("Deep Learning is...", true).unwrap()],
+        vec![],
+        [0].to_vec(),
+    );
+
+    let embeddings_single = SnapshotScores::from(backend.embed(input_single)?.raw_embeddings);
+    insta::assert_yaml_snapshot!("mini_single_raw", embeddings_single, &matcher);
+    // assert_eq!(embeddings_batch[1], embeddings_single[0]);
+    // assert_eq!(embeddings_batch[3], embeddings_single[0]);
 
     Ok(())
 }
@@ -59,20 +128,28 @@ fn test_flash_emotions() -> Result<()> {
 
     let backend = CandleBackend::new(model_root, "float16".to_string(), ModelType::Classifier)?;
 
-    let input_batch = batch(vec![
-        tokenizer.encode("I like you.", true).unwrap(),
-        tokenizer
-            .encode("I am not having a great day.", true)
-            .unwrap(),
-        tokenizer.encode("I like you.", true).unwrap(),
-    ]);
+    let input_batch = batch(
+        vec![
+            tokenizer.encode("I like you.", true).unwrap(),
+            tokenizer
+                .encode("I am not having a great day.", true)
+                .unwrap(),
+            tokenizer.encode("I like you.", true).unwrap(),
+        ],
+        [0, 1, 2].to_vec(),
+        vec![],
+    );
 
     let matcher = relative_matcher();
 
     let predictions_batch = SnapshotScores::from(backend.predict(input_batch)?);
     insta::assert_yaml_snapshot!("emotions_batch", predictions_batch, &matcher);
 
-    let input_single = batch(vec![tokenizer.encode("I like you.", true).unwrap()]);
+    let input_single = batch(
+        vec![tokenizer.encode("I like you.", true).unwrap()],
+        [0].to_vec(),
+        vec![],
+    );
 
     let predictions_single = SnapshotScores::from(backend.predict(input_single)?);
 

@@ -2,7 +2,7 @@ mod logging;
 mod management;
 
 use backend_grpc_client::Client;
-use text_embeddings_backend_core::{Backend, BackendError, Batch, Embedding, ModelType, Pool};
+use text_embeddings_backend_core::{Backend, BackendError, Batch, Embeddings, ModelType, Pool};
 use tokio::runtime::Runtime;
 
 pub struct PythonBackend {
@@ -69,7 +69,13 @@ impl Backend for PythonBackend {
         false
     }
 
-    fn embed(&self, batch: Batch) -> Result<Vec<Embedding>, BackendError> {
+    fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError> {
+        if !batch.pooled_indices.is_empty() {
+            return Err(BackendError::Inference(
+                "raw embeddings are not supported for the Python backend.".to_string(),
+            ));
+        }
+
         let results = self
             .tokio_runtime
             .block_on(self.backend_client.clone().embed(
@@ -80,7 +86,12 @@ impl Backend for PythonBackend {
                 batch.max_length,
             ))
             .map_err(|err| BackendError::Inference(err.to_string()))?;
-        Ok(results.into_iter().map(|r| r.values).collect())
+        let pooled_embeddings = results.into_iter().map(|r| r.values).collect();
+
+        Ok(Embeddings {
+            pooled_embeddings,
+            raw_embeddings: vec![],
+        })
     }
 
     fn predict(&self, _batch: Batch) -> Result<Vec<Vec<f32>>, BackendError> {

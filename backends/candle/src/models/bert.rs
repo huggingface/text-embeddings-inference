@@ -592,25 +592,87 @@ impl BertModel {
             .embeddings
             .forward(&input_ids, &type_ids, &position_ids)?;
 
-        let mut outputs = self
+        let outputs = self
             .encoder
             .forward(&embedding_output, attention_bias.as_ref())?;
 
-        let results = match self.pool {
-            // CLS pooling
-            Pool::Cls => outputs.i((.., 0))?,
-            // Mean pooling
-            Pool::Mean => {
-                if let Some(attention_mask) = attention_mask {
-                    // Mask padded values
-                    outputs = outputs.broadcast_mul(&attention_mask)?;
-                }
+        let pooled_embeddings = if !batch.pooled_indices.is_empty() {
+            let pooled_indices_length = batch.pooled_indices.len();
+            let mut outputs = outputs.clone();
 
-                (outputs.sum(1)?.broadcast_div(&input_lengths))?
-            }
+            // Only use pooled_indices if at least one member of the batch ask for raw
+            // embeddings
+            let pooled_indices = if !batch.raw_indices.is_empty() {
+                let pooled_indices =
+                    Tensor::from_vec(batch.pooled_indices, pooled_indices_length, &self.device)?;
+
+                // Select values in the batch
+                outputs = outputs.index_select(&pooled_indices, 0)?;
+                Some(pooled_indices)
+            } else {
+                None
+            };
+
+            let pooled_embeddings = match self.pool {
+                // CLS pooling
+                Pool::Cls => outputs.i((.., 0))?,
+                // Mean pooling
+                Pool::Mean => {
+                    if let Some(attention_mask) = attention_mask {
+                        let mut attention_mask = attention_mask.clone();
+
+                        if let Some(pooled_indices) = pooled_indices {
+                            // Select values in the batch
+                            attention_mask = attention_mask.index_select(&pooled_indices, 0)?;
+                        };
+
+                        // Mask padded values
+                        outputs = outputs.broadcast_mul(&attention_mask)?;
+                    }
+
+                    (outputs.sum(1)?.broadcast_div(&input_lengths))?
+                }
+            };
+            Some(pooled_embeddings)
+        } else {
+            None
         };
 
-        Ok((Some(results), None))
+        let raw_embeddings = if !batch.raw_indices.is_empty() {
+            // Reshape outputs
+            let (b, l, h) = outputs.shape().dims3()?;
+            let outputs = outputs.reshape((b * l, h))?;
+
+            if batch_size > 1 {
+                let mut final_indices: Vec<u32> = Vec::with_capacity(batch_size * max_length);
+
+                for i in batch.raw_indices.into_iter() {
+                    let start = i * batch.max_length;
+                    let i = i as usize;
+                    let length =
+                        batch.cumulative_seq_lengths[i + 1] - batch.cumulative_seq_lengths[i];
+
+                    for j in start..start + length {
+                        // Add indices for the tokens of this specific member of the batch
+                        final_indices.push(j);
+                    }
+                }
+
+                let final_indices_length = final_indices.len();
+                let final_indices =
+                    Tensor::from_vec(final_indices, final_indices_length, &self.device)?;
+
+                // Select the tokens with final indices
+                Some(outputs.index_select(&final_indices, 0)?)
+            } else {
+                // If batch size == 1, there is no padding to remove
+                Some(outputs)
+            }
+        } else {
+            None
+        };
+
+        Ok((pooled_embeddings, raw_embeddings))
     }
 }
 
@@ -628,7 +690,8 @@ impl Model for BertModel {
             None => candle::bail!("`predict` is not implemented for this model"),
             Some(classifier) => {
                 let (pooled_embeddings, _raw_embeddings) = self.forward(batch)?;
-                let pooled_embeddings = pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
+                let pooled_embeddings =
+                    pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
                 classifier.forward(&pooled_embeddings)
             }
         }

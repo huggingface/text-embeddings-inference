@@ -123,18 +123,17 @@ pub fn load_tokenizer(model_root: &Path) -> Result<Tokenizer> {
     Ok(tokenizer)
 }
 
-pub fn batch(encodings: Vec<Encoding>) -> Batch {
+pub fn batch(encodings: Vec<Encoding>, pooled_indices: Vec<u32>, raw_indices: Vec<u32>) -> Batch {
     let mut input_ids = Vec::new();
     let mut token_type_ids = Vec::new();
     let mut position_ids = Vec::new();
-    let mut pooled_indices = Vec::new();
     let mut cumulative_seq_lengths = Vec::with_capacity(encodings.len() + 1);
     cumulative_seq_lengths.push(0);
 
     let mut max_length = 0;
     let mut cumulative_length = 0;
 
-    for (i, encoding) in encodings.iter().enumerate() {
+    for encoding in encodings.iter() {
         let encoding_length = encoding.len() as u32;
         input_ids.extend(encoding.get_ids().to_vec());
         token_type_ids.extend(encoding.get_type_ids().to_vec());
@@ -142,7 +141,6 @@ pub fn batch(encodings: Vec<Encoding>) -> Batch {
         cumulative_length += encoding_length;
         cumulative_seq_lengths.push(cumulative_length);
         max_length = max(max_length, encoding_length);
-        pooled_indices.push(i as u32);
     }
 
     Batch {
@@ -152,6 +150,6 @@ pub fn batch(encodings: Vec<Encoding>) -> Batch {
         cumulative_seq_lengths,
         max_length,
         pooled_indices,
-        raw_indices: vec![]
+        raw_indices,
     }
 }

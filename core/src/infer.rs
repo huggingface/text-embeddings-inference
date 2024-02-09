@@ -235,7 +235,7 @@ impl Infer {
                 prompt_tokens: encoding.input_ids.len(),
             },
             encoding,
-            pooling: true
+            pooling: true,
         });
 
         self.notify_batching_task.notify_one();
@@ -337,7 +337,10 @@ async fn backend_task(
     while let Some((batch, _callback)) = embed_receiver.recv().await {
         let results = match &backend.model_type {
             ModelType::Classifier => backend.predict(batch.1).await,
-            ModelType::Embedding(_) => backend.embed(batch.1).await,
+            ModelType::Embedding(_) => backend
+                .embed(batch.1)
+                .await
+                .map(|(e, d)| (e.pooled_embeddings, d)),
         };
 
         // Handle sending responses in another thread to avoid starving the backend

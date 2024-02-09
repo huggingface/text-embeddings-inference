@@ -9,7 +9,7 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{instrument, Span};
 
 pub use crate::dtype::DType;
-pub use text_embeddings_backend_core::{BackendError, Batch, Embedding, ModelType, Pool};
+pub use text_embeddings_backend_core::{BackendError, Batch, Embeddings, ModelType, Pool};
 
 #[cfg(feature = "candle")]
 use text_embeddings_backend_candle::CandleBackend;
@@ -102,7 +102,7 @@ impl Backend {
     }
 
     #[instrument(skip_all)]
-    pub async fn embed(&self, batch: Batch) -> Result<(Vec<Embedding>, Duration), BackendError> {
+    pub async fn embed(&self, batch: Batch) -> Result<(Embeddings, Duration), BackendError> {
         let (sender, receiver) = oneshot::channel();
 
         self.backend_sender
@@ -213,7 +213,7 @@ enum BackendCommand {
     Embed(
         Batch,
         Span,
-        oneshot::Sender<Result<(Vec<Embedding>, Duration), BackendError>>,
+        oneshot::Sender<Result<(Embeddings, Duration), BackendError>>,
     ),
     Predict(
         Batch,

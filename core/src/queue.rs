@@ -192,7 +192,7 @@ fn queue_blocking_task(
                             cumulative_seq_lengths: cu_seq_lengths,
                             max_length,
                             pooled_indices,
-                            raw_indices
+                            raw_indices,
                         },
                     ))
                 };

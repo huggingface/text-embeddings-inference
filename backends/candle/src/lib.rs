@@ -19,7 +19,7 @@ use candle::{DType, Device};
 use candle_nn::VarBuilder;
 use models::Config;
 use std::path::PathBuf;
-use text_embeddings_backend_core::{Backend, BackendError, Batch, Embedding, ModelType};
+use text_embeddings_backend_core::{Backend, BackendError, Batch, Embeddings, ModelType};
 
 pub struct CandleBackend {
     model: Box<dyn Model + Send>,
@@ -148,10 +148,27 @@ impl Backend for CandleBackend {
         self.model.is_padded()
     }
 
-    fn embed(&self, batch: Batch) -> Result<Vec<Embedding>, BackendError> {
-        let (pooled_embeddings, _raw_embeddings) = self.model.embed(batch).e()?;
-        let results = pooled_embeddings.unwrap().to_dtype(DType::F32).e()?.to_vec2().e()?;
-        Ok(results)
+    fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError> {
+        let (pooled_embeddings, raw_embeddings) = self.model.embed(batch).e()?;
+
+        // Device => Host data transfer
+        let pooled_embeddings = match pooled_embeddings {
+            None => vec![],
+            Some(pooled_embeddings) => pooled_embeddings.to_dtype(DType::F32).e()?.to_vec2().e()?,
+        };
+
+        // This transfer is expensive...
+        let raw_embeddings = match raw_embeddings {
+            None => vec![],
+            Some(raw_embeddings) => raw_embeddings.to_dtype(DType::F32).e()?.to_vec2().e()?,
+        };
+
+        let embeddings = Embeddings {
+            pooled_embeddings,
+            raw_embeddings,
+        };
+
+        Ok(embeddings)
     }
 
     fn predict(&self, batch: Batch) -> Result<Vec<Vec<f32>>, BackendError> {

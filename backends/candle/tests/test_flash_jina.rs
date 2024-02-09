@@ -20,22 +20,28 @@ fn test_flash_jina_small() -> Result<()> {
         ModelType::Embedding(Pool::Mean),
     )?;
 
-    let input_batch = batch(vec![
-        tokenizer.encode("What is Deep Learning?", true).unwrap(),
-        tokenizer.encode("Deep Learning is...", true).unwrap(),
-        tokenizer.encode("What is Deep Learning?", true).unwrap(),
-    ]);
+    let input_batch = batch(
+        vec![
+            tokenizer.encode("What is Deep Learning?", true).unwrap(),
+            tokenizer.encode("Deep Learning is...", true).unwrap(),
+            tokenizer.encode("What is Deep Learning?", true).unwrap(),
+        ],
+        [0, 1, 2].to_vec(),
+        vec![],
+    );
 
     let matcher = relative_matcher();
 
-    let embeddings_batch = SnapshotScores::from(backend.embed(input_batch)?);
+    let embeddings_batch = SnapshotScores::from(backend.embed(input_batch)?.pooled_embeddings);
     insta::assert_yaml_snapshot!("jina_batch", embeddings_batch, &matcher);
 
-    let input_single = batch(vec![tokenizer
-        .encode("What is Deep Learning?", true)
-        .unwrap()]);
+    let input_single = batch(
+        vec![tokenizer.encode("What is Deep Learning?", true).unwrap()],
+        [0].to_vec(),
+        vec![],
+    );
 
-    let embeddings_single = SnapshotScores::from(backend.embed(input_single)?);
+    let embeddings_single = SnapshotScores::from(backend.embed(input_single)?.pooled_embeddings);
 
     insta::assert_yaml_snapshot!("jina_single", embeddings_single, &matcher);
     assert_eq!(embeddings_batch[0], embeddings_single[0]);
