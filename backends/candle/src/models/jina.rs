@@ -569,17 +569,19 @@ impl JinaBertModel {
             .embeddings
             .forward(&input_ids, &type_ids, &position_ids)?;
 
-        let mut outputs = self
+        let outputs = self
             .encoder
             .forward(&embedding_output, attention_bias.as_ref())?;
 
-        let pooled_embeddings = if !batch.pooled_indices.is_empty() {
+        let has_pooling_requests = !batch.pooled_indices.is_empty();
+        let has_raw_requests = !batch.raw_indices.is_empty();
+
+        let pooled_embeddings = if has_pooling_requests {
             let pooled_indices_length = batch.pooled_indices.len();
             let mut outputs = outputs.clone();
 
-            // Only use pooled_indices if at least one member of the batch ask for raw
-            // embeddings
-            let pooled_indices = if !batch.raw_indices.is_empty() {
+            // Only use pooled_indices if at least one member of the batch ask for raw embeddings
+            let pooled_indices = if has_raw_requests {
                 let pooled_indices =
                     Tensor::from_vec(batch.pooled_indices, pooled_indices_length, &self.device)?;
 
@@ -595,7 +597,7 @@ impl JinaBertModel {
                 Pool::Cls => outputs.i((.., 0))?,
                 // Mean pooling
                 Pool::Mean => {
-                    if let Some(attention_mask) = attention_mask {
+                    if let Some(ref attention_mask) = attention_mask {
                         let mut attention_mask = attention_mask.clone();
 
                         if let Some(pooled_indices) = pooled_indices {
@@ -615,12 +617,17 @@ impl JinaBertModel {
             None
         };
 
-        let raw_embeddings = if !batch.raw_indices.is_empty() {
+        let raw_embeddings = if has_raw_requests {
             // Reshape outputs
             let (b, l, h) = outputs.shape().dims3()?;
             let outputs = outputs.reshape((b * l, h))?;
 
-            if batch_size > 1 {
+            // We need to remove the padding tokens only if batch_size > 1 and there are some
+            // member of the batch that require pooling
+            // or if batch_size > 1 and the members of the batch have different lengths
+            if (batch_size > 1 && has_pooling_requests)
+                || (batch_size > 1 && attention_mask.is_some())
+            {
                 let mut final_indices: Vec<u32> = Vec::with_capacity(batch_size * max_length);
 
                 for i in batch.raw_indices.into_iter() {
@@ -642,7 +649,6 @@ impl JinaBertModel {
                 // Select the tokens with final indices
                 Some(outputs.index_select(&final_indices, 0)?)
             } else {
-                // If batch size == 1, there is no padding to remove
                 Some(outputs)
             }
         } else {

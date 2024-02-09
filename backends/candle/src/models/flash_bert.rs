@@ -2,7 +2,7 @@ use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{LayerNorm, Linear};
 use crate::models::bert::{Config, PositionEmbeddingType};
 use crate::models::Model;
-use candle::{DType, Device, Result, Tensor, IndexOp};
+use candle::{DType, Device, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
@@ -412,33 +412,32 @@ impl FlashBertModel {
             self.encoder
                 .forward(&embedding_output, &cu_seqlens, batch.max_length as usize)?;
 
-        let pooled_embeddings = if !batch.pooled_indices.is_empty() {
+        let has_pooling_requests = !batch.pooled_indices.is_empty();
+        let has_raw_requests = !batch.raw_indices.is_empty();
+
+        let pooled_embeddings = if has_pooling_requests {
             match self.pool {
                 // CLS pooling
                 Pool::Cls => {
-                    if batch_size > 1 {
-                        // Get the indices of the cls tokens from cu_seqlens
-                        let mut cls_indices = cu_seqlens.narrow(0, 0, batch_size)?;
+                    // Get the indices of the cls tokens from cu_seqlens
+                    let mut cls_indices = cu_seqlens.narrow(0, 0, batch_size)?;
 
-                        // If raw_indices is empty, we don't need to do anything with
-                        // the pooled_indices
-                        if !batch.raw_indices.is_empty() {
-                            // We need the pooled indices to select the correct cls indices
-                            let pooled_indices = Tensor::from_vec(
-                                batch.pooled_indices.clone(),
-                                batch.pooled_indices.len(),
-                                &self.device,
-                            )?;
+                    // If raw_indices is empty, we don't need to do anything with
+                    // the pooled_indices
+                    if has_raw_requests {
+                        // We need the pooled indices to select the correct cls indices
+                        let pooled_indices = Tensor::from_vec(
+                            batch.pooled_indices.clone(),
+                            batch.pooled_indices.len(),
+                            &self.device,
+                        )?;
 
-                            // Only select indices that requires pooling
-                            cls_indices = cls_indices.index_select(&pooled_indices, 0)?
-                        }
-
-                        // Select cls tokens
-                        Some(outputs.index_select(&cls_indices, 0)?)
-                    } else {
-                        Some(outputs.i(0)?)
+                        // Only select indices that requires pooling
+                        cls_indices = cls_indices.index_select(&pooled_indices, 0)?
                     }
+
+                    // Select cls tokens
+                    Some(outputs.index_select(&cls_indices, 0)?)
                 }
                 // Mean pooling
                 Pool::Mean => {
@@ -469,8 +468,8 @@ impl FlashBertModel {
             None
         };
 
-        let raw_embeddings = if !batch.raw_indices.is_empty() {
-            if batch_size > 1 && !batch.pooled_indices.is_empty() {
+        let raw_embeddings = if has_raw_requests {
+            if batch_size > 1 && has_pooling_requests {
                 // Create indexing vector for the embeddings
                 let mut final_indices: Vec<u32> = Vec::with_capacity(shape);
                 for i in batch.raw_indices.into_iter() {

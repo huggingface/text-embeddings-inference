@@ -386,7 +386,10 @@ impl FlashJinaBertModel {
             self.encoder
                 .forward(&embedding_output, &cu_seqlens, batch.max_length as usize)?;
 
-        let pooled_embeddings = if !batch.pooled_indices.is_empty() {
+        let has_pooling_requests = !batch.pooled_indices.is_empty();
+        let has_raw_requests = !batch.raw_indices.is_empty();
+
+        let pooled_embeddings = if has_pooling_requests {
             match self.pool {
                 // CLS pooling
                 Pool::Cls => {
@@ -396,7 +399,7 @@ impl FlashJinaBertModel {
 
                         // If raw_indices is empty, we don't need to do anything with
                         // the pooled_indices
-                        if !batch.raw_indices.is_empty() {
+                        if has_raw_requests {
                             // We need the pooled indices to select the correct cls indices
                             let pooled_indices = Tensor::from_vec(
                                 batch.pooled_indices.clone(),
@@ -443,8 +446,8 @@ impl FlashJinaBertModel {
             None
         };
 
-        let raw_embeddings = if !batch.raw_indices.is_empty() {
-            if batch_size > 1 && !batch.pooled_indices.is_empty() {
+        let raw_embeddings = if has_raw_requests {
+            if batch_size > 1 && has_pooling_requests {
                 // Create indexing vector for the embeddings
                 let mut final_indices: Vec<u32> = Vec::with_capacity(shape);
                 for i in batch.raw_indices.into_iter() {
