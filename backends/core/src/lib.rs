@@ -10,7 +10,14 @@ pub struct Batch {
     pub position_ids: Vec<u32>,
     pub cumulative_seq_lengths: Vec<u32>,
     pub max_length: u32,
+    pub pooled_indices: Vec<u32>,
+    pub raw_indices: Vec<u32>,
 }
+
+// pub enum Embedding {
+//     Pooled(Vec<f32>),
+//     Raw(Vec<f32>),
+// }
 
 pub type Embedding = Vec<f32>;
 

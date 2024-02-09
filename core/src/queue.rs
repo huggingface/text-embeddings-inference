@@ -14,6 +14,8 @@ pub struct Entry {
     pub encoding: ValidEncoding,
     /// Entry metadata
     pub metadata: Metadata,
+    /// Apply pooling
+    pub pooling: bool,
 }
 
 /// Entry metadata
@@ -122,12 +124,16 @@ fn queue_blocking_task(
                 let mut token_type_ids = Vec::with_capacity(max_batch_tokens);
                 let mut position_ids = Vec::with_capacity(max_batch_tokens);
 
+                let mut pooled_indices = Vec::with_capacity(capacity);
+                let mut raw_indices = Vec::with_capacity(capacity);
                 let mut metadata = Vec::with_capacity(capacity);
                 let mut cu_seq_lengths = Vec::with_capacity(capacity);
                 cu_seq_lengths.push(0);
 
                 let mut current_tokens = 0;
                 let mut max_length = 0;
+
+                let mut entry_index = 0;
 
                 while let Some(entry) = entries.pop_front() {
                     // Filter entries where the response receiver was dropped (== entries where the request
@@ -161,6 +167,13 @@ fn queue_blocking_task(
                     metadata.push(entry.metadata);
                     cu_seq_lengths.push(current_tokens as u32);
 
+                    match entry.pooling {
+                        true => pooled_indices.push(entry_index),
+                        false => raw_indices.push(entry_index),
+                    }
+
+                    entry_index += 1;
+
                     if Some(metadata.len()) == max_batch_requests {
                         break;
                     }
@@ -178,6 +191,8 @@ fn queue_blocking_task(
                             position_ids,
                             cumulative_seq_lengths: cu_seq_lengths,
                             max_length,
+                            pooled_indices,
+                            raw_indices
                         },
                     ))
                 };

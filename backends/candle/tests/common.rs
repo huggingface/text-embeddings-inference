@@ -5,7 +5,7 @@ use insta::internals::YamlMatcher;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::ops::Deref;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use text_embeddings_backend_core::Batch;
 use tokenizers::pre_tokenizers::metaspace::PrependScheme;
 use tokenizers::pre_tokenizers::sequence::Sequence;
@@ -45,7 +45,7 @@ impl From<Vec<Vec<f32>>> for SnapshotScores {
         Self(
             value
                 .into_iter()
-                .map(|v| v.into_iter().map(|s| Score(s)).collect())
+                .map(|v| v.into_iter().map(Score).collect())
                 .collect(),
         )
     }
@@ -77,7 +77,7 @@ pub fn relative_matcher() -> YamlMatcher<SnapshotScores> {
     YamlMatcher::new()
 }
 
-pub fn load_tokenizer(model_root: &PathBuf) -> Result<Tokenizer> {
+pub fn load_tokenizer(model_root: &Path) -> Result<Tokenizer> {
     // Load tokenizer
     let tokenizer_path = model_root.join("tokenizer.json");
     let mut tokenizer = Tokenizer::from_file(tokenizer_path).expect("tokenizer.json not found");
@@ -93,8 +93,7 @@ pub fn load_tokenizer(model_root: &PathBuf) -> Result<Tokenizer> {
             // Check if we have a Metaspace pre tokenizer in the sequence
             let has_metaspace = pre_tokenizers
                 .iter()
-                .find(|t| matches!(t, PreTokenizerWrapper::Metaspace(_)))
-                .is_some();
+                .any(|t| matches!(t, PreTokenizerWrapper::Metaspace(_)));
 
             if has_metaspace {
                 let mut new_pre_tokenizers = Vec::with_capacity(s.get_pre_tokenizers().len());
@@ -128,13 +127,14 @@ pub fn batch(encodings: Vec<Encoding>) -> Batch {
     let mut input_ids = Vec::new();
     let mut token_type_ids = Vec::new();
     let mut position_ids = Vec::new();
+    let mut pooled_indices = Vec::new();
     let mut cumulative_seq_lengths = Vec::with_capacity(encodings.len() + 1);
     cumulative_seq_lengths.push(0);
 
     let mut max_length = 0;
     let mut cumulative_length = 0;
 
-    for encoding in encodings {
+    for (i, encoding) in encodings.iter().enumerate() {
         let encoding_length = encoding.len() as u32;
         input_ids.extend(encoding.get_ids().to_vec());
         token_type_ids.extend(encoding.get_type_ids().to_vec());
@@ -142,6 +142,7 @@ pub fn batch(encodings: Vec<Encoding>) -> Batch {
         cumulative_length += encoding_length;
         cumulative_seq_lengths.push(cumulative_length);
         max_length = max(max_length, encoding_length);
+        pooled_indices.push(i as u32);
     }
 
     Batch {
@@ -150,5 +151,7 @@ pub fn batch(encodings: Vec<Encoding>) -> Batch {
         position_ids,
         cumulative_seq_lengths,
         max_length,
+        pooled_indices,
+        raw_indices: vec![]
     }
 }

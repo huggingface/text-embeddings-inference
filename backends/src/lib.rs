@@ -86,6 +86,8 @@ impl Backend {
                 position_ids: vec![0],
                 cumulative_seq_lengths: vec![0, 1],
                 max_length: 1,
+                pooled_indices: vec![0],
+                raw_indices: vec![],
             };
             match &self.model_type {
                 ModelType::Classifier => self.predict(batch).await.map(|_| ()),

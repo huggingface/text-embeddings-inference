@@ -473,7 +473,7 @@ impl BertModel {
         })
     }
 
-    pub fn forward(&self, batch: Batch) -> Result<Tensor> {
+    pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         let _enter = self.span.enter();
 
         let batch_size = batch.cumulative_seq_lengths.len() - 1;
@@ -610,7 +610,7 @@ impl BertModel {
             }
         };
 
-        Ok(results)
+        Ok((Some(results), None))
     }
 }
 
@@ -619,7 +619,7 @@ impl Model for BertModel {
         true
     }
 
-    fn embed(&self, batch: Batch) -> Result<Tensor> {
+    fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
     }
 
@@ -627,8 +627,9 @@ impl Model for BertModel {
         match &self.classifier {
             None => candle::bail!("`predict` is not implemented for this model"),
             Some(classifier) => {
-                let hidden_states = self.forward(batch)?;
-                classifier.forward(&hidden_states)
+                let (pooled_embeddings, _raw_embeddings) = self.forward(batch)?;
+                let pooled_embeddings = pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
+                classifier.forward(&pooled_embeddings)
             }
         }
     }

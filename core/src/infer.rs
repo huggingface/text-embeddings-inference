@@ -140,6 +140,7 @@ impl Infer {
                 prompt_tokens: encoding.input_ids.len(),
             },
             encoding,
+            pooling: true,
         });
 
         self.notify_batching_task.notify_one();
@@ -234,6 +235,7 @@ impl Infer {
                 prompt_tokens: encoding.input_ids.len(),
             },
             encoding,
+            pooling: true
         });
 
         self.notify_batching_task.notify_one();

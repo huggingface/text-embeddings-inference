@@ -149,8 +149,8 @@ impl Backend for CandleBackend {
     }
 
     fn embed(&self, batch: Batch) -> Result<Vec<Embedding>, BackendError> {
-        let results = self.model.embed(batch).e()?;
-        let results = results.to_dtype(DType::F32).e()?.to_vec2().e()?;
+        let (pooled_embeddings, _raw_embeddings) = self.model.embed(batch).e()?;
+        let results = pooled_embeddings.unwrap().to_dtype(DType::F32).e()?.to_vec2().e()?;
         Ok(results)
     }
 
