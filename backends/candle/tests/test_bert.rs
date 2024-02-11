@@ -1,6 +1,6 @@
 mod common;
 
-use crate::common::SnapshotScores;
+use crate::common::{sort_embeddings, SnapshotScores};
 use anyhow::Result;
 use common::{batch, download_artifacts, load_tokenizer, relative_matcher};
 use text_embeddings_backend_candle::CandleBackend;
@@ -30,7 +30,8 @@ fn test_mini() -> Result<()> {
 
     let matcher = relative_matcher();
 
-    let embeddings_batch = SnapshotScores::from(backend.embed(input_batch)?.pooled_embeddings);
+    let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_batch)?);
+    let embeddings_batch = SnapshotScores::from(pooled_embeddings);
     insta::assert_yaml_snapshot!("mini_batch", embeddings_batch, &matcher);
 
     let input_single = batch(
@@ -39,7 +40,8 @@ fn test_mini() -> Result<()> {
         vec![],
     );
 
-    let embeddings_single = SnapshotScores::from(backend.embed(input_single)?.pooled_embeddings);
+    let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_single)?);
+    let embeddings_single = SnapshotScores::from(pooled_embeddings);
 
     insta::assert_yaml_snapshot!("mini_single", embeddings_single, &matcher);
     assert_eq!(embeddings_batch[0], embeddings_single[0]);
@@ -54,9 +56,9 @@ fn test_mini() -> Result<()> {
         [1].to_vec(),
     );
 
-    let embeddings = backend.embed(input_batch)?;
-    let pooled_embeddings = SnapshotScores::from(embeddings.pooled_embeddings);
-    let raw_embeddings = SnapshotScores::from(embeddings.raw_embeddings);
+    let (pooled_embeddings, raw_embeddings) = sort_embeddings(backend.embed(input_batch)?);
+    let pooled_embeddings = SnapshotScores::from(pooled_embeddings);
+    let raw_embeddings = SnapshotScores::from(raw_embeddings);
 
     assert_eq!(embeddings_batch[0], pooled_embeddings[0]);
     assert_eq!(raw_embeddings.len(), 8);
@@ -91,11 +93,11 @@ fn test_mini_pooled_raw() -> Result<()> {
 
     let matcher = relative_matcher();
 
-    let embeddings = backend.embed(input_batch)?;
-    let pooled_embeddings_batch = SnapshotScores::from(embeddings.pooled_embeddings);
+    let (pooled_embeddings, raw_embeddings) = sort_embeddings(backend.embed(input_batch)?);
+    let pooled_embeddings_batch = SnapshotScores::from(pooled_embeddings);
     insta::assert_yaml_snapshot!("mini_batch_pooled", pooled_embeddings_batch, &matcher);
 
-    let raw_embeddings_batch = SnapshotScores::from(embeddings.raw_embeddings);
+    let raw_embeddings_batch = SnapshotScores::from(raw_embeddings);
     insta::assert_yaml_snapshot!("mini_batch_raw", raw_embeddings_batch, &matcher);
 
     // Check that the first token of each raw embeddings member is the same as the cls pooling ones
@@ -110,8 +112,8 @@ fn test_mini_pooled_raw() -> Result<()> {
         vec![],
     );
 
-    let embeddings_single = backend.embed(input_single)?;
-    let embeddings_single = SnapshotScores::from(embeddings_single.pooled_embeddings);
+    let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_single)?);
+    let embeddings_single = SnapshotScores::from(pooled_embeddings);
     insta::assert_yaml_snapshot!("mini_single_pooled", embeddings_single, &matcher);
 
     assert_eq!(pooled_embeddings_batch[0], embeddings_single[0]);
@@ -123,9 +125,8 @@ fn test_mini_pooled_raw() -> Result<()> {
         [0].to_vec(),
     );
 
-    let embeddings_single = backend.embed(input_single)?;
-
-    let embeddings_single = SnapshotScores::from(embeddings_single.raw_embeddings);
+    let (_, raw_embeddings) = sort_embeddings(backend.embed(input_single)?);
+    let embeddings_single = SnapshotScores::from(raw_embeddings);
     insta::assert_yaml_snapshot!("mini_single_raw", embeddings_single, &matcher);
 
     assert_eq!(raw_embeddings_batch[0], embeddings_single[0]);
@@ -157,7 +158,12 @@ fn test_emotions() -> Result<()> {
 
     let matcher = relative_matcher();
 
-    let predictions_batch = SnapshotScores::from(backend.predict(input_batch)?);
+    let predictions: Vec<Vec<f32>> = backend
+        .predict(input_batch)?
+        .into_iter()
+        .map(|(_, v)| v)
+        .collect();
+    let predictions_batch = SnapshotScores::from(predictions);
     insta::assert_yaml_snapshot!("emotions_batch", predictions_batch, &matcher);
 
     let input_single = batch(
@@ -166,7 +172,12 @@ fn test_emotions() -> Result<()> {
         vec![],
     );
 
-    let predictions_single = SnapshotScores::from(backend.predict(input_single)?);
+    let predictions: Vec<Vec<f32>> = backend
+        .predict(input_single)?
+        .into_iter()
+        .map(|(_, v)| v)
+        .collect();
+    let predictions_single = SnapshotScores::from(predictions);
 
     insta::assert_yaml_snapshot!("emotions_single", predictions_single, &matcher);
     assert_eq!(predictions_batch[0], predictions_single[0]);

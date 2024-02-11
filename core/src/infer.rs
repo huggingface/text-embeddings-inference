@@ -109,9 +109,8 @@ impl Infer {
             .embed(inputs, truncate, false, &start_time, permit)
             .await?;
 
-        let response = match results {
-            InferResult::AllEmbedding(embeddings) => embeddings,
-            _ => panic!("unexpected enum variant. this is a bug"),
+        let InferResult::AllEmbedding(response) = results else {
+            panic!("unexpected enum variant")
         };
 
         // Timings
@@ -150,28 +149,26 @@ impl Infer {
             .embed(inputs, truncate, true, &start_time, permit)
             .await?;
 
-        let response = match results {
-            InferResult::PooledEmbedding(mut embeddings) => {
-                if normalize {
-                    // Normalize embedding
-                    let scale = (1.0
-                        / embeddings
-                            .results
-                            .iter()
-                            .map(|v| {
-                                let v = *v as f64;
-                                v * v
-                            })
-                            .sum::<f64>()
-                            .sqrt()) as f32;
-                    for v in embeddings.results.iter_mut() {
-                        *v *= scale;
-                    }
-                }
-                embeddings
-            }
-            _ => panic!("unexpected enum variant. this is a bug"),
+        let InferResult::PooledEmbedding(mut response) = results else {
+            panic!("unexpected enum variant")
         };
+
+        if normalize {
+            // Normalize embedding
+            let scale = (1.0
+                / response
+                    .results
+                    .iter()
+                    .map(|v| {
+                        let v = *v as f64;
+                        v * v
+                    })
+                    .sum::<f64>()
+                    .sqrt()) as f32;
+            for v in response.results.iter_mut() {
+                *v *= scale;
+            }
+        }
 
         // Timings
         let total_time = start_time.elapsed();
@@ -314,9 +311,8 @@ impl Infer {
                 err
             })?;
 
-        let mut response = match response {
-            InferResult::Classification(response) => response,
-            _ => panic!("unexpected enum variant. this is a bug"),
+        let InferResult::Classification(mut response) = response else {
+            panic!("unexpected enum variant")
         };
 
         if !raw_scores {

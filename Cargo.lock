@@ -3323,6 +3323,7 @@ name = "text-embeddings-backend-python"
 version = "0.6.0"
 dependencies = [
  "backend-grpc-client",
+ "nohash-hasher",
  "serde",
  "serde_json",
  "text-embeddings-backend-core",

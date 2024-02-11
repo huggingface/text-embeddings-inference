@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use text_embeddings_backend_core::Batch;
+use text_embeddings_backend_core::{Batch, Embedding, Embeddings};
 use tokenizers::pre_tokenizers::metaspace::PrependScheme;
 use tokenizers::pre_tokenizers::sequence::Sequence;
 use tokenizers::{Encoding, PreTokenizerWrapper, Tokenizer};
@@ -49,6 +49,20 @@ impl From<Vec<Vec<f32>>> for SnapshotScores {
                 .collect(),
         )
     }
+}
+
+pub fn sort_embeddings(embeddings: Embeddings) -> (Vec<Vec<f32>>, Vec<Vec<f32>>) {
+    let mut pooled_embeddings = Vec::new();
+    let mut raw_embeddings = Vec::new();
+
+    for (_, embedding) in embeddings {
+        match embedding {
+            Embedding::Pooled(e) => pooled_embeddings.push(e),
+            Embedding::All(e) => raw_embeddings.extend(e),
+        }
+    }
+
+    (pooled_embeddings, raw_embeddings)
 }
 
 pub fn download_artifacts(model_id: &'static str) -> Result<PathBuf> {
