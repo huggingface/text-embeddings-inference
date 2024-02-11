@@ -36,7 +36,7 @@ fn test_flash_mini() -> Result<()> {
 
     let matcher = relative_matcher();
 
-    let (pooled_embeddings, raw_embeddings) = sort_embeddings(backend.embed(input_batch)?);
+    let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_batch)?);
     let embeddings_batch = SnapshotScores::from(pooled_embeddings);
     insta::assert_yaml_snapshot!("mini_batch", embeddings_batch, &matcher);
 
@@ -46,7 +46,7 @@ fn test_flash_mini() -> Result<()> {
         vec![],
     );
 
-    let (pooled_embeddings, raw_embeddings) = sort_embeddings(backend.embed(input_single)?);
+    let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_single)?);
     let embeddings_single = SnapshotScores::from(pooled_embeddings);
 
     insta::assert_yaml_snapshot!("mini_single", embeddings_single, &matcher);
