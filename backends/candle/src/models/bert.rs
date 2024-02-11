@@ -359,14 +359,49 @@ impl BertEncoder {
     }
 }
 
-struct BertClassificationHead {
-    intermediate: Linear,
+pub trait ClassificationHead {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
+}
+
+pub struct BertClassificationHead {
     output: Linear,
     span: tracing::Span,
 }
 
 impl BertClassificationHead {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub(crate) fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+        let n_classes = match &config.id2label {
+            None => candle::bail!("`id2label` must be set for classifier models"),
+            Some(id2label) => id2label.len(),
+        };
+
+        let output_weight = vb.get((n_classes, config.hidden_size), "weight")?;
+        let output_bias = vb.get(n_classes, "bias")?;
+        let output = Linear::new(output_weight, Some(output_bias), None);
+
+        Ok(Self {
+            output,
+            span: tracing::span!(tracing::Level::TRACE, "classifier"),
+        })
+    }
+}
+
+impl ClassificationHead for BertClassificationHead {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+        let hidden_states = self.output.forward(&hidden_states)?;
+        Ok(hidden_states)
+    }
+}
+
+pub struct RobertaClassificationHead {
+    intermediate: Linear,
+    output: Linear,
+    span: tracing::Span,
+}
+
+impl RobertaClassificationHead {
+    pub(crate) fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
         let n_classes = match &config.id2label {
             None => candle::bail!("`id2label` must be set for classifier models"),
             Some(id2label) => id2label.len(),
@@ -390,8 +425,10 @@ impl BertClassificationHead {
             span: tracing::span!(tracing::Level::TRACE, "classifier"),
         })
     }
+}
 
-    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+impl ClassificationHead for RobertaClassificationHead {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
         let hidden_states = self.intermediate.forward(hidden_states)?;
@@ -406,7 +443,7 @@ pub struct BertModel {
     embeddings: BertEmbeddings,
     encoder: BertEncoder,
     pool: Pool,
-    classifier: Option<BertClassificationHead>,
+    classifier: Option<Box<dyn ClassificationHead + Send>>,
 
     num_attention_heads: usize,
 
@@ -426,13 +463,18 @@ impl BertModel {
         let (pool, classifier) = match model_type {
             // Classifier models always use CLS pooling
             ModelType::Classifier => {
-                if config.model_type == Some("bert".to_string()) {
-                    candle::bail!("`classifier` model type is not supported for Bert");
-                }
-                (
-                    Pool::Cls,
-                    Some(BertClassificationHead::load(vb.pp("classifier"), config)?),
-                )
+                let pool = Pool::Cls;
+
+                let classifier: Box<dyn ClassificationHead + Send> =
+                    if config.model_type == Some("bert".to_string()) {
+                        Box::new(BertClassificationHead::load(vb.pp("classifier"), config)?)
+                    } else {
+                        Box::new(RobertaClassificationHead::load(
+                            vb.pp("classifier"),
+                            config,
+                        )?)
+                    };
+                (pool, Some(classifier))
             }
             ModelType::Embedding(pool) => (pool, None),
         };
