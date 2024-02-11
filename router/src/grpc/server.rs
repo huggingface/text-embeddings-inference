@@ -1,5 +1,5 @@
 use crate::grpc::pb::tei::v1::{
-    EmbedRawRequest, EmbedRawResponse, EncodeRequest, EncodeResponse, RerankStreamRequest,
+    EmbedAllRequest, EmbedAllResponse, EncodeRequest, EncodeResponse, RerankStreamRequest,
     SimpleToken, TokenEmbedding,
 };
 use crate::grpc::{
@@ -116,18 +116,18 @@ impl TextEmbeddingsService {
             inference_time,
         )
     )]
-    async fn embed_raw_inner(
+    async fn embed_all_inner(
         &self,
-        request: EmbedRawRequest,
+        request: EmbedAllRequest,
         permit: OwnedSemaphorePermit,
-    ) -> Result<(EmbedRawResponse, ResponseMetadata), Status> {
+    ) -> Result<(EmbedAllResponse, ResponseMetadata), Status> {
         let span = Span::current();
         let start_time = Instant::now();
 
         let compute_chars = request.inputs.chars().count();
         let response = self
             .infer
-            .embed_raw(request.inputs, request.truncate, permit)
+            .embed_all(request.inputs, request.truncate, permit)
             .await
             .map_err(ErrorResponse::from)?;
 
@@ -151,7 +151,7 @@ impl TextEmbeddingsService {
             .collect();
 
         Ok((
-            EmbedRawResponse {
+            EmbedAllResponse {
                 token_embeddings,
                 metadata: Some(grpc::Metadata::from(&response_metadata)),
             },
@@ -417,10 +417,10 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
     }
 
     #[instrument(skip_all)]
-    async fn embed_raw(
+    async fn embed_all(
         &self,
-        request: Request<EmbedRawRequest>,
-    ) -> Result<Response<EmbedRawResponse>, Status> {
+        request: Request<EmbedAllRequest>,
+    ) -> Result<Response<EmbedAllResponse>, Status> {
         metrics::increment_counter!("te_request_count", "method" => "single");
 
         let permit = self
@@ -429,7 +429,7 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
             .map_err(ErrorResponse::from)?;
 
         let request = request.into_inner();
-        let (response, metadata) = self.embed_raw_inner(request, permit).await?;
+        let (response, metadata) = self.embed_all_inner(request, permit).await?;
         let headers = HeaderMap::from(metadata);
 
         metrics::increment_counter!("te_request_success", "method" => "single");
@@ -441,20 +441,20 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         ))
     }
 
-    type EmbedRawStreamStream = UnboundedReceiverStream<Result<EmbedRawResponse, Status>>;
+    type EmbedAllStreamStream = UnboundedReceiverStream<Result<EmbedAllResponse, Status>>;
 
     #[instrument(skip_all)]
-    async fn embed_raw_stream(
+    async fn embed_all_stream(
         &self,
-        request: Request<Streaming<EmbedRawRequest>>,
-    ) -> Result<Response<Self::EmbedRawStreamStream>, Status> {
+        request: Request<Streaming<EmbedAllRequest>>,
+    ) -> Result<Response<Self::EmbedAllStreamStream>, Status> {
         let mut request_stream = request.into_inner();
 
         // Create bounded channel to have an upper bound of spawned tasks
         // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
         let (embed_sender, mut embed_receiver) = mpsc::channel::<(
-            EmbedRawRequest,
-            oneshot::Sender<Result<EmbedRawResponse, Status>>,
+            EmbedAllRequest,
+            oneshot::Sender<Result<EmbedAllResponse, Status>>,
         )>(self.max_parallel_stream_requests);
 
         // Required for the async move below
@@ -473,7 +473,7 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
                 tokio::spawn(async move {
                     // Select on closed to cancel work if the stream was closed
                     tokio::select! {
-                    response = task_local.embed_raw_inner(request, permit) => {
+                    response = task_local.embed_all_inner(request, permit) => {
                         let _ = sender.send(response.map(|(r, _m)| r));
                     }
                     _ = sender.closed() => {}

@@ -4,12 +4,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use text_embeddings_backend_core::Backend as CoreBackend;
+use text_embeddings_backend_core::{Backend as CoreBackend, Predictions};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{instrument, Span};
 
 pub use crate::dtype::DType;
-pub use text_embeddings_backend_core::{BackendError, Batch, Embeddings, ModelType, Pool};
+pub use text_embeddings_backend_core::{
+    BackendError, Batch, Embedding, Embeddings, ModelType, Pool,
+};
 
 #[cfg(feature = "candle")]
 use text_embeddings_backend_candle::CandleBackend;
@@ -114,7 +116,7 @@ impl Backend {
     }
 
     #[instrument(skip_all)]
-    pub async fn predict(&self, batch: Batch) -> Result<(Vec<Vec<f32>>, Duration), BackendError> {
+    pub async fn predict(&self, batch: Batch) -> Result<(Predictions, Duration), BackendError> {
         let (sender, receiver) = oneshot::channel();
 
         self.backend_sender
@@ -219,6 +221,6 @@ enum BackendCommand {
         Batch,
         Span,
         #[allow(clippy::type_complexity)]
-        oneshot::Sender<Result<(Vec<Vec<f32>>, Duration), BackendError>>,
+        oneshot::Sender<Result<(Predictions, Duration), BackendError>>,
     ),
 }

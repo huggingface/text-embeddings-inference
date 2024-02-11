@@ -1,6 +1,6 @@
 /// HTTP Server logic
 use crate::http::types::{
-    EmbedRawRequest, EmbedRawResponse, EmbedRequest, EmbedResponse, Input, OpenAICompatEmbedding,
+    EmbedAllRequest, EmbedAllResponse, EmbedRequest, EmbedResponse, Input, OpenAICompatEmbedding,
     OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage,
     PredictInput, PredictRequest, PredictResponse, Prediction, Rank, RerankRequest, RerankResponse,
     Sequence, SimpleToken, TokenizeRequest, TokenizeResponse,
@@ -23,7 +23,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::BackendError;
 use text_embeddings_core::infer::{
-    Infer, PooledEmbeddingsInferResponse, RawEmbeddingsInferResponse,
+    AllEmbeddingsInferResponse, Infer, PooledEmbeddingsInferResponse,
 };
 use text_embeddings_core::TextEmbeddingsError;
 use tokio::sync::OwnedSemaphorePermit;
@@ -594,10 +594,10 @@ async fn embed(
 #[utoipa::path(
 post,
 tag = "Text Embeddings Inference",
-path = "/embed_raw",
-request_body = EmbedRawRequest,
+path = "/embed_all",
+request_body = EmbedAllRequest,
 responses(
-(status = 200, description = "Embeddings", body = EmbedRawResponse),
+(status = 200, description = "Embeddings", body = EmbedAllResponse),
 (status = 424, description = "Embedding Error", body = ErrorResponse,
 example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 (status = 429, description = "Model is overloaded", body = ErrorResponse,
@@ -612,11 +612,11 @@ example = json ! ({"error": "Batch size error", "error_type": "validation"})),
     skip_all,
     fields(total_time, tokenization_time, queue_time, inference_time,)
 )]
-async fn embed_raw(
+async fn embed_all(
     infer: Extension<Infer>,
     info: Extension<Info>,
-    Json(req): Json<EmbedRawRequest>,
-) -> Result<(HeaderMap, Json<EmbedRawResponse>), (StatusCode, Json<ErrorResponse>)> {
+    Json(req): Json<EmbedAllRequest>,
+) -> Result<(HeaderMap, Json<EmbedAllResponse>), (StatusCode, Json<ErrorResponse>)> {
     let span = tracing::Span::current();
     let start_time = Instant::now();
 
@@ -628,14 +628,14 @@ async fn embed_raw(
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
-                .embed_raw(input, req.truncate, permit)
+                .embed_all(input, req.truncate, permit)
                 .await
                 .map_err(ErrorResponse::from)?;
 
             metrics::increment_counter!("te_request_success", "method" => "single");
 
             (
-                EmbedRawResponse(vec![response.results]),
+                EmbedAllResponse(vec![response.results]),
                 ResponseMetadata::new(
                     compute_chars,
                     response.metadata.prompt_tokens,
@@ -684,13 +684,13 @@ async fn embed_raw(
                 let local_infer = infer.clone();
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
-                    local_infer.embed_raw(input, req.truncate, permit).await
+                    local_infer.embed_all(input, req.truncate, permit).await
                 })
             }
             let results = join_all(futures)
                 .await
                 .into_iter()
-                .collect::<Result<Vec<RawEmbeddingsInferResponse>, TextEmbeddingsError>>()
+                .collect::<Result<Vec<AllEmbeddingsInferResponse>, TextEmbeddingsError>>()
                 .map_err(ErrorResponse::from)?;
 
             let mut embeddings = Vec::with_capacity(batch_size);
@@ -711,7 +711,7 @@ async fn embed_raw(
             metrics::increment_counter!("te_request_success", "method" => "batch");
 
             (
-                EmbedRawResponse(embeddings),
+                EmbedAllResponse(embeddings),
                 ResponseMetadata::new(
                     compute_chars,
                     total_compute_tokens,
@@ -1026,7 +1026,7 @@ pub async fn run(
     predict,
     rerank,
     embed,
-    embed_raw,
+    embed_all,
     openai_embed,
     tokenize,
     metrics,
@@ -1046,8 +1046,8 @@ pub async fn run(
     OpenAICompatEmbedding,
     OpenAICompatUsage,
     OpenAICompatResponse,
-    EmbedRawRequest,
-    EmbedRawResponse,
+    EmbedAllRequest,
+    EmbedAllResponse,
     RerankRequest,
     Rank,
     RerankResponse,
@@ -1101,7 +1101,7 @@ pub async fn run(
         // Base routes
         .route("/info", get(get_model_info))
         .route("/embed", post(embed))
-        .route("/embed_raw", post(embed_raw))
+        .route("/embed_all", post(embed_all))
         .route("/predict", post(predict))
         .route("/rerank", post(rerank))
         .route("/tokenize", post(tokenize))

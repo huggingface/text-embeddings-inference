@@ -55,7 +55,7 @@ async fn test_embeddings() -> Result<()> {
 
     let client = reqwest::Client::new();
     let res = client
-        .post("http://0.0.0.0:8090/embed_raw")
+        .post("http://0.0.0.0:8090/embed_all")
         .json(&request)
         .send()
         .await?;

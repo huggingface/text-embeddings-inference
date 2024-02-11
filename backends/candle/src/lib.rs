@@ -18,8 +18,12 @@ use crate::models::{BertModel, JinaBertModel, Model, PositionEmbeddingType};
 use candle::{DType, Device};
 use candle_nn::VarBuilder;
 use models::Config;
+use nohash_hasher::BuildNoHashHasher;
+use std::collections::HashMap;
 use std::path::PathBuf;
-use text_embeddings_backend_core::{Backend, BackendError, Batch, Embeddings, ModelType};
+use text_embeddings_backend_core::{
+    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Predictions,
+};
 
 pub struct CandleBackend {
     model: Box<dyn Model + Send>,
@@ -149,6 +153,18 @@ impl Backend for CandleBackend {
     }
 
     fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError> {
+        let batch_size = batch.len();
+        let pooled_indices = batch.pooled_indices.clone();
+        let raw_indices = batch.raw_indices.clone();
+
+        // Used for indexing in the raw_embeddings tensor
+        let input_lengths: Vec<usize> = (0..batch.len())
+            .map(|i| {
+                (batch.cumulative_seq_lengths[i + 1] - batch.cumulative_seq_lengths[i]) as usize
+            })
+            .collect();
+
+        // Run forward
         let (pooled_embeddings, raw_embeddings) = self.model.embed(batch).e()?;
 
         // Device => Host data transfer
@@ -163,18 +179,36 @@ impl Backend for CandleBackend {
             Some(raw_embeddings) => raw_embeddings.to_dtype(DType::F32).e()?.to_vec2().e()?,
         };
 
-        let embeddings = Embeddings {
-            pooled_embeddings,
-            raw_embeddings,
-        };
+        let mut embeddings =
+            HashMap::with_capacity_and_hasher(batch_size, BuildNoHashHasher::default());
+        for (i, e) in pooled_indices.into_iter().zip(pooled_embeddings) {
+            embeddings.insert(i as usize, Embedding::Pooled(e));
+        }
+
+        let mut cumulative_length = 0;
+        for i in raw_indices.into_iter() {
+            let length = input_lengths[i as usize];
+            let e = raw_embeddings[cumulative_length..cumulative_length + length].to_vec();
+            embeddings.insert(i as usize, Embedding::All(e));
+            cumulative_length += length;
+        }
 
         Ok(embeddings)
     }
 
-    fn predict(&self, batch: Batch) -> Result<Vec<Vec<f32>>, BackendError> {
+    fn predict(&self, batch: Batch) -> Result<Predictions, BackendError> {
+        let batch_size = batch.len();
+
         let results = self.model.predict(batch).e()?;
         let results = results.to_dtype(DType::F32).e()?.to_vec2().e()?;
-        Ok(results)
+
+        let mut predictions =
+            HashMap::with_capacity_and_hasher(batch_size, BuildNoHashHasher::default());
+        for (i, r) in results.into_iter().enumerate() {
+            predictions.insert(i, r);
+        }
+
+        Ok(predictions)
     }
 }
 

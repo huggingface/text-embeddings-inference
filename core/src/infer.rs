@@ -3,7 +3,7 @@ use crate::tokenization::{EncodingInput, RawEncoding, Tokenization};
 use crate::TextEmbeddingsError;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use text_embeddings_backend::{Backend, BackendError, ModelType};
+use text_embeddings_backend::{Backend, BackendError, Embedding, ModelType};
 use tokio::sync::{mpsc, oneshot, watch, Notify, OwnedSemaphorePermit, Semaphore};
 use tracing::instrument;
 
@@ -97,12 +97,12 @@ impl Infer {
     }
 
     #[instrument(skip(self, permit))]
-    pub async fn embed_raw<I: Into<EncodingInput> + std::fmt::Debug>(
+    pub async fn embed_all<I: Into<EncodingInput> + std::fmt::Debug>(
         &self,
         inputs: I,
         truncate: bool,
         permit: OwnedSemaphorePermit,
-    ) -> Result<RawEmbeddingsInferResponse, TextEmbeddingsError> {
+    ) -> Result<AllEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
 
         let results = self
@@ -110,7 +110,7 @@ impl Infer {
             .await?;
 
         let response = match results {
-            InferResult::RawEmbedding(embeddings) => embeddings,
+            InferResult::AllEmbedding(embeddings) => embeddings,
             _ => panic!("unexpected enum variant. this is a bug"),
         };
 
@@ -412,8 +412,8 @@ async fn backend_task(
 
                 // Handle sending responses in another thread to avoid starving the backend
                 std::thread::spawn(move || match results {
-                    Ok((results, inference_duration)) => {
-                        batch.0.into_iter().zip(results).for_each(|(m, r)| {
+                    Ok((mut predictions, inference_duration)) => {
+                        batch.0.into_iter().enumerate().for_each(|(i, m)| {
                             let infer_metadata = InferMetadata {
                                 prompt_tokens: m.prompt_tokens,
                                 tokenization: m.tokenization,
@@ -423,7 +423,9 @@ async fn backend_task(
 
                             let _ = m.response_tx.send(Ok(InferResult::Classification(
                                 ClassificationInferResponse {
-                                    results: r,
+                                    results: predictions.remove(&i).expect(
+                                        "prediction not found in results. This is a backend bug.",
+                                    ),
                                     metadata: infer_metadata,
                                 },
                             )));
@@ -437,51 +439,39 @@ async fn backend_task(
                 });
             }
             ModelType::Embedding(_) => {
-                let input_lengths: Vec<usize> = (0..batch.1.len())
-                    .map(|i| {
-                        (batch.1.cumulative_seq_lengths[i + 1] - batch.1.cumulative_seq_lengths[i])
-                            as usize
-                    })
-                    .collect();
-
                 let results = backend.embed(batch.1).await;
 
                 // Handle sending responses in another thread to avoid starving the backend
                 std::thread::spawn(move || match results {
-                    Ok((embeddings, inference_duration)) => {
-                        // Required to correctly index in the embeddings
-                        let mut pooled_index = 0;
-                        let mut raw_cumulative_length = 0;
-
-                        for (i, m) in batch.0.into_iter().enumerate() {
-                            let infer_metadata = InferMetadata {
+                    Ok((mut embeddings, inference_duration)) => {
+                        batch.0.into_iter().enumerate().for_each(|(i, m)| {
+                            let metadata = InferMetadata {
                                 prompt_tokens: m.prompt_tokens,
                                 tokenization: m.tokenization,
                                 queue: m.queue_time.elapsed() - inference_duration,
                                 inference: inference_duration,
                             };
 
-                            let results = if m.pooling {
-                                let results = embeddings.pooled_embeddings[pooled_index].clone();
-                                pooled_index += 1;
-                                InferResult::PooledEmbedding(PooledEmbeddingsInferResponse {
-                                    results,
-                                    metadata: infer_metadata,
-                                })
-                            } else {
-                                let length = input_lengths[i];
-                                let results = embeddings.raw_embeddings
-                                    [raw_cumulative_length..raw_cumulative_length + length]
-                                    .to_vec();
-                                raw_cumulative_length += length;
-                                InferResult::RawEmbedding(RawEmbeddingsInferResponse {
-                                    results,
-                                    metadata: infer_metadata,
-                                })
+                            let results = match embeddings
+                                .remove(&i)
+                                .expect("embedding not found in results. This is a backend bug.")
+                            {
+                                Embedding::Pooled(e) => {
+                                    InferResult::PooledEmbedding(PooledEmbeddingsInferResponse {
+                                        results: e,
+                                        metadata,
+                                    })
+                                }
+                                Embedding::All(e) => {
+                                    InferResult::AllEmbedding(AllEmbeddingsInferResponse {
+                                        results: e,
+                                        metadata,
+                                    })
+                                }
                             };
 
                             let _ = m.response_tx.send(Ok(results));
-                        }
+                        })
                     }
                     Err(err) => {
                         batch.0.into_iter().for_each(|m| {
@@ -506,7 +496,7 @@ pub struct InferMetadata {
 pub(crate) enum InferResult {
     Classification(ClassificationInferResponse),
     PooledEmbedding(PooledEmbeddingsInferResponse),
-    RawEmbedding(RawEmbeddingsInferResponse),
+    AllEmbedding(AllEmbeddingsInferResponse),
 }
 
 #[derive(Debug)]
@@ -522,7 +512,7 @@ pub struct PooledEmbeddingsInferResponse {
 }
 
 #[derive(Debug)]
-pub struct RawEmbeddingsInferResponse {
+pub struct AllEmbeddingsInferResponse {
     pub results: Vec<Vec<f32>>,
     pub metadata: InferMetadata,
 }

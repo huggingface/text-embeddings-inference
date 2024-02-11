@@ -15,6 +15,7 @@ candle-flash-attn = { version = "^0.3", optional = true }
 candle-flash-attn-v1 = { git = "https://github.com/huggingface/candle-flash-attn-v1", rev = "d5b873e4555b7f460ed639d96f26cb014f2daad7", optional = true }
 candle-cublaslt = { git = "https://github.com/huggingface/candle-cublaslt", rev = "c8a810ffe649c5f4634cbe1f0aaf02f6025fe5a5", optional = true }
 candle-layer-norm = { git = "https://github.com/huggingface/candle-layer-norm", rev = "0dd5bdceb9ba7cded921c62f9ddd66e7726327ba", optional = true }
+nohash-hasher = "^0.2"
 text-embeddings-backend-core = { path = "../core" }
 tracing = "^0.1"
 safetensors = "^0.4"
