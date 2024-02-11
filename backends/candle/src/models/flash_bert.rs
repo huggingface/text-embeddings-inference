@@ -1,6 +1,9 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{LayerNorm, Linear};
-use crate::models::bert::{Config, PositionEmbeddingType};
+use crate::models::bert::{
+    BertClassificationHead, ClassificationHead, Config, PositionEmbeddingType,
+    RobertaClassificationHead,
+};
 use crate::models::Model;
 use candle::{DType, Device, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
@@ -271,54 +274,11 @@ impl BertEncoder {
     }
 }
 
-struct BertClassificationHead {
-    intermediate: Linear,
-    output: Linear,
-    span: tracing::Span,
-}
-
-impl BertClassificationHead {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
-        let n_classes = match &config.id2label {
-            None => candle::bail!("`id2label` must be set for classifier models"),
-            Some(id2label) => id2label.len(),
-        };
-
-        let intermediate_weight = vb
-            .pp("dense")
-            .get((config.hidden_size, config.hidden_size), "weight")?;
-        let intermediate_bias = vb.pp("dense").get(config.hidden_size, "bias")?;
-        let intermediate = Linear::new(intermediate_weight, Some(intermediate_bias), None);
-
-        let output_weight = vb
-            .pp("out_proj")
-            .get((n_classes, config.hidden_size), "weight")?;
-        let output_bias = vb.pp("out_proj").get(n_classes, "bias")?;
-        let output = Linear::new(output_weight, Some(output_bias), None);
-
-        Ok(Self {
-            intermediate,
-            output,
-            span: tracing::span!(tracing::Level::TRACE, "classifier"),
-        })
-    }
-
-    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let hidden_states = self.intermediate.forward(hidden_states)?;
-        let hidden_states = hidden_states.tanh()?;
-        let hidden_states = self.output.forward(&hidden_states)?;
-
-        Ok(hidden_states)
-    }
-}
-
 pub struct FlashBertModel {
     embeddings: BertEmbeddings,
     encoder: BertEncoder,
     pool: Pool,
-    classifier: Option<BertClassificationHead>,
+    classifier: Option<Box<dyn ClassificationHead + Send>>,
     pub device: Device,
 
     span: tracing::Span,
@@ -343,13 +303,18 @@ impl FlashBertModel {
         let (pool, classifier) = match model_type {
             // Classifier models always use CLS pooling
             ModelType::Classifier => {
-                if config.model_type == Some("bert".to_string()) {
-                    candle::bail!("`classifier` model type is not supported for Bert");
-                }
-                (
-                    Pool::Cls,
-                    Some(BertClassificationHead::load(vb.pp("classifier"), config)?),
-                )
+                let pool = Pool::Cls;
+
+                let classifier: Box<dyn ClassificationHead + Send> =
+                    if config.model_type == Some("bert".to_string()) {
+                        Box::new(BertClassificationHead::load(vb.pp("classifier"), config)?)
+                    } else {
+                        Box::new(RobertaClassificationHead::load(
+                            vb.pp("classifier"),
+                            config,
+                        )?)
+                    };
+                (pool, Some(classifier))
             }
             ModelType::Embedding(pool) => (pool, None),
         };
