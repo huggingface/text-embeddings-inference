@@ -362,10 +362,10 @@ impl FlashJinaBertModel {
         })
     }
 
-    pub fn forward(&self, batch: Batch) -> Result<Tensor> {
+    pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         let _enter = self.span.enter();
 
-        let batch_size = batch.cumulative_seq_lengths.len() - 1;
+        let batch_size = batch.len();
         let shape = batch.input_ids.len();
 
         // Create Cuda tensors
@@ -386,33 +386,96 @@ impl FlashJinaBertModel {
             self.encoder
                 .forward(&embedding_output, &cu_seqlens, batch.max_length as usize)?;
 
-        let results = match self.pool {
-            // CLS pooling
-            Pool::Cls => outputs.index_select(&cu_seqlens.narrow(0, 0, batch_size)?, 0)?,
-            // Mean pooling
-            Pool::Mean => {
-                if batch_size > 1 {
-                    // for each request
-                    let results: Result<Vec<Tensor>> = (0..batch.cumulative_seq_lengths.len() - 1)
-                        .map(|i| {
-                            let start = batch.cumulative_seq_lengths[i];
-                            let len = batch.cumulative_seq_lengths[i + 1] - start;
+        let has_pooling_requests = !batch.pooled_indices.is_empty();
+        let has_raw_requests = !batch.raw_indices.is_empty();
 
-                            // Mean
-                            let embeddings = outputs.narrow(0, start as usize, len as usize)?;
-                            embeddings.sum_keepdim(0)? / (len as f64)
-                        })
-                        .collect();
+        let pooled_embeddings = if has_pooling_requests {
+            match self.pool {
+                // CLS pooling
+                Pool::Cls => {
+                    if batch_size > 1 {
+                        // Get the indices of the cls tokens from cu_seqlens
+                        let mut cls_indices = cu_seqlens.narrow(0, 0, batch_size)?;
 
-                    // Concatenate all results
-                    Tensor::cat(&results?, 0)?
-                } else {
-                    (outputs.sum_keepdim(0)? / (batch.max_length as f64))?
+                        // If raw_indices is empty, we don't need to do anything with
+                        // the pooled_indices
+                        if has_raw_requests {
+                            // We need the pooled indices to select the correct cls indices
+                            let pooled_indices = Tensor::from_vec(
+                                batch.pooled_indices.clone(),
+                                batch.pooled_indices.len(),
+                                &self.device,
+                            )?;
+
+                            // Only select indices that requires pooling
+                            cls_indices = cls_indices.index_select(&pooled_indices, 0)?
+                        }
+
+                        // Select cls tokens
+                        Some(outputs.index_select(&cls_indices, 0)?)
+                    } else {
+                        Some(outputs.i(0)?)
+                    }
+                }
+                // Mean pooling
+                Pool::Mean => {
+                    if batch_size > 1 {
+                        // for each request that requires pooling
+                        let results: Result<Vec<Tensor>> = batch
+                            .pooled_indices
+                            .into_iter()
+                            .map(|i| {
+                                let i = i as usize;
+                                let start = batch.cumulative_seq_lengths[i];
+                                let len = batch.cumulative_seq_lengths[i + 1] - start;
+
+                                // Mean
+                                let embeddings = outputs.narrow(0, start as usize, len as usize)?;
+                                embeddings.sum_keepdim(0)? / (len as f64)
+                            })
+                            .collect();
+
+                        // Concatenate all results
+                        Some(Tensor::cat(&results?, 0)?)
+                    } else {
+                        Some((outputs.sum_keepdim(0)? / (batch.max_length as f64))?)
+                    }
                 }
             }
+        } else {
+            None
         };
 
-        Ok(results)
+        let raw_embeddings = if has_raw_requests {
+            if batch_size > 1 && has_pooling_requests {
+                // Create indexing vector for the embeddings
+                let mut final_indices: Vec<u32> = Vec::with_capacity(shape);
+                for i in batch.raw_indices.into_iter() {
+                    let i = i as usize;
+                    // Get start/end token index of this specific member of the batch
+                    let start = batch.cumulative_seq_lengths[i];
+                    let end = batch.cumulative_seq_lengths[i + 1];
+
+                    for j in start..end {
+                        // Add indices for the tokens of this specific member of the batch
+                        final_indices.push(j);
+                    }
+                }
+
+                let final_indices_length = final_indices.len();
+                let final_indices =
+                    Tensor::from_vec(final_indices, final_indices_length, &self.device)?;
+
+                // Select the tokens with final indices
+                Some(outputs.index_select(&final_indices, 0)?)
+            } else {
+                Some(outputs)
+            }
+        } else {
+            None
+        };
+
+        Ok((pooled_embeddings, raw_embeddings))
     }
 }
 
@@ -420,7 +483,7 @@ impl Model for FlashJinaBertModel {
     fn is_padded(&self) -> bool {
         false
     }
-    fn embed(&self, batch: Batch) -> Result<Tensor> {
+    fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
     }
 }

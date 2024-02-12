@@ -4,12 +4,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use text_embeddings_backend_core::Backend as CoreBackend;
+use text_embeddings_backend_core::{Backend as CoreBackend, Predictions};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{instrument, Span};
 
 pub use crate::dtype::DType;
-pub use text_embeddings_backend_core::{BackendError, Batch, Embedding, ModelType, Pool};
+pub use text_embeddings_backend_core::{
+    BackendError, Batch, Embedding, Embeddings, ModelType, Pool,
+};
 
 #[cfg(feature = "candle")]
 use text_embeddings_backend_candle::CandleBackend;
@@ -86,6 +88,8 @@ impl Backend {
                 position_ids: vec![0],
                 cumulative_seq_lengths: vec![0, 1],
                 max_length: 1,
+                pooled_indices: vec![0],
+                raw_indices: vec![],
             };
             match &self.model_type {
                 ModelType::Classifier => self.predict(batch).await.map(|_| ()),
@@ -100,7 +104,7 @@ impl Backend {
     }
 
     #[instrument(skip_all)]
-    pub async fn embed(&self, batch: Batch) -> Result<(Vec<Embedding>, Duration), BackendError> {
+    pub async fn embed(&self, batch: Batch) -> Result<(Embeddings, Duration), BackendError> {
         let (sender, receiver) = oneshot::channel();
 
         self.backend_sender
@@ -112,7 +116,7 @@ impl Backend {
     }
 
     #[instrument(skip_all)]
-    pub async fn predict(&self, batch: Batch) -> Result<(Vec<Vec<f32>>, Duration), BackendError> {
+    pub async fn predict(&self, batch: Batch) -> Result<(Predictions, Duration), BackendError> {
         let (sender, receiver) = oneshot::channel();
 
         self.backend_sender
@@ -211,12 +215,12 @@ enum BackendCommand {
     Embed(
         Batch,
         Span,
-        oneshot::Sender<Result<(Vec<Embedding>, Duration), BackendError>>,
+        oneshot::Sender<Result<(Embeddings, Duration), BackendError>>,
     ),
     Predict(
         Batch,
         Span,
         #[allow(clippy::type_complexity)]
-        oneshot::Sender<Result<(Vec<Vec<f32>>, Duration), BackendError>>,
+        oneshot::Sender<Result<(Predictions, Duration), BackendError>>,
     ),
 }

@@ -1,9 +1,9 @@
 /// HTTP Server logic
 use crate::http::types::{
-    EmbedRequest, EmbedResponse, Input, OpenAICompatEmbedding, OpenAICompatErrorResponse,
-    OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage, PredictInput, PredictRequest,
-    PredictResponse, Prediction, Rank, RerankRequest, RerankResponse, Sequence, SimpleToken,
-    TokenizeRequest, TokenizeResponse,
+    EmbedAllRequest, EmbedAllResponse, EmbedRequest, EmbedResponse, Input, OpenAICompatEmbedding,
+    OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage,
+    PredictInput, PredictRequest, PredictResponse, Prediction, Rank, RerankRequest, RerankResponse,
+    Sequence, SimpleToken, TokenizeRequest, TokenizeResponse,
 };
 use crate::{
     shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
@@ -22,7 +22,9 @@ use std::env;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::BackendError;
-use text_embeddings_core::infer::{Infer, InferResponse};
+use text_embeddings_core::infer::{
+    AllEmbeddingsInferResponse, Infer, PooledEmbeddingsInferResponse,
+};
 use text_embeddings_core::TextEmbeddingsError;
 use tokio::sync::OwnedSemaphorePermit;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -137,10 +139,10 @@ async fn predict(
         predictions.reverse();
 
         Ok::<(usize, Duration, Duration, Duration, Vec<Prediction>), ErrorResponse>((
-            response.prompt_tokens,
-            response.tokenization,
-            response.queue,
-            response.inference,
+            response.metadata.prompt_tokens,
+            response.metadata.tokenization,
+            response.metadata.queue,
+            response.metadata.inference,
             predictions,
         ))
     };
@@ -335,10 +337,10 @@ async fn rerank(
         let score = response.results[0];
 
         Ok::<(usize, Duration, Duration, Duration, f32), ErrorResponse>((
-            response.prompt_tokens,
-            response.tokenization,
-            response.queue,
-            response.inference,
+            response.metadata.prompt_tokens,
+            response.metadata.tokenization,
+            response.metadata.queue,
+            response.metadata.inference,
             score,
         ))
     };
@@ -479,7 +481,7 @@ async fn embed(
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
-                .embed(input, req.truncate, req.normalize, permit)
+                .embed_pooled(input, req.truncate, req.normalize, permit)
                 .await
                 .map_err(ErrorResponse::from)?;
 
@@ -489,11 +491,11 @@ async fn embed(
                 EmbedResponse(vec![response.results]),
                 ResponseMetadata::new(
                     compute_chars,
-                    response.prompt_tokens,
+                    response.metadata.prompt_tokens,
                     start_time,
-                    response.tokenization,
-                    response.queue,
-                    response.inference,
+                    response.metadata.tokenization,
+                    response.metadata.queue,
+                    response.metadata.inference,
                 ),
             )
         }
@@ -536,14 +538,14 @@ async fn embed(
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
                     local_infer
-                        .embed(input, req.truncate, req.normalize, permit)
+                        .embed_pooled(input, req.truncate, req.normalize, permit)
                         .await
                 })
             }
             let results = join_all(futures)
                 .await
                 .into_iter()
-                .collect::<Result<Vec<InferResponse>, TextEmbeddingsError>>()
+                .collect::<Result<Vec<PooledEmbeddingsInferResponse>, TextEmbeddingsError>>()
                 .map_err(ErrorResponse::from)?;
 
             let mut embeddings = Vec::with_capacity(batch_size);
@@ -553,10 +555,10 @@ async fn embed(
             let mut total_compute_tokens = 0;
 
             for r in results {
-                total_tokenization_time += r.tokenization.as_nanos() as u64;
-                total_queue_time += r.queue.as_nanos() as u64;
-                total_inference_time += r.inference.as_nanos() as u64;
-                total_compute_tokens += r.prompt_tokens;
+                total_tokenization_time += r.metadata.tokenization.as_nanos() as u64;
+                total_queue_time += r.metadata.queue.as_nanos() as u64;
+                total_inference_time += r.metadata.inference.as_nanos() as u64;
+                total_compute_tokens += r.metadata.prompt_tokens;
                 embeddings.push(r.results);
             }
             let batch_size = batch_size as u64;
@@ -565,6 +567,151 @@ async fn embed(
 
             (
                 EmbedResponse(embeddings),
+                ResponseMetadata::new(
+                    compute_chars,
+                    total_compute_tokens,
+                    start_time,
+                    Duration::from_nanos(total_tokenization_time / batch_size),
+                    Duration::from_nanos(total_queue_time / batch_size),
+                    Duration::from_nanos(total_inference_time / batch_size),
+                ),
+            )
+        }
+    };
+
+    metadata.record_span(&span);
+    metadata.record_metrics();
+
+    let headers = HeaderMap::from(metadata);
+
+    tracing::info!("Success");
+
+    Ok((headers, Json(response)))
+}
+
+/// Get all Embeddings without Pooling.
+/// Returns a 424 status code if the model is not an embedding model.
+#[utoipa::path(
+post,
+tag = "Text Embeddings Inference",
+path = "/embed_all",
+request_body = EmbedAllRequest,
+responses(
+(status = 200, description = "Embeddings", body = EmbedAllResponse),
+(status = 424, description = "Embedding Error", body = ErrorResponse,
+example = json ! ({"error": "Inference failed", "error_type": "backend"})),
+(status = 429, description = "Model is overloaded", body = ErrorResponse,
+example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
+(status = 422, description = "Tokenization error", body = ErrorResponse,
+example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 413, description = "Batch size error", body = ErrorResponse,
+example = json ! ({"error": "Batch size error", "error_type": "validation"})),
+)
+)]
+#[instrument(
+    skip_all,
+    fields(total_time, tokenization_time, queue_time, inference_time,)
+)]
+async fn embed_all(
+    infer: Extension<Infer>,
+    info: Extension<Info>,
+    Json(req): Json<EmbedAllRequest>,
+) -> Result<(HeaderMap, Json<EmbedAllResponse>), (StatusCode, Json<ErrorResponse>)> {
+    let span = tracing::Span::current();
+    let start_time = Instant::now();
+
+    let (response, metadata) = match req.inputs {
+        Input::Single(input) => {
+            metrics::increment_counter!("te_request_count", "method" => "single");
+
+            let compute_chars = input.chars().count();
+
+            let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+            let response = infer
+                .embed_all(input, req.truncate, permit)
+                .await
+                .map_err(ErrorResponse::from)?;
+
+            metrics::increment_counter!("te_request_success", "method" => "single");
+
+            (
+                EmbedAllResponse(vec![response.results]),
+                ResponseMetadata::new(
+                    compute_chars,
+                    response.metadata.prompt_tokens,
+                    start_time,
+                    response.metadata.tokenization,
+                    response.metadata.queue,
+                    response.metadata.inference,
+                ),
+            )
+        }
+        Input::Batch(inputs) => {
+            metrics::increment_counter!("te_request_count", "method" => "batch");
+
+            if inputs.is_empty() {
+                let message = "`inputs` cannot be empty".to_string();
+                tracing::error!("{message}");
+                let err = ErrorResponse {
+                    error: message,
+                    error_type: ErrorType::Validation,
+                };
+                metrics::increment_counter!("te_request_failure", "err" => "validation");
+                Err(err)?;
+            }
+
+            let batch_size = inputs.len();
+            if batch_size > info.max_client_batch_size {
+                let message = format!(
+                    "batch size {batch_size} > maximum allowed batch size {}",
+                    info.max_client_batch_size
+                );
+                tracing::error!("{message}");
+                let err = ErrorResponse {
+                    error: message,
+                    error_type: ErrorType::Validation,
+                };
+                metrics::increment_counter!("te_request_failure", "err" => "batch_size");
+                Err(err)?;
+            }
+
+            let mut futures = Vec::with_capacity(batch_size);
+            let mut compute_chars = 0;
+
+            for input in inputs {
+                compute_chars += input.chars().count();
+
+                let local_infer = infer.clone();
+                futures.push(async move {
+                    let permit = local_infer.acquire_permit().await;
+                    local_infer.embed_all(input, req.truncate, permit).await
+                })
+            }
+            let results = join_all(futures)
+                .await
+                .into_iter()
+                .collect::<Result<Vec<AllEmbeddingsInferResponse>, TextEmbeddingsError>>()
+                .map_err(ErrorResponse::from)?;
+
+            let mut embeddings = Vec::with_capacity(batch_size);
+            let mut total_tokenization_time = 0;
+            let mut total_queue_time = 0;
+            let mut total_inference_time = 0;
+            let mut total_compute_tokens = 0;
+
+            for r in results {
+                total_tokenization_time += r.metadata.tokenization.as_nanos() as u64;
+                total_queue_time += r.metadata.queue.as_nanos() as u64;
+                total_inference_time += r.metadata.inference.as_nanos() as u64;
+                total_compute_tokens += r.metadata.prompt_tokens;
+                embeddings.push(r.results);
+            }
+            let batch_size = batch_size as u64;
+
+            metrics::increment_counter!("te_request_success", "method" => "batch");
+
+            (
+                EmbedAllResponse(embeddings),
                 ResponseMetadata::new(
                     compute_chars,
                     total_compute_tokens,
@@ -626,7 +773,7 @@ async fn openai_embed(
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
-                .embed(input, false, true, permit)
+                .embed_pooled(input, false, true, permit)
                 .await
                 .map_err(ErrorResponse::from)?;
 
@@ -640,11 +787,11 @@ async fn openai_embed(
                 }],
                 ResponseMetadata::new(
                     compute_chars,
-                    response.prompt_tokens,
+                    response.metadata.prompt_tokens,
                     start_time,
-                    response.tokenization,
-                    response.queue,
-                    response.inference,
+                    response.metadata.tokenization,
+                    response.metadata.queue,
+                    response.metadata.inference,
                 ),
             )
         }
@@ -686,13 +833,13 @@ async fn openai_embed(
                 let local_infer = infer.clone();
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
-                    local_infer.embed(input, false, true, permit).await
+                    local_infer.embed_pooled(input, false, true, permit).await
                 })
             }
             let results = join_all(futures)
                 .await
                 .into_iter()
-                .collect::<Result<Vec<InferResponse>, TextEmbeddingsError>>()
+                .collect::<Result<Vec<PooledEmbeddingsInferResponse>, TextEmbeddingsError>>()
                 .map_err(ErrorResponse::from)?;
 
             let mut embeddings = Vec::with_capacity(batch_size);
@@ -702,10 +849,10 @@ async fn openai_embed(
             let mut total_compute_tokens = 0;
 
             for (i, r) in results.into_iter().enumerate() {
-                total_tokenization_time += r.tokenization.as_nanos() as u64;
-                total_queue_time += r.queue.as_nanos() as u64;
-                total_inference_time += r.inference.as_nanos() as u64;
-                total_compute_tokens += r.prompt_tokens;
+                total_tokenization_time += r.metadata.tokenization.as_nanos() as u64;
+                total_queue_time += r.metadata.queue.as_nanos() as u64;
+                total_inference_time += r.metadata.inference.as_nanos() as u64;
+                total_compute_tokens += r.metadata.prompt_tokens;
                 embeddings.push(OpenAICompatEmbedding {
                     object: "embedding",
                     embedding: r.results,
@@ -879,6 +1026,7 @@ pub async fn run(
     predict,
     rerank,
     embed,
+    embed_all,
     openai_embed,
     tokenize,
     metrics,
@@ -898,6 +1046,8 @@ pub async fn run(
     OpenAICompatEmbedding,
     OpenAICompatUsage,
     OpenAICompatResponse,
+    EmbedAllRequest,
+    EmbedAllResponse,
     RerankRequest,
     Rank,
     RerankResponse,
@@ -951,6 +1101,7 @@ pub async fn run(
         // Base routes
         .route("/info", get(get_model_info))
         .route("/embed", post(embed))
+        .route("/embed_all", post(embed_all))
         .route("/predict", post(predict))
         .route("/rerank", post(rerank))
         .route("/tokenize", post(tokenize))

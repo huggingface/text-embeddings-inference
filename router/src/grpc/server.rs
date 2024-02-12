@@ -1,4 +1,7 @@
-use crate::grpc::pb::tei::v1::{EncodeRequest, EncodeResponse, RerankStreamRequest, SimpleToken};
+use crate::grpc::pb::tei::v1::{
+    EmbedAllRequest, EmbedAllResponse, EncodeRequest, EncodeResponse, RerankStreamRequest,
+    SimpleToken, TokenEmbedding,
+};
 use crate::grpc::{
     EmbedRequest, EmbedResponse, InfoRequest, InfoResponse, PredictRequest, PredictResponse,
     Prediction, Rank, RerankRequest, RerankResponse,
@@ -65,7 +68,7 @@ impl TextEmbeddingsService {
             inference_time,
         )
     )]
-    async fn embed_inner(
+    async fn embed_pooled_inner(
         &self,
         request: EmbedRequest,
         permit: OwnedSemaphorePermit,
@@ -76,17 +79,17 @@ impl TextEmbeddingsService {
         let compute_chars = request.inputs.chars().count();
         let response = self
             .infer
-            .embed(request.inputs, request.truncate, request.normalize, permit)
+            .embed_pooled(request.inputs, request.truncate, request.normalize, permit)
             .await
             .map_err(ErrorResponse::from)?;
 
         let response_metadata = ResponseMetadata::new(
             compute_chars,
-            response.prompt_tokens,
+            response.metadata.prompt_tokens,
             start_time,
-            response.tokenization,
-            response.queue,
-            response.inference,
+            response.metadata.tokenization,
+            response.metadata.queue,
+            response.metadata.inference,
         );
         response_metadata.record_span(&span);
         response_metadata.record_metrics();
@@ -96,6 +99,60 @@ impl TextEmbeddingsService {
         Ok((
             EmbedResponse {
                 embeddings: response.results,
+                metadata: Some(grpc::Metadata::from(&response_metadata)),
+            },
+            response_metadata,
+        ))
+    }
+
+    #[instrument(
+        skip_all,
+        fields(
+            compute_chars,
+            compute_tokens,
+            total_time,
+            tokenization_time,
+            queue_time,
+            inference_time,
+        )
+    )]
+    async fn embed_all_inner(
+        &self,
+        request: EmbedAllRequest,
+        permit: OwnedSemaphorePermit,
+    ) -> Result<(EmbedAllResponse, ResponseMetadata), Status> {
+        let span = Span::current();
+        let start_time = Instant::now();
+
+        let compute_chars = request.inputs.chars().count();
+        let response = self
+            .infer
+            .embed_all(request.inputs, request.truncate, permit)
+            .await
+            .map_err(ErrorResponse::from)?;
+
+        let response_metadata = ResponseMetadata::new(
+            compute_chars,
+            response.metadata.prompt_tokens,
+            start_time,
+            response.metadata.tokenization,
+            response.metadata.queue,
+            response.metadata.inference,
+        );
+        response_metadata.record_span(&span);
+        response_metadata.record_metrics();
+
+        tracing::info!("Success");
+
+        let token_embeddings = response
+            .results
+            .into_iter()
+            .map(|v| TokenEmbedding { embeddings: v })
+            .collect();
+
+        Ok((
+            EmbedAllResponse {
+                token_embeddings,
                 metadata: Some(grpc::Metadata::from(&response_metadata)),
             },
             response_metadata,
@@ -136,11 +193,11 @@ impl TextEmbeddingsService {
 
         let response_metadata = ResponseMetadata::new(
             compute_chars,
-            response.prompt_tokens,
+            response.metadata.prompt_tokens,
             start_time,
-            response.tokenization,
-            response.queue,
-            response.inference,
+            response.metadata.tokenization,
+            response.metadata.queue,
+            response.metadata.inference,
         );
 
         let mut predictions = Vec::with_capacity(response.results.len());
@@ -259,7 +316,7 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
             .map_err(ErrorResponse::from)?;
 
         let request = request.into_inner();
-        let (response, metadata) = self.embed_inner(request, permit).await?;
+        let (response, metadata) = self.embed_pooled_inner(request, permit).await?;
         let headers = HeaderMap::from(metadata);
 
         metrics::increment_counter!("te_request_success", "method" => "single");
@@ -303,7 +360,120 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
                 tokio::spawn(async move {
                     // Select on closed to cancel work if the stream was closed
                     tokio::select! {
-                    response = task_local.embed_inner(request, permit) => {
+                    response = task_local.embed_pooled_inner(request, permit) => {
+                        let _ = sender.send(response.map(|(r, _m)| r));
+                    }
+                    _ = sender.closed() => {}
+                    }
+                });
+            }
+        });
+
+        // Intermediate channels
+        // Required to keep the order of the requests
+        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            // Iterate on input
+            while let Some(request) = request_stream.next().await {
+                // Create return channel
+                let (result_sender, result_receiver) = oneshot::channel();
+                // Push to intermediate channel and preserve ordering
+                intermediate_sender
+                    .send(result_receiver)
+                    .expect("`intermediate_receiver` was dropped. This is a bug.");
+
+                match request {
+                    Ok(request) => embed_sender
+                        .send((request, result_sender))
+                        .await
+                        .expect("`embed_receiver` was dropped. This is a bug."),
+                    Err(status) => {
+                        // Request is malformed
+                        let _ = result_sender.send(Err(status));
+                    }
+                };
+            }
+        });
+
+        // Final channel for the outputs
+        let (response_sender, response_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            while let Some(result_receiver) = intermediate_receiver.recv().await {
+                // Select on closed to cancel work if the stream was closed
+                tokio::select! {
+                response = result_receiver => {
+                    let _ = response_sender.send(response.expect("`result_sender` was dropped. This is a bug."));
+                }
+                _ = response_sender.closed() => {}
+                }
+            }
+        });
+
+        Ok(Response::new(UnboundedReceiverStream::new(
+            response_receiver,
+        )))
+    }
+
+    #[instrument(skip_all)]
+    async fn embed_all(
+        &self,
+        request: Request<EmbedAllRequest>,
+    ) -> Result<Response<EmbedAllResponse>, Status> {
+        metrics::increment_counter!("te_request_count", "method" => "single");
+
+        let permit = self
+            .infer
+            .try_acquire_permit()
+            .map_err(ErrorResponse::from)?;
+
+        let request = request.into_inner();
+        let (response, metadata) = self.embed_all_inner(request, permit).await?;
+        let headers = HeaderMap::from(metadata);
+
+        metrics::increment_counter!("te_request_success", "method" => "single");
+
+        Ok(Response::from_parts(
+            MetadataMap::from_headers(headers),
+            response,
+            Extensions::default(),
+        ))
+    }
+
+    type EmbedAllStreamStream = UnboundedReceiverStream<Result<EmbedAllResponse, Status>>;
+
+    #[instrument(skip_all)]
+    async fn embed_all_stream(
+        &self,
+        request: Request<Streaming<EmbedAllRequest>>,
+    ) -> Result<Response<Self::EmbedAllStreamStream>, Status> {
+        let mut request_stream = request.into_inner();
+
+        // Create bounded channel to have an upper bound of spawned tasks
+        // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
+        let (embed_sender, mut embed_receiver) = mpsc::channel::<(
+            EmbedAllRequest,
+            oneshot::Sender<Result<EmbedAllResponse, Status>>,
+        )>(self.max_parallel_stream_requests);
+
+        // Required for the async move below
+        let local = self.clone();
+
+        // Background task that uses the bounded channel
+        tokio::spawn(async move {
+            while let Some((request, mut sender)) = embed_receiver.recv().await {
+                // Wait on permit before spawning the task to avoid creating more tasks than needed
+                let permit = local.infer.acquire_permit().await;
+
+                // Required for the async move below
+                let task_local = local.clone();
+
+                // Create async task for this specific input
+                tokio::spawn(async move {
+                    // Select on closed to cancel work if the stream was closed
+                    tokio::select! {
+                    response = task_local.embed_all_inner(request, permit) => {
                         let _ = sender.send(response.map(|(r, _m)| r));
                     }
                     _ = sender.closed() => {}
@@ -541,10 +711,10 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
             let score = response.results[0];
 
             Ok::<(usize, Duration, Duration, Duration, f32), ErrorResponse>((
-                response.prompt_tokens,
-                response.tokenization,
-                response.queue,
-                response.inference,
+                response.metadata.prompt_tokens,
+                response.metadata.tokenization,
+                response.metadata.queue,
+                response.metadata.inference,
                 score,
             ))
         };
@@ -706,10 +876,10 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
 
             Ok::<(usize, usize, Duration, Duration, Duration, f32, String), ErrorResponse>((
                 index,
-                response.prompt_tokens,
-                response.tokenization,
-                response.queue,
-                response.inference,
+                response.metadata.prompt_tokens,
+                response.metadata.tokenization,
+                response.metadata.queue,
+                response.metadata.inference,
                 score,
                 text,
             ))

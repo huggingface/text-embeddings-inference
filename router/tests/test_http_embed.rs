@@ -49,5 +49,20 @@ async fn test_embeddings() -> Result<()> {
         assert_eq!(embeddings, &embeddings_single[0]);
     }
 
+    let request = json!({
+        "inputs": "test"
+    });
+
+    let client = reqwest::Client::new();
+    let res = client
+        .post("http://0.0.0.0:8090/embed_all")
+        .json(&request)
+        .send()
+        .await?;
+
+    let embeddings_raw = res.json::<Vec<Vec<Vec<Score>>>>().await?;
+    let matcher = YamlMatcher::<Vec<Vec<Vec<Score>>>>::new();
+    insta::assert_yaml_snapshot!("embeddings_raw", embeddings_raw, &matcher);
+
     Ok(())
 }

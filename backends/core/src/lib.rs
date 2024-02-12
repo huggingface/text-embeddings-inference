@@ -1,5 +1,6 @@
 #[cfg(feature = "clap")]
 use clap::ValueEnum;
+use nohash_hasher::IntMap;
 use std::fmt;
 use thiserror::Error;
 
@@ -10,9 +11,27 @@ pub struct Batch {
     pub position_ids: Vec<u32>,
     pub cumulative_seq_lengths: Vec<u32>,
     pub max_length: u32,
+    pub pooled_indices: Vec<u32>,
+    pub raw_indices: Vec<u32>,
 }
 
-pub type Embedding = Vec<f32>;
+impl Batch {
+    pub fn len(&self) -> usize {
+        self.cumulative_seq_lengths.len() - 1
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+pub enum Embedding {
+    Pooled(Vec<f32>),
+    All(Vec<Vec<f32>>),
+}
+
+pub type Embeddings = IntMap<usize, Embedding>;
+pub type Predictions = IntMap<usize, Vec<f32>>;
 
 pub trait Backend {
     fn health(&self) -> Result<(), BackendError>;
@@ -22,9 +41,9 @@ pub trait Backend {
 
     fn is_padded(&self) -> bool;
 
-    fn embed(&self, batch: Batch) -> Result<Vec<Embedding>, BackendError>;
+    fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError>;
 
-    fn predict(&self, batch: Batch) -> Result<Vec<Vec<f32>>, BackendError>;
+    fn predict(&self, batch: Batch) -> Result<Predictions, BackendError>;
 }
 
 #[derive(Debug, PartialEq, Clone)]

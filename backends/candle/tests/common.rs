@@ -5,8 +5,8 @@ use insta::internals::YamlMatcher;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
 use std::ops::Deref;
-use std::path::PathBuf;
-use text_embeddings_backend_core::Batch;
+use std::path::{Path, PathBuf};
+use text_embeddings_backend_core::{Batch, Embedding, Embeddings};
 use tokenizers::pre_tokenizers::metaspace::PrependScheme;
 use tokenizers::pre_tokenizers::sequence::Sequence;
 use tokenizers::{Encoding, PreTokenizerWrapper, Tokenizer};
@@ -45,10 +45,24 @@ impl From<Vec<Vec<f32>>> for SnapshotScores {
         Self(
             value
                 .into_iter()
-                .map(|v| v.into_iter().map(|s| Score(s)).collect())
+                .map(|v| v.into_iter().map(Score).collect())
                 .collect(),
         )
     }
+}
+
+pub fn sort_embeddings(embeddings: Embeddings) -> (Vec<Vec<f32>>, Vec<Vec<f32>>) {
+    let mut pooled_embeddings = Vec::new();
+    let mut raw_embeddings = Vec::new();
+
+    for (_, embedding) in embeddings {
+        match embedding {
+            Embedding::Pooled(e) => pooled_embeddings.push(e),
+            Embedding::All(e) => raw_embeddings.extend(e),
+        }
+    }
+
+    (pooled_embeddings, raw_embeddings)
 }
 
 pub fn download_artifacts(model_id: &'static str) -> Result<PathBuf> {
@@ -77,7 +91,7 @@ pub fn relative_matcher() -> YamlMatcher<SnapshotScores> {
     YamlMatcher::new()
 }
 
-pub fn load_tokenizer(model_root: &PathBuf) -> Result<Tokenizer> {
+pub fn load_tokenizer(model_root: &Path) -> Result<Tokenizer> {
     // Load tokenizer
     let tokenizer_path = model_root.join("tokenizer.json");
     let mut tokenizer = Tokenizer::from_file(tokenizer_path).expect("tokenizer.json not found");
@@ -93,8 +107,7 @@ pub fn load_tokenizer(model_root: &PathBuf) -> Result<Tokenizer> {
             // Check if we have a Metaspace pre tokenizer in the sequence
             let has_metaspace = pre_tokenizers
                 .iter()
-                .find(|t| matches!(t, PreTokenizerWrapper::Metaspace(_)))
-                .is_some();
+                .any(|t| matches!(t, PreTokenizerWrapper::Metaspace(_)));
 
             if has_metaspace {
                 let mut new_pre_tokenizers = Vec::with_capacity(s.get_pre_tokenizers().len());
@@ -124,7 +137,7 @@ pub fn load_tokenizer(model_root: &PathBuf) -> Result<Tokenizer> {
     Ok(tokenizer)
 }
 
-pub fn batch(encodings: Vec<Encoding>) -> Batch {
+pub fn batch(encodings: Vec<Encoding>, pooled_indices: Vec<u32>, raw_indices: Vec<u32>) -> Batch {
     let mut input_ids = Vec::new();
     let mut token_type_ids = Vec::new();
     let mut position_ids = Vec::new();
@@ -134,7 +147,7 @@ pub fn batch(encodings: Vec<Encoding>) -> Batch {
     let mut max_length = 0;
     let mut cumulative_length = 0;
 
-    for encoding in encodings {
+    for encoding in encodings.iter() {
         let encoding_length = encoding.len() as u32;
         input_ids.extend(encoding.get_ids().to_vec());
         token_type_ids.extend(encoding.get_type_ids().to_vec());
@@ -150,5 +163,7 @@ pub fn batch(encodings: Vec<Encoding>) -> Batch {
         position_ids,
         cumulative_seq_lengths,
         max_length,
+        pooled_indices,
+        raw_indices,
     }
 }

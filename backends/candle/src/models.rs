@@ -27,7 +27,7 @@ pub use flash_jina::FlashJinaBertModel;
 pub(crate) trait Model {
     fn is_padded(&self) -> bool;
 
-    fn embed(&self, _batch: Batch) -> Result<Tensor> {
+    fn embed(&self, _batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         candle::bail!("`embed` is not implemented for this model");
     }
 

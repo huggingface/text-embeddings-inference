@@ -315,6 +315,18 @@ fn default_normalize() -> bool {
 #[schema(example = json!([[0.0, 1.0, 2.0]]))]
 pub(crate) struct EmbedResponse(pub Vec<Vec<f32>>);
 
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct EmbedAllRequest {
+    pub inputs: Input,
+    #[serde(default)]
+    #[schema(default = "false", example = "false")]
+    pub truncate: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(example = json!([[[0.0, 1.0, 2.0]]]))]
+pub(crate) struct EmbedAllResponse(pub Vec<Vec<Vec<f32>>>);
+
 #[derive(Serialize, ToSchema)]
 pub(crate) struct OpenAICompatErrorResponse {
     pub message: String,

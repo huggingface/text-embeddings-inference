@@ -407,10 +407,10 @@ impl JinaBertModel {
         })
     }
 
-    pub fn forward(&self, batch: Batch) -> Result<Tensor> {
+    pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         let _enter = self.span.enter();
 
-        let batch_size = batch.cumulative_seq_lengths.len() - 1;
+        let batch_size = batch.len();
         let max_length = batch.max_length as usize;
 
         let shape = (batch_size, max_length);
@@ -569,25 +569,91 @@ impl JinaBertModel {
             .embeddings
             .forward(&input_ids, &type_ids, &position_ids)?;
 
-        let mut outputs = self
+        let outputs = self
             .encoder
             .forward(&embedding_output, attention_bias.as_ref())?;
 
-        let results = match self.pool {
-            // CLS pooling
-            Pool::Cls => outputs.i((.., 0))?,
-            // Mean pooling
-            Pool::Mean => {
-                if let Some(attention_mask) = attention_mask {
-                    // Mask padded values
-                    outputs = outputs.broadcast_mul(&attention_mask)?;
-                }
+        let has_pooling_requests = !batch.pooled_indices.is_empty();
+        let has_raw_requests = !batch.raw_indices.is_empty();
 
-                (outputs.sum(1)?.broadcast_div(&input_lengths))?
-            }
+        let pooled_embeddings = if has_pooling_requests {
+            let pooled_indices_length = batch.pooled_indices.len();
+            let mut outputs = outputs.clone();
+
+            // Only use pooled_indices if at least one member of the batch ask for raw embeddings
+            let pooled_indices = if has_raw_requests {
+                let pooled_indices =
+                    Tensor::from_vec(batch.pooled_indices, pooled_indices_length, &self.device)?;
+
+                // Select values in the batch
+                outputs = outputs.index_select(&pooled_indices, 0)?;
+                Some(pooled_indices)
+            } else {
+                None
+            };
+
+            let pooled_embeddings = match self.pool {
+                // CLS pooling
+                Pool::Cls => outputs.i((.., 0))?,
+                // Mean pooling
+                Pool::Mean => {
+                    if let Some(ref attention_mask) = attention_mask {
+                        let mut attention_mask = attention_mask.clone();
+
+                        if let Some(pooled_indices) = pooled_indices {
+                            // Select values in the batch
+                            attention_mask = attention_mask.index_select(&pooled_indices, 0)?;
+                        };
+
+                        // Mask padded values
+                        outputs = outputs.broadcast_mul(&attention_mask)?;
+                    }
+
+                    (outputs.sum(1)?.broadcast_div(&input_lengths))?
+                }
+            };
+            Some(pooled_embeddings)
+        } else {
+            None
         };
 
-        Ok(results)
+        let raw_embeddings = if has_raw_requests {
+            // Reshape outputs
+            let (b, l, h) = outputs.shape().dims3()?;
+            let outputs = outputs.reshape((b * l, h))?;
+
+            // We need to remove the padding tokens only if batch_size > 1 and there are some
+            // member of the batch that require pooling
+            // or if batch_size > 1 and the members of the batch have different lengths
+            if (attention_mask.is_some() || has_pooling_requests) && batch_size > 1 {
+                let mut final_indices: Vec<u32> = Vec::with_capacity(batch_size * max_length);
+
+                for i in batch.raw_indices.into_iter() {
+                    let start = i * batch.max_length;
+                    let i = i as usize;
+                    let length =
+                        batch.cumulative_seq_lengths[i + 1] - batch.cumulative_seq_lengths[i];
+
+                    for j in start..start + length {
+                        // Add indices for the tokens of this specific member of the batch
+                        final_indices.push(j);
+                    }
+                }
+
+                let final_indices_length = final_indices.len();
+                let final_indices =
+                    Tensor::from_vec(final_indices, final_indices_length, &self.device)?;
+
+                // Select the tokens with final indices
+                Some(outputs.index_select(&final_indices, 0)?)
+            } else {
+                Some(outputs)
+            }
+        } else {
+            None
+        };
+
+        Ok((pooled_embeddings, raw_embeddings))
     }
 }
 
@@ -595,7 +661,7 @@ impl Model for JinaBertModel {
     fn is_padded(&self) -> bool {
         true
     }
-    fn embed(&self, batch: Batch) -> Result<Tensor> {
+    fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
     }
 }

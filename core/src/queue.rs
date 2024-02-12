@@ -1,4 +1,4 @@
-use crate::infer::InferResponse;
+use crate::infer::InferResult;
 use crate::tokenization::ValidEncoding;
 use std::cmp::max;
 use std::collections::VecDeque;
@@ -20,15 +20,15 @@ pub struct Entry {
 #[derive(Debug)]
 pub struct Metadata {
     /// InferResponse sender to communicate between the Infer struct and the batching_task
-    pub response_tx: oneshot::Sender<Result<InferResponse, BackendError>>,
-    /// Span that will live as long as entry
-    pub span: Span,
+    pub(crate) response_tx: oneshot::Sender<Result<InferResult, BackendError>>,
     /// Tokenization duration
-    pub tokenization: Duration,
+    pub(crate) tokenization: Duration,
     /// Instant when this entry was queued
-    pub queue_time: Instant,
+    pub(crate) queue_time: Instant,
     /// Number of tokens in the prompt
-    pub prompt_tokens: usize,
+    pub(crate) prompt_tokens: usize,
+    /// Pooled embedding
+    pub(crate) pooling: bool,
 }
 
 /// Request Queue
@@ -122,12 +122,16 @@ fn queue_blocking_task(
                 let mut token_type_ids = Vec::with_capacity(max_batch_tokens);
                 let mut position_ids = Vec::with_capacity(max_batch_tokens);
 
+                let mut pooled_indices = Vec::with_capacity(capacity);
+                let mut raw_indices = Vec::with_capacity(capacity);
                 let mut metadata = Vec::with_capacity(capacity);
                 let mut cu_seq_lengths = Vec::with_capacity(capacity);
                 cu_seq_lengths.push(0);
 
                 let mut current_tokens = 0;
                 let mut max_length = 0;
+
+                let mut entry_index = 0;
 
                 while let Some(entry) = entries.pop_front() {
                     // Filter entries where the response receiver was dropped (== entries where the request
@@ -151,6 +155,11 @@ fn queue_blocking_task(
                         break;
                     }
 
+                    match entry.metadata.pooling {
+                        true => pooled_indices.push(entry_index),
+                        false => raw_indices.push(entry_index),
+                    }
+
                     max_length = max(max_length, entry_tokens as u32);
 
                     input_ids.extend(entry.encoding.input_ids);
@@ -160,6 +169,8 @@ fn queue_blocking_task(
                     current_tokens += entry_tokens;
                     metadata.push(entry.metadata);
                     cu_seq_lengths.push(current_tokens as u32);
+
+                    entry_index += 1;
 
                     if Some(metadata.len()) == max_batch_requests {
                         break;
@@ -178,6 +189,8 @@ fn queue_blocking_task(
                             position_ids,
                             cumulative_seq_lengths: cu_seq_lengths,
                             max_length,
+                            pooled_indices,
+                            raw_indices,
                         },
                     ))
                 };

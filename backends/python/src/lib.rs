@@ -2,7 +2,11 @@ mod logging;
 mod management;
 
 use backend_grpc_client::Client;
-use text_embeddings_backend_core::{Backend, BackendError, Batch, Embedding, ModelType, Pool};
+use nohash_hasher::BuildNoHashHasher;
+use std::collections::HashMap;
+use text_embeddings_backend_core::{
+    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool, Predictions,
+};
 use tokio::runtime::Runtime;
 
 pub struct PythonBackend {
@@ -69,7 +73,14 @@ impl Backend for PythonBackend {
         false
     }
 
-    fn embed(&self, batch: Batch) -> Result<Vec<Embedding>, BackendError> {
+    fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError> {
+        if !batch.raw_indices.is_empty() {
+            return Err(BackendError::Inference(
+                "raw embeddings are not supported for the Python backend.".to_string(),
+            ));
+        }
+        let batch_size = batch.len();
+
         let results = self
             .tokio_runtime
             .block_on(self.backend_client.clone().embed(
@@ -80,10 +91,18 @@ impl Backend for PythonBackend {
                 batch.max_length,
             ))
             .map_err(|err| BackendError::Inference(err.to_string()))?;
-        Ok(results.into_iter().map(|r| r.values).collect())
+        let pooled_embeddings: Vec<Vec<f32>> = results.into_iter().map(|r| r.values).collect();
+
+        let mut embeddings =
+            HashMap::with_capacity_and_hasher(batch_size, BuildNoHashHasher::default());
+        for (i, e) in pooled_embeddings.into_iter().enumerate() {
+            embeddings.insert(i, Embedding::Pooled(e));
+        }
+
+        Ok(embeddings)
     }
 
-    fn predict(&self, _batch: Batch) -> Result<Vec<Vec<f32>>, BackendError> {
+    fn predict(&self, _batch: Batch) -> Result<Predictions, BackendError> {
         Err(BackendError::Inference(
             "`predict` is not implemented".to_string(),
         ))
