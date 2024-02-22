@@ -19,7 +19,6 @@ use axum::{http, Json, Router};
 use axum_tracing_opentelemetry::middleware::OtelAxumLayer;
 use futures::future::join_all;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
-use std::env;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::BackendError;
@@ -1017,6 +1016,7 @@ pub async fn run(
     info: Info,
     addr: SocketAddr,
     prom_builder: PrometheusBuilder,
+    cors_allow_origin: Option<Vec<String>>,
 ) -> Result<(), anyhow::Error> {
     // OpenAPI documentation
     #[derive(OpenApi)]
@@ -1077,13 +1077,13 @@ pub async fn run(
     // CORS allowed origins
     // map to go inside the option and then map to parse from String to HeaderValue
     // Finally, convert to AllowOrigin
-    let allow_origin: Option<AllowOrigin> =
-        env::var("CORS_ALLOW_ORIGIN").ok().map(|cors_allow_origin| {
-            let cors_allow_origin = cors_allow_origin.split(',');
-            AllowOrigin::list(
-                cors_allow_origin.map(|origin| origin.parse::<HeaderValue>().unwrap()),
-            )
-        });
+    let allow_origin: Option<AllowOrigin> = cors_allow_origin.map(|cors_allow_origin| {
+        AllowOrigin::list(
+            cors_allow_origin
+                .into_iter()
+                .map(|origin| origin.parse::<HeaderValue>().unwrap()),
+        )
+    });
 
     let prom_handle = prom_builder
         .install_recorder()

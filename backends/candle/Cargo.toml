@@ -44,4 +44,3 @@ cuda = ["candle/cuda", "candle-nn/cuda", "dep:candle-cublaslt", "dep:candle-laye
 flash-attn-v1 = ["dep:candle-flash-attn-v1", "cuda"]
 flash-attn = ["dep:candle-flash-attn", "cuda"]
 static-linking = ["candle-cublaslt?/static-linking"]
-

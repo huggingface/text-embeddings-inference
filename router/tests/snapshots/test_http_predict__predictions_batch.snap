@@ -282,4 +282,3 @@ expression: predictions_batch
     label: nervousness
   - score: 0.0000098800765
     label: remorse
-

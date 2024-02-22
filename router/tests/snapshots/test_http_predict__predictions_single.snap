@@ -58,4 +58,3 @@ expression: predictions_single
   label: nervousness
 - score: 0.0000098800765
   label: remorse
-

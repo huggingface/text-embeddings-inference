@@ -24,7 +24,7 @@ Once you have confirmed that you have access to the model:
 - Navigate to your account's [Profile | Settings | Access Tokens page](https://huggingface.co/settings/tokens).
 - Generate and copy a read token.
 
-If you're the CLI, set the `HUGGING_FACE_HUB_TOKEN` environment variable. For example:  
+If you're the CLI, set the `HUGGING_FACE_HUB_TOKEN` environment variable. For example:
 
 ```shell
 export HUGGING_FACE_HUB_TOKEN=<YOUR READ TOKEN>

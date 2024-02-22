@@ -104,6 +104,10 @@ struct Args {
     /// e.g. `http://localhost:4317`
     #[clap(long, env)]
     otlp_endpoint: Option<String>,
+
+    // Unused for gRPC servers
+    #[clap(long, env)]
+    cors_allow_origin: Option<Vec<String>>,
 }
 
 #[tokio::main]
@@ -133,6 +137,7 @@ async fn main() -> Result<()> {
         Some(args.uds_path),
         args.huggingface_hub_cache,
         args.otlp_endpoint,
+        args.cors_allow_origin,
     )
     .await?;
 

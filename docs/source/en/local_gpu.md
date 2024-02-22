@@ -16,7 +16,7 @@ rendered properly in your Markdown viewer.
 
 # Using TEI locally with GPU
 
-You can install `text-embeddings-inference` locally to run it on your own machine with a GPU. 
+You can install `text-embeddings-inference` locally to run it on your own machine with a GPU.
 To make sure that your hardware is supported, check out the [Supported models and hardware](supported_models) page.
 
 ## Step 1: CUDA and NVIDIA drivers
@@ -55,7 +55,7 @@ cargo install --path router -F candle-cuda --no-default-features
 
 ## Step 4: Launch Text Embeddings Inference
 
-You can now launch Text Embeddings Inference on GPU with: 
+You can now launch Text Embeddings Inference on GPU with:
 
 ```shell
 model=BAAI/bge-large-en-v1.5

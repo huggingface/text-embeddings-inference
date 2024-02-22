@@ -18,11 +18,11 @@ rendered properly in your Markdown viewer.
 
 ## Text Embeddings
 
-The easiest way to get started with TEI is to use one of the official Docker containers 
-(see [Supported models and hardware](supported_models) to choose the right container). 
+The easiest way to get started with TEI is to use one of the official Docker containers
+(see [Supported models and hardware](supported_models) to choose the right container).
 
-After making sure that your hardware is supported, install the 
-[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) if you 
+After making sure that your hardware is supported, install the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) if you
 plan on utilizing GPUs. NVIDIA drivers on your device need to be compatible with CUDA version 12.2 or higher.
 
 Next, install Docker following their [installation instructions](https://docs.docker.com/get-docker/).
@@ -32,7 +32,7 @@ Finally, deploy your model. Let's say you want to use `BAAI/bge-large-en-v1.5`. 
 ```shell
 model=BAAI/bge-large-en-v1.5
 revision=refs/pr/5
-volume=$PWD/data 
+volume=$PWD/data
 
 docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.6 --model-id $model --revision $revision
 ```
@@ -55,7 +55,7 @@ curl 127.0.0.1:8080/embed \
 
 ## Re-rankers
 
-Re-rankers models are Sequence Classification cross-encoders models with a single class that scores the similarity 
+Re-rankers models are Sequence Classification cross-encoders models with a single class that scores the similarity
 between a query and a text.
 
 See [this blogpost](https://blog.llamaindex.ai/boosting-rag-picking-the-best-embedding-reranker-models-42d079022e83) by
@@ -67,7 +67,7 @@ Let's say you want to use `BAAI/bge-reranker-large`:
 ```shell
 model=BAAI/bge-reranker-large
 revision=refs/pr/4
-volume=$PWD/data 
+volume=$PWD/data
 
 docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.6 --model-id $model --revision $revision
 ```
@@ -88,9 +88,9 @@ You can also use classic Sequence Classification models like `SamLowe/roberta-ba
 
 ```shell
 model=SamLowe/roberta-base-go_emotions
-volume=$PWD/data 
+volume=$PWD/data
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.6 --model-id $model 
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.6 --model-id $model
 ```
 
 Once you have deployed the model you can use the `predict` endpoint to get the emotions most associated with an input:
