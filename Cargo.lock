@@ -1294,9 +1294,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.3.22"
+version = "0.3.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d6250322ef6e60f93f9a2162799302cd6f68f79f6e5d85c8c16f14d1d958178"
+checksum = "bb2c4422095b67ee78da96fbb51a4cc413b3b25883c7717ff7ca1ab31022c9c9"
 dependencies = [
  "bytes",
  "fnv",
@@ -1485,7 +1485,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "futures-util",
- "h2 0.3.22",
+ "h2 0.3.24",
  "http 0.2.11",
  "http-body 0.4.6",
  "httparse",
@@ -1766,6 +1766,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ec2a862134d2a7d32d7983ddcdd1c4923530833c9f2ea1a44fc5fa473989058"
 
 [[package]]
+name = "libmimalloc-sys"
+version = "0.1.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3979b5c37ece694f1f5e51e7ecc871fdb0f517ed04ee45f88d15d6d553cb9664"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "libredox"
 version = "0.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1946,6 +1956,15 @@ dependencies = [
  "num_cpus",
  "quanta",
  "sketches-ddsketch",
+]
+
+[[package]]
+name = "mimalloc"
+version = "0.1.39"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa01922b5ea280a911e323e4d2fd24b7fe5cc4042e0d2cda3c40775cdc4bdc9c"
+dependencies = [
+ "libmimalloc-sys",
 ]
 
 [[package]]
@@ -2907,7 +2926,7 @@ dependencies = [
  "encoding_rs",
  "futures-core",
  "futures-util",
- "h2 0.3.22",
+ "h2 0.3.24",
  "http 0.2.11",
  "http-body 0.4.6",
  "hyper 0.14.28",
@@ -3504,12 +3523,13 @@ dependencies = [
  "clap",
  "futures",
  "hf-hub",
- "http 0.2.11",
+ "http 1.0.0",
  "init-tracing-opentelemetry",
  "insta",
  "is_close",
  "metrics",
  "metrics-exporter-prometheus",
+ "mimalloc",
  "num_cpus",
  "opentelemetry 0.20.0",
  "opentelemetry-otlp",
@@ -3523,7 +3543,7 @@ dependencies = [
  "tokenizers",
  "tokio",
  "tokio-stream",
- "tonic 0.10.2",
+ "tonic 0.11.0",
  "tonic-build 0.10.2",
  "tonic-health",
  "tonic-reflection",
@@ -3740,7 +3760,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-util",
- "h2 0.3.22",
+ "h2 0.3.24",
  "http 0.2.11",
  "http-body 0.4.6",
  "hyper 0.14.28",
@@ -3758,16 +3778,16 @@ dependencies = [
 
 [[package]]
 name = "tonic"
-version = "0.10.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d560933a0de61cf715926b9cac824d4c883c2c43142f787595e48280c40a1d0e"
+checksum = "76c4eb7a4e9ef9d4763600161f12f5070b92a578e1b634db88a6887844c91a13"
 dependencies = [
  "async-stream",
  "async-trait",
  "axum 0.6.20",
  "base64 0.21.5",
  "bytes",
- "h2 0.3.22",
+ "h2 0.3.24",
  "http 0.2.11",
  "http-body 0.4.6",
  "hyper 0.14.28",
@@ -3811,28 +3831,28 @@ dependencies = [
 
 [[package]]
 name = "tonic-health"
-version = "0.10.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f80db390246dfb46553481f6024f0082ba00178ea495dbb99e70ba9a4fafb5e1"
+checksum = "2cef6e24bc96871001a7e48e820ab240b3de2201e59b517cf52835df2f1d2350"
 dependencies = [
  "async-stream",
  "prost 0.12.3",
  "tokio",
  "tokio-stream",
- "tonic 0.10.2",
+ "tonic 0.11.0",
 ]
 
 [[package]]
 name = "tonic-reflection"
-version = "0.10.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fa37c513df1339d197f4ba21d28c918b9ef1ac1768265f11ecb6b7f1cba1b76"
+checksum = "548c227bd5c0fae5925812c4ec6c66ffcfced23ea370cb823f4d18f0fc1cb6a7"
 dependencies = [
  "prost 0.12.3",
  "prost-types 0.12.3",
  "tokio",
  "tokio-stream",
- "tonic 0.10.2",
+ "tonic 0.11.0",
 ]
 
 [[package]]

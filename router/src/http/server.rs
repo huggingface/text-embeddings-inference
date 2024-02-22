@@ -12,7 +12,8 @@ use crate::{
 use anyhow::Context;
 use axum::extract::Extension;
 use axum::http::HeaderValue;
-use axum::http::{HeaderMap, Method, StatusCode};
+use ::http::HeaderMap;
+use axum::http::{Method, StatusCode};
 use axum::routing::{get, post};
 use axum::{http, Json, Router};
 use axum_tracing_opentelemetry::middleware::OtelAxumLayer;
