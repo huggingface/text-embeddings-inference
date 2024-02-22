@@ -9,7 +9,7 @@ mod http;
 mod grpc;
 mod shutdown;
 
-use ::http::HeaderMap;
+use axum::http::HeaderMap;
 use anyhow::{anyhow, Context, Result};
 use hf_hub::api::tokio::ApiBuilder;
 use hf_hub::{Repo, RepoType};

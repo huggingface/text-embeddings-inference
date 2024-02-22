@@ -1143,8 +1143,9 @@ pub async fn run(
         .layer(cors_layer);
 
     // Run server
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+
+    axum::serve(listener, app)
         // Wait until all requests are finished to shut down
         .with_graceful_shutdown(shutdown::shutdown_signal())
         .await?;

@@ -36,7 +36,8 @@ export const options = {
 
 export default function () {
     const payload = JSON.stringify({
-        inputs: inputs,
+        query: inputs,
+        texts: [inputs],
         truncate: true,
     });
 
