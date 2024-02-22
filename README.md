@@ -234,6 +234,8 @@ Options:
           [env: JSON_OUTPUT=]
 
       --otlp-endpoint <OTLP_ENDPOINT>
+          The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC.
+          e.g. `http://localhost:4317`
           [env: OTLP_ENDPOINT=]
 
       --cors-allow-origin <CORS_ALLOW_ORIGIN>

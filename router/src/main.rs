@@ -96,6 +96,8 @@ struct Args {
     #[clap(long, env)]
     json_output: bool,
 
+    /// The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC.
+    /// e.g. `http://localhost:4317`
     #[clap(long, env)]
     otlp_endpoint: Option<String>,
 }
