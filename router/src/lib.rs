@@ -281,6 +281,8 @@ pub async fn run(
 
     #[cfg(feature = "grpc")]
     {
+        // cors_allow_origin is not used for gRPC servers
+        let _ = cors_allow_origin;
         let server =
             tokio::spawn(async move { grpc::server::run(infer, info, addr, prom_builder).await });
         tracing::info!("Ready");

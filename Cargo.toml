@@ -3,6 +3,8 @@ members = [
     "backends",
     "backends/candle",
     "backends/core",
+    "backends/python",
+    "backends/grpc-client",
     "core",
     "router",
 ]

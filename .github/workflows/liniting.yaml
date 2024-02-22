@@ -55,6 +55,9 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
+      - name: Build
+        run: |
+          cargo build
       - name: Pre-commit checks
         run: |
           pip install pre-commit
