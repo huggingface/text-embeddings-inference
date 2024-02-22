@@ -55,6 +55,7 @@ pub async fn run(
     uds_path: Option<String>,
     huggingface_hub_cache: Option<String>,
     otlp_endpoint: Option<String>,
+    cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
     let model_id_path = Path::new(&model_id);
     let model_root = if model_id_path.exists() && model_id_path.is_dir() {
@@ -271,14 +272,17 @@ pub async fn run(
 
     #[cfg(feature = "http")]
     {
-        let server =
-            tokio::spawn(async move { http::server::run(infer, info, addr, prom_builder).await });
+        let server = tokio::spawn(async move {
+            http::server::run(infer, info, addr, prom_builder, cors_allow_origin).await
+        });
         tracing::info!("Ready");
         server.await??;
     }
 
     #[cfg(feature = "grpc")]
     {
+        // cors_allow_origin is not used for gRPC servers
+        let _ = cors_allow_origin;
         let server =
             tokio::spawn(async move { grpc::server::run(infer, info, addr, prom_builder).await });
         tracing::info!("Ready");

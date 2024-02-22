@@ -389,7 +389,7 @@ impl BertClassificationHead {
 impl ClassificationHead for BertClassificationHead {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
-        let hidden_states = self.output.forward(&hidden_states)?;
+        let hidden_states = self.output.forward(hidden_states)?;
         Ok(hidden_states)
     }
 }

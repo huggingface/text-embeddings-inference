@@ -16,8 +16,8 @@ rendered properly in your Markdown viewer.
 
 # Text Embeddings Inference
 
-Text Embeddings Inference (TEI) is a comprehensive toolkit designed for efficient deployment and serving of open source 
-text embeddings models. It enables high-performance extraction for the most popular models, including FlagEmbedding, Ember, GTE, and E5. 
+Text Embeddings Inference (TEI) is a comprehensive toolkit designed for efficient deployment and serving of open source
+text embeddings models. It enables high-performance extraction for the most popular models, including FlagEmbedding, Ember, GTE, and E5.
 
 TEI offers multiple features tailored to optimize the deployment process and enhance overall performance.
 
@@ -45,4 +45,4 @@ Benchmark for [BAAI/bge-base-en-v1.5](https://hf.co/BAAI/bge-large-en-v1.5) on a
 
 **Getting Started:**
 
-To start using TEI, check the [Quick Tour](quick_tour) guide. 
+To start using TEI, check the [Quick Tour](quick_tour) guide.

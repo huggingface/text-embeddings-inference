@@ -131,4 +131,3 @@
            tags: ${{ steps.meta-89-grpc.outputs.tags }}
            labels: ${{ steps.meta-89-grpc.outputs.labels }}
            cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-89,mode=max
-

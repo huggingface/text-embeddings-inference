@@ -16,7 +16,7 @@ rendered properly in your Markdown viewer.
 
 # Using TEI locally with Metal
 
-You can install `text-embeddings-inference` locally to run it on your own Mac with Metal support. 
+You can install `text-embeddings-inference` locally to run it on your own Mac with Metal support.
 Here are the step-by-step instructions for installation:
 
 ## Step 1: Install Rust
