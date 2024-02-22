@@ -22,7 +22,7 @@ clap = { version = "4.1.4", features = ["derive", "env"] }
 futures = "^0.3"
 init-tracing-opentelemetry = { version = "0.14.1", features = ["opentelemetry-otlp"] }
 hf-hub = { version = "0.3.0", features = ["tokio"] }
-http = "0.2.9"
+http = "1.0.0"
 num_cpus = "1.16.0"
 metrics = "0.21.0"
 metrics-exporter-prometheus = { version = "0.12.1", features = [] }
@@ -32,26 +32,27 @@ reqwest = { version = "0.11.14", features = [] }
 serde = "1.0.152"
 serde_json = "1.0.93"
 thiserror = "1.0.38"
-tokenizers = { version = "0.15.0", default-features=false, features=["onig", "esaxx_fast"] }
+tokenizers = { version = "0.15.2", default-features=false, features=["onig", "esaxx_fast"] }
 tokio = { version = "1.25.0", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync"] }
 tracing = "0.1.37"
 tracing-opentelemetry = "0.21.0"
 tracing-subscriber = { version = "0.3.16", features = ["json", "env-filter"] }
 veil = "0.1.6"
+mimalloc = { version = "*", default-features = false }
 
 # HTTP dependencies
-axum = { version = "0.6.4", features = ["json"], optional = true }
-axum-tracing-opentelemetry = { version = "0.14.1", optional = true }
-tower-http = { version = "0.4.0", features = ["cors"], optional = true }
-utoipa = { version = "4.0.0", features = ["axum_extras"], optional = true }
-utoipa-swagger-ui = { version = "4.0.0", features = ["axum"], optional = true }
+axum = { version = "0.7.4", features = ["json"], optional = true }
+axum-tracing-opentelemetry = { version = "0.17.0", optional = true }
+tower-http = { version = "0.5.1", features = ["cors"], optional = true }
+utoipa = { version = "4.2", features = ["axum_extras"], optional = true }
+utoipa-swagger-ui = { version = "6.0", features = ["axum"], optional = true }
 
 # gRPC dependencies
 async-stream = { version = "0.3.5", optional = true }
 prost = { version = "0.12.1", optional = true }
-tonic = { version = "0.10.2", optional = true }
-tonic-health = { version = "0.10.2", optional = true }
-tonic-reflection = { version = "0.10.2", optional = true }
+tonic = { version = "0.11.0", optional = true }
+tonic-health = { version = "0.11.0", optional = true }
+tonic-reflection = { version = "0.11.0", optional = true }
 tokio-stream = { version = "0.1.14", optional = true }
 
 [dev-dependencies]

@@ -12,7 +12,8 @@ use crate::{
 use anyhow::Context;
 use axum::extract::Extension;
 use axum::http::HeaderValue;
-use axum::http::{HeaderMap, Method, StatusCode};
+use ::http::HeaderMap;
+use axum::http::{Method, StatusCode};
 use axum::routing::{get, post};
 use axum::{http, Json, Router};
 use axum_tracing_opentelemetry::middleware::OtelAxumLayer;
@@ -1143,8 +1144,9 @@ pub async fn run(
         .layer(cors_layer);
 
     // Run server
-    axum::Server::bind(&addr)
-        .serve(app.into_make_service())
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+
+    axum::serve(listener, app)
         // Wait until all requests are finished to shut down
         .with_graceful_shutdown(shutdown::shutdown_signal())
         .await?;

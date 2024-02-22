@@ -3,6 +3,10 @@ use clap::Parser;
 use opentelemetry::global;
 use text_embeddings_backend::DType;
 use veil::Redact;
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 /// App Configuration
 #[derive(Parser, Redact)]

@@ -4,12 +4,16 @@ mod prometheus;
 
 #[cfg(feature = "http")]
 mod http;
+#[cfg(feature = "http")]
+use ::http::HeaderMap;
 
 #[cfg(feature = "grpc")]
 mod grpc;
+#[cfg(feature = "grpc")]
+use tonic::codegen::http::HeaderMap;
+
 mod shutdown;
 
-use ::http::HeaderMap;
 use anyhow::{anyhow, Context, Result};
 use hf_hub::api::tokio::ApiBuilder;
 use hf_hub::{Repo, RepoType};
