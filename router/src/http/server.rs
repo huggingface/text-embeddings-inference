@@ -9,10 +9,10 @@ use crate::{
     shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
     ResponseMetadata,
 };
+use ::http::HeaderMap;
 use anyhow::Context;
 use axum::extract::Extension;
 use axum::http::HeaderValue;
-use ::http::HeaderMap;
 use axum::http::{Method, StatusCode};
 use axum::routing::{get, post};
 use axum::{http, Json, Router};

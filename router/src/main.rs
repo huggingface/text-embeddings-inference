@@ -1,9 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
+use mimalloc::MiMalloc;
 use opentelemetry::global;
 use text_embeddings_backend::DType;
 use veil::Redact;
-use mimalloc::MiMalloc;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
