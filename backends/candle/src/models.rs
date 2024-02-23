@@ -15,10 +15,12 @@ mod jina;
 
 #[cfg(feature = "cuda")]
 mod flash_nomic;
+mod nomic;
 
 pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
 use candle::{Result, Tensor};
 pub use jina::JinaBertModel;
+pub use nomic::{NomicBertModel, NomicConfig};
 use text_embeddings_backend_core::Batch;
 
 #[cfg(feature = "cuda")]
@@ -28,7 +30,7 @@ pub use flash_bert::FlashBertModel;
 pub use flash_jina::FlashJinaBertModel;
 
 #[cfg(feature = "cuda")]
-pub use flash_nomic::{FlashNomicBertModel, NomicConfig};
+pub use flash_nomic::FlashNomicBertModel;
 
 pub(crate) trait Model {
     fn is_padded(&self) -> bool;

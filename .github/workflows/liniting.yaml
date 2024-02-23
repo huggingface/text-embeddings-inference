@@ -58,6 +58,7 @@ jobs:
       - name: Build
         run: |
           cargo build
+          cargo build -F candle -F grpc --no-default-features
       - name: Pre-commit checks
         run: |
           pip install pre-commit

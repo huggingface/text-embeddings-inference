@@ -1,54 +1,9 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{HiddenAct, LayerNorm, Linear};
-use crate::models::Model;
+use crate::layers::{LayerNorm, Linear};
+use crate::models::{Model, NomicConfig};
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{Embedding, VarBuilder};
-use serde::Deserialize;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct NomicConfig {
-    pub prenorm: bool,
-    pub rotary_emb_fraction: f32,
-    pub qkv_proj_bias: bool,
-    pub rotary_emb_base: f32,
-    pub rotary_emb_interleaved: bool,
-    pub mlp_fc1_bias: bool,
-    pub mlp_fc2_bias: bool,
-    pub rotary_scaling_factor: Option<f32>,
-    #[serde(default = "default_max_trained_positions")]
-    pub max_trained_positions: usize,
-
-    pub n_embd: usize,
-    pub n_head: usize,
-    pub n_inner: usize,
-    pub n_layer: usize,
-    pub n_positions: usize,
-
-    pub activation_function: HiddenAct,
-
-    pub vocab_size: usize,
-    pub type_vocab_size: usize,
-    pub layer_norm_epsilon: f32,
-}
-
-fn default_max_trained_positions() -> usize {
-    2048
-}
-
-impl NomicConfig {
-    // For now, we only support these parameters
-    pub fn valid(&self) -> bool {
-        !self.prenorm
-            && self.rotary_emb_fraction == 1.0
-            && !self.qkv_proj_bias
-            && !self.rotary_emb_interleaved
-            && !self.mlp_fc1_bias
-            && !self.mlp_fc2_bias
-            && self.type_vocab_size > 0
-            && self.activation_function == HiddenAct::Swiglu
-    }
-}
 
 #[derive(Debug)]
 struct NomicBertEmbeddings {
@@ -71,11 +26,7 @@ impl NomicBertEmbeddings {
                     .get((config.type_vocab_size, config.n_embd), "weight")?,
                 config.n_embd,
             ),
-            layer_norm: LayerNorm::load(
-                vb.pp("emb_ln"),
-                config.n_embd,
-                config.layer_norm_epsilon as f32,
-            )?,
+            layer_norm: LayerNorm::load(vb.pp("emb_ln"), config.n_embd, config.layer_norm_epsilon)?,
             span: tracing::span!(tracing::Level::TRACE, "embeddings"),
         })
     }

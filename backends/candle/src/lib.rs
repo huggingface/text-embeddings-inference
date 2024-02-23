@@ -10,13 +10,11 @@ mod models;
 use crate::compute_cap::{
     get_compile_compute_cap, get_runtime_compute_cap, incompatible_compute_cap,
 };
-#[cfg(feature = "cuda")]
-use crate::models::FlashBertModel;
-#[cfg(feature = "cuda")]
-use crate::models::FlashJinaBertModel;
 use crate::models::{
-    BertModel, FlashNomicBertModel, JinaBertModel, Model, NomicConfig, PositionEmbeddingType,
+    BertModel, JinaBertModel, Model, NomicBertModel, NomicConfig, PositionEmbeddingType,
 };
+#[cfg(feature = "cuda")]
+use crate::models::{FlashBertModel, FlashJinaBertModel, FlashNomicBertModel};
 use candle::{DType, Device};
 use candle_nn::VarBuilder;
 use models::BertConfig;
@@ -35,7 +33,6 @@ enum Config {
     XlmRoberta(BertConfig),
     Camembert(BertConfig),
     Roberta(BertConfig),
-    Jina(BertConfig),
     #[serde(rename(deserialize = "nomic_bert"))]
     NomicBert(NomicConfig),
 }
@@ -58,6 +55,7 @@ impl CandleBackend {
 
         // Get candle device
         let device = if candle::utils::cuda_is_available() {
+            #[cfg(feature = "cuda")]
             if incompatible_compute_cap() {
                 return Err(BackendError::Start(format!(
                     "Runtime compute cap {} is not compatible with compile time compute cap {}",
@@ -65,7 +63,6 @@ impl CandleBackend {
                     get_compile_compute_cap()
                 )));
             }
-
             Device::new_cuda(0)
         } else if candle::utils::metal_is_available() {
             Device::new_metal(0)
@@ -111,9 +108,15 @@ impl CandleBackend {
                 | Config::Roberta(config),
                 Device::Cpu | Device::Metal(_),
             ) => {
-                tracing::info!("Starting Bert model on {:?}", device);
-                Ok(Box::new(BertModel::load(vb, &config, model_type).s()?))
+                if config.position_embedding_type == PositionEmbeddingType::Alibi {
+                    tracing::info!("Starting JinaBertModel model on {:?}", device);
+                    Ok(Box::new(JinaBertModel::load(vb, &config, model_type).s()?))
+                } else {
+                    tracing::info!("Starting Bert model on {:?}", device);
+                    Ok(Box::new(BertModel::load(vb, &config, model_type).s()?))
+                }
             }
+            #[cfg(feature = "cuda")]
             (
                 Config::Bert(config)
                 | Config::XlmRoberta(config)
@@ -123,42 +126,35 @@ impl CandleBackend {
             ) => {
                 if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
                     && dtype == DType::F16
-                    && config.position_embedding_type == PositionEmbeddingType::Absolute
+                    && ((config.position_embedding_type == PositionEmbeddingType::Absolute) | (config.position_embedding_type == PositionEmbeddingType::Alibi))
                     // Allow disabling because of flash attention v1 precision problems
                     // See: https://github.com/huggingface/text-embeddings-inference/issues/37
                     && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
                 {
-                    tracing::info!("Starting FlashBert model on {:?}", device);
-                    Ok(Box::new(FlashBertModel::load(vb, &config, model_type).s()?))
+                    if config.position_embedding_type == PositionEmbeddingType::Alibi {
+                        tracing::info!("Starting FlashJinaBertModel model on {:?}", device);
+                        Ok(Box::new(
+                            FlashJinaBertModel::load(vb, &config, model_type).s()?,
+                        ))
+                    } else {
+                        tracing::info!("Starting FlashBert model on {:?}", device);
+                        Ok(Box::new(FlashBertModel::load(vb, &config, model_type).s()?))
+                    }
                 } else {
-                    tracing::info!("Starting Bert model on {:?}", device);
-                    Ok(Box::new(BertModel::load(vb, &config, model_type).s()?))
+                    if config.position_embedding_type == PositionEmbeddingType::Alibi {
+                        tracing::info!("Starting JinaBertModel model on {:?}", device);
+                        Ok(Box::new(JinaBertModel::load(vb, &config, model_type).s()?))
+                    } else {
+                        tracing::info!("Starting Bert model on {:?}", device);
+                        Ok(Box::new(BertModel::load(vb, &config, model_type).s()?))
+                    }
                 }
             }
-            (Config::Jina(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting JinaBert model on {:?}", device);
-                Ok(Box::new(JinaBertModel::load(vb, &config, model_type).s()?))
+            (Config::NomicBert(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting NomicBertModel model on {:?}", device);
+                Ok(Box::new(NomicBertModel::load(vb, &config, model_type).s()?))
             }
-            (Config::Jina(config), Device::Cuda(_)) => {
-                if cfg!(feature = "flash-attn")
-                    && dtype == DType::F16
-                    && &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        == "true"
-                {
-                    tracing::info!("Starting FlashJinaBertModel model on {:?}", device);
-                    Ok(Box::new(
-                        FlashJinaBertModel::load(vb, &config, model_type).s()?,
-                    ))
-                } else {
-                    tracing::info!("Starting JinaBert model on {:?}", device);
-                    Ok(Box::new(JinaBertModel::load(vb, &config, model_type).s()?))
-                }
-            }
-            (Config::NomicBert(_), Device::Cpu | Device::Metal(_)) => {
-                panic!();
-            }
+            #[cfg(feature = "cuda")]
             (Config::NomicBert(config), Device::Cuda(_)) => {
                 if cfg!(feature = "flash-attn")
                     && dtype == DType::F16
@@ -172,10 +168,8 @@ impl CandleBackend {
                         FlashNomicBertModel::load(vb, &config, model_type).s()?,
                     ))
                 } else {
-                    tracing::info!("Starting FlashNomicBertModel model on {:?}", device);
-                    Ok(Box::new(
-                        FlashNomicBertModel::load(vb, &config, model_type).s()?,
-                    ))
+                    tracing::info!("Starting NomicBertModel model on {:?}", device);
+                    Ok(Box::new(NomicBertModel::load(vb, &config, model_type).s()?))
                 }
             }
         };
