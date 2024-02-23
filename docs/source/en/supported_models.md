@@ -25,7 +25,7 @@ model with Alibi positions.
 
 Below are some examples of the currently supported models:
 
-| MTEB Rank | Model Type  | Example Model ID                                                                                 |
+| MTEB Rank | Model Type  | Model ID                                                                                         |
 |-----------|-------------|--------------------------------------------------------------------------------------------------|
 | 6         | Bert        | [WhereIsAI/UAE-Large-V1](https://hf.co/WhereIsAI/UAE-Large-V1)                                   |
 | 1O        | XLM-RoBERTa | [intfloat/multilingual-e5-large-instruct](https://hf.co/intfloat/multilingual-e5-large-instruct) |
@@ -63,13 +63,13 @@ Find the appropriate Docker image for your hardware in the following table:
 
 | Architecture                        | Image                                                                    |
 |-------------------------------------|--------------------------------------------------------------------------|
-| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-0.7                    |
+| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-1.0                    |
 | Volta                               | NOT SUPPORTED                                                            |
-| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-0.7 (experimental)  |
-| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:0.7                        |
-| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-0.7                     |
-| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-0.7                     |
-| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-0.7 (experimental)  |
+| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-1.0 (experimental)  |
+| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:1.0                        |
+| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-1.0                     |
+| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-1.0                     |
+| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-1.0 (experimental)  |
 
 **Warning**: Flash Attention is turned off by default for the Turing image as it suffers from precision issues.
 You can turn Flash Attention v1 ON by using the `USE_FLASH_ATTENTION=True` environment variable.
