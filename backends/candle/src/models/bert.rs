@@ -8,7 +8,7 @@ use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 // https://github.com/huggingface/transformers/blob/6eedfa6dd15dc1e22a55ae036f681914e5a0d9a1/src/transformers/models/bert/configuration_bert.py#L1
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct Config {
+pub struct BertConfig {
     pub vocab_size: usize,
     pub hidden_size: usize,
     pub num_hidden_layers: usize,
@@ -48,7 +48,7 @@ struct BertEmbeddings {
 }
 
 impl BertEmbeddings {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         if config.position_embedding_type != PositionEmbeddingType::Absolute {
             candle::bail!("Bert only supports absolute position embeddings");
         }
@@ -113,7 +113,7 @@ struct BertAttention {
 }
 
 impl BertAttention {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let attention_head_size = config.hidden_size / config.num_attention_heads;
         let all_head_size = config.num_attention_heads * attention_head_size;
         let hidden_size = config.hidden_size;
@@ -270,7 +270,7 @@ struct BertLayer {
 }
 
 impl BertLayer {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let attention = BertAttention::load(vb.pp("attention"), config)?;
 
         let intermediate_weight = vb
@@ -336,7 +336,7 @@ struct BertEncoder {
 }
 
 impl BertEncoder {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let layers = (0..config.num_hidden_layers)
             .map(|index| BertLayer::load(vb.pp(format!("layer.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
@@ -369,7 +369,7 @@ pub struct BertClassificationHead {
 }
 
 impl BertClassificationHead {
-    pub(crate) fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub(crate) fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let n_classes = match &config.id2label {
             None => candle::bail!("`id2label` must be set for classifier models"),
             Some(id2label) => id2label.len(),
@@ -401,7 +401,7 @@ pub struct RobertaClassificationHead {
 }
 
 impl RobertaClassificationHead {
-    pub(crate) fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub(crate) fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let n_classes = match &config.id2label {
             None => candle::bail!("`id2label` must be set for classifier models"),
             Some(id2label) => id2label.len(),
@@ -454,7 +454,7 @@ pub struct BertModel {
 }
 
 impl BertModel {
-    pub fn load(vb: VarBuilder, config: &Config, model_type: ModelType) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig, model_type: ModelType) -> Result<Self> {
         // Check position embedding type
         if config.position_embedding_type != PositionEmbeddingType::Absolute {
             candle::bail!("Bert only supports absolute position embeddings")
