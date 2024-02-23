@@ -31,7 +31,7 @@ export PATH=$PATH:/usr/local/cuda/bin
 
 ## Step 2: Install Rust
 
-[Install Rust]((https://rustup.rs/) on your machine by run the following in your terminal, then following the instructions:
+[Install Rust](https://rustup.rs/) on your machine by run the following in your terminal, then following the instructions:
 
 ```shell
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
