@@ -1,7 +1,7 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{LayerNorm, Linear};
 use crate::models::bert::{
-    BertClassificationHead, ClassificationHead, Config, PositionEmbeddingType,
+    BertClassificationHead, BertConfig, ClassificationHead, PositionEmbeddingType,
     RobertaClassificationHead,
 };
 use crate::models::Model;
@@ -19,7 +19,7 @@ struct BertEmbeddings {
 }
 
 impl BertEmbeddings {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         if config.position_embedding_type != PositionEmbeddingType::Absolute {
             candle::bail!("FlashBert only supports absolute position embeddings");
         }
@@ -84,7 +84,7 @@ struct BertAttention {
 }
 
 impl BertAttention {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let attention_head_size = config.hidden_size / config.num_attention_heads;
         let all_head_size = config.num_attention_heads * attention_head_size;
         let hidden_size = config.hidden_size;
@@ -184,7 +184,7 @@ struct BertLayer {
 }
 
 impl BertLayer {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let attention = BertAttention::load(vb.pp("attention"), config)?;
 
         let intermediate_weight = vb
@@ -251,7 +251,7 @@ struct BertEncoder {
 }
 
 impl BertEncoder {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let layers = (0..config.num_hidden_layers)
             .map(|index| BertLayer::load(vb.pp(format!("layer.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
@@ -285,7 +285,7 @@ pub struct FlashBertModel {
 }
 
 impl FlashBertModel {
-    pub fn load(vb: VarBuilder, config: &Config, model_type: ModelType) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig, model_type: ModelType) -> Result<Self> {
         match vb.device() {
             Device::Cuda(_) => {}
             _ => candle::bail!("FlashBert requires Cuda"),

@@ -51,21 +51,27 @@ impl CublasLtWrapper {
     ) -> Result<Tensor> {
         #[cfg(feature = "cuda")]
         {
-            let act = act.clone().map(|a| match a {
-                HiddenAct::Gelu => Activation::Gelu,
-                HiddenAct::Relu => Activation::Relu,
-            });
+            let inner_act = match act {
+                Some(HiddenAct::Gelu) => Some(Activation::Gelu),
+                Some(HiddenAct::Relu) => Some(Activation::Relu),
+                _ => None,
+            };
 
-            fused_matmul(
-                &a,
-                &b,
+            let mut result = fused_matmul(
+                a,
+                b,
                 out,
                 alpha,
                 beta,
                 bias,
-                act.clone(),
+                inner_act,
                 self.cublaslt.clone(),
-            )
+            )?;
+
+            if Some(HiddenAct::Swiglu) == act {
+                result = candle_nn::ops::swiglu(&result)?;
+            }
+            Ok(result)
         }
         #[cfg(not(feature = "cuda"))]
         {
@@ -86,21 +92,27 @@ impl CublasLtWrapper {
     ) -> Result<Tensor> {
         #[cfg(feature = "cuda")]
         {
-            let act = act.clone().map(|a| match a {
-                HiddenAct::Gelu => Activation::Gelu,
-                HiddenAct::Relu => Activation::Relu,
-            });
+            let inner_act = match act {
+                Some(HiddenAct::Gelu) => Some(Activation::Gelu),
+                Some(HiddenAct::Relu) => Some(Activation::Relu),
+                _ => None,
+            };
 
-            fused_batch_matmul(
-                &a,
-                &b,
+            let mut result = fused_batch_matmul(
+                a,
+                b,
                 out,
                 alpha,
                 beta,
                 bias,
-                act.clone(),
+                inner_act,
                 self.cublaslt.clone(),
-            )
+            )?;
+
+            if Some(HiddenAct::Swiglu) == act {
+                result = candle_nn::ops::swiglu(&result)?;
+            }
+            Ok(result)
         }
         #[cfg(not(feature = "cuda"))]
         {

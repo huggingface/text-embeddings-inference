@@ -57,7 +57,7 @@ impl LayerNorm {
                     let hidden_states = hidden_states.flatten_to(D::Minus2)?;
                     let residual = residual.flatten_to(D::Minus2)?;
 
-                    let result = fused_add_layer_norm(
+                    let (result, _) = fused_add_layer_norm(
                         &hidden_states,
                         &residual,
                         &self.weight,

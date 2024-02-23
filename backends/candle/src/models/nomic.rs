@@ -3,173 +3,197 @@ use crate::models::Model;
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{Embedding, VarBuilder};
 use serde::Deserialize;
-use std::collections::HashMap;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
-// https://github.com/huggingface/transformers/blob/6eedfa6dd15dc1e22a55ae036f681914e5a0d9a1/src/transformers/models/bert/configuration_bert.py#L1
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct BertConfig {
+pub struct NomicConfig {
+    pub prenorm: bool,
+    pub rotary_emb_fraction: f32,
+    pub qkv_proj_bias: bool,
+    pub rotary_emb_base: f32,
+    pub rotary_emb_interleaved: bool,
+    pub mlp_fc1_bias: bool,
+    pub mlp_fc2_bias: bool,
+    pub rotary_scaling_factor: Option<f32>,
+    #[serde(default = "default_max_trained_positions")]
+    pub max_trained_positions: usize,
+
+    pub n_embd: usize,
+    pub n_head: usize,
+    pub n_inner: usize,
+    pub n_layer: usize,
+    pub n_positions: usize,
+
+    pub activation_function: HiddenAct,
+
     pub vocab_size: usize,
-    pub hidden_size: usize,
-    pub num_hidden_layers: usize,
-    pub num_attention_heads: usize,
-    pub intermediate_size: usize,
-    pub hidden_act: HiddenAct,
-    pub hidden_dropout_prob: f64,
-    pub max_position_embeddings: usize,
     pub type_vocab_size: usize,
-    pub initializer_range: f64,
-    pub layer_norm_eps: f64,
-    pub pad_token_id: usize,
-    #[serde(default)]
-    pub position_embedding_type: PositionEmbeddingType,
-    #[serde(default)]
-    pub use_cache: bool,
-    pub classifier_dropout: Option<f64>,
-    pub model_type: Option<String>,
-    pub id2label: Option<HashMap<String, String>>,
+    pub layer_norm_epsilon: f32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum PositionEmbeddingType {
-    #[default]
-    Absolute,
-    Alibi,
+fn default_max_trained_positions() -> usize {
+    2048
+}
+
+impl NomicConfig {
+    // For now, we only support these parameters
+    pub fn valid(&self) -> bool {
+        !self.prenorm
+            && self.rotary_emb_fraction == 1.0
+            && !self.qkv_proj_bias
+            && !self.rotary_emb_interleaved
+            && !self.mlp_fc1_bias
+            && !self.mlp_fc2_bias
+            && self.type_vocab_size > 0
+            && self.activation_function == HiddenAct::Swiglu
+    }
 }
 
 #[derive(Debug)]
-struct BertEmbeddings {
+struct NomicBertEmbeddings {
     word_embeddings: Embedding,
     token_type_embeddings: Embedding,
-    position_embeddings: Embedding,
     layer_norm: LayerNorm,
     span: tracing::Span,
 }
 
-impl BertEmbeddings {
-    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
-        if config.position_embedding_type != PositionEmbeddingType::Absolute {
-            candle::bail!("Bert only supports absolute position embeddings");
-        }
-
+impl NomicBertEmbeddings {
+    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
         Ok(Self {
             word_embeddings: Embedding::new(
-                vb.pp("word_embeddings")
-                    .get((config.vocab_size, config.hidden_size), "weight")?,
-                config.hidden_size,
+                vb.pp("embeddings.word_embeddings")
+                    .get((config.vocab_size, config.n_embd), "weight")?,
+                config.n_embd,
             ),
             token_type_embeddings: Embedding::new(
-                vb.pp("token_type_embeddings")
-                    .get((config.type_vocab_size, config.hidden_size), "weight")?,
-                config.hidden_size,
+                vb.pp("embeddings.token_type_embeddings")
+                    .get((config.type_vocab_size, config.n_embd), "weight")?,
+                config.n_embd,
             ),
-            position_embeddings: Embedding::new(
-                vb.pp("position_embeddings").get(
-                    (config.max_position_embeddings, config.hidden_size),
-                    "weight",
-                )?,
-                config.hidden_size,
-            ),
-            layer_norm: LayerNorm::load(
-                vb.pp("LayerNorm"),
-                config.hidden_size,
-                config.layer_norm_eps as f32,
-            )?,
+            layer_norm: LayerNorm::load(vb.pp("emb_ln"), config.n_embd, config.layer_norm_epsilon)?,
             span: tracing::span!(tracing::Level::TRACE, "embeddings"),
         })
     }
 
-    fn forward(
-        &self,
-        input_ids: &Tensor,
-        token_type_ids: &Tensor,
-        position_ids: &Tensor,
-    ) -> Result<Tensor> {
+    fn forward(&self, input_ids: &Tensor, token_type_ids: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
         let input_embeddings = self.word_embeddings.forward(input_ids)?;
         let token_type_embeddings = self.token_type_embeddings.forward(token_type_ids)?;
-        let position_embeddings = self.position_embeddings.forward(position_ids)?;
 
-        let embeddings = input_embeddings.add(&token_type_embeddings)?;
-        let embeddings = self.layer_norm.forward(&embeddings, &position_embeddings)?;
+        let embeddings = self
+            .layer_norm
+            .forward(&input_embeddings, &token_type_embeddings)?;
 
         Ok(embeddings)
     }
 }
 
-struct BertAttention {
-    qkv_linear: Linear,
+struct NomicBertGatedMLP {
+    gate_up_proj: Linear,
+    down_proj: Linear,
 
-    dense: Linear,
-    layer_norm: LayerNorm,
+    span: tracing::Span,
+}
+
+impl NomicBertGatedMLP {
+    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
+        let intermediate_size = config.n_inner;
+
+        let gate_proj_weight = vb
+            .pp("fc12")
+            .get((intermediate_size, config.n_embd), "weight")?;
+
+        let up_proj_weight = vb
+            .pp("fc11")
+            .get((intermediate_size, config.n_embd), "weight")?;
+
+        let gate_up_proj_weight = Tensor::cat(&[&gate_proj_weight, &up_proj_weight], 0)?;
+        let gate_up_proj = Linear::new(
+            gate_up_proj_weight,
+            None,
+            Some(config.activation_function.clone()),
+        );
+
+        let down_proj_weight = vb
+            .pp("fc2")
+            .get((config.n_embd, intermediate_size), "weight")?;
+        let down_proj = Linear::new(down_proj_weight, None, None);
+
+        Ok(Self {
+            gate_up_proj,
+            down_proj,
+            span: tracing::span!(tracing::Level::TRACE, "mlp"),
+        })
+    }
+
+    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let gate_up_states = self.gate_up_proj.forward(hidden_states)?;
+        self.down_proj.forward(&gate_up_states)
+    }
+}
+
+struct NomicAttention {
+    qkv_linear: Linear,
+    out_proj: Linear,
 
     num_attention_heads: usize,
     attention_head_size: usize,
+
     softmax_scale: f64,
 
     span: tracing::Span,
 }
 
-impl BertAttention {
-    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
-        let attention_head_size = config.hidden_size / config.num_attention_heads;
-        let all_head_size = config.num_attention_heads * attention_head_size;
-        let hidden_size = config.hidden_size;
+impl NomicAttention {
+    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
+        let num_attention_heads = config.n_head;
+        let attention_head_size = config.n_embd / config.n_head;
+        let hidden_size = config.n_embd;
 
-        let query_weight = vb
-            .pp("self.query")
-            .get((all_head_size, hidden_size), "weight")?;
-        let query_bias = vb.pp("self.query").get(all_head_size, "bias")?;
-
-        let key_weight = vb
-            .pp("self.key")
-            .get((all_head_size, hidden_size), "weight")?;
-        let key_bias = vb.pp("self.key").get(all_head_size, "bias")?;
-
-        let value_weight = vb
-            .pp("self.value")
-            .get((all_head_size, hidden_size), "weight")?;
-        let value_bias = vb.pp("self.value").get(all_head_size, "bias")?;
-
-        let qkv_weight = Tensor::cat(&[&query_weight, &key_weight, &value_weight], 0)?;
-        let qkv_bias = Tensor::cat(&[&query_bias, &key_bias, &value_bias], 0)?;
-
-        let qkv_linear = Linear::new(qkv_weight, Some(qkv_bias), None);
-
-        let dense_weight = vb
-            .pp("output")
-            .pp("dense")
-            .get((hidden_size, hidden_size), "weight")?;
-        let dense_bias = vb.pp("output").pp("dense").get(hidden_size, "bias")?;
-
-        let dense = Linear::new(dense_weight, Some(dense_bias), None);
-
-        let layer_norm = LayerNorm::load(
-            vb.pp("output").pp("LayerNorm"),
-            config.hidden_size,
-            config.layer_norm_eps as f32,
+        let qkv_weight = vb.pp("Wqkv").get(
+            (3 * num_attention_heads * attention_head_size, hidden_size),
+            "weight",
         )?;
+        let qkv_linear = Linear::new(qkv_weight, None, None);
+
+        let out_proj_weight = vb
+            .pp("out_proj")
+            .get((hidden_size, hidden_size), "weight")?;
+        let out_proj = Linear::new(out_proj_weight, None, None);
 
         let softmax_scale = 1. / (attention_head_size as f64).sqrt();
 
         Ok(Self {
             qkv_linear,
-            dense,
-            layer_norm,
-            num_attention_heads: config.num_attention_heads,
+            out_proj,
+            num_attention_heads,
             attention_head_size,
             softmax_scale,
             span: tracing::span!(tracing::Level::TRACE, "attention"),
         })
     }
 
-    fn forward(&self, hidden_states: &Tensor, attention_bias: Option<&Tensor>) -> Result<Tensor> {
+    fn apply_rotary(&self, x: &Tensor, cos: &Tensor, sin: &Tensor) -> Result<Tensor> {
+        let dim = self.attention_head_size / 2;
+        let x1 = x.narrow(D::Minus1, 0, dim)?;
+        let x2 = x.narrow(D::Minus1, dim, dim)?;
+        let rotate_x = Tensor::cat(&[&x2.neg()?, &x1], D::Minus1)?;
+        let rope = (x.broadcast_mul(cos)? + rotate_x.broadcast_mul(sin)?)?;
+        Ok(rope)
+    }
+
+    pub fn forward(
+        &self,
+        hidden_states: &Tensor,
+        attention_bias: Option<&Tensor>,
+        cos: &Tensor,
+        sin: &Tensor,
+    ) -> Result<Tensor> {
         let _enter = self.span.enter();
         let device = hidden_states.device();
-
-        let residual = hidden_states.clone();
 
         let qkv = self.qkv_linear.forward(hidden_states)?;
 
@@ -183,6 +207,9 @@ impl BertAttention {
         let query_layer = &qkv[0].contiguous()?;
         let key_layer = &qkv[1].contiguous()?;
         let value_layer = &qkv[2];
+
+        let query_layer = self.apply_rotary(query_layer, cos, sin)?;
+        let key_layer = self.apply_rotary(key_layer, cos, sin)?;
 
         #[allow(unused_variables)]
         let context_layer = if let (Device::Cuda(_), Some(cublaslt)) =
@@ -254,60 +281,36 @@ impl BertAttention {
 
         let context_layer = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?;
 
-        let hidden_states = self.dense.forward(&context_layer)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.out_proj.forward(&context_layer)?;
 
         Ok(hidden_states)
     }
 }
 
-struct BertLayer {
-    attention: BertAttention,
-    intermediate: Linear,
-    output: Linear,
-    layer_norm: LayerNorm,
+struct NomicBertBlock {
+    attention: NomicAttention,
+    mlp: NomicBertGatedMLP,
+    post_attention_layer_norm: LayerNorm,
+    output_layer_norm: LayerNorm,
+
     span: tracing::Span,
 }
 
-impl BertLayer {
-    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
-        let attention = BertAttention::load(vb.pp("attention"), config)?;
+impl NomicBertBlock {
+    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
+        let attention = NomicAttention::load(vb.pp("attn"), config)?;
+        let mlp = NomicBertGatedMLP::load(vb.pp("mlp"), config)?;
 
-        let intermediate_weight = vb
-            .pp("intermediate")
-            .pp("dense")
-            .get((config.intermediate_size, config.hidden_size), "weight")?;
-        let intermediate_bias = vb
-            .pp("intermediate")
-            .pp("dense")
-            .get(config.intermediate_size, "bias")?;
-        let intermediate = Linear::new(
-            intermediate_weight,
-            Some(intermediate_bias),
-            Some(config.hidden_act.clone()),
-        );
-
-        let output_weight = vb
-            .pp("output")
-            .pp("dense")
-            .get((config.hidden_size, config.intermediate_size), "weight")?;
-        let output_bias = vb
-            .pp("output")
-            .pp("dense")
-            .get(config.hidden_size, "bias")?;
-        let output = Linear::new(output_weight, Some(output_bias), None);
-
-        let layer_norm = LayerNorm::load(
-            vb.pp("output").pp("LayerNorm"),
-            config.hidden_size,
-            config.layer_norm_eps as f32,
-        )?;
+        let post_attention_layer_norm =
+            LayerNorm::load(vb.pp("norm1"), config.n_embd, config.layer_norm_epsilon)?;
+        let output_layer_norm =
+            LayerNorm::load(vb.pp("norm2"), config.n_embd, config.layer_norm_epsilon)?;
 
         Ok(Self {
             attention,
-            intermediate,
-            output,
-            layer_norm,
+            mlp,
+            post_attention_layer_norm,
+            output_layer_norm,
             span: tracing::span!(tracing::Level::TRACE, "layer"),
         })
     }
@@ -316,205 +319,123 @@ impl BertLayer {
         &self,
         hidden_states: &Tensor,
         attention_bias: Option<&Tensor>,
+        cos: &Tensor,
+        sin: &Tensor,
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let hidden_states = self.attention.forward(hidden_states, attention_bias)?;
-        let residual = hidden_states.clone();
+        let attn_output = self
+            .attention
+            .forward(hidden_states, attention_bias, cos, sin)?;
+        let hidden_states = self
+            .post_attention_layer_norm
+            .forward(hidden_states, &attn_output)?;
 
-        let hidden_states = self.intermediate.forward(&hidden_states)?;
-        let hidden_states = self.output.forward(&hidden_states)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let mlp_out = self.mlp.forward(&hidden_states)?;
 
-        Ok(hidden_states)
+        self.output_layer_norm.forward(&hidden_states, &mlp_out)
     }
 }
 
-struct BertEncoder {
-    layers: Vec<BertLayer>,
+struct NomicBertEncoder {
+    layers: Vec<NomicBertBlock>,
     span: tracing::Span,
 }
 
-impl BertEncoder {
-    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
-        let layers = (0..config.num_hidden_layers)
-            .map(|index| BertLayer::load(vb.pp(format!("layer.{index}")), config))
+impl NomicBertEncoder {
+    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
+        let layers = (0..config.n_layer)
+            .map(|index| NomicBertBlock::load(vb.pp(format!("layers.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
-        let span = tracing::span!(tracing::Level::TRACE, "encoder");
 
-        Ok(BertEncoder { layers, span })
+        let span = tracing::span!(tracing::Level::TRACE, "encoder");
+        Ok(NomicBertEncoder { layers, span })
     }
 
-    fn forward(&self, hidden_states: &Tensor, attention_bias: Option<&Tensor>) -> Result<Tensor> {
+    fn forward(
+        &self,
+        hidden_states: &Tensor,
+        attention_bias: Option<&Tensor>,
+        cos: &Tensor,
+        sin: &Tensor,
+    ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
         let mut hidden_states = hidden_states.clone();
 
         // Use a loop rather than a fold as it's easier to modify when adding debug/...
         for layer in self.layers.iter() {
-            hidden_states = layer.forward(&hidden_states, attention_bias)?;
+            hidden_states = layer.forward(&hidden_states, attention_bias, cos, sin)?
         }
 
         Ok(hidden_states)
     }
 }
 
-pub trait ClassificationHead {
-    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
-}
-
-pub struct BertClassificationHead {
-    output: Linear,
-    span: tracing::Span,
-}
-
-impl BertClassificationHead {
-    pub(crate) fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
-        let n_classes = match &config.id2label {
-            None => candle::bail!("`id2label` must be set for classifier models"),
-            Some(id2label) => id2label.len(),
-        };
-
-        let output_weight = vb.get((n_classes, config.hidden_size), "weight")?;
-        let output_bias = vb.get(n_classes, "bias")?;
-        let output = Linear::new(output_weight, Some(output_bias), None);
-
-        Ok(Self {
-            output,
-            span: tracing::span!(tracing::Level::TRACE, "classifier"),
-        })
-    }
-}
-
-impl ClassificationHead for BertClassificationHead {
-    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-        let hidden_states = self.output.forward(hidden_states)?;
-        Ok(hidden_states)
-    }
-}
-
-pub struct RobertaClassificationHead {
-    intermediate: Linear,
-    output: Linear,
-    span: tracing::Span,
-}
-
-impl RobertaClassificationHead {
-    pub(crate) fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
-        let n_classes = match &config.id2label {
-            None => candle::bail!("`id2label` must be set for classifier models"),
-            Some(id2label) => id2label.len(),
-        };
-
-        let intermediate_weight = vb
-            .pp("dense")
-            .get((config.hidden_size, config.hidden_size), "weight")?;
-        let intermediate_bias = vb.pp("dense").get(config.hidden_size, "bias")?;
-        let intermediate = Linear::new(intermediate_weight, Some(intermediate_bias), None);
-
-        let output_weight = vb
-            .pp("out_proj")
-            .get((n_classes, config.hidden_size), "weight")?;
-        let output_bias = vb.pp("out_proj").get(n_classes, "bias")?;
-        let output = Linear::new(output_weight, Some(output_bias), None);
-
-        Ok(Self {
-            intermediate,
-            output,
-            span: tracing::span!(tracing::Level::TRACE, "classifier"),
-        })
-    }
-}
-
-impl ClassificationHead for RobertaClassificationHead {
-    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let hidden_states = self.intermediate.forward(hidden_states)?;
-        let hidden_states = hidden_states.tanh()?;
-        let hidden_states = self.output.forward(&hidden_states)?;
-
-        Ok(hidden_states)
-    }
-}
-
-pub struct BertModel {
-    embeddings: BertEmbeddings,
-    encoder: BertEncoder,
+pub struct NomicBertModel {
+    embeddings: NomicBertEmbeddings,
+    encoder: NomicBertEncoder,
     pool: Pool,
-    classifier: Option<Box<dyn ClassificationHead + Send>>,
+    pub device: Device,
+    dtype: DType,
+
+    rotary_dim: usize,
+    max_trained_positions: u32,
+    rotary_cache: (Tensor, Tensor),
+    scaled_rotary_cache: Option<(Tensor, Tensor)>,
 
     num_attention_heads: usize,
 
-    device: Device,
-    dtype: DType,
-
     span: tracing::Span,
 }
 
-impl BertModel {
-    pub fn load(vb: VarBuilder, config: &BertConfig, model_type: ModelType) -> Result<Self> {
-        // Check position embedding type
-        if config.position_embedding_type != PositionEmbeddingType::Absolute {
-            candle::bail!("Bert only supports absolute position embeddings")
+impl NomicBertModel {
+    pub fn load(vb: VarBuilder, config: &NomicConfig, model_type: ModelType) -> Result<Self> {
+        if !config.valid() {
+            candle::bail!("config is not supported")
         }
 
-        let (pool, classifier) = match model_type {
+        let pool = match model_type {
             // Classifier models always use CLS pooling
             ModelType::Classifier => {
-                let pool = Pool::Cls;
-
-                let classifier: Box<dyn ClassificationHead + Send> =
-                    if config.model_type == Some("bert".to_string()) {
-                        Box::new(BertClassificationHead::load(vb.pp("classifier"), config)?)
-                    } else {
-                        Box::new(RobertaClassificationHead::load(
-                            vb.pp("classifier"),
-                            config,
-                        )?)
-                    };
-                (pool, Some(classifier))
+                candle::bail!("`classifier` model type is not supported for Jina")
             }
-            ModelType::Embedding(pool) => (pool, None),
+            ModelType::Embedding(pool) => pool,
         };
 
-        let (embeddings, encoder) = match (
-            BertEmbeddings::load(vb.pp("embeddings"), config),
-            BertEncoder::load(vb.pp("encoder"), config),
-        ) {
-            (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
-            (Err(err), _) | (_, Err(err)) => {
-                let model_type = config.model_type.clone().unwrap_or("bert".to_string());
+        let embeddings = NomicBertEmbeddings::load(vb.clone(), config)?;
+        let encoder = NomicBertEncoder::load(vb.pp("encoder"), config)?;
 
-                if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
-                    BertEncoder::load(vb.pp(format!("{model_type}.encoder")), config),
-                ) {
-                    (embeddings, encoder)
-                } else if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp("roberta.embeddings"), config),
-                    BertEncoder::load(vb.pp("roberta.encoder"), config),
-                ) {
-                    (embeddings, encoder)
-                } else {
-                    return Err(err);
-                }
-            }
+        let rotary_dim = encoder.layers[0].attention.attention_head_size;
+        let inv_freqs_tensor = inv_freqs(rotary_dim, config.rotary_emb_base, vb.device())?;
+        let rotary_cache = cos_sin(config.n_positions, &inv_freqs_tensor, vb.dtype())?;
+
+        let scaled_rotary_cache = if let Some(scaling_factor) = config.rotary_scaling_factor {
+            let new_base = (config.rotary_emb_base
+                * ((scaling_factor * config.n_positions as f32
+                    / config.max_trained_positions as f32)
+                    - (scaling_factor - 1.0)))
+                .powi((rotary_dim as f32 / (rotary_dim as f32 - 2.0)) as i32);
+            let inv_freqs_tensor = inv_freqs(rotary_dim, new_base, vb.device())?;
+            Some(cos_sin(config.n_positions, &inv_freqs_tensor, vb.dtype())?)
+        } else {
+            None
         };
 
         Ok(Self {
             embeddings,
             encoder,
             pool,
-            classifier,
-            num_attention_heads: config.num_attention_heads,
+            rotary_dim,
+            max_trained_positions: config.max_trained_positions as u32,
+            rotary_cache,
+            scaled_rotary_cache,
+            num_attention_heads: config.n_head,
             device: vb.device().clone(),
             dtype: vb.dtype(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
     }
-
     pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         let _enter = self.span.enter();
 
@@ -626,17 +547,40 @@ impl BertModel {
         // Create CPU tensors
         let input_ids = Tensor::from_vec(input_ids, shape, &self.device)?;
         let type_ids = Tensor::from_vec(type_ids, shape, &self.device)?;
-        let position_ids = Tensor::from_vec(position_ids, shape, &self.device)?;
+        let position_ids = Tensor::from_vec(position_ids, batch_size * max_length, &self.device)?;
         let input_lengths =
             Tensor::from_vec(input_lengths, (batch_size, 1), &self.device)?.to_dtype(self.dtype)?;
 
-        let embedding_output = self
-            .embeddings
-            .forward(&input_ids, &type_ids, &position_ids)?;
+        let (cos, sin) = if self.scaled_rotary_cache.is_some()
+            && batch.max_length > self.max_trained_positions
+        {
+            let cos = self
+                .scaled_rotary_cache
+                .as_ref()
+                .unwrap()
+                .0
+                .index_select(&position_ids, 0)?;
+            let sin = self
+                .scaled_rotary_cache
+                .as_ref()
+                .unwrap()
+                .1
+                .index_select(&position_ids, 0)?;
+            (cos, sin)
+        } else {
+            let cos = self.rotary_cache.0.index_select(&position_ids, 0)?;
+            let sin = self.rotary_cache.1.index_select(&position_ids, 0)?;
+            (cos, sin)
+        };
 
-        let outputs = self
-            .encoder
-            .forward(&embedding_output, attention_bias.as_ref())?;
+        let cos = cos.reshape((batch_size, 1, max_length, self.rotary_dim))?;
+        let sin = sin.reshape((batch_size, 1, max_length, self.rotary_dim))?;
+
+        let embedding_output = self.embeddings.forward(&input_ids, &type_ids)?;
+
+        let outputs =
+            self.encoder
+                .forward(&embedding_output, attention_bias.as_ref(), &cos, &sin)?;
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();
@@ -722,24 +666,32 @@ impl BertModel {
     }
 }
 
-impl Model for BertModel {
-    fn is_padded(&self) -> bool {
-        true
-    }
+pub fn inv_freqs(dim: usize, base: f32, device: &Device) -> Result<Tensor> {
+    let inv_freq: Vec<_> = (0..dim)
+        .step_by(2)
+        .map(|i| 1f32 / base.powf(i as f32 / dim as f32))
+        .collect();
+    let inv_freq_len = inv_freq.len();
+    Tensor::from_vec(inv_freq, (1, inv_freq_len), device)
+}
 
+pub fn cos_sin(length: usize, inv_freqs: &Tensor, dtype: DType) -> Result<(Tensor, Tensor)> {
+    let t = Tensor::arange(0u32, length as u32, inv_freqs.device())?
+        .to_dtype(DType::F32)?
+        .reshape((length, 1))?;
+    let freqs = t.matmul(inv_freqs)?;
+    let freqs = Tensor::cat(&[&freqs, &freqs], 1)?;
+
+    let cos = freqs.cos()?.to_dtype(dtype)?;
+    let sin = freqs.sin()?.to_dtype(dtype)?;
+    Ok((cos, sin))
+}
+
+impl Model for NomicBertModel {
+    fn is_padded(&self) -> bool {
+        false
+    }
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
-    }
-
-    fn predict(&self, batch: Batch) -> Result<Tensor> {
-        match &self.classifier {
-            None => candle::bail!("`predict` is not implemented for this model"),
-            Some(classifier) => {
-                let (pooled_embeddings, _raw_embeddings) = self.forward(batch)?;
-                let pooled_embeddings =
-                    pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
-                classifier.forward(&pooled_embeddings)
-            }
-        }
     }
 }

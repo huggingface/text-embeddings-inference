@@ -321,6 +321,7 @@ pub struct ModelConfig {
     pub model_type: String,
     #[serde(alias = "n_positions")]
     pub max_position_embeddings: usize,
+    #[serde(default)]
     pub pad_token_id: usize,
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,

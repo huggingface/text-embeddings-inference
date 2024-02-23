@@ -1,7 +1,7 @@
 use crate::alibi::alibi_head_slopes;
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{HiddenAct, LayerNorm, Linear};
-use crate::models::bert::{Config, PositionEmbeddingType};
+use crate::models::bert::{BertConfig, PositionEmbeddingType};
 use crate::models::Model;
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
@@ -17,7 +17,7 @@ struct BertEmbeddings {
 }
 
 impl BertEmbeddings {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let position_embeddings =
             if config.position_embedding_type == PositionEmbeddingType::Absolute {
                 Some(Embedding::new(
@@ -89,7 +89,7 @@ struct AlibiBertAttention {
 }
 
 impl AlibiBertAttention {
-    pub fn load(vb: VarBuilder, config: &Config, alibi_slopes: Option<Tensor>) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig, alibi_slopes: Option<Tensor>) -> Result<Self> {
         let attention_head_size = config.hidden_size / config.num_attention_heads;
         let all_head_size = config.num_attention_heads * attention_head_size;
         let hidden_size = config.hidden_size;
@@ -194,7 +194,7 @@ struct JinaBertLayer {
 }
 
 impl JinaBertLayer {
-    pub fn load(vb: VarBuilder, config: &Config, alibi: Option<Tensor>) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig, alibi: Option<Tensor>) -> Result<Self> {
         let attention = AlibiBertAttention::load(vb.pp("attention"), config, alibi)?;
 
         let gated_weight = vb
@@ -243,6 +243,7 @@ impl JinaBertLayer {
         let gated = match self.act {
             HiddenAct::Gelu => gated.gelu(),
             HiddenAct::Relu => gated.relu(),
+            HiddenAct::Swiglu => gated.silu(),
         }?;
 
         let non_gated = hidden_states.i((.., self.intermediate_size..))?;
@@ -261,7 +262,7 @@ struct BertEncoder {
 }
 
 impl BertEncoder {
-    pub fn load(vb: VarBuilder, config: &Config, alibi: Option<Tensor>) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig, alibi: Option<Tensor>) -> Result<Self> {
         let layers = (0..config.num_hidden_layers)
             .map(|index| {
                 JinaBertLayer::load(vb.pp(format!("layer.{index}")), config, alibi.clone())
@@ -296,7 +297,7 @@ pub struct FlashJinaBertModel {
 }
 
 impl FlashJinaBertModel {
-    pub fn load(vb: VarBuilder, config: &Config, model_type: ModelType) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig, model_type: ModelType) -> Result<Self> {
         let alibi = match config.position_embedding_type {
             PositionEmbeddingType::Alibi => {
                 let alibi_slopes = alibi_head_slopes(config.num_attention_heads);
