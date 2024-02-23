@@ -4,11 +4,13 @@ mod prometheus;
 
 #[cfg(feature = "http")]
 mod http;
+
 #[cfg(feature = "http")]
 use ::http::HeaderMap;
 
 #[cfg(feature = "grpc")]
 mod grpc;
+
 #[cfg(feature = "grpc")]
 use tonic::codegen::http::HeaderMap;
 
@@ -25,14 +27,14 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::DType;
-use text_embeddings_core::download::{download_artifacts, download_pool_config};
+use text_embeddings_core::download::{
+    download_artifacts, download_pool_config, download_st_config, ST_CONFIG_NAMES,
+};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
 use text_embeddings_core::tokenization::Tokenization;
 use text_embeddings_core::TextEmbeddingsError;
-use tokenizers::decoders::metaspace::PrependScheme;
-use tokenizers::pre_tokenizers::sequence::Sequence;
-use tokenizers::{PreTokenizerWrapper, Tokenizer};
+use tokenizers::Tokenizer;
 use tracing::Span;
 
 pub use logging::init_logging;
@@ -82,6 +84,9 @@ pub async fn run(
             // If a pooling config exist, download it
             let _ = download_pool_config(&api_repo).await;
         }
+
+        // Download sentence transformers config
+        let _ = download_st_config(&api_repo).await;
 
         // Download model from the Hub
         download_artifacts(&api_repo)
@@ -178,7 +183,25 @@ pub async fn run(
     } else {
         0
     };
-    let max_input_length = config.max_position_embeddings - position_offset;
+
+    // Try to load ST Config
+    let mut st_config: Option<STConfig> = None;
+    for name in ST_CONFIG_NAMES {
+        let config_path = model_root.join(name);
+        if let Ok(config) = fs::read_to_string(config_path) {
+            st_config =
+                Some(serde_json::from_str(&config).context(format!("Failed to parse `{}`", name))?);
+            break;
+        }
+    }
+    let max_input_length = match st_config {
+        Some(config) => config.max_seq_length,
+        None => {
+            tracing::warn!("Could not find a Sentence Transformers config");
+            config.max_position_embeddings - position_offset
+        }
+    };
+    tracing::info!("Maximum number of tokens per request: {max_input_length}");
 
     let tokenization_workers = tokenization_workers.unwrap_or_else(num_cpus::get_physical);
 
@@ -309,6 +332,11 @@ pub struct PoolConfig {
     pooling_mode_mean_tokens: bool,
     pooling_mode_max_tokens: bool,
     pooling_mode_mean_sqrt_len_tokens: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct STConfig {
+    pub max_seq_length: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
