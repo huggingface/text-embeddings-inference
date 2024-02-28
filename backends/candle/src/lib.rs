@@ -15,7 +15,9 @@ use crate::models::{
     NomicConfig, PositionEmbeddingType,
 };
 #[cfg(feature = "cuda")]
-use crate::models::{FlashBertModel, FlashJinaBertModel, FlashNomicBertModel};
+use crate::models::{
+    FlashBertModel, FlashDistilBertModel, FlashJinaBertModel, FlashNomicBertModel,
+};
 use candle::{DType, Device};
 use candle_nn::VarBuilder;
 use models::BertConfig;
@@ -193,7 +195,9 @@ impl CandleBackend {
                         == "true"
                 {
                     tracing::info!("Starting FlashNomicBertModel model on {:?}", device);
-                    todo!();
+                    Ok(Box::new(
+                        FlashDistilBertModel::load(vb, &config, model_type).s()?,
+                    ))
                 } else {
                     tracing::info!("Starting DistilBertModel model on {:?}", device);
                     Ok(Box::new(

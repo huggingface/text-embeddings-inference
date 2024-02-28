@@ -105,6 +105,15 @@ impl Infer {
     ) -> Result<AllEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
 
+        if self.is_splade() {
+            metrics::increment_counter!("te_request_failure", "err" => "model_type");
+            let message = "`embed_all` is not available for SPLADE models".to_string();
+            tracing::error!("{message}");
+            return Err(TextEmbeddingsError::Backend(BackendError::Inference(
+                message,
+            )));
+        }
+
         let results = self
             .embed(inputs, truncate, false, &start_time, permit)
             .await?;
@@ -144,6 +153,15 @@ impl Infer {
         permit: OwnedSemaphorePermit,
     ) -> Result<PooledEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
+
+        if self.is_splade() && normalize {
+            metrics::increment_counter!("te_request_failure", "err" => "model_type");
+            let message = "`normalize` is not available for SPLADE models".to_string();
+            tracing::error!("{message}");
+            return Err(TextEmbeddingsError::Backend(BackendError::Inference(
+                message,
+            )));
+        }
 
         let results = self
             .embed(inputs, truncate, true, &start_time, permit)
@@ -364,6 +382,14 @@ impl Infer {
     #[instrument(skip(self))]
     pub fn is_classifier(&self) -> bool {
         matches!(self.backend.model_type, ModelType::Classifier)
+    }
+
+    #[instrument(skip(self))]
+    pub fn is_splade(&self) -> bool {
+        matches!(
+            self.backend.model_type,
+            ModelType::Embedding(text_embeddings_backend::Pool::Splade)
+        )
     }
 
     #[instrument(skip(self))]
