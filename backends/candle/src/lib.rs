@@ -101,13 +101,7 @@ impl CandleBackend {
             (_, Device::Cuda(_)) => Err(BackendError::Start(
                 "`cuda` feature is not enabled".to_string(),
             )),
-            (
-                Config::Bert(config)
-                | Config::XlmRoberta(config)
-                | Config::Camembert(config)
-                | Config::Roberta(config),
-                Device::Cpu | Device::Metal(_),
-            ) => {
+            (Config::Bert(config), Device::Cpu | Device::Metal(_)) => {
                 if config.position_embedding_type == PositionEmbeddingType::Alibi {
                     tracing::info!("Starting JinaBertModel model on {:?}", device);
                     Ok(Box::new(JinaBertModel::load(vb, &config, model_type).s()?))
@@ -116,14 +110,21 @@ impl CandleBackend {
                     Ok(Box::new(BertModel::load(vb, &config, model_type).s()?))
                 }
             }
-            #[cfg(feature = "cuda")]
             (
-                Config::Bert(config)
-                | Config::XlmRoberta(config)
-                | Config::Camembert(config)
-                | Config::Roberta(config),
-                Device::Cuda(_),
+                Config::XlmRoberta(config) | Config::Camembert(config) | Config::Roberta(config),
+                Device::Cpu | Device::Metal(_),
             ) => {
+                tracing::info!("Starting Bert model on {:?}", device);
+                Ok(Box::new(
+                    BertModel::load_roberta(vb, &config, model_type).s()?,
+                ))
+            }
+            (Config::NomicBert(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting NomicBertModel model on {:?}", device);
+                Ok(Box::new(NomicBertModel::load(vb, &config, model_type).s()?))
+            }
+            #[cfg(feature = "cuda")]
+            (Config::Bert(config), Device::Cuda(_)) => {
                 if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
                     && dtype == DType::F16
                     && ((config.position_embedding_type == PositionEmbeddingType::Absolute) | (config.position_embedding_type == PositionEmbeddingType::Alibi))
@@ -150,9 +151,28 @@ impl CandleBackend {
                     }
                 }
             }
-            (Config::NomicBert(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting NomicBertModel model on {:?}", device);
-                Ok(Box::new(NomicBertModel::load(vb, &config, model_type).s()?))
+            #[cfg(feature = "cuda")]
+            (
+                Config::XlmRoberta(config) | Config::Camembert(config) | Config::Roberta(config),
+                Device::Cuda(_),
+            ) => {
+                if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                    && dtype == DType::F16
+                    && ((config.position_embedding_type == PositionEmbeddingType::Absolute) | (config.position_embedding_type == PositionEmbeddingType::Alibi))
+                    // Allow disabling because of flash attention v1 precision problems
+                    // See: https://github.com/huggingface/text-embeddings-inference/issues/37
+                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
+                {
+                    tracing::info!("Starting FlashBert model on {:?}", device);
+                    Ok(Box::new(
+                        FlashBertModel::load_roberta(vb, &config, model_type).s()?,
+                    ))
+                } else {
+                    tracing::info!("Starting Bert model on {:?}", device);
+                    Ok(Box::new(
+                        BertModel::load_roberta(vb, &config, model_type).s()?,
+                    ))
+                }
             }
             #[cfg(feature = "cuda")]
             (Config::NomicBert(config), Device::Cuda(_)) => {
