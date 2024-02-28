@@ -134,7 +134,6 @@ pub async fn run(
                 pooling: pool.to_string(),
             })
         }
-        text_embeddings_backend::ModelType::Splade => ModelType::Splade,
     };
 
     // Load tokenizer
@@ -292,8 +291,10 @@ fn get_backend_model_type(
     splade: bool,
 ) -> Result<text_embeddings_backend::ModelType> {
     for arch in &config.architectures {
-        if splade && arch.ends_with("MaskedLM") {
-            return Ok(text_embeddings_backend::ModelType::Splade);
+        if Some(text_embeddings_backend::Pool::Splade) == pooling && arch.ends_with("MaskedLM") {
+            return Ok(text_embeddings_backend::ModelType::Embedding(
+                text_embeddings_backend::Pool::Splade,
+            ));
         } else if arch.ends_with("Classification") {
             if pooling.is_some() {
                 tracing::warn!(
@@ -309,9 +310,9 @@ fn get_backend_model_type(
         }
     }
 
-    if splade {
+    if Some(text_embeddings_backend::Pool::Splade) == pooling {
         return Err(anyhow!(
-            "`--splade` arg is set but model is not a ForMaskedLM model"
+            "Splade pooling is not supported: model is not a ForMaskedLM model"
         ));
     }
 

@@ -131,11 +131,12 @@ impl NomicBertBlock {
             .forward(&hidden_states, cu_seqlens, cos, sin, max_s)?;
         let hidden_states = self
             .post_attention_layer_norm
-            .forward(&hidden_states, &attn_output)?;
+            .forward(&hidden_states, Some(&attn_output))?;
 
         let mlp_out = self.mlp.forward(&hidden_states)?;
 
-        self.output_layer_norm.forward(&hidden_states, &mlp_out)
+        self.output_layer_norm
+            .forward(&hidden_states, Some(&mlp_out))
     }
 }
 
@@ -207,10 +208,12 @@ impl FlashNomicBertModel {
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for Nomic")
             }
-            ModelType::Splade => {
-                candle::bail!("`splade` model type is not supported for Nomic")
+            ModelType::Embedding(pool) => {
+                if pool == Pool::Splade {
+                    candle::bail!("`splade` is not supported for Nomic")
+                }
+                pool
             }
-            ModelType::Embedding(pool) => pool,
         };
 
         let embeddings = NomicBertEmbeddings::load(vb.clone(), config)?;
@@ -350,6 +353,9 @@ impl FlashNomicBertModel {
                     } else {
                         Some((outputs.sum_keepdim(0)? / (batch.max_length as f64))?)
                     }
+                }
+                Pool::Splade => {
+                    unreachable!();
                 }
             }
         } else {

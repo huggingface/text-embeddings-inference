@@ -109,7 +109,7 @@ impl AlibiBertAttention {
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
         let hidden_states = self.dense.forward(&attention)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -184,7 +184,7 @@ impl JinaBertLayer {
         let hidden_states = (gated * non_gated)?;
 
         let hidden_states = self.output.forward(&hidden_states)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -256,10 +256,12 @@ impl FlashJinaBertModel {
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for Jina")
             }
-            ModelType::Splade => {
-                candle::bail!("`splade` model type is not supported for Jina")
+            ModelType::Embedding(pool) => {
+                if pool == Pool::Splade {
+                    candle::bail!("`splade` is not supported for Jina")
+                }
+                pool
             }
-            ModelType::Embedding(pool) => pool,
         };
 
         let (embeddings, encoder) = match (
@@ -268,18 +270,7 @@ impl FlashJinaBertModel {
         ) {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
-                let model_type = config.model_type.clone().unwrap_or("bert".to_string());
-
                 if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
-                    BertEncoder::load(
-                        vb.pp(format!("{model_type}.encoder")),
-                        config,
-                        alibi.clone(),
-                    ),
-                ) {
-                    (embeddings, encoder)
-                } else if let (Ok(embeddings), Ok(encoder)) = (
                     BertEmbeddings::load(vb.pp("bert.embeddings"), config),
                     BertEncoder::load(vb.pp("bert.encoder"), config, alibi.clone()),
                 ) {
@@ -377,6 +368,9 @@ impl FlashJinaBertModel {
                     } else {
                         Some((outputs.sum_keepdim(0)? / (batch.max_length as f64))?)
                     }
+                }
+                Pool::Splade => {
+                    unreachable!();
                 }
             }
         } else {

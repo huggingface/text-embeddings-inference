@@ -23,23 +23,19 @@ impl PythonBackend {
         uds_path: String,
         otlp_endpoint: Option<String>,
     ) -> Result<Self, BackendError> {
-        let pool = match model_type {
+        match model_type {
             ModelType::Classifier => {
                 return Err(BackendError::Start(
                     "`classifier` model type is not supported".to_string(),
                 ))
             }
-            ModelType::Splade => {
-                return Err(BackendError::Start(
-                    "`splade` model type is not supported".to_string(),
-                ))
+            ModelType::Embedding(pool) => {
+                if pool != Pool::Cls {
+                    return Err(BackendError::Start(format!("{pool:?} is not supported")));
+                }
+                pool
             }
-            ModelType::Embedding(pool) => pool,
         };
-
-        if pool != Pool::Cls {
-            return Err(BackendError::Start(format!("{pool:?} is not supported")));
-        }
 
         let backend_process =
             management::BackendProcess::new(model_path, dtype, &uds_path, otlp_endpoint)?;

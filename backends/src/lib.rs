@@ -93,7 +93,7 @@ impl Backend {
             };
             match &self.model_type {
                 ModelType::Classifier => self.predict(batch).await.map(|_| ()),
-                ModelType::Embedding(_) | ModelType::Splade => self.embed(batch).await.map(|_| ()),
+                ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
             }
         }
     }

@@ -52,7 +52,7 @@ impl DistilBertEmbeddings {
 
         let embeddings = self
             .layer_norm
-            .forward(&input_embeddings, &position_embeddings)?;
+            .forward(&input_embeddings, Some(&position_embeddings))?;
 
         Ok(embeddings)
     }
@@ -280,11 +280,12 @@ impl DistilBertBlock {
         let attn_output = self.attention.forward(hidden_states, attention_bias)?;
         let hidden_states = self
             .post_attention_layer_norm
-            .forward(hidden_states, &attn_output)?;
+            .forward(hidden_states, Some(&attn_output))?;
 
         let mlp_out = self.mlp.forward(&hidden_states)?;
 
-        self.output_layer_norm.forward(&hidden_states, &mlp_out)
+        self.output_layer_norm
+            .forward(&hidden_states, Some(&mlp_out))
     }
 }
 
@@ -319,10 +320,62 @@ impl DistilBertEncoder {
 }
 
 #[derive(Debug)]
+pub struct DistilBertSpladeHead {
+    vocab_transform: Linear,
+    vocab_projector: Linear,
+    vocab_layer_norm: LayerNorm,
+    span: tracing::Span,
+}
+
+impl DistilBertSpladeHead {
+    pub(crate) fn load(vb: VarBuilder, config: &DistilBertConfig) -> Result<Self> {
+        let vocab_transform_weight = vb
+            .pp("vocab_transform")
+            .get((config.dim, config.dim), "weight")?;
+        let vocab_transform_bias = vb.pp("vocab_transform").get(config.dim, "bias")?;
+        let vocab_transform = Linear::new(
+            vocab_transform_weight,
+            Some(vocab_transform_bias),
+            Some(config.activation.clone()),
+        );
+
+        let vocab_projector_weight = vb
+            .pp("vocab_projector")
+            .get((config.vocab_size, config.dim), "weight")?;
+        let vocab_projector_bias = vb.pp("vocab_projector").get(config.vocab_size, "bias")?;
+        let vocab_projector = Linear::new(
+            vocab_projector_weight,
+            Some(vocab_projector_bias),
+            Some(HiddenAct::Relu),
+        );
+
+        let vocab_layer_norm = LayerNorm::load(vb.pp("vocab_layer_norm"), config.dim, 1e-12f32)?;
+
+        Ok(Self {
+            vocab_transform,
+            vocab_projector,
+            vocab_layer_norm,
+            span: tracing::span!(tracing::Level::TRACE, "splade"),
+        })
+    }
+
+    pub(crate) fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let hidden_states = self.vocab_transform.forward(hidden_states)?;
+        let hidden_states = self.vocab_layer_norm.forward(&hidden_states, None)?;
+        let hidden_states = self.vocab_projector.forward(&hidden_states)?;
+
+        (1.0 + hidden_states)?.log()
+    }
+}
+
+#[derive(Debug)]
 pub struct DistilBertModel {
     embeddings: DistilBertEmbeddings,
     encoder: DistilBertEncoder,
     pool: Pool,
+    splade: Option<DistilBertSpladeHead>,
 
     num_attention_heads: usize,
 
@@ -335,14 +388,10 @@ pub struct DistilBertModel {
 impl DistilBertModel {
     pub fn load(vb: VarBuilder, config: &DistilBertConfig, model_type: ModelType) -> Result<Self> {
         let pool = match model_type {
-            // Classifier models always use CLS pooling
             ModelType::Classifier => {
-                candle::bail!("`splade` model type is not supported for DistilBert")
+                candle::bail!("`classifier` model type is not supported for DistilBert")
             }
             ModelType::Embedding(pool) => pool,
-            ModelType::Splade => {
-                candle::bail!("`splade` model type is not supported for DistilBert")
-            }
         };
 
         let (embeddings, encoder) = match (
@@ -362,10 +411,17 @@ impl DistilBertModel {
             }
         };
 
+        let splade = if pool == Pool::Splade {
+            Some(DistilBertSpladeHead::load(vb.clone(), config)?)
+        } else {
+            None
+        };
+
         Ok(Self {
             embeddings,
             encoder,
             pool,
+            splade,
             num_attention_heads: config.n_heads,
             device: vb.device().clone(),
             dtype: vb.dtype(),
@@ -525,6 +581,25 @@ impl DistilBertModel {
                     }
 
                     (outputs.sum(1)?.broadcast_div(&input_lengths))?
+                }
+                Pool::Splade => {
+                    // Unwrap is safe here
+                    let splade_head = self.splade.as_ref().unwrap();
+                    let mut relu_log = splade_head.forward(&outputs)?;
+
+                    if let Some(ref attention_mask) = attention_mask {
+                        let mut attention_mask = attention_mask.clone();
+
+                        if let Some(pooled_indices) = pooled_indices {
+                            // Select values in the batch
+                            attention_mask = attention_mask.index_select(&pooled_indices, 0)?;
+                        };
+
+                        // Mask padded values
+                        relu_log = relu_log.broadcast_mul(&attention_mask)?;
+                    }
+
+                    relu_log.max(1)?
                 }
             };
             Some(pooled_embeddings)

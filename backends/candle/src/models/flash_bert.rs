@@ -107,7 +107,7 @@ impl BertAttention {
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
         let hidden_states = self.dense.forward(&attention)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -177,7 +177,7 @@ impl BertLayer {
 
         let hidden_states = self.intermediate.forward(&hidden_states)?;
         let hidden_states = self.output.forward(&hidden_states)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -247,10 +247,12 @@ impl FlashBertModel {
                     Box::new(BertClassificationHead::load(vb.pp("classifier"), config)?);
                 (pool, Some(classifier))
             }
-            ModelType::Splade => {
-                candle::bail!("`splade` model type is not supported for Bert")
+            ModelType::Embedding(pool) => {
+                if pool == Pool::Splade {
+                    candle::bail!("`splade` is not supported for Nomic")
+                }
+                (pool, None)
             }
-            ModelType::Embedding(pool) => (pool, None),
         };
 
         let (embeddings, encoder) = match (
@@ -309,7 +311,12 @@ impl FlashBertModel {
                 );
                 (pool, Some(classifier))
             }
-            ModelType::Embedding(pool) => (pool, None),
+            ModelType::Embedding(pool) => {
+                if pool == Pool::Splade {
+                    candle::bail!("`splade` is not supported for Nomic")
+                }
+                (pool, None)
+            }
         };
 
         let (embeddings, encoder) = match (
@@ -423,6 +430,9 @@ impl FlashBertModel {
                     } else {
                         Some((outputs.sum_keepdim(0)? / (batch.max_length as f64))?)
                     }
+                }
+                Pool::Splade => {
+                    unreachable!();
                 }
             }
         } else {

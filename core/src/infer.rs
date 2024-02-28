@@ -434,7 +434,7 @@ async fn backend_task(
                     }
                 });
             }
-            ModelType::Embedding(_) | ModelType::Splade => {
+            ModelType::Embedding(_) => {
                 let results = backend.embed(batch.1).await;
 
                 // Handle sending responses in another thread to avoid starving the backend

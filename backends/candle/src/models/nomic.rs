@@ -83,7 +83,7 @@ impl NomicBertEmbeddings {
 
         let embeddings = self
             .layer_norm
-            .forward(&input_embeddings, &token_type_embeddings)?;
+            .forward(&input_embeddings, Some(&token_type_embeddings))?;
 
         Ok(embeddings)
     }
@@ -329,11 +329,12 @@ impl NomicBertBlock {
             .forward(hidden_states, attention_bias, cos, sin)?;
         let hidden_states = self
             .post_attention_layer_norm
-            .forward(hidden_states, &attn_output)?;
+            .forward(hidden_states, Some(&attn_output))?;
 
         let mlp_out = self.mlp.forward(&hidden_states)?;
 
-        self.output_layer_norm.forward(&hidden_states, &mlp_out)
+        self.output_layer_norm
+            .forward(&hidden_states, Some(&mlp_out))
     }
 }
 
@@ -400,10 +401,12 @@ impl NomicBertModel {
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for Nomic")
             }
-            ModelType::Splade => {
-                candle::bail!("`splade` model type is not supported for Nomic")
+            ModelType::Embedding(pool) => {
+                if pool == Pool::Splade {
+                    candle::bail!("`splade` is not supported for Nomic")
+                }
+                pool
             }
-            ModelType::Embedding(pool) => pool,
         };
 
         let embeddings = NomicBertEmbeddings::load(vb.clone(), config)?;
@@ -623,6 +626,7 @@ impl NomicBertModel {
 
                     (outputs.sum(1)?.broadcast_div(&input_lengths))?
                 }
+                Pool::Splade => unreachable!(),
             };
             Some(pooled_embeddings)
         } else {

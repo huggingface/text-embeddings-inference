@@ -50,7 +50,6 @@ pub trait Backend {
 pub enum ModelType {
     Classifier,
     Embedding(Pool),
-    Splade,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -58,6 +57,7 @@ pub enum ModelType {
 pub enum Pool {
     Cls,
     Mean,
+    Splade,
 }
 
 impl fmt::Display for Pool {
@@ -65,6 +65,7 @@ impl fmt::Display for Pool {
         match self {
             Pool::Cls => write!(f, "cls"),
             Pool::Mean => write!(f, "mean"),
+            Pool::Splade => write!(f, "splade"),
         }
     }
 }
