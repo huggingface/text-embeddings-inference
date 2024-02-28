@@ -306,14 +306,7 @@ impl FlashBertModel {
                 let pool = Pool::Cls;
 
                 let classifier: Box<dyn ClassificationHead + Send> =
-                    if config.model_type == Some("bert".to_string()) {
-                        Box::new(BertClassificationHead::load(vb.pp("classifier"), config)?)
-                    } else {
-                        Box::new(RobertaClassificationHead::load(
-                            vb.pp("classifier"),
-                            config,
-                        )?)
-                    };
+                    Box::new(BertClassificationHead::load(vb.pp("classifier"), config)?);
                 (pool, Some(classifier))
             }
             ModelType::Embedding(pool) => (pool, None),
@@ -325,16 +318,78 @@ impl FlashBertModel {
         ) {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
-                let model_type = config.model_type.clone().unwrap_or("bert".to_string());
-
                 if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
-                    BertEncoder::load(vb.pp(format!("{model_type}.encoder")), config),
+                    BertEmbeddings::load(vb.pp("bert.embeddings".to_string()), config),
+                    BertEncoder::load(vb.pp("bert.encoder".to_string()), config),
+                ) {
+                    (embeddings, encoder)
+                } else {
+                    return Err(err);
+                }
+            }
+        };
+
+        Ok(Self {
+            embeddings,
+            encoder,
+            pool,
+            classifier,
+            device: vb.device().clone(),
+            span: tracing::span!(tracing::Level::TRACE, "model"),
+        })
+    }
+
+    pub fn load_roberta(
+        vb: VarBuilder,
+        config: &BertConfig,
+        model_type: ModelType,
+    ) -> Result<Self> {
+        match vb.device() {
+            Device::Cuda(_) => {}
+            _ => candle::bail!("FlashBert requires Cuda"),
+        }
+
+        if vb.dtype() != DType::F16 {
+            candle::bail!("FlashBert requires DType::F16")
+        }
+
+        // Check position embedding type
+        if config.position_embedding_type != PositionEmbeddingType::Absolute {
+            candle::bail!("FlashBert only supports absolute position embeddings")
+        }
+
+        let (pool, classifier) = match model_type {
+            // Classifier models always use CLS pooling
+            ModelType::Classifier => {
+                let pool = Pool::Cls;
+
+                let classifier: Box<dyn ClassificationHead + Send> = Box::new(
+                    RobertaClassificationHead::load(vb.pp("classifier"), config)?,
+                );
+                (pool, Some(classifier))
+            }
+            ModelType::Embedding(pool) => (pool, None),
+        };
+
+        let (embeddings, encoder) = match (
+            BertEmbeddings::load(vb.pp("embeddings"), config),
+            BertEncoder::load(vb.pp("encoder"), config),
+        ) {
+            (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
+            (Err(err), _) | (_, Err(err)) => {
+                if let (Ok(embeddings), Ok(encoder)) = (
+                    BertEmbeddings::load(vb.pp("roberta.embeddings".to_string()), config),
+                    BertEncoder::load(vb.pp("roberta.encoder".to_string()), config),
                 ) {
                     (embeddings, encoder)
                 } else if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp("roberta.embeddings"), config),
-                    BertEncoder::load(vb.pp("roberta.encoder"), config),
+                    BertEmbeddings::load(vb.pp("xlm-roberta.embeddings".to_string()), config),
+                    BertEncoder::load(vb.pp("xlm-roberta.encoder".to_string()), config),
+                ) {
+                    (embeddings, encoder)
+                } else if let (Ok(embeddings), Ok(encoder)) = (
+                    BertEmbeddings::load(vb.pp("camembert.embeddings".to_string()), config),
+                    BertEncoder::load(vb.pp("camembert.encoder".to_string()), config),
                 ) {
                     (embeddings, encoder)
                 } else {
