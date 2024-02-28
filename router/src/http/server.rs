@@ -301,7 +301,7 @@ async fn rerank(
 
     match &info.model_type {
         ModelType::Reranker(_) => Ok(()),
-        ModelType::Classifier(_) | ModelType::Embedding(_) | ModelType::Splade => {
+        ModelType::Classifier(_) | ModelType::Embedding(_) => {
             metrics::increment_counter!("te_request_failure", "err" => "model_type");
             let message = "model is not a re-ranker model".to_string();
             Err(TextEmbeddingsError::Backend(BackendError::Inference(
@@ -1122,7 +1122,7 @@ pub async fn run(
                 // AWS Sagemaker route
                 .route("/invocations", post(rerank))
         }
-        ModelType::Embedding(_) | ModelType::Splade => {
+        ModelType::Embedding(_) => {
             app.route("/", post(embed))
                 // AWS Sagemaker route
                 .route("/invocations", post(embed))

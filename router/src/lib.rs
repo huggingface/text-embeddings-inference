@@ -385,7 +385,6 @@ pub enum ModelType {
     Classifier(ClassifierModel),
     Embedding(EmbeddingModel),
     Reranker(ClassifierModel),
-    Splade,
 }
 
 #[derive(Clone, Debug, Serialize)]
