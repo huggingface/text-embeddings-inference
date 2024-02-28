@@ -309,6 +309,9 @@ impl FlashBertModel {
                     Box::new(BertClassificationHead::load(vb.pp("classifier"), config)?);
                 (pool, Some(classifier))
             }
+            ModelType::Splade => {
+                candle::bail!("`splade` model type is not supported for Jina")
+            }
             ModelType::Embedding(pool) => (pool, None),
         };
 

@@ -45,6 +45,13 @@ struct Args {
     #[clap(long, env, value_enum)]
     pooling: Option<text_embeddings_backend::Pool>,
 
+    /// Apply SPLADE (Sparse Lexical and Expansion) to the model embeddings
+    ///
+    /// This option is only available if the loaded model is a `<Model>ForMaskedLM` transformer
+    /// model.
+    #[clap(default_value = "false", long, env, value_enum)]
+    splade: bool,
+
     /// The maximum amount of concurrent requests for this particular deployment.
     /// Having a low limit will refuse clients requests instead of having them
     /// wait for too long and is usually good to handle backpressure correctly.
@@ -127,6 +134,7 @@ async fn main() -> Result<()> {
         args.tokenization_workers,
         args.dtype,
         args.pooling,
+        args.splade,
         args.max_concurrent_requests,
         args.max_batch_tokens,
         args.max_batch_requests,

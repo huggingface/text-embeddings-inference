@@ -29,6 +29,11 @@ impl PythonBackend {
                     "`classifier` model type is not supported".to_string(),
                 ))
             }
+            ModelType::Splade => {
+                return Err(BackendError::Start(
+                    "`splade` model type is not supported".to_string(),
+                ))
+            }
             ModelType::Embedding(pool) => pool,
         };
 

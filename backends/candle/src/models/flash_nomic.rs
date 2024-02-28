@@ -289,9 +289,11 @@ impl FlashNomicBertModel {
         }
 
         let pool = match model_type {
-            // Classifier models always use CLS pooling
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for Jina")
+            }
+            ModelType::Splade => {
+                candle::bail!("`splade` model type is not supported for Jina")
             }
             ModelType::Embedding(pool) => pool,
         };

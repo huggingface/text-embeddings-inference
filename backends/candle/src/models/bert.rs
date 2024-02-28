@@ -470,6 +470,9 @@ impl BertModel {
                 (pool, Some(classifier))
             }
             ModelType::Embedding(pool) => (pool, None),
+            ModelType::Splade => {
+                candle::bail!("`splade` model type is not supported for Jina")
+            }
         };
 
         let (embeddings, encoder) = match (
