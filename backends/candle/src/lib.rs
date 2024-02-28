@@ -11,7 +11,8 @@ use crate::compute_cap::{
     get_compile_compute_cap, get_runtime_compute_cap, incompatible_compute_cap,
 };
 use crate::models::{
-    BertModel, JinaBertModel, Model, NomicBertModel, NomicConfig, PositionEmbeddingType,
+    BertModel, DistilBertConfig, DistilBertModel, JinaBertModel, Model, NomicBertModel,
+    NomicConfig, PositionEmbeddingType,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{FlashBertModel, FlashJinaBertModel, FlashNomicBertModel};
@@ -33,6 +34,8 @@ enum Config {
     XlmRoberta(BertConfig),
     Camembert(BertConfig),
     Roberta(BertConfig),
+    #[serde(rename(deserialize = "distilbert"))]
+    DistilBert(DistilBertConfig),
     #[serde(rename(deserialize = "nomic_bert"))]
     NomicBert(NomicConfig),
 }
@@ -119,6 +122,12 @@ impl CandleBackend {
                     BertModel::load_roberta(vb, &config, model_type).s()?,
                 ))
             }
+            (Config::DistilBert(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting DistilBertModel model on {:?}", device);
+                Ok(Box::new(
+                    DistilBertModel::load(vb, &config, model_type).s()?,
+                ))
+            }
             (Config::NomicBert(config), Device::Cpu | Device::Metal(_)) => {
                 tracing::info!("Starting NomicBertModel model on {:?}", device);
                 Ok(Box::new(NomicBertModel::load(vb, &config, model_type).s()?))
@@ -171,6 +180,24 @@ impl CandleBackend {
                     tracing::info!("Starting Bert model on {:?}", device);
                     Ok(Box::new(
                         BertModel::load_roberta(vb, &config, model_type).s()?,
+                    ))
+                }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::DistilBert(config), Device::Cuda(_)) => {
+                if cfg!(feature = "flash-attn")
+                    && dtype == DType::F16
+                    && &std::env::var("USE_FLASH_ATTENTION")
+                        .unwrap_or("True".to_string())
+                        .to_lowercase()
+                        == "true"
+                {
+                    tracing::info!("Starting FlashNomicBertModel model on {:?}", device);
+                    todo!();
+                } else {
+                    tracing::info!("Starting DistilBertModel model on {:?}", device);
+                    Ok(Box::new(
+                        DistilBertModel::load(vb, &config, model_type).s()?,
                     ))
                 }
             }

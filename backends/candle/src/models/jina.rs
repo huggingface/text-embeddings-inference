@@ -51,7 +51,7 @@ impl BertEmbeddings {
         })
     }
 
-    fn forward(
+    pub fn forward(
         &self,
         input_ids: &Tensor,
         token_type_ids: &Tensor,
@@ -380,14 +380,7 @@ impl JinaBertModel {
         ) {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
-                let model_type = config.model_type.clone().unwrap_or("bert".to_string());
-
                 if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
-                    BertEncoder::load(vb.pp(format!("{model_type}.encoder")), config),
-                ) {
-                    (embeddings, encoder)
-                } else if let (Ok(embeddings), Ok(encoder)) = (
                     BertEmbeddings::load(vb.pp("bert.embeddings"), config),
                     BertEncoder::load(vb.pp("bert.encoder"), config),
                 ) {

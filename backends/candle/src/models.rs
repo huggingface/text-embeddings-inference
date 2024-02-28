@@ -5,20 +5,22 @@ extern crate intel_mkl_src;
 extern crate accelerate_src;
 
 mod bert;
+mod distilbert;
+mod jina;
+mod nomic;
 
 #[cfg(feature = "cuda")]
 mod flash_bert;
 
 #[cfg(feature = "cuda")]
 mod flash_jina;
-mod jina;
 
 #[cfg(feature = "cuda")]
 mod flash_nomic;
-mod nomic;
 
 pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
 use candle::{Result, Tensor};
+pub use distilbert::{DistilBertConfig, DistilBertModel};
 pub use jina::JinaBertModel;
 pub use nomic::{NomicBertModel, NomicConfig};
 use text_embeddings_backend_core::Batch;

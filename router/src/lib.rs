@@ -60,6 +60,12 @@ pub async fn run(
     otlp_endpoint: Option<String>,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
+    if splade && pooling.is_some() {
+        return Err(anyhow!(
+            "`--splade` and `--pooling` args cannot be used at the same time."
+        ));
+    }
+
     let model_id_path = Path::new(&model_id);
     let model_root = if model_id_path.exists() && model_id_path.is_dir() {
         // Using a local model
@@ -286,7 +292,7 @@ fn get_backend_model_type(
     splade: bool,
 ) -> Result<text_embeddings_backend::ModelType> {
     for arch in &config.architectures {
-        if arch.ends_with("MaskedLM") {
+        if splade && arch.ends_with("MaskedLM") {
             return Ok(text_embeddings_backend::ModelType::Splade);
         } else if arch.ends_with("Classification") {
             if pooling.is_some() {

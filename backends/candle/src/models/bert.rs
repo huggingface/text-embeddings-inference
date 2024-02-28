@@ -39,7 +39,7 @@ pub enum PositionEmbeddingType {
 }
 
 #[derive(Debug)]
-struct BertEmbeddings {
+pub struct BertEmbeddings {
     word_embeddings: Embedding,
     token_type_embeddings: Embedding,
     position_embeddings: Embedding,
@@ -80,7 +80,7 @@ impl BertEmbeddings {
         })
     }
 
-    fn forward(
+    pub fn forward(
         &self,
         input_ids: &Tensor,
         token_type_ids: &Tensor,
@@ -471,7 +471,7 @@ impl BertModel {
             }
             ModelType::Embedding(pool) => (pool, None),
             ModelType::Splade => {
-                candle::bail!("`splade` model type is not supported for Jina")
+                candle::bail!("`splade` model type is not supported for Bert")
             }
         };
 
