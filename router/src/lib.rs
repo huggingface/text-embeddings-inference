@@ -101,45 +101,7 @@ pub async fn run(
         serde_json::from_str(&config).context("Failed to parse `config.json`")?;
 
     // Set model type from config
-    let backend_model_type = {
-        // Check if the model is a classifier
-        let mut classifier = false;
-        for arch in &config.architectures {
-            if arch.ends_with("Classification") {
-                classifier = true;
-                break;
-            }
-        }
-
-        if classifier {
-            if pooling.is_some() {
-                tracing::warn!(
-                    "`--pooling` arg is set but model is a classifier. Ignoring `--pooling` arg."
-                );
-            }
-            text_embeddings_backend::ModelType::Classifier
-        } else {
-            // Set pooling
-            let pool = match pooling {
-                Some(pool) => pool,
-                None => {
-                    // Load pooling config
-                    let config_path = model_root.join("1_Pooling/config.json");
-                    let config = fs::read_to_string(config_path).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.")?;
-                    let config: PoolConfig = serde_json::from_str(&config)
-                        .context("Failed to parse `1_Pooling/config.json`")?;
-                    if config.pooling_mode_cls_token {
-                        text_embeddings_backend::Pool::Cls
-                    } else if config.pooling_mode_mean_tokens {
-                        text_embeddings_backend::Pool::Mean
-                    } else {
-                        return Err(anyhow!("Pooling config {config:?} is not supported"));
-                    }
-                }
-            };
-            text_embeddings_backend::ModelType::Embedding(pool)
-        }
-    };
+    let backend_model_type = get_backend_model_type(&config, &model_root, pooling)?;
 
     // Info model type
     let model_type = match &backend_model_type {
@@ -313,6 +275,53 @@ pub async fn run(
     }
 
     Ok(())
+}
+
+fn get_backend_model_type(
+    config: &ModelConfig,
+    model_root: &Path,
+    pooling: Option<text_embeddings_backend::Pool>,
+) -> Result<text_embeddings_backend::ModelType> {
+    for arch in &config.architectures {
+        if Some(text_embeddings_backend::Pool::Splade) == pooling && arch.ends_with("MaskedLM") {
+            return Ok(text_embeddings_backend::ModelType::Embedding(
+                text_embeddings_backend::Pool::Splade,
+            ));
+        } else if arch.ends_with("Classification") {
+            if pooling.is_some() {
+                tracing::warn!(
+                    "`--pooling` arg is set but model is a classifier. Ignoring `--pooling` arg."
+                );
+            }
+            return Ok(text_embeddings_backend::ModelType::Classifier);
+        }
+    }
+
+    if Some(text_embeddings_backend::Pool::Splade) == pooling {
+        return Err(anyhow!(
+            "Splade pooling is not supported: model is not a ForMaskedLM model"
+        ));
+    }
+
+    // Set pooling
+    let pool = match pooling {
+        Some(pool) => pool,
+        None => {
+            // Load pooling config
+            let config_path = model_root.join("1_Pooling/config.json");
+            let config = fs::read_to_string(config_path).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.")?;
+            let config: PoolConfig =
+                serde_json::from_str(&config).context("Failed to parse `1_Pooling/config.json`")?;
+            if config.pooling_mode_cls_token {
+                text_embeddings_backend::Pool::Cls
+            } else if config.pooling_mode_mean_tokens {
+                text_embeddings_backend::Pool::Mean
+            } else {
+                return Err(anyhow!("Pooling config {config:?} is not supported"));
+            }
+        }
+    };
+    Ok(text_embeddings_backend::ModelType::Embedding(pool))
 }
 
 #[derive(Debug, Deserialize)]

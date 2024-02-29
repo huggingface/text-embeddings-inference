@@ -2,77 +2,11 @@ use crate::alibi::alibi_head_slopes;
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{HiddenAct, LayerNorm, Linear};
 use crate::models::bert::{BertConfig, PositionEmbeddingType};
+use crate::models::jina::BertEmbeddings;
 use crate::models::Model;
 use candle::{DType, Device, IndexOp, Result, Tensor};
-use candle_nn::{Embedding, Module, VarBuilder};
+use candle_nn::VarBuilder;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
-
-#[derive(Debug)]
-struct BertEmbeddings {
-    word_embeddings: Embedding,
-    token_type_embeddings: Embedding,
-    position_embeddings: Option<Embedding>,
-    layer_norm: LayerNorm,
-    span: tracing::Span,
-}
-
-impl BertEmbeddings {
-    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
-        let position_embeddings =
-            if config.position_embedding_type == PositionEmbeddingType::Absolute {
-                Some(Embedding::new(
-                    vb.pp("position_embeddings").get(
-                        (config.max_position_embeddings, config.hidden_size),
-                        "weight",
-                    )?,
-                    config.hidden_size,
-                ))
-            } else {
-                None
-            };
-
-        Ok(Self {
-            word_embeddings: Embedding::new(
-                vb.pp("word_embeddings")
-                    .get((config.vocab_size, config.hidden_size), "weight")?,
-                config.hidden_size,
-            ),
-            token_type_embeddings: Embedding::new(
-                vb.pp("token_type_embeddings")
-                    .get((config.type_vocab_size, config.hidden_size), "weight")?,
-                config.hidden_size,
-            ),
-            position_embeddings,
-            layer_norm: LayerNorm::load(
-                vb.pp("LayerNorm"),
-                config.hidden_size,
-                config.layer_norm_eps as f32,
-            )?,
-            span: tracing::span!(tracing::Level::TRACE, "embeddings"),
-        })
-    }
-
-    fn forward(
-        &self,
-        input_ids: &Tensor,
-        token_type_ids: &Tensor,
-        position_ids: &Tensor,
-    ) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let input_embeddings = self.word_embeddings.forward(input_ids)?;
-        let token_type_embeddings = self.token_type_embeddings.forward(token_type_ids)?;
-
-        if let Some(position_embeddings) = &self.position_embeddings {
-            let position_embeddings = position_embeddings.forward(position_ids)?;
-            let embeddings = input_embeddings.add(&token_type_embeddings)?;
-            self.layer_norm.forward(&embeddings, &position_embeddings)
-        } else {
-            self.layer_norm
-                .forward(&input_embeddings, &token_type_embeddings)
-        }
-    }
-}
 
 struct AlibiBertAttention {
     qkv_linear: Linear,
@@ -175,7 +109,7 @@ impl AlibiBertAttention {
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
         let hidden_states = self.dense.forward(&attention)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -250,7 +184,7 @@ impl JinaBertLayer {
         let hidden_states = (gated * non_gated)?;
 
         let hidden_states = self.output.forward(&hidden_states)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -319,11 +253,15 @@ impl FlashJinaBertModel {
         }
 
         let pool = match model_type {
-            // Classifier models always use CLS pooling
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for Jina")
             }
-            ModelType::Embedding(pool) => pool,
+            ModelType::Embedding(pool) => {
+                if pool == Pool::Splade {
+                    candle::bail!("`splade` is not supported for Jina")
+                }
+                pool
+            }
         };
 
         let (embeddings, encoder) = match (
@@ -332,18 +270,7 @@ impl FlashJinaBertModel {
         ) {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
-                let model_type = config.model_type.clone().unwrap_or("bert".to_string());
-
                 if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
-                    BertEncoder::load(
-                        vb.pp(format!("{model_type}.encoder")),
-                        config,
-                        alibi.clone(),
-                    ),
-                ) {
-                    (embeddings, encoder)
-                } else if let (Ok(embeddings), Ok(encoder)) = (
                     BertEmbeddings::load(vb.pp("bert.embeddings"), config),
                     BertEncoder::load(vb.pp("bert.encoder"), config, alibi.clone()),
                 ) {
@@ -441,6 +368,9 @@ impl FlashJinaBertModel {
                     } else {
                         Some((outputs.sum_keepdim(0)? / (batch.max_length as f64))?)
                     }
+                }
+                Pool::Splade => {
+                    unreachable!();
                 }
             }
         } else {

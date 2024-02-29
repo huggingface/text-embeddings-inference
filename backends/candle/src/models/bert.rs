@@ -26,7 +26,6 @@ pub struct BertConfig {
     #[serde(default)]
     pub use_cache: bool,
     pub classifier_dropout: Option<f64>,
-    pub model_type: Option<String>,
     pub id2label: Option<HashMap<String, String>>,
 }
 
@@ -39,7 +38,7 @@ pub enum PositionEmbeddingType {
 }
 
 #[derive(Debug)]
-struct BertEmbeddings {
+pub struct BertEmbeddings {
     word_embeddings: Embedding,
     token_type_embeddings: Embedding,
     position_embeddings: Embedding,
@@ -80,7 +79,7 @@ impl BertEmbeddings {
         })
     }
 
-    fn forward(
+    pub fn forward(
         &self,
         input_ids: &Tensor,
         token_type_ids: &Tensor,
@@ -93,7 +92,9 @@ impl BertEmbeddings {
         let position_embeddings = self.position_embeddings.forward(position_ids)?;
 
         let embeddings = input_embeddings.add(&token_type_embeddings)?;
-        let embeddings = self.layer_norm.forward(&embeddings, &position_embeddings)?;
+        let embeddings = self
+            .layer_norm
+            .forward(&embeddings, Some(&position_embeddings))?;
 
         Ok(embeddings)
     }
@@ -255,7 +256,7 @@ impl BertAttention {
         let context_layer = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?;
 
         let hidden_states = self.dense.forward(&context_layer)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -324,7 +325,7 @@ impl BertLayer {
 
         let hidden_states = self.intermediate.forward(&hidden_states)?;
         let hidden_states = self.output.forward(&hidden_states)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -469,7 +470,12 @@ impl BertModel {
                     Box::new(BertClassificationHead::load(vb.pp("classifier"), config)?);
                 (pool, Some(classifier))
             }
-            ModelType::Embedding(pool) => (pool, None),
+            ModelType::Embedding(pool) => {
+                if pool == Pool::Splade {
+                    candle::bail!("`splade` is not supported for Nomic")
+                }
+                (pool, None)
+            }
         };
 
         let (embeddings, encoder) = match (
@@ -724,6 +730,7 @@ impl BertModel {
 
                     (outputs.sum(1)?.broadcast_div(&input_lengths))?
                 }
+                Pool::Splade => unreachable!(),
             };
             Some(pooled_embeddings)
         } else {

@@ -300,17 +300,10 @@ async fn rerank(
     }
 
     match &info.model_type {
-        ModelType::Classifier(_) => {
+        ModelType::Reranker(_) => Ok(()),
+        ModelType::Classifier(_) | ModelType::Embedding(_) => {
             metrics::increment_counter!("te_request_failure", "err" => "model_type");
             let message = "model is not a re-ranker model".to_string();
-            Err(TextEmbeddingsError::Backend(BackendError::Inference(
-                message,
-            )))
-        }
-        ModelType::Reranker(_) => Ok(()),
-        ModelType::Embedding(_) => {
-            metrics::increment_counter!("te_request_failure", "err" => "model_type");
-            let message = "model is not a classifier model".to_string();
             Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
             )))

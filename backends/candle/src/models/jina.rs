@@ -51,7 +51,7 @@ impl BertEmbeddings {
         })
     }
 
-    fn forward(
+    pub fn forward(
         &self,
         input_ids: &Tensor,
         token_type_ids: &Tensor,
@@ -65,10 +65,11 @@ impl BertEmbeddings {
         if let Some(position_embeddings) = &self.position_embeddings {
             let position_embeddings = position_embeddings.forward(position_ids)?;
             let embeddings = input_embeddings.add(&token_type_embeddings)?;
-            self.layer_norm.forward(&embeddings, &position_embeddings)
+            self.layer_norm
+                .forward(&embeddings, Some(&position_embeddings))
         } else {
             self.layer_norm
-                .forward(&input_embeddings, &token_type_embeddings)
+                .forward(&input_embeddings, Some(&token_type_embeddings))
         }
     }
 }
@@ -229,7 +230,7 @@ impl BertAttention {
         let context_layer = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?;
 
         let hidden_states = self.dense.forward(&context_layer)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -303,7 +304,7 @@ impl JinaBertLayer {
         let hidden_states = (gated * non_gated)?;
 
         let hidden_states = self.output.forward(&hidden_states)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -365,11 +366,15 @@ impl JinaBertModel {
         };
 
         let pool = match model_type {
-            // Classifier models always use CLS pooling
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for Jina")
             }
-            ModelType::Embedding(pool) => pool,
+            ModelType::Embedding(pool) => {
+                if pool == Pool::Splade {
+                    candle::bail!("`splade` is not supported for Jina")
+                }
+                pool
+            }
         };
 
         let (embeddings, encoder) = match (
@@ -378,14 +383,7 @@ impl JinaBertModel {
         ) {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
-                let model_type = config.model_type.clone().unwrap_or("bert".to_string());
-
                 if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
-                    BertEncoder::load(vb.pp(format!("{model_type}.encoder")), config),
-                ) {
-                    (embeddings, encoder)
-                } else if let (Ok(embeddings), Ok(encoder)) = (
                     BertEmbeddings::load(vb.pp("bert.embeddings"), config),
                     BertEncoder::load(vb.pp("bert.encoder"), config),
                 ) {
@@ -612,6 +610,7 @@ impl JinaBertModel {
 
                     (outputs.sum(1)?.broadcast_div(&input_lengths))?
                 }
+                Pool::Splade => unreachable!(),
             };
             Some(pooled_embeddings)
         } else {

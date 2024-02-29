@@ -5,20 +5,25 @@ extern crate intel_mkl_src;
 extern crate accelerate_src;
 
 mod bert;
+mod distilbert;
+mod jina;
+mod nomic;
 
 #[cfg(feature = "cuda")]
 mod flash_bert;
 
 #[cfg(feature = "cuda")]
 mod flash_jina;
-mod jina;
 
 #[cfg(feature = "cuda")]
 mod flash_nomic;
-mod nomic;
+
+#[cfg(feature = "cuda")]
+mod flash_distilbert;
 
 pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
 use candle::{Result, Tensor};
+pub use distilbert::{DistilBertConfig, DistilBertModel};
 pub use jina::JinaBertModel;
 pub use nomic::{NomicBertModel, NomicConfig};
 use text_embeddings_backend_core::Batch;
@@ -31,6 +36,9 @@ pub use flash_jina::FlashJinaBertModel;
 
 #[cfg(feature = "cuda")]
 pub use flash_nomic::FlashNomicBertModel;
+
+#[cfg(feature = "cuda")]
+pub use flash_distilbert::FlashDistilBertModel;
 
 pub(crate) trait Model {
     fn is_padded(&self) -> bool;

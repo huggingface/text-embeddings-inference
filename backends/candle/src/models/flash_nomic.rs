@@ -1,95 +1,10 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{LayerNorm, Linear};
+use crate::models::nomic::{NomicBertEmbeddings, NomicBertGatedMLP};
 use crate::models::{Model, NomicConfig};
-use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
-use candle_nn::{Embedding, VarBuilder};
+use candle::{DType, Device, IndexOp, Result, Tensor, D};
+use candle_nn::VarBuilder;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
-
-#[derive(Debug)]
-struct NomicBertEmbeddings {
-    word_embeddings: Embedding,
-    token_type_embeddings: Embedding,
-    layer_norm: LayerNorm,
-    span: tracing::Span,
-}
-
-impl NomicBertEmbeddings {
-    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
-        Ok(Self {
-            word_embeddings: Embedding::new(
-                vb.pp("embeddings.word_embeddings")
-                    .get((config.vocab_size, config.n_embd), "weight")?,
-                config.n_embd,
-            ),
-            token_type_embeddings: Embedding::new(
-                vb.pp("embeddings.token_type_embeddings")
-                    .get((config.type_vocab_size, config.n_embd), "weight")?,
-                config.n_embd,
-            ),
-            layer_norm: LayerNorm::load(vb.pp("emb_ln"), config.n_embd, config.layer_norm_epsilon)?,
-            span: tracing::span!(tracing::Level::TRACE, "embeddings"),
-        })
-    }
-
-    fn forward(&self, input_ids: &Tensor, token_type_ids: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let input_embeddings = self.word_embeddings.forward(input_ids)?;
-        let token_type_embeddings = self.token_type_embeddings.forward(token_type_ids)?;
-
-        let embeddings = self
-            .layer_norm
-            .forward(&input_embeddings, &token_type_embeddings)?;
-
-        Ok(embeddings)
-    }
-}
-
-struct NomicBertGatedMLP {
-    gate_up_proj: Linear,
-    down_proj: Linear,
-
-    span: tracing::Span,
-}
-
-impl NomicBertGatedMLP {
-    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
-        let intermediate_size = config.n_inner;
-
-        let gate_proj_weight = vb
-            .pp("fc12")
-            .get((intermediate_size, config.n_embd), "weight")?;
-
-        let up_proj_weight = vb
-            .pp("fc11")
-            .get((intermediate_size, config.n_embd), "weight")?;
-
-        let gate_up_proj_weight = Tensor::cat(&[&gate_proj_weight, &up_proj_weight], 0)?;
-        let gate_up_proj = Linear::new(
-            gate_up_proj_weight,
-            None,
-            Some(config.activation_function.clone()),
-        );
-
-        let down_proj_weight = vb
-            .pp("fc2")
-            .get((config.n_embd, intermediate_size), "weight")?;
-        let down_proj = Linear::new(down_proj_weight, None, None);
-
-        Ok(Self {
-            gate_up_proj,
-            down_proj,
-            span: tracing::span!(tracing::Level::TRACE, "mlp"),
-        })
-    }
-
-    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let gate_up_states = self.gate_up_proj.forward(hidden_states)?;
-        self.down_proj.forward(&gate_up_states)
-    }
-}
 
 struct NomicAttention {
     qkv_linear: Linear,
@@ -216,11 +131,12 @@ impl NomicBertBlock {
             .forward(&hidden_states, cu_seqlens, cos, sin, max_s)?;
         let hidden_states = self
             .post_attention_layer_norm
-            .forward(&hidden_states, &attn_output)?;
+            .forward(&hidden_states, Some(&attn_output))?;
 
         let mlp_out = self.mlp.forward(&hidden_states)?;
 
-        self.output_layer_norm.forward(&hidden_states, &mlp_out)
+        self.output_layer_norm
+            .forward(&hidden_states, Some(&mlp_out))
     }
 }
 
@@ -289,11 +205,15 @@ impl FlashNomicBertModel {
         }
 
         let pool = match model_type {
-            // Classifier models always use CLS pooling
             ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for Jina")
+                candle::bail!("`classifier` model type is not supported for Nomic")
             }
-            ModelType::Embedding(pool) => pool,
+            ModelType::Embedding(pool) => {
+                if pool == Pool::Splade {
+                    candle::bail!("`splade` is not supported for Nomic")
+                }
+                pool
+            }
         };
 
         let embeddings = NomicBertEmbeddings::load(vb.clone(), config)?;
@@ -433,6 +353,9 @@ impl FlashNomicBertModel {
                     } else {
                         Some((outputs.sum_keepdim(0)? / (batch.max_length as f64))?)
                     }
+                }
+                Pool::Splade => {
+                    unreachable!();
                 }
             }
         } else {

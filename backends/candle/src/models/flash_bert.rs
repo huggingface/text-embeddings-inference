@@ -1,75 +1,13 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{LayerNorm, Linear};
 use crate::models::bert::{
-    BertClassificationHead, BertConfig, ClassificationHead, PositionEmbeddingType,
+    BertClassificationHead, BertConfig, BertEmbeddings, ClassificationHead, PositionEmbeddingType,
     RobertaClassificationHead,
 };
 use crate::models::Model;
 use candle::{DType, Device, Result, Tensor};
-use candle_nn::{Embedding, Module, VarBuilder};
+use candle_nn::VarBuilder;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
-
-#[derive(Debug)]
-struct BertEmbeddings {
-    word_embeddings: Embedding,
-    token_type_embeddings: Embedding,
-    position_embeddings: Embedding,
-    layer_norm: LayerNorm,
-    span: tracing::Span,
-}
-
-impl BertEmbeddings {
-    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
-        if config.position_embedding_type != PositionEmbeddingType::Absolute {
-            candle::bail!("FlashBert only supports absolute position embeddings");
-        }
-
-        Ok(Self {
-            word_embeddings: Embedding::new(
-                vb.pp("word_embeddings")
-                    .get((config.vocab_size, config.hidden_size), "weight")?,
-                config.hidden_size,
-            ),
-            token_type_embeddings: Embedding::new(
-                vb.pp("token_type_embeddings")
-                    .get((config.type_vocab_size, config.hidden_size), "weight")?,
-                config.hidden_size,
-            ),
-            position_embeddings: Embedding::new(
-                vb.pp("position_embeddings").get(
-                    (config.max_position_embeddings, config.hidden_size),
-                    "weight",
-                )?,
-                config.hidden_size,
-            ),
-            layer_norm: LayerNorm::load(
-                vb.pp("LayerNorm"),
-                config.hidden_size,
-                config.layer_norm_eps as f32,
-            )?,
-            span: tracing::span!(tracing::Level::TRACE, "embeddings"),
-        })
-    }
-
-    fn forward(
-        &self,
-        input_ids: &Tensor,
-        token_type_ids: &Tensor,
-        position_ids: &Tensor,
-    ) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let input_embeddings = self.word_embeddings.forward(input_ids)?;
-        let token_type_embeddings = self.token_type_embeddings.forward(token_type_ids)?;
-        let embeddings = input_embeddings.add(&token_type_embeddings)?;
-
-        let position_embeddings = self.position_embeddings.forward(position_ids)?;
-
-        let embeddings = self.layer_norm.forward(&embeddings, &position_embeddings)?;
-
-        Ok(embeddings)
-    }
-}
 
 struct BertAttention {
     qkv_linear: Linear,
@@ -169,7 +107,7 @@ impl BertAttention {
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
         let hidden_states = self.dense.forward(&attention)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -239,7 +177,7 @@ impl BertLayer {
 
         let hidden_states = self.intermediate.forward(&hidden_states)?;
         let hidden_states = self.output.forward(&hidden_states)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -309,7 +247,12 @@ impl FlashBertModel {
                     Box::new(BertClassificationHead::load(vb.pp("classifier"), config)?);
                 (pool, Some(classifier))
             }
-            ModelType::Embedding(pool) => (pool, None),
+            ModelType::Embedding(pool) => {
+                if pool == Pool::Splade {
+                    candle::bail!("`splade` is not supported for Nomic")
+                }
+                (pool, None)
+            }
         };
 
         let (embeddings, encoder) = match (
@@ -368,7 +311,12 @@ impl FlashBertModel {
                 );
                 (pool, Some(classifier))
             }
-            ModelType::Embedding(pool) => (pool, None),
+            ModelType::Embedding(pool) => {
+                if pool == Pool::Splade {
+                    candle::bail!("`splade` is not supported for Nomic")
+                }
+                (pool, None)
+            }
         };
 
         let (embeddings, encoder) = match (
@@ -482,6 +430,9 @@ impl FlashBertModel {
                     } else {
                         Some((outputs.sum_keepdim(0)? / (batch.max_length as f64))?)
                     }
+                }
+                Pool::Splade => {
+                    unreachable!();
                 }
             }
         } else {

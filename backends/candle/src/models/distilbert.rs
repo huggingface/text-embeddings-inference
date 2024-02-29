@@ -6,192 +6,108 @@ use serde::Deserialize;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct NomicConfig {
-    pub prenorm: bool,
-    pub rotary_emb_fraction: f32,
-    pub qkv_proj_bias: bool,
-    pub rotary_emb_base: f32,
-    pub rotary_emb_interleaved: bool,
-    pub mlp_fc1_bias: bool,
-    pub mlp_fc2_bias: bool,
-    pub rotary_scaling_factor: Option<f32>,
-    #[serde(default = "default_max_trained_positions")]
-    pub max_trained_positions: usize,
-
-    pub n_embd: usize,
-    pub n_head: usize,
-    pub n_inner: usize,
-    pub n_layer: usize,
-    pub n_positions: usize,
-
-    pub activation_function: HiddenAct,
-
+pub struct DistilBertConfig {
     pub vocab_size: usize,
-    pub type_vocab_size: usize,
-    pub layer_norm_epsilon: f32,
-}
-
-fn default_max_trained_positions() -> usize {
-    2048
-}
-
-impl NomicConfig {
-    // For now, we only support these parameters
-    pub fn valid(&self) -> bool {
-        !self.prenorm
-            && self.rotary_emb_fraction == 1.0
-            && !self.qkv_proj_bias
-            && !self.rotary_emb_interleaved
-            && !self.mlp_fc1_bias
-            && !self.mlp_fc2_bias
-            && self.type_vocab_size > 0
-            && self.activation_function == HiddenAct::Swiglu
-    }
+    pub dim: usize,
+    pub n_layers: usize,
+    pub n_heads: usize,
+    pub hidden_dim: usize,
+    pub activation: HiddenAct,
+    pub max_position_embeddings: usize,
+    pub pad_token_id: usize,
+    pub model_type: Option<String>,
 }
 
 #[derive(Debug)]
-pub struct NomicBertEmbeddings {
+pub struct DistilBertEmbeddings {
     word_embeddings: Embedding,
-    token_type_embeddings: Embedding,
+    position_embeddings: Embedding,
     layer_norm: LayerNorm,
     span: tracing::Span,
 }
 
-impl NomicBertEmbeddings {
-    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
+impl DistilBertEmbeddings {
+    pub fn load(vb: VarBuilder, config: &DistilBertConfig) -> Result<Self> {
         Ok(Self {
             word_embeddings: Embedding::new(
-                vb.pp("embeddings.word_embeddings")
-                    .get((config.vocab_size, config.n_embd), "weight")?,
-                config.n_embd,
+                vb.pp("word_embeddings")
+                    .get((config.vocab_size, config.dim), "weight")?,
+                config.dim,
             ),
-            token_type_embeddings: Embedding::new(
-                vb.pp("embeddings.token_type_embeddings")
-                    .get((config.type_vocab_size, config.n_embd), "weight")?,
-                config.n_embd,
+            position_embeddings: Embedding::new(
+                vb.pp("position_embeddings")
+                    .get((config.max_position_embeddings, config.dim), "weight")?,
+                config.dim,
             ),
-            layer_norm: LayerNorm::load(vb.pp("emb_ln"), config.n_embd, config.layer_norm_epsilon)?,
+            layer_norm: LayerNorm::load(vb.pp("LayerNorm"), config.dim, 1e-12f32)?,
             span: tracing::span!(tracing::Level::TRACE, "embeddings"),
         })
     }
 
-    pub fn forward(&self, input_ids: &Tensor, token_type_ids: &Tensor) -> Result<Tensor> {
+    pub fn forward(&self, input_ids: &Tensor, position_ids: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
         let input_embeddings = self.word_embeddings.forward(input_ids)?;
-        let token_type_embeddings = self.token_type_embeddings.forward(token_type_ids)?;
+        let position_embeddings = self.position_embeddings.forward(position_ids)?;
 
         let embeddings = self
             .layer_norm
-            .forward(&input_embeddings, Some(&token_type_embeddings))?;
+            .forward(&input_embeddings, Some(&position_embeddings))?;
 
         Ok(embeddings)
     }
 }
 
-pub struct NomicBertGatedMLP {
-    gate_up_proj: Linear,
-    down_proj: Linear,
-
-    span: tracing::Span,
-}
-
-impl NomicBertGatedMLP {
-    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
-        let intermediate_size = config.n_inner;
-
-        let gate_proj_weight = vb
-            .pp("fc12")
-            .get((intermediate_size, config.n_embd), "weight")?;
-
-        let up_proj_weight = vb
-            .pp("fc11")
-            .get((intermediate_size, config.n_embd), "weight")?;
-
-        let gate_up_proj_weight = Tensor::cat(&[&gate_proj_weight, &up_proj_weight], 0)?;
-        let gate_up_proj = Linear::new(
-            gate_up_proj_weight,
-            None,
-            Some(config.activation_function.clone()),
-        );
-
-        let down_proj_weight = vb
-            .pp("fc2")
-            .get((config.n_embd, intermediate_size), "weight")?;
-        let down_proj = Linear::new(down_proj_weight, None, None);
-
-        Ok(Self {
-            gate_up_proj,
-            down_proj,
-            span: tracing::span!(tracing::Level::TRACE, "mlp"),
-        })
-    }
-
-    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let gate_up_states = self.gate_up_proj.forward(hidden_states)?;
-        self.down_proj.forward(&gate_up_states)
-    }
-}
-
-struct NomicAttention {
+#[derive(Debug)]
+struct DistilBertAttention {
     qkv_linear: Linear,
-    out_proj: Linear,
+    dense: Linear,
 
     num_attention_heads: usize,
     attention_head_size: usize,
-
     softmax_scale: f64,
 
     span: tracing::Span,
 }
 
-impl NomicAttention {
-    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
-        let num_attention_heads = config.n_head;
-        let attention_head_size = config.n_embd / config.n_head;
-        let hidden_size = config.n_embd;
+impl DistilBertAttention {
+    pub fn load(vb: VarBuilder, config: &DistilBertConfig) -> Result<Self> {
+        let attention_head_size = config.dim / config.n_heads;
+        let all_head_size = config.n_heads * attention_head_size;
+        let hidden_size = config.dim;
 
-        let qkv_weight = vb.pp("Wqkv").get(
-            (3 * num_attention_heads * attention_head_size, hidden_size),
-            "weight",
-        )?;
-        let qkv_linear = Linear::new(qkv_weight, None, None);
+        let query_weight = vb.pp("q_lin").get((all_head_size, hidden_size), "weight")?;
+        let query_bias = vb.pp("q_lin").get(all_head_size, "bias")?;
 
-        let out_proj_weight = vb
-            .pp("out_proj")
-            .get((hidden_size, hidden_size), "weight")?;
-        let out_proj = Linear::new(out_proj_weight, None, None);
+        let key_weight = vb.pp("k_lin").get((all_head_size, hidden_size), "weight")?;
+        let key_bias = vb.pp("k_lin").get(all_head_size, "bias")?;
+
+        let value_weight = vb.pp("v_lin").get((all_head_size, hidden_size), "weight")?;
+        let value_bias = vb.pp("v_lin").get(all_head_size, "bias")?;
+
+        let qkv_weight = Tensor::cat(&[&query_weight, &key_weight, &value_weight], 0)?;
+        let qkv_bias = Tensor::cat(&[&query_bias, &key_bias, &value_bias], 0)?;
+
+        let qkv_linear = Linear::new(qkv_weight, Some(qkv_bias), None);
+
+        let dense_weight = vb.pp("out_lin").get((hidden_size, hidden_size), "weight")?;
+        let dense_bias = vb.pp("out_lin").get(hidden_size, "bias")?;
+
+        let dense = Linear::new(dense_weight, Some(dense_bias), None);
 
         let softmax_scale = 1. / (attention_head_size as f64).sqrt();
 
         Ok(Self {
             qkv_linear,
-            out_proj,
-            num_attention_heads,
+            dense,
+            num_attention_heads: config.n_heads,
             attention_head_size,
             softmax_scale,
             span: tracing::span!(tracing::Level::TRACE, "attention"),
         })
     }
 
-    fn apply_rotary(&self, x: &Tensor, cos: &Tensor, sin: &Tensor) -> Result<Tensor> {
-        let dim = self.attention_head_size / 2;
-        let x1 = x.narrow(D::Minus1, 0, dim)?;
-        let x2 = x.narrow(D::Minus1, dim, dim)?;
-        let rotate_x = Tensor::cat(&[&x2.neg()?, &x1], D::Minus1)?;
-        let rope = (x.broadcast_mul(cos)? + rotate_x.broadcast_mul(sin)?)?;
-        Ok(rope)
-    }
-
-    pub fn forward(
-        &self,
-        hidden_states: &Tensor,
-        attention_bias: Option<&Tensor>,
-        cos: &Tensor,
-        sin: &Tensor,
-    ) -> Result<Tensor> {
+    fn forward(&self, hidden_states: &Tensor, attention_bias: Option<&Tensor>) -> Result<Tensor> {
         let _enter = self.span.enter();
         let device = hidden_states.device();
 
@@ -207,9 +123,6 @@ impl NomicAttention {
         let query_layer = &qkv[0].contiguous()?;
         let key_layer = &qkv[1].contiguous()?;
         let value_layer = &qkv[2];
-
-        let query_layer = self.apply_rotary(query_layer, cos, sin)?;
-        let key_layer = self.apply_rotary(key_layer, cos, sin)?;
 
         #[allow(unused_variables)]
         let context_layer = if let (Device::Cuda(_), Some(cublaslt)) =
@@ -281,30 +194,71 @@ impl NomicAttention {
 
         let context_layer = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?;
 
-        let hidden_states = self.out_proj.forward(&context_layer)?;
+        let hidden_states = self.dense.forward(&context_layer)?;
 
         Ok(hidden_states)
     }
 }
 
-struct NomicBertBlock {
-    attention: NomicAttention,
-    mlp: NomicBertGatedMLP,
+#[derive(Debug)]
+pub struct DistilBertMLP {
+    lin1: Linear,
+    lin2: Linear,
+
+    span: tracing::Span,
+}
+
+impl DistilBertMLP {
+    pub fn load(vb: VarBuilder, config: &DistilBertConfig) -> Result<Self> {
+        let lin1_weight = vb
+            .pp("lin1")
+            .get((config.hidden_dim, config.dim), "weight")?;
+        let lin1_bias = vb.pp("lin1").get(config.hidden_dim, "bias")?;
+        let lin1 = Linear::new(
+            lin1_weight,
+            Some(lin1_bias),
+            Some(config.activation.clone()),
+        );
+
+        let lin2_weight = vb
+            .pp("lin2")
+            .get((config.dim, config.hidden_dim), "weight")?;
+        let lin2_bias = vb.pp("lin2").get(config.dim, "bias")?;
+        let lin2 = Linear::new(lin2_weight, Some(lin2_bias), None);
+
+        Ok(Self {
+            lin1,
+            lin2,
+            span: tracing::span!(tracing::Level::TRACE, "mlp"),
+        })
+    }
+
+    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let hidden_states = self.lin1.forward(hidden_states)?;
+        self.lin2.forward(&hidden_states)
+    }
+}
+
+#[derive(Debug)]
+struct DistilBertBlock {
+    attention: DistilBertAttention,
+    mlp: DistilBertMLP,
     post_attention_layer_norm: LayerNorm,
     output_layer_norm: LayerNorm,
 
     span: tracing::Span,
 }
 
-impl NomicBertBlock {
-    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
-        let attention = NomicAttention::load(vb.pp("attn"), config)?;
-        let mlp = NomicBertGatedMLP::load(vb.pp("mlp"), config)?;
+impl DistilBertBlock {
+    pub fn load(vb: VarBuilder, config: &DistilBertConfig) -> Result<Self> {
+        let attention = DistilBertAttention::load(vb.pp("attention"), config)?;
+        let mlp = DistilBertMLP::load(vb.pp("ffn"), config)?;
 
         let post_attention_layer_norm =
-            LayerNorm::load(vb.pp("norm1"), config.n_embd, config.layer_norm_epsilon)?;
-        let output_layer_norm =
-            LayerNorm::load(vb.pp("norm2"), config.n_embd, config.layer_norm_epsilon)?;
+            LayerNorm::load(vb.pp("sa_layer_norm"), config.dim, 1e-12f32)?;
+        let output_layer_norm = LayerNorm::load(vb.pp("output_layer_norm"), config.dim, 1e-12f32)?;
 
         Ok(Self {
             attention,
@@ -319,14 +273,10 @@ impl NomicBertBlock {
         &self,
         hidden_states: &Tensor,
         attention_bias: Option<&Tensor>,
-        cos: &Tensor,
-        sin: &Tensor,
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let attn_output = self
-            .attention
-            .forward(hidden_states, attention_bias, cos, sin)?;
+        let attn_output = self.attention.forward(hidden_states, attention_bias)?;
         let hidden_states = self
             .post_attention_layer_norm
             .forward(hidden_states, Some(&attn_output))?;
@@ -338,92 +288,131 @@ impl NomicBertBlock {
     }
 }
 
-struct NomicBertEncoder {
-    layers: Vec<NomicBertBlock>,
+#[derive(Debug)]
+struct DistilBertEncoder {
+    layers: Vec<DistilBertBlock>,
     span: tracing::Span,
 }
 
-impl NomicBertEncoder {
-    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
-        let layers = (0..config.n_layer)
-            .map(|index| NomicBertBlock::load(vb.pp(format!("layers.{index}")), config))
+impl DistilBertEncoder {
+    pub fn load(vb: VarBuilder, config: &DistilBertConfig) -> Result<Self> {
+        let layers = (0..config.n_layers)
+            .map(|index| DistilBertBlock::load(vb.pp(format!("layer.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
-
         let span = tracing::span!(tracing::Level::TRACE, "encoder");
-        Ok(NomicBertEncoder { layers, span })
+
+        Ok(DistilBertEncoder { layers, span })
     }
 
-    fn forward(
-        &self,
-        hidden_states: &Tensor,
-        attention_bias: Option<&Tensor>,
-        cos: &Tensor,
-        sin: &Tensor,
-    ) -> Result<Tensor> {
+    fn forward(&self, hidden_states: &Tensor, attention_bias: Option<&Tensor>) -> Result<Tensor> {
         let _enter = self.span.enter();
 
         let mut hidden_states = hidden_states.clone();
 
         // Use a loop rather than a fold as it's easier to modify when adding debug/...
         for layer in self.layers.iter() {
-            hidden_states = layer.forward(&hidden_states, attention_bias, cos, sin)?
+            hidden_states = layer.forward(&hidden_states, attention_bias)?;
         }
 
         Ok(hidden_states)
     }
 }
 
-pub struct NomicBertModel {
-    embeddings: NomicBertEmbeddings,
-    encoder: NomicBertEncoder,
-    pool: Pool,
-    pub device: Device,
-    dtype: DType,
+#[derive(Debug)]
+pub struct DistilBertSpladeHead {
+    vocab_transform: Linear,
+    vocab_projector: Linear,
+    vocab_layer_norm: LayerNorm,
+    span: tracing::Span,
+}
 
-    rotary_dim: usize,
-    max_trained_positions: u32,
-    rotary_cache: (Tensor, Tensor),
-    scaled_rotary_cache: Option<(Tensor, Tensor)>,
+impl DistilBertSpladeHead {
+    pub(crate) fn load(vb: VarBuilder, config: &DistilBertConfig) -> Result<Self> {
+        let vocab_transform_weight = vb
+            .pp("vocab_transform")
+            .get((config.dim, config.dim), "weight")?;
+        let vocab_transform_bias = vb.pp("vocab_transform").get(config.dim, "bias")?;
+        let vocab_transform = Linear::new(
+            vocab_transform_weight,
+            Some(vocab_transform_bias),
+            Some(config.activation.clone()),
+        );
+
+        let vocab_projector_weight = vb
+            .pp("vocab_projector")
+            .get((config.vocab_size, config.dim), "weight")?;
+        let vocab_projector_bias = vb.pp("vocab_projector").get(config.vocab_size, "bias")?;
+        let vocab_projector = Linear::new(
+            vocab_projector_weight,
+            Some(vocab_projector_bias),
+            Some(HiddenAct::Relu),
+        );
+
+        let vocab_layer_norm = LayerNorm::load(vb.pp("vocab_layer_norm"), config.dim, 1e-12f32)?;
+
+        Ok(Self {
+            vocab_transform,
+            vocab_projector,
+            vocab_layer_norm,
+            span: tracing::span!(tracing::Level::TRACE, "splade"),
+        })
+    }
+
+    pub(crate) fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let hidden_states = self.vocab_transform.forward(hidden_states)?;
+        let hidden_states = self.vocab_layer_norm.forward(&hidden_states, None)?;
+        let hidden_states = self.vocab_projector.forward(&hidden_states)?;
+        Ok(hidden_states)
+
+        // (1.0 + hidden_states)?.log()
+    }
+}
+
+#[derive(Debug)]
+pub struct DistilBertModel {
+    embeddings: DistilBertEmbeddings,
+    encoder: DistilBertEncoder,
+    pool: Pool,
+    splade: Option<DistilBertSpladeHead>,
 
     num_attention_heads: usize,
+
+    device: Device,
+    dtype: DType,
 
     span: tracing::Span,
 }
 
-impl NomicBertModel {
-    pub fn load(vb: VarBuilder, config: &NomicConfig, model_type: ModelType) -> Result<Self> {
-        if !config.valid() {
-            candle::bail!("config is not supported")
-        }
-
+impl DistilBertModel {
+    pub fn load(vb: VarBuilder, config: &DistilBertConfig, model_type: ModelType) -> Result<Self> {
         let pool = match model_type {
-            // Classifier models always use CLS pooling
             ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for Nomic")
+                candle::bail!("`classifier` model type is not supported for DistilBert")
             }
-            ModelType::Embedding(pool) => {
-                if pool == Pool::Splade {
-                    candle::bail!("`splade` is not supported for Nomic")
+            ModelType::Embedding(pool) => pool,
+        };
+
+        let (embeddings, encoder) = match (
+            DistilBertEmbeddings::load(vb.pp("embeddings"), config),
+            DistilBertEncoder::load(vb.pp("encoder"), config),
+        ) {
+            (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
+            (Err(err), _) | (_, Err(err)) => {
+                if let (Ok(embeddings), Ok(encoder)) = (
+                    DistilBertEmbeddings::load(vb.pp("distilbert.embeddings"), config),
+                    DistilBertEncoder::load(vb.pp("distilbert.transformer"), config),
+                ) {
+                    (embeddings, encoder)
+                } else {
+                    return Err(err);
                 }
-                pool
             }
         };
 
-        let embeddings = NomicBertEmbeddings::load(vb.clone(), config)?;
-        let encoder = NomicBertEncoder::load(vb.pp("encoder"), config)?;
-
-        let rotary_dim = encoder.layers[0].attention.attention_head_size;
-        let inv_freqs_tensor = inv_freqs(rotary_dim, config.rotary_emb_base, vb.device())?;
-        let rotary_cache = cos_sin(config.n_positions, &inv_freqs_tensor, vb.dtype())?;
-
-        let scaled_rotary_cache = if let Some(scaling_factor) = config.rotary_scaling_factor {
-            let new_base = (config.rotary_emb_base
-                * ((scaling_factor * config.n_positions as f32
-                    / config.max_trained_positions as f32)
-                    - (scaling_factor - 1.0)))
-                .powi((rotary_dim as f32 / (rotary_dim as f32 - 2.0)) as i32);
-            let inv_freqs_tensor = inv_freqs(rotary_dim, new_base, vb.device())?;
-            Some(cos_sin(config.n_positions, &inv_freqs_tensor, vb.dtype())?)
+        let splade = if pool == Pool::Splade {
+            Some(DistilBertSpladeHead::load(vb.clone(), config)?)
         } else {
             None
         };
@@ -432,16 +421,14 @@ impl NomicBertModel {
             embeddings,
             encoder,
             pool,
-            rotary_dim,
-            max_trained_positions: config.max_trained_positions as u32,
-            rotary_cache,
-            scaled_rotary_cache,
-            num_attention_heads: config.n_head,
+            splade,
+            num_attention_heads: config.n_heads,
             device: vb.device().clone(),
             dtype: vb.dtype(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
     }
+
     pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         let _enter = self.span.enter();
 
@@ -450,13 +437,12 @@ impl NomicBertModel {
 
         let shape = (batch_size, max_length);
 
-        let (input_ids, type_ids, position_ids, input_lengths, attention_bias, attention_mask) =
+        let (input_ids, position_ids, input_lengths, attention_bias, attention_mask) =
             if batch_size > 1 {
                 // Prepare padded batch
                 let elems = batch_size * max_length;
 
                 let mut input_ids = Vec::with_capacity(elems);
-                let mut type_ids = Vec::with_capacity(elems);
                 let mut position_ids = Vec::with_capacity(elems);
                 let mut attention_mask = Vec::with_capacity(elems);
                 let mut attention_bias = Vec::with_capacity(elems);
@@ -473,7 +459,6 @@ impl NomicBertModel {
                     // Copy values
                     for j in start..end {
                         input_ids.push(batch.input_ids[j]);
-                        type_ids.push(batch.token_type_ids[j]);
                         position_ids.push(batch.position_ids[j]);
                         attention_mask.push(1.0_f32);
                         attention_bias.push(0.0);
@@ -486,7 +471,6 @@ impl NomicBertModel {
                         masking = true;
                         for _ in 0..padding {
                             input_ids.push(0);
-                            type_ids.push(0);
                             position_ids.push(0);
                             attention_mask.push(0.0_f32);
                             attention_bias.push(f32::NEG_INFINITY);
@@ -533,7 +517,6 @@ impl NomicBertModel {
 
                 (
                     input_ids,
-                    type_ids,
                     position_ids,
                     input_lengths,
                     attention_bias,
@@ -542,7 +525,6 @@ impl NomicBertModel {
             } else {
                 (
                     batch.input_ids,
-                    batch.token_type_ids,
                     batch.position_ids,
                     vec![batch.max_length as f32],
                     None,
@@ -552,41 +534,15 @@ impl NomicBertModel {
 
         // Create CPU tensors
         let input_ids = Tensor::from_vec(input_ids, shape, &self.device)?;
-        let type_ids = Tensor::from_vec(type_ids, shape, &self.device)?;
-        let position_ids = Tensor::from_vec(position_ids, batch_size * max_length, &self.device)?;
+        let position_ids = Tensor::from_vec(position_ids, shape, &self.device)?;
         let input_lengths =
             Tensor::from_vec(input_lengths, (batch_size, 1), &self.device)?.to_dtype(self.dtype)?;
 
-        let (cos, sin) = if self.scaled_rotary_cache.is_some()
-            && batch.max_length > self.max_trained_positions
-        {
-            let cos = self
-                .scaled_rotary_cache
-                .as_ref()
-                .unwrap()
-                .0
-                .index_select(&position_ids, 0)?;
-            let sin = self
-                .scaled_rotary_cache
-                .as_ref()
-                .unwrap()
-                .1
-                .index_select(&position_ids, 0)?;
-            (cos, sin)
-        } else {
-            let cos = self.rotary_cache.0.index_select(&position_ids, 0)?;
-            let sin = self.rotary_cache.1.index_select(&position_ids, 0)?;
-            (cos, sin)
-        };
+        let embedding_output = self.embeddings.forward(&input_ids, &position_ids)?;
 
-        let cos = cos.reshape((batch_size, 1, max_length, self.rotary_dim))?;
-        let sin = sin.reshape((batch_size, 1, max_length, self.rotary_dim))?;
-
-        let embedding_output = self.embeddings.forward(&input_ids, &type_ids)?;
-
-        let outputs =
-            self.encoder
-                .forward(&embedding_output, attention_bias.as_ref(), &cos, &sin)?;
+        let outputs = self
+            .encoder
+            .forward(&embedding_output, attention_bias.as_ref())?;
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();
@@ -626,7 +582,25 @@ impl NomicBertModel {
 
                     (outputs.sum(1)?.broadcast_div(&input_lengths))?
                 }
-                Pool::Splade => unreachable!(),
+                Pool::Splade => {
+                    // Unwrap is safe here
+                    let splade_head = self.splade.as_ref().unwrap();
+                    let mut relu_log = splade_head.forward(&outputs)?;
+
+                    if let Some(ref attention_mask) = attention_mask {
+                        let mut attention_mask = attention_mask.clone();
+
+                        if let Some(pooled_indices) = pooled_indices {
+                            // Select values in the batch
+                            attention_mask = attention_mask.index_select(&pooled_indices, 0)?;
+                        };
+
+                        // Mask padded values
+                        relu_log = relu_log.broadcast_mul(&attention_mask)?;
+                    }
+
+                    relu_log.max(1)?
+                }
             };
             Some(pooled_embeddings)
         } else {
@@ -673,31 +647,11 @@ impl NomicBertModel {
     }
 }
 
-pub fn inv_freqs(dim: usize, base: f32, device: &Device) -> Result<Tensor> {
-    let inv_freq: Vec<_> = (0..dim)
-        .step_by(2)
-        .map(|i| 1f32 / base.powf(i as f32 / dim as f32))
-        .collect();
-    let inv_freq_len = inv_freq.len();
-    Tensor::from_vec(inv_freq, (1, inv_freq_len), device)
-}
-
-pub fn cos_sin(length: usize, inv_freqs: &Tensor, dtype: DType) -> Result<(Tensor, Tensor)> {
-    let t = Tensor::arange(0u32, length as u32, inv_freqs.device())?
-        .to_dtype(DType::F32)?
-        .reshape((length, 1))?;
-    let freqs = t.matmul(inv_freqs)?;
-    let freqs = Tensor::cat(&[&freqs, &freqs], 1)?;
-
-    let cos = freqs.cos()?.to_dtype(dtype)?;
-    let sin = freqs.sin()?.to_dtype(dtype)?;
-    Ok((cos, sin))
-}
-
-impl Model for NomicBertModel {
+impl Model for DistilBertModel {
     fn is_padded(&self) -> bool {
-        false
+        true
     }
+
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
     }
