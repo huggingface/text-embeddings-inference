@@ -47,7 +47,6 @@ pub async fn run(
     tokenization_workers: Option<usize>,
     dtype: Option<DType>,
     pooling: Option<text_embeddings_backend::Pool>,
-    splade: bool,
     max_concurrent_requests: usize,
     max_batch_tokens: usize,
     max_batch_requests: Option<usize>,
@@ -60,12 +59,6 @@ pub async fn run(
     otlp_endpoint: Option<String>,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
-    if splade && pooling.is_some() {
-        return Err(anyhow!(
-            "`--splade` and `--pooling` args cannot be used at the same time."
-        ));
-    }
-
     let model_id_path = Path::new(&model_id);
     let model_root = if model_id_path.exists() && model_id_path.is_dir() {
         // Using a local model
@@ -108,7 +101,7 @@ pub async fn run(
         serde_json::from_str(&config).context("Failed to parse `config.json`")?;
 
     // Set model type from config
-    let backend_model_type = get_backend_model_type(&config, &model_root, pooling, splade)?;
+    let backend_model_type = get_backend_model_type(&config, &model_root, pooling)?;
 
     // Info model type
     let model_type = match &backend_model_type {
@@ -288,7 +281,6 @@ fn get_backend_model_type(
     config: &ModelConfig,
     model_root: &Path,
     pooling: Option<text_embeddings_backend::Pool>,
-    splade: bool,
 ) -> Result<text_embeddings_backend::ModelType> {
     for arch in &config.architectures {
         if Some(text_embeddings_backend::Pool::Splade) == pooling && arch.ends_with("MaskedLM") {
@@ -299,11 +291,6 @@ fn get_backend_model_type(
             if pooling.is_some() {
                 tracing::warn!(
                     "`--pooling` arg is set but model is a classifier. Ignoring `--pooling` arg."
-                );
-            }
-            if splade {
-                tracing::warn!(
-                    "`--splade` arg is set but model is a classifier. Ignoring `--splade` arg."
                 );
             }
             return Ok(text_embeddings_backend::ModelType::Classifier);

@@ -152,13 +152,16 @@ Options:
       --pooling <POOLING>
           Optionally control the pooling method for embedding models.
 
-          If `pooling` is not set, the pooling configuration will be parsed from the model `1_Pooling/config.json`
-          configuration.
+          If `pooling` is not set, the pooling configuration will be parsed from the model `1_Pooling/config.json` configuration.
 
           If `pooling` is set, it will override the model pooling configuration
 
           [env: POOLING=]
-          [possible values: cls, mean]
+
+          Possible values:
+          - cls:    Select the CLS token as embedding
+          - mean:   Apply Mean pooling to the model embeddings
+          - splade: Apply SPLADE (Sparse Lexical and Expansion) to the model embeddings. This option is only available if the loaded model is a `ForMaskedLM` Transformer model
 
       --max-concurrent-requests <MAX_CONCURRENT_REQUESTS>
           The maximum amount of concurrent requests for this particular deployment.
