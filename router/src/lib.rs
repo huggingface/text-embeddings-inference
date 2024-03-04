@@ -239,6 +239,15 @@ pub async fn run(
         docker_label: option_env!("DOCKER_LABEL"),
     };
 
+    // Determine the server port based on the feature and environment variable.
+    let port = if cfg!(feature = "google") {
+        std::env::var("AIP_HTTP_PORT")
+            .map(|aip_http_port| aip_http_port.parse::<u16>().unwrap_or(port))
+            .unwrap_or(port)
+    } else {
+        port
+    };
+
     let addr = match hostname.unwrap_or("0.0.0.0".to_string()).parse() {
         Ok(ip) => SocketAddr::new(ip, port),
         Err(_) => {

@@ -1255,9 +1255,9 @@ pub async fn run(
     {
         tracing::info!("Built with `google` feature");
         tracing::info!(
-            "Environment variables `AIP_EMBED_ROUTE` and `AIP_HEALTH_ROUTE` will be respected."
+            "Environment variables `AIP_PREDICT_ROUTE` and `AIP_HEALTH_ROUTE` will be respected."
         );
-        if let Ok(env_predict_route) = std::env::var("AIP_EMBED_ROUTE") {
+        if let Ok(env_predict_route) = std::env::var("AIP_PREDICT_ROUTE") {
             app = app.route(&env_predict_route, post(vertex_compatibility));
         }
         if let Ok(env_health_route) = std::env::var("AIP_HEALTH_ROUTE") {
