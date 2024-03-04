@@ -39,6 +39,7 @@ length of 512 tokens:
     - [gRPC](#grpc)
 - [Local Install](#local-install)
 - [Docker Build](#docker-build)
+- [Examples](#examples)
 
 Text Embeddings Inference (TEI) is a toolkit for deploying and serving open source text embeddings and sequence
 classification models. TEI enables high-performance extraction for the most popular models, including FlagEmbedding,
