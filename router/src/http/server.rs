@@ -1208,7 +1208,7 @@ pub async fn run(
     };
 
     // Create router
-    let app = Router::new()
+    let base_routes = Router::new()
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", doc))
         // Base routes
         .route("/info", get(get_model_info))
@@ -1230,8 +1230,10 @@ pub async fn run(
         // Prometheus metrics route
         .route("/metrics", get(metrics));
 
+    let mut app = Router::new().merge(base_routes);
+
     // Set default routes
-    let app = match &info.model_type {
+    app = match &info.model_type {
         ModelType::Classifier(_) => {
             app.route("/", post(predict))
                 // AWS Sagemaker route
@@ -1248,6 +1250,20 @@ pub async fn run(
                 .route("/invocations", post(embed))
         }
     };
+
+    #[cfg(feature = "google")]
+    {
+        tracing::info!("Built with `google` feature");
+        tracing::info!(
+            "Environment variables `AIP_EMBED_ROUTE` and `AIP_HEALTH_ROUTE` will be respected."
+        );
+        if let Ok(env_predict_route) = std::env::var("AIP_EMBED_ROUTE") {
+            app = app.route(&env_predict_route, post(vertex_compatibility));
+        }
+        if let Ok(env_health_route) = std::env::var("AIP_HEALTH_ROUTE") {
+            app = app.route(&env_health_route, get(health));
+        }
+    }
 
     let app = app
         .layer(Extension(infer))
