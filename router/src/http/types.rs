@@ -364,3 +364,18 @@ pub(crate) struct SimpleToken {
 #[derive(Serialize, ToSchema)]
 #[schema(example = json!([[{"id": 0, "text": "test", "special": false, "start": 0, "stop": 2}]]))]
 pub(crate) struct TokenizeResponse(pub Vec<Vec<SimpleToken>>);
+
+#[derive(Clone, Deserialize, ToSchema)]
+pub(crate) struct VertexInstance {
+    #[schema(example = "What is Deep Learning?")]
+    pub inputs: String,
+    #[serde(default)]
+    #[schema(default = "false", example = "false")]
+    pub truncate: bool,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct VertexRequest {
+    #[serde(rename = "instances")]
+    pub instances: Vec<VertexInstance>,
+}
