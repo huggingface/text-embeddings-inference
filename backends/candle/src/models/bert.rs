@@ -450,6 +450,7 @@ pub struct BertSpladeHead {
 
 impl BertSpladeHead {
     pub(crate) fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
+        let vb = vb.pp("cls.predictions");
         let transform_weight = vb
             .pp("transform.dense")
             .get((config.hidden_size, config.hidden_size), "weight")?;
@@ -481,6 +482,7 @@ impl BertSpladeHead {
     }
 
     pub(crate) fn load_roberta(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
+        let vb = vb.pp("lm_head");
         let transform_weight = vb
             .pp("dense")
             .get((config.hidden_size, config.hidden_size), "weight")?;

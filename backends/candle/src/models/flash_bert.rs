@@ -459,9 +459,9 @@ impl FlashBertModel {
                             .collect();
 
                         // Concatenate all results
-                        Tensor::cat(&results?, 0)?
+                        Some(Tensor::cat(&results?, 0)?)
                     } else {
-                        relu_log.max_keepdim(0)?
+                        Some(relu_log.max_keepdim(0)?)
                     }
                 }
             }
