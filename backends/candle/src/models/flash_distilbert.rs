@@ -320,7 +320,9 @@ impl FlashDistilBertModel {
                                 let start = batch.cumulative_seq_lengths[i];
                                 let len = batch.cumulative_seq_lengths[i + 1] - start;
 
-                                relu_log.narrow(0, start as usize, len as usize)?.max(0)
+                                relu_log
+                                    .narrow(0, start as usize, len as usize)?
+                                    .max_keepdim(0)
                             })
                             .collect();
 
