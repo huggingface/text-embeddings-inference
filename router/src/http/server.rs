@@ -1045,7 +1045,7 @@ async fn vertex_compatibility(
         futures.push(async move {
             let permit = local_infer.acquire_permit().await;
             local_infer
-                .embed_all(input, instance.truncate, permit)
+                .embed_pooled(input, instance.truncate, instance.normalize, permit)
                 .await
         })
     }
