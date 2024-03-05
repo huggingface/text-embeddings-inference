@@ -26,7 +26,7 @@ hf-hub = { git = "https://github.com/huggingface/hf-hub", rev = "b167f69692be5f4
 
 
 [profile.release]
-debug = 1
+debug = 0
 incremental = true
 lto = "off"
 panic = "abort"
