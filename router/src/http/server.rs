@@ -1052,7 +1052,7 @@ async fn vertex_compatibility(
     let results = join_all(futures)
         .await
         .into_iter()
-        .collect::<Result<Vec<AllEmbeddingsInferResponse>, TextEmbeddingsError>>()
+        .collect::<Result<Vec<PooledEmbeddingsInferResponse>, TextEmbeddingsError>>()
         .map_err(ErrorResponse::from)?;
 
     let mut embeddings = Vec::with_capacity(batch_size);
