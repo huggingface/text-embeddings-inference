@@ -379,6 +379,5 @@ pub(crate) struct VertexInstance {
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct VertexRequest {
-    #[serde(rename = "instances")]
     pub instances: Vec<VertexInstance>,
 }

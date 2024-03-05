@@ -1015,7 +1015,7 @@ async fn vertex_compatibility(
     infer: Extension<Infer>,
     info: Extension<Info>,
     Json(req): Json<VertexRequest>,
-) -> Result<(HeaderMap, Json<EmbedAllResponse>), (StatusCode, Json<ErrorResponse>)> {
+) -> Result<(HeaderMap, Json<EmbedResponse>), (StatusCode, Json<ErrorResponse>)> {
     let span = tracing::Span::current();
     let start_time = Instant::now();
 
