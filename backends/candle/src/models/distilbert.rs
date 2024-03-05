@@ -364,9 +364,7 @@ impl DistilBertSpladeHead {
         let hidden_states = self.vocab_transform.forward(hidden_states)?;
         let hidden_states = self.vocab_layer_norm.forward(&hidden_states, None)?;
         let hidden_states = self.vocab_projector.forward(&hidden_states)?;
-        Ok(hidden_states)
-
-        // (1.0 + hidden_states)?.log()
+        (1.0 + hidden_states)?.log()
     }
 }
 
