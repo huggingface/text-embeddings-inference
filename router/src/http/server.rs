@@ -999,7 +999,7 @@ async fn tokenize(
     path = "/vertex",
     request_body = VertexRequest,
     responses(
-        (status = 200, description = "Embeddings", body = EmbedAllResponse),
+        (status = 200, description = "Embeddings", body = EmbedResponse),
         (status = 424, description = "Embedding Error", body = ErrorResponse,
         example = json ! ({"error": "Inference failed", "error_type": "backend"})),
         (status = 429, description = "Model is overloaded", body = ErrorResponse,
