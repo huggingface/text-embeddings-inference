@@ -1070,7 +1070,7 @@ async fn vertex_compatibility(
     }
     let batch_size = batch_size as u64;
 
-    let response = EmbedAllResponse(embeddings);
+    let response = EmbedResponse(embeddings);
     let metadata = ResponseMetadata::new(
         compute_chars,
         total_compute_tokens,
