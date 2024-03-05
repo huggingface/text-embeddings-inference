@@ -372,6 +372,9 @@ pub(crate) struct VertexInstance {
     #[serde(default)]
     #[schema(default = "false", example = "false")]
     pub truncate: bool,
+    #[serde(default = "default_normalize")]
+    #[schema(default = "true", example = "true")]
+    pub normalize: bool,
 }
 
 #[derive(Deserialize, ToSchema)]
