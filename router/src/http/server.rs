@@ -11,7 +11,7 @@ use crate::{
 };
 use ::http::HeaderMap;
 use anyhow::Context;
-use axum::extract::Extension;
+use axum::extract::{DefaultBodyLimit, Extension};
 use axum::http::HeaderValue;
 use axum::http::{Method, StatusCode};
 use axum::routing::{get, post};
@@ -1130,6 +1130,7 @@ pub async fn run(
     };
 
     let app = app
+        .layer(DefaultBodyLimit::max(67110000))
         .layer(Extension(infer))
         .layer(Extension(info))
         .layer(Extension(prom_handle.clone()))
