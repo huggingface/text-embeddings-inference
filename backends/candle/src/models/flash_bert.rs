@@ -1,8 +1,8 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{LayerNorm, Linear};
 use crate::models::bert::{
-    BertClassificationHead, BertConfig, BertEmbeddings, ClassificationHead, PositionEmbeddingType,
-    RobertaClassificationHead,
+    BertClassificationHead, BertConfig, BertEmbeddings, BertSpladeHead, ClassificationHead,
+    PositionEmbeddingType, RobertaClassificationHead,
 };
 use crate::models::Model;
 use candle::{DType, Device, Result, Tensor};
@@ -217,6 +217,8 @@ pub struct FlashBertModel {
     encoder: BertEncoder,
     pool: Pool,
     classifier: Option<Box<dyn ClassificationHead + Send>>,
+    splade: Option<BertSpladeHead>,
+
     pub device: Device,
 
     span: tracing::Span,
@@ -238,20 +240,22 @@ impl FlashBertModel {
             candle::bail!("FlashBert only supports absolute position embeddings")
         }
 
-        let (pool, classifier) = match model_type {
+        let (pool, classifier, splade) = match model_type {
             // Classifier models always use CLS pooling
             ModelType::Classifier => {
                 let pool = Pool::Cls;
 
                 let classifier: Box<dyn ClassificationHead + Send> =
                     Box::new(BertClassificationHead::load(vb.pp("classifier"), config)?);
-                (pool, Some(classifier))
+                (pool, Some(classifier), None)
             }
             ModelType::Embedding(pool) => {
-                if pool == Pool::Splade {
-                    candle::bail!("`splade` is not supported for Nomic")
-                }
-                (pool, None)
+                let splade = if pool == Pool::Splade {
+                    Some(BertSpladeHead::load(vb.clone(), config)?)
+                } else {
+                    None
+                };
+                (pool, None, splade)
             }
         };
 
@@ -277,6 +281,7 @@ impl FlashBertModel {
             encoder,
             pool,
             classifier,
+            splade,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
@@ -301,7 +306,7 @@ impl FlashBertModel {
             candle::bail!("FlashBert only supports absolute position embeddings")
         }
 
-        let (pool, classifier) = match model_type {
+        let (pool, classifier, splade) = match model_type {
             // Classifier models always use CLS pooling
             ModelType::Classifier => {
                 let pool = Pool::Cls;
@@ -309,13 +314,15 @@ impl FlashBertModel {
                 let classifier: Box<dyn ClassificationHead + Send> = Box::new(
                     RobertaClassificationHead::load(vb.pp("classifier"), config)?,
                 );
-                (pool, Some(classifier))
+                (pool, Some(classifier), None)
             }
             ModelType::Embedding(pool) => {
-                if pool == Pool::Splade {
-                    candle::bail!("`splade` is not supported for Nomic")
-                }
-                (pool, None)
+                let splade = if pool == Pool::Splade {
+                    Some(BertSpladeHead::load_roberta(vb.clone(), config)?)
+                } else {
+                    None
+                };
+                (pool, None, splade)
             }
         };
 
@@ -351,6 +358,7 @@ impl FlashBertModel {
             encoder,
             pool,
             classifier,
+            splade,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
@@ -432,7 +440,31 @@ impl FlashBertModel {
                     }
                 }
                 Pool::Splade => {
-                    unreachable!();
+                    // Unwrap is safe here
+                    let splade_head = self.splade.as_ref().unwrap();
+                    let relu_log = splade_head.forward(&outputs)?;
+
+                    if batch_size > 1 {
+                        // for each request that requires pooling
+                        let results: Result<Vec<Tensor>> = batch
+                            .pooled_indices
+                            .into_iter()
+                            .map(|i| {
+                                let i = i as usize;
+                                let start = batch.cumulative_seq_lengths[i];
+                                let len = batch.cumulative_seq_lengths[i + 1] - start;
+
+                                relu_log
+                                    .narrow(0, start as usize, len as usize)?
+                                    .max_keepdim(0)
+                            })
+                            .collect();
+
+                        // Concatenate all results
+                        Some(Tensor::cat(&results?, 0)?)
+                    } else {
+                        Some(relu_log.max_keepdim(0)?)
+                    }
                 }
             }
         } else {

@@ -440,11 +440,95 @@ impl ClassificationHead for RobertaClassificationHead {
     }
 }
 
+#[derive(Debug)]
+pub struct BertSpladeHead {
+    transform: Linear,
+    transform_layer_norm: LayerNorm,
+    decoder: Linear,
+    span: tracing::Span,
+}
+
+impl BertSpladeHead {
+    pub(crate) fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
+        let vb = vb.pp("cls.predictions");
+        let transform_weight = vb
+            .pp("transform.dense")
+            .get((config.hidden_size, config.hidden_size), "weight")?;
+        let transform_bias = vb.pp("transform.dense").get(config.hidden_size, "bias")?;
+        let transform = Linear::new(
+            transform_weight,
+            Some(transform_bias),
+            Some(config.hidden_act.clone()),
+        );
+
+        let transform_layer_norm = LayerNorm::load(
+            vb.pp("transform.LayerNorm"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
+        )?;
+
+        let decoder_weight = vb
+            .pp("decoder")
+            .get((config.vocab_size, config.hidden_size), "weight")?;
+        let decoder_bias = vb.get(config.vocab_size, "bias")?;
+        let decoder = Linear::new(decoder_weight, Some(decoder_bias), Some(HiddenAct::Relu));
+
+        Ok(Self {
+            transform,
+            transform_layer_norm,
+            decoder,
+            span: tracing::span!(tracing::Level::TRACE, "splade"),
+        })
+    }
+
+    pub(crate) fn load_roberta(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
+        let vb = vb.pp("lm_head");
+        let transform_weight = vb
+            .pp("dense")
+            .get((config.hidden_size, config.hidden_size), "weight")?;
+        let transform_bias = vb.pp("dense").get(config.hidden_size, "bias")?;
+        let transform = Linear::new(
+            transform_weight,
+            Some(transform_bias),
+            Some(HiddenAct::Gelu),
+        );
+
+        let transform_layer_norm = LayerNorm::load(
+            vb.pp("layer_norm"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
+        )?;
+
+        let decoder_weight = vb
+            .pp("decoder")
+            .get((config.vocab_size, config.hidden_size), "weight")?;
+        let decoder_bias = vb.get(config.vocab_size, "bias")?;
+        let decoder = Linear::new(decoder_weight, Some(decoder_bias), Some(HiddenAct::Relu));
+
+        Ok(Self {
+            transform,
+            transform_layer_norm,
+            decoder,
+            span: tracing::span!(tracing::Level::TRACE, "splade"),
+        })
+    }
+
+    pub(crate) fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let hidden_states = self.transform.forward(hidden_states)?;
+        let hidden_states = self.transform_layer_norm.forward(&hidden_states, None)?;
+        let hidden_states = self.decoder.forward(&hidden_states)?;
+        (1.0 + hidden_states)?.log()
+    }
+}
+
 pub struct BertModel {
     embeddings: BertEmbeddings,
     encoder: BertEncoder,
     pool: Pool,
     classifier: Option<Box<dyn ClassificationHead + Send>>,
+    splade: Option<BertSpladeHead>,
 
     num_attention_heads: usize,
 
@@ -461,20 +545,22 @@ impl BertModel {
             candle::bail!("Bert only supports absolute position embeddings")
         }
 
-        let (pool, classifier) = match model_type {
+        let (pool, classifier, splade) = match model_type {
             // Classifier models always use CLS pooling
             ModelType::Classifier => {
                 let pool = Pool::Cls;
 
                 let classifier: Box<dyn ClassificationHead + Send> =
                     Box::new(BertClassificationHead::load(vb.pp("classifier"), config)?);
-                (pool, Some(classifier))
+                (pool, Some(classifier), None)
             }
             ModelType::Embedding(pool) => {
-                if pool == Pool::Splade {
-                    candle::bail!("`splade` is not supported for Nomic")
-                }
-                (pool, None)
+                let splade = if pool == Pool::Splade {
+                    Some(BertSpladeHead::load(vb.clone(), config)?)
+                } else {
+                    None
+                };
+                (pool, None, splade)
             }
         };
 
@@ -500,6 +586,7 @@ impl BertModel {
             encoder,
             pool,
             classifier,
+            splade,
             num_attention_heads: config.num_attention_heads,
             device: vb.device().clone(),
             dtype: vb.dtype(),
@@ -517,7 +604,7 @@ impl BertModel {
             candle::bail!("Bert only supports absolute position embeddings")
         }
 
-        let (pool, classifier) = match model_type {
+        let (pool, classifier, splade) = match model_type {
             // Classifier models always use CLS pooling
             ModelType::Classifier => {
                 let pool = Pool::Cls;
@@ -525,9 +612,16 @@ impl BertModel {
                 let classifier: Box<dyn ClassificationHead + Send> = Box::new(
                     RobertaClassificationHead::load(vb.pp("classifier"), config)?,
                 );
-                (pool, Some(classifier))
+                (pool, Some(classifier), None)
             }
-            ModelType::Embedding(pool) => (pool, None),
+            ModelType::Embedding(pool) => {
+                let splade = if pool == Pool::Splade {
+                    Some(BertSpladeHead::load_roberta(vb.clone(), config)?)
+                } else {
+                    None
+                };
+                (pool, None, splade)
+            }
         };
 
         let (embeddings, encoder) = match (
@@ -562,6 +656,7 @@ impl BertModel {
             encoder,
             pool,
             classifier,
+            splade,
             num_attention_heads: config.num_attention_heads,
             device: vb.device().clone(),
             dtype: vb.dtype(),
@@ -730,7 +825,25 @@ impl BertModel {
 
                     (outputs.sum(1)?.broadcast_div(&input_lengths))?
                 }
-                Pool::Splade => unreachable!(),
+                Pool::Splade => {
+                    // Unwrap is safe here
+                    let splade_head = self.splade.as_ref().unwrap();
+                    let mut relu_log = splade_head.forward(&outputs)?;
+
+                    if let Some(ref attention_mask) = attention_mask {
+                        let mut attention_mask = attention_mask.clone();
+
+                        if let Some(pooled_indices) = pooled_indices {
+                            // Select values in the batch
+                            attention_mask = attention_mask.index_select(&pooled_indices, 0)?;
+                        };
+
+                        // Mask padded values
+                        relu_log = relu_log.broadcast_mul(&attention_mask)?;
+                    }
+
+                    relu_log.max(1)?
+                }
             };
             Some(pooled_embeddings)
         } else {

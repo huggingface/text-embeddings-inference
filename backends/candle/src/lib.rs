@@ -194,7 +194,7 @@ impl CandleBackend {
                         .to_lowercase()
                         == "true"
                 {
-                    tracing::info!("Starting FlashNomicBertModel model on {:?}", device);
+                    tracing::info!("Starting FlashDistilBertModel model on {:?}", device);
                     Ok(Box::new(
                         FlashDistilBertModel::load(vb, &config, model_type).s()?,
                     ))
