@@ -239,6 +239,16 @@ pub async fn run(
         docker_label: option_env!("DOCKER_LABEL"),
     };
 
+    // use AIP_HTTP_PORT if google feature is enabled
+    let port = if cfg!(feature = "google") {
+        std::env::var("AIP_HTTP_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .expect("Invalid or unset AIP_HTTP_PORT")
+    } else {
+        port
+    };
+
     let addr = match hostname.unwrap_or("0.0.0.0".to_string()).parse() {
         Ok(ip) => SocketAddr::new(ip, port),
         Err(_) => {
