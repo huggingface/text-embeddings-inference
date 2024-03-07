@@ -4,7 +4,8 @@ use crate::http::types::{
     EmbedSparseResponse, Input, OpenAICompatEmbedding, OpenAICompatErrorResponse,
     OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage, PredictInput, PredictRequest,
     PredictResponse, Prediction, Rank, RerankRequest, RerankResponse, Sequence, SimpleToken,
-    SparseValue, TokenizeRequest, TokenizeResponse, VertexRequest,
+    SparseValue, TokenizeRequest, TokenizeResponse, VertexInstance, VertexRequest, VertexResponse,
+    VertexResponseInstance,
 };
 use crate::{
     shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
@@ -20,6 +21,7 @@ use axum::{http, Json, Router};
 use axum_tracing_opentelemetry::middleware::OtelAxumLayer;
 use futures::future::join_all;
 use http::header::AUTHORIZATION;
+use futures::FutureExt;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -1158,8 +1160,8 @@ tag = "Text Embeddings Inference",
 path = "/vertex",
 request_body = VertexRequest,
 responses(
-(status = 200, description = "Embeddings", body = EmbedResponse),
-(status = 424, description = "Embedding Error", body = ErrorResponse,
+(status = 200, description = "Results"),
+(status = 424, description = "Error", body = ErrorResponse,
 example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 (status = 429, description = "Model is overloaded", body = ErrorResponse,
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
@@ -1174,76 +1176,70 @@ async fn vertex_compatibility(
     infer: Extension<Infer>,
     info: Extension<Info>,
     Json(req): Json<VertexRequest>,
-) -> Result<(HeaderMap, Json<EmbedResponse>), (StatusCode, Json<ErrorResponse>)> {
-    let span = tracing::Span::current();
-    let start_time = Instant::now();
-
-    let batch_size = req.instances.len();
-    if batch_size > info.max_client_batch_size {
-        let message = format!(
-            "batch size {batch_size} > maximum allowed batch size {}",
-            info.max_client_batch_size
-        );
-        tracing::error!("{message}");
-        let err = ErrorResponse {
-            error: message,
-            error_type: ErrorType::Validation,
+) -> Result<Json<VertexResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let embed_future = move |infer: Extension<Infer>, info: Extension<Info>, req: EmbedRequest| async move {
+        let result = embed(infer, info, Json(req)).await?;
+        Ok(VertexResponseInstance::Embed(result.1 .0))
+    };
+    let embed_all_future =
+        move |infer: Extension<Infer>, info: Extension<Info>, req: EmbedAllRequest| async move {
+            let result = embed_all(infer, info, Json(req)).await?;
+            Ok(VertexResponseInstance::EmbedAll(result.1 .0))
         };
-        metrics::increment_counter!("te_request_failure", "err" => "batch_size");
-        Err(err)?;
-    }
+    let embed_sparse_future =
+        move |infer: Extension<Infer>, info: Extension<Info>, req: EmbedSparseRequest| async move {
+            let result = embed_sparse(infer, info, Json(req)).await?;
+            Ok(VertexResponseInstance::EmbedSparse(result.1 .0))
+        };
+    let predict_future =
+        move |infer: Extension<Infer>, info: Extension<Info>, req: PredictRequest| async move {
+            let result = predict(infer, info, Json(req)).await?;
+            Ok(VertexResponseInstance::Predict(result.1 .0))
+        };
+    let rerank_future =
+        move |infer: Extension<Infer>, info: Extension<Info>, req: RerankRequest| async move {
+            let result = rerank(infer, info, Json(req)).await?;
+            Ok(VertexResponseInstance::Rerank(result.1 .0))
+        };
+    let tokenize_future =
+        move |infer: Extension<Infer>, info: Extension<Info>, req: TokenizeRequest| async move {
+            let result = tokenize(infer, info, Json(req)).await?;
+            Ok(VertexResponseInstance::Tokenize(result.0))
+        };
 
-    let mut futures = Vec::with_capacity(batch_size);
-    let mut compute_chars = 0;
-
-    for instance in req.instances.iter() {
-        let input = instance.inputs.clone();
-        compute_chars += input.chars().count();
-
+    let mut futures = Vec::with_capacity(req.instances.len());
+    for instance in req.instances {
         let local_infer = infer.clone();
-        futures.push(async move {
-            let permit = local_infer.acquire_permit().await;
-            local_infer
-                .embed_pooled(input, instance.truncate, instance.normalize, permit)
-                .await
-        })
+        let local_info = info.clone();
+
+        match instance {
+            VertexInstance::Embed(req) => {
+                futures.push(embed_future(local_infer, local_info, req).boxed());
+            }
+            VertexInstance::EmbedAll(req) => {
+                futures.push(embed_all_future(local_infer, local_info, req).boxed());
+            }
+            VertexInstance::EmbedSparse(req) => {
+                futures.push(embed_sparse_future(local_infer, local_info, req).boxed());
+            }
+            VertexInstance::Predict(req) => {
+                futures.push(predict_future(local_infer, local_info, req).boxed());
+            }
+            VertexInstance::Rerank(req) => {
+                futures.push(rerank_future(local_infer, local_info, req).boxed());
+            }
+            VertexInstance::Tokenize(req) => {
+                futures.push(tokenize_future(local_infer, local_info, req).boxed());
+            }
+        }
     }
+
     let results = join_all(futures)
         .await
         .into_iter()
-        .collect::<Result<Vec<PooledEmbeddingsInferResponse>, TextEmbeddingsError>>()
-        .map_err(ErrorResponse::from)?;
+        .collect::<Result<Vec<VertexResponseInstance>, (StatusCode, Json<ErrorResponse>)>>()?;
 
-    let mut embeddings = Vec::with_capacity(batch_size);
-    let mut total_tokenization_time = 0;
-    let mut total_queue_time = 0;
-    let mut total_inference_time = 0;
-    let mut total_compute_tokens = 0;
-
-    for r in results {
-        total_tokenization_time += r.metadata.tokenization.as_nanos() as u64;
-        total_queue_time += r.metadata.queue.as_nanos() as u64;
-        total_inference_time += r.metadata.inference.as_nanos() as u64;
-        total_compute_tokens += r.metadata.prompt_tokens;
-        embeddings.push(r.results);
-    }
-    let batch_size = batch_size as u64;
-
-    let response = EmbedResponse(embeddings);
-    let metadata = ResponseMetadata::new(
-        compute_chars,
-        total_compute_tokens,
-        start_time,
-        Duration::from_nanos(total_tokenization_time / batch_size),
-        Duration::from_nanos(total_queue_time / batch_size),
-        Duration::from_nanos(total_inference_time / batch_size),
-    );
-
-    metadata.record_span(&span);
-    metadata.record_metrics();
-    tracing::info!("Success");
-
-    Ok((HeaderMap::from(metadata), Json(response)))
+    Ok(Json(VertexResponse(results)))
 }
 
 /// Prometheus metrics scrape endpoint
@@ -1354,12 +1350,15 @@ pub async fn run(
         // avoid `mut` if possible
         #[cfg(feature = "google")]
         {
-            use crate::http::types::VertexInstance;
-
             #[derive(OpenApi)]
             #[openapi(
                 paths(vertex_compatibility),
-                components(schemas(VertexInstance, VertexRequest))
+                components(schemas(
+                    VertexInstance,
+                    VertexRequest,
+                    VertexResponse,
+                    VertexResponseInstance
+                ))
             )]
             struct VertextApiDoc;
 

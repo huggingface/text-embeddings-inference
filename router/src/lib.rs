@@ -246,7 +246,7 @@ pub async fn run(
         std::env::var("AIP_HTTP_PORT")
             .ok()
             .and_then(|p| p.parse().ok())
-            .expect("Invalid or unset AIP_HTTP_PORT")
+            .context("Invalid or unset AIP_HTTP_PORT")?
     } else {
         port
     };
