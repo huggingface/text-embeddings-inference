@@ -35,6 +35,7 @@ length of 512 tokens:
     - [Using a private or gated model](#using-a-private-or-gated-model)
     - [Using Re-rankers models](#using-re-rankers-models)
     - [Using Sequence Classification models](#using-sequence-classification-models)
+    - [Using SPLADE pooling](#using-splade-pooling)
     - [Distributed Tracing](#distributed-tracing)
     - [gRPC](#grpc)
 - [Local Install](#local-install)
@@ -326,6 +327,26 @@ Once you have deployed the model you can use the `predict` endpoint to get the e
 
 ```bash
 curl 127.0.0.1:8080/predict \
+    -X POST \
+    -d '{"inputs":"I like you."}' \
+    -H 'Content-Type: application/json'
+```
+
+### Using SPLADE pooling
+
+You can choose to activate SPLADE pooling for Bert and Distilbert MaskedLM architectures:
+
+```shell
+model=naver/efficient-splade-VI-BT-large-query
+volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
+
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.1 --model-id $model --pooling splade
+```
+
+Once you have deployed the model you can use the `/embed_sparse` endpoint to get the sparse embedding:
+
+```bash
+curl 127.0.0.1:8080/embed_sparse \
     -X POST \
     -d '{"inputs":"I like you."}' \
     -H 'Content-Type: application/json'

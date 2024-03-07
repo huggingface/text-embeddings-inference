@@ -145,6 +145,54 @@ impl Infer {
     }
 
     #[instrument(skip(self, permit))]
+    pub async fn embed_sparse<I: Into<EncodingInput> + std::fmt::Debug>(
+        &self,
+        inputs: I,
+        truncate: bool,
+        permit: OwnedSemaphorePermit,
+    ) -> Result<PooledEmbeddingsInferResponse, TextEmbeddingsError> {
+        let start_time = Instant::now();
+
+        if !self.is_splade() {
+            metrics::increment_counter!("te_request_failure", "err" => "model_type");
+            let message = "Model is not an embedding model with SPLADE pooling".to_string();
+            tracing::error!("{message}");
+            return Err(TextEmbeddingsError::Backend(BackendError::Inference(
+                message,
+            )));
+        }
+
+        let results = self
+            .embed(inputs, truncate, true, &start_time, permit)
+            .await?;
+
+        let InferResult::PooledEmbedding(response) = results else {
+            panic!("unexpected enum variant")
+        };
+
+        // Timings
+        let total_time = start_time.elapsed();
+
+        // Metrics
+        metrics::increment_counter!("te_embed_success");
+        metrics::histogram!("te_embed_duration", total_time.as_secs_f64());
+        metrics::histogram!(
+            "te_embed_tokenization_duration",
+            response.metadata.tokenization.as_secs_f64()
+        );
+        metrics::histogram!(
+            "te_embed_queue_duration",
+            response.metadata.queue.as_secs_f64()
+        );
+        metrics::histogram!(
+            "te_embed_inference_duration",
+            response.metadata.inference.as_secs_f64()
+        );
+
+        Ok(response)
+    }
+
+    #[instrument(skip(self, permit))]
     pub async fn embed_pooled<I: Into<EncodingInput> + std::fmt::Debug>(
         &self,
         inputs: I,
