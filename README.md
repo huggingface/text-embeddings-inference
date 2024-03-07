@@ -39,6 +39,7 @@ length of 512 tokens:
     - [gRPC](#grpc)
 - [Local Install](#local-install)
 - [Docker Build](#docker-build)
+- [Examples](#examples)
 
 Text Embeddings Inference (TEI) is a toolkit for deploying and serving open source text embeddings and sequence
 classification models. TEI enables high-performance extraction for the most popular models, including FlagEmbedding,
@@ -453,3 +454,7 @@ runtime_compute_cap=90
 
 docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
 ```
+
+## Examples
+- [Set up an Inference Endpoint with TEI](https://huggingface.co/learn/cookbook/automatic_embedding_tei_inference_endpoints)
+- [RAG containers with TEI](https://github.com/plaggy/rag-containers)
