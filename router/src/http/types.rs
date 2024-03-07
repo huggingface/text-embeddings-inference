@@ -316,6 +316,23 @@ fn default_normalize() -> bool {
 pub(crate) struct EmbedResponse(pub Vec<Vec<f32>>);
 
 #[derive(Deserialize, ToSchema)]
+pub(crate) struct EmbedSparseRequest {
+    pub inputs: Input,
+    #[serde(default)]
+    #[schema(default = "false", example = "false")]
+    pub truncate: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct SparseValue {
+    pub index: usize,
+    pub value: f32,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct EmbedSparseResponse(pub Vec<Vec<SparseValue>>);
+
+#[derive(Deserialize, ToSchema)]
 pub(crate) struct EmbedAllRequest {
     pub inputs: Input,
     #[serde(default)]

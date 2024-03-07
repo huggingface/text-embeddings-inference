@@ -11,6 +11,8 @@ service Info {
 service Embed {
     rpc Embed (EmbedRequest) returns (EmbedResponse);
     rpc EmbedStream (stream EmbedRequest) returns (stream EmbedResponse);
+    rpc EmbedSparse (EmbedSparseRequest) returns (EmbedSparseResponse);
+    rpc EmbedSparseStream (stream EmbedSparseRequest) returns (stream EmbedSparseResponse);
     rpc EmbedAll (EmbedAllRequest) returns (EmbedAllResponse);
     rpc EmbedAllStream (stream EmbedAllRequest) returns (stream EmbedAllResponse);
 }
@@ -71,6 +73,21 @@ message EmbedRequest {
 
 message EmbedResponse {
     repeated float embeddings = 1;
+    Metadata metadata = 2;
+}
+
+message EmbedSparseRequest {
+    string inputs = 1;
+    bool truncate = 2;
+}
+
+message SparseValue {
+    uint32 index = 1;
+    float value = 2;
+}
+
+message EmbedSparseResponse {
+    repeated SparseValue sparse_embeddings = 1;
     Metadata metadata = 2;
 }
 
