@@ -52,7 +52,7 @@ impl TryFrom<&String> for PythonLogMessage {
 }
 
 pub(crate) fn log_lines<S: Sized + BufRead>(lines: Lines<S>) {
-    for line in lines.flatten() {
+    for line in lines.map_while(Result::ok) {
         match PythonLogMessage::try_from(&line) {
             Ok(log) => log.trace(),
             Err(_) => tracing::debug!("{line}"),
