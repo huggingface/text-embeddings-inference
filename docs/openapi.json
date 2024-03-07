@@ -658,6 +658,87 @@
           }
         }
       }
+    },
+    "/vertex": {
+      "post": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Generate embeddings from a Vertex request",
+        "description": "Generate embeddings from a Vertex request",
+        "operationId": "vertex_compatibility",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VertexRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Results"
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Inference failed",
+                  "error_type": "backend"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Model is overloaded",
+                  "error_type": "overloaded"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1338,6 +1419,274 @@
             }
           ]
         ]
+      },
+      "VertexInstance": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EmbedRequest"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "embed"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EmbedAllRequest"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "embed_all"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EmbedSparseRequest"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "embed_sparse"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PredictRequest"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "predict"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RerankRequest"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "rerank"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TokenizeRequest"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "tokenize"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type"
+        }
+      },
+      "VertexRequest": {
+        "type": "object",
+        "required": [
+          "instances"
+        ],
+        "properties": {
+          "instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VertexInstance"
+            }
+          }
+        }
+      },
+      "VertexResponse": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/VertexResponseInstance"
+        }
+      },
+      "VertexResponseInstance": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/EmbedResponse"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "embed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/EmbedAllResponse"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "embed_all"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/EmbedSparseResponse"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "embed_sparse"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/PredictResponse"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "predict"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/RerankResponse"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "rerank"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/TokenizeResponse"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "tokenize"
+                ]
+              }
+            }
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type"
+        }
       }
     }
   },
