@@ -246,7 +246,7 @@ impl FlashBertModel {
                 let pool = Pool::Cls;
 
                 let classifier: Box<dyn ClassificationHead + Send> =
-                    Box::new(BertClassificationHead::load(vb.pp("classifier"), config)?);
+                    Box::new(BertClassificationHead::load(vb.clone(), config)?);
                 (pool, Some(classifier), None)
             }
             ModelType::Embedding(pool) => {

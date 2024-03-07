@@ -365,6 +365,7 @@ pub trait ClassificationHead {
 }
 
 pub struct BertClassificationHead {
+    pooler: Option<Linear>,
     output: Linear,
     span: tracing::Span,
 }
@@ -376,11 +377,24 @@ impl BertClassificationHead {
             Some(id2label) => id2label.len(),
         };
 
-        let output_weight = vb.get((n_classes, config.hidden_size), "weight")?;
-        let output_bias = vb.get(n_classes, "bias")?;
+        let pooler = if let Ok(pooler_weight) = vb
+            .pp("bert.pooler.dense")
+            .get((config.hidden_size, config.hidden_size), "weight")
+        {
+            let pooler_bias = vb.pp("bert.pooler.dense").get(config.hidden_size, "bias")?;
+            Some(Linear::new(pooler_weight, Some(pooler_bias), None))
+        } else {
+            None
+        };
+
+        let output_weight = vb
+            .pp("classifier")
+            .get((n_classes, config.hidden_size), "weight")?;
+        let output_bias = vb.pp("classifier").get(n_classes, "bias")?;
         let output = Linear::new(output_weight, Some(output_bias), None);
 
         Ok(Self {
+            pooler,
             output,
             span: tracing::span!(tracing::Level::TRACE, "classifier"),
         })
@@ -390,7 +404,14 @@ impl BertClassificationHead {
 impl ClassificationHead for BertClassificationHead {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
-        let hidden_states = self.output.forward(hidden_states)?;
+
+        let mut hidden_states = hidden_states.clone();
+        if let Some(pooler) = self.pooler.as_ref() {
+            hidden_states = pooler.forward(&hidden_states)?;
+            hidden_states = hidden_states.tanh()?;
+        }
+
+        let hidden_states = self.output.forward(&hidden_states)?;
         Ok(hidden_states)
     }
 }
@@ -551,7 +572,7 @@ impl BertModel {
                 let pool = Pool::Cls;
 
                 let classifier: Box<dyn ClassificationHead + Send> =
-                    Box::new(BertClassificationHead::load(vb.pp("classifier"), config)?);
+                    Box::new(BertClassificationHead::load(vb.clone(), config)?);
                 (pool, Some(classifier), None)
             }
             ModelType::Embedding(pool) => {

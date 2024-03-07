@@ -11,7 +11,7 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
 #[serial_test::serial]
 #[cfg(all(feature = "cuda", feature = "flash-attn"))]
 fn test_flash_jina_small() -> Result<()> {
-    let model_root = download_artifacts("jinaai/jina-embeddings-v2-small-en")?;
+    let model_root = download_artifacts("jinaai/jina-embeddings-v2-small-en", None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(

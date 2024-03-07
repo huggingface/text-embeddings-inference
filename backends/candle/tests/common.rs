@@ -65,11 +65,22 @@ pub fn sort_embeddings(embeddings: Embeddings) -> (Vec<Vec<f32>>, Vec<Vec<f32>>)
     (pooled_embeddings, raw_embeddings)
 }
 
-pub fn download_artifacts(model_id: &'static str) -> Result<PathBuf> {
+pub fn download_artifacts(
+    model_id: &'static str,
+    revision: Option<&'static str>,
+) -> Result<PathBuf> {
     let builder = ApiBuilder::new().with_progress(false);
 
     let api = builder.build().unwrap();
-    let api_repo = api.repo(Repo::new(model_id.to_string(), RepoType::Model));
+    let api_repo = if let Some(revision) = revision {
+        api.repo(Repo::with_revision(
+            model_id.to_string(),
+            RepoType::Model,
+            revision.to_string(),
+        ))
+    } else {
+        api.repo(Repo::new(model_id.to_string(), RepoType::Model))
+    };
 
     api_repo.get("config.json")?;
     api_repo.get("tokenizer.json")?;
