@@ -30,7 +30,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ## Step 2: Install with Metal support
 
 ```shell
-cargo install --path router -F candle -F metal
+cargo install --path router -F metal
 ```
 
 ## Step 3: Launch Text Embeddings Inference

@@ -392,9 +392,9 @@ Then run:
 
 ```shell
 # On x86
-cargo install --path router -F candle -F mkl
+cargo install --path router -F mkl
 # On M1 or M2
-cargo install --path router -F candle -F metal
+cargo install --path router -F metal
 ```
 
 You can now launch Text Embeddings Inference on CPU with:
@@ -429,10 +429,10 @@ Then run:
 # This can take a while as we need to compile a lot of cuda kernels
 
 # On Turing GPUs (T4, RTX 2000 series ... )
-cargo install --path router -F candle-cuda-turing --no-default-features
+cargo install --path router -F candle-cuda-turing -F http --no-default-features
 
 # On Ampere and Hopper
-cargo install --path router -F candle-cuda --no-default-features
+cargo install --path router -F candle-cuda -F http --no-default-features
 ```
 
 You can now launch Text Embeddings Inference on GPU with:

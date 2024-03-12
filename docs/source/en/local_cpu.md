@@ -33,13 +33,13 @@ Depending on your machine's architecture, run one of the following commands:
 ### For x86 Machines
 
 ```shell
-cargo install --path router -F candle -F mkl
+cargo install --path router -F mkl
 ```
 
 ### For M1 or M2 Machines
 
 ```shell
-cargo install --path router -F candle -F accelerate
+cargo install --path router -F metal
 ```
 
 ## Step 3: Launch Text Embeddings Inference
