@@ -57,6 +57,7 @@ pub async fn run(
     uds_path: Option<String>,
     huggingface_hub_cache: Option<String>,
     payload_limit: usize,
+    api_key: Option<String>,
     otlp_endpoint: Option<String>,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
@@ -275,6 +276,7 @@ pub async fn run(
                 addr,
                 prom_builder,
                 payload_limit,
+                api_key,
                 cors_allow_origin,
             )
             .await
@@ -285,10 +287,12 @@ pub async fn run(
 
     #[cfg(feature = "grpc")]
     {
-        // cors_allow_origin is not used for gRPC servers
+        // cors_allow_origin and payload_limit are not used for gRPC servers
         let _ = cors_allow_origin;
-        let server =
-            tokio::spawn(async move { grpc::server::run(infer, info, addr, prom_builder).await });
+        let _ = payload_limit;
+        let server = tokio::spawn(async move {
+            grpc::server::run(infer, info, addr, prom_builder, api_key).await
+        });
         tracing::info!("Ready");
         server.await??;
     }
