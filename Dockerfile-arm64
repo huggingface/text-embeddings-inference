@@ -1,4 +1,9 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1.75-bookworm AS chef
+FROM --platform=$BUILDPLATFORM tonistiigi/xx AS xx
+FROM --platform=$BUILDPLATFORM lukemathwalker/cargo-chef:latest-rust-1.75-bookworm AS chef
+COPY --from=xx / /
+ARG TARGETPLATFORM
+RUN xx-info env
+
 WORKDIR /usr/src
 
 ENV SCCACHE=0.5.4
@@ -59,6 +64,8 @@ RUN cargo build --release --bin text-embeddings-router -F grpc -F candle --no-de
 
 FROM debian:bookworm-slim as base
 
+COPY --from=builder /usr/src/libfakeintel.so /usr/local/libfakeintel.so
+
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80 \
     MKL_ENABLE_INSTRUCTIONS=AVX512_E4 \
@@ -73,7 +80,6 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /usr/src/libfakeintel.so /usr/local/libfakeintel.so
 
 FROM base as grpc
 
