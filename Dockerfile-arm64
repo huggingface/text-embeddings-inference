@@ -1,8 +1,4 @@
-FROM --platform=$BUILDPLATFORM tonistiigi/xx AS xx
-FROM --platform=$BUILDPLATFORM lukemathwalker/cargo-chef:latest-rust-1.75-bookworm AS chef
-COPY --from=xx / /
-ARG TARGETPLATFORM
-RUN xx-info env
+FROM lukemathwalker/cargo-chef:latest-rust-1.75-bookworm AS chef
 
 WORKDIR /usr/src
 
