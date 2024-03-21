@@ -4,7 +4,7 @@ use crate::http::types::{
     EmbedSparseResponse, Input, OpenAICompatEmbedding, OpenAICompatErrorResponse,
     OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage, PredictInput, PredictRequest,
     PredictResponse, Prediction, Rank, RerankRequest, RerankResponse, Sequence, SimpleToken,
-    SparseValue, TokenizeRequest, TokenizeResponse, VertexInstance, VertexRequest, VertexResponse,
+    SparseValue, TokenizeRequest, TokenizeResponse, VertexRequest, VertexResponse,
     VertexResponseInstance,
 };
 use crate::{
@@ -1181,11 +1181,6 @@ async fn vertex_compatibility(
         let result = embed(infer, info, Json(req)).await?;
         Ok(VertexResponseInstance::Embed(result.1 .0))
     };
-    let embed_all_future =
-        move |infer: Extension<Infer>, info: Extension<Info>, req: EmbedAllRequest| async move {
-            let result = embed_all(infer, info, Json(req)).await?;
-            Ok(VertexResponseInstance::EmbedAll(result.1 .0))
-        };
     let embed_sparse_future =
         move |infer: Extension<Infer>, info: Extension<Info>, req: EmbedSparseRequest| async move {
             let result = embed_sparse(infer, info, Json(req)).await?;
@@ -1201,45 +1196,44 @@ async fn vertex_compatibility(
             let result = rerank(infer, info, Json(req)).await?;
             Ok(VertexResponseInstance::Rerank(result.1 .0))
         };
-    let tokenize_future =
-        move |infer: Extension<Infer>, info: Extension<Info>, req: TokenizeRequest| async move {
-            let result = tokenize(infer, info, Json(req)).await?;
-            Ok(VertexResponseInstance::Tokenize(result.0))
-        };
 
     let mut futures = Vec::with_capacity(req.instances.len());
     for instance in req.instances {
         let local_infer = infer.clone();
         let local_info = info.clone();
 
-        match instance {
-            VertexInstance::Embed(req) => {
-                futures.push(embed_future(local_infer, local_info, req).boxed());
+        // Rerank is the only payload that can me matched safely
+        if let Ok(instance) = serde_json::from_value::<RerankRequest>(instance.clone()) {
+            futures.push(rerank_future(local_infer, local_info, instance).boxed());
+            continue;
+        }
+
+        match info.model_type {
+            ModelType::Classifier(_) | ModelType::Reranker(_) => {
+                let instance = serde_json::from_value::<PredictRequest>(instance)
+                    .map_err(ErrorResponse::from)?;
+                futures.push(predict_future(local_infer, local_info, instance).boxed());
             }
-            VertexInstance::EmbedAll(req) => {
-                futures.push(embed_all_future(local_infer, local_info, req).boxed());
-            }
-            VertexInstance::EmbedSparse(req) => {
-                futures.push(embed_sparse_future(local_infer, local_info, req).boxed());
-            }
-            VertexInstance::Predict(req) => {
-                futures.push(predict_future(local_infer, local_info, req).boxed());
-            }
-            VertexInstance::Rerank(req) => {
-                futures.push(rerank_future(local_infer, local_info, req).boxed());
-            }
-            VertexInstance::Tokenize(req) => {
-                futures.push(tokenize_future(local_infer, local_info, req).boxed());
+            ModelType::Embedding(_) => {
+                if infer.is_splade() {
+                    let instance = serde_json::from_value::<EmbedSparseRequest>(instance)
+                        .map_err(ErrorResponse::from)?;
+                    futures.push(embed_sparse_future(local_infer, local_info, instance).boxed());
+                } else {
+                    let instance = serde_json::from_value::<EmbedRequest>(instance)
+                        .map_err(ErrorResponse::from)?;
+                    futures.push(embed_future(local_infer, local_info, instance).boxed());
+                }
             }
         }
     }
 
-    let results = join_all(futures)
+    let predictions = join_all(futures)
         .await
         .into_iter()
         .collect::<Result<Vec<VertexResponseInstance>, (StatusCode, Json<ErrorResponse>)>>()?;
 
-    Ok(Json(VertexResponse(results)))
+    Ok(Json(VertexResponse { predictions }))
 }
 
 /// Prometheus metrics scrape endpoint
@@ -1353,12 +1347,7 @@ pub async fn run(
             #[derive(OpenApi)]
             #[openapi(
                 paths(vertex_compatibility),
-                components(schemas(
-                    VertexInstance,
-                    VertexRequest,
-                    VertexResponse,
-                    VertexResponseInstance
-                ))
+                components(schemas(VertexRequest, VertexResponse, VertexResponseInstance))
             )]
             struct VertextApiDoc;
 
@@ -1396,31 +1385,6 @@ pub async fn run(
         // Prometheus metrics route
         .route("/metrics", get(metrics));
 
-    // Set default routes
-    app = match &info.model_type {
-        ModelType::Classifier(_) => {
-            app.route("/", post(predict))
-                // AWS Sagemaker route
-                .route("/invocations", post(predict))
-        }
-        ModelType::Reranker(_) => {
-            app.route("/", post(rerank))
-                // AWS Sagemaker route
-                .route("/invocations", post(rerank))
-        }
-        ModelType::Embedding(model) => {
-            if model.pooling == "splade" {
-                app.route("/", post(embed_sparse))
-                    // AWS Sagemaker route
-                    .route("/invocations", post(embed_sparse))
-            } else {
-                app.route("/", post(embed))
-                    // AWS Sagemaker route
-                    .route("/invocations", post(embed))
-            }
-        }
-    };
-
     #[cfg(feature = "google")]
     {
         tracing::info!("Built with `google` feature");
@@ -1433,6 +1397,44 @@ pub async fn run(
         if let Ok(env_health_route) = std::env::var("AIP_HEALTH_ROUTE") {
             app = app.route(&env_health_route, get(health));
         }
+    let mut app = Router::new().merge(base_routes);
+
+    #[cfg(feature = "google")]
+    {
+        tracing::info!("Built with `google` feature");
+        let env_predict_route = std::env::var("AIP_PREDICT_ROUTE")
+            .context("`AIP_PREDICT_ROUTE` env var must be set for Google Vertex deployments")?;
+        app = app.route(&env_predict_route, post(vertex_compatibility));
+        let env_health_route = std::env::var("AIP_HEALTH_ROUTE")
+            .context("`AIP_HEALTH_ROUTE` env var must be set for Google Vertex deployments")?;
+        app = app.route(&env_health_route, get(health));
+    }
+    #[cfg(not(feature = "google"))]
+    {
+        // Set default routes
+        app = match &info.model_type {
+            ModelType::Classifier(_) => {
+                app.route("/", post(predict))
+                    // AWS Sagemaker route
+                    .route("/invocations", post(predict))
+            }
+            ModelType::Reranker(_) => {
+                app.route("/", post(rerank))
+                    // AWS Sagemaker route
+                    .route("/invocations", post(rerank))
+            }
+            ModelType::Embedding(model) => {
+                if model.pooling == "splade" {
+                    app.route("/", post(embed_sparse))
+                        // AWS Sagemaker route
+                        .route("/invocations", post(embed_sparse))
+                } else {
+                    app.route("/", post(embed))
+                        // AWS Sagemaker route
+                        .route("/invocations", post(embed))
+                }
+            }
+        };
     }
 
     app = app
@@ -1507,5 +1509,14 @@ impl From<ErrorResponse> for (StatusCode, Json<ErrorResponse>) {
 impl From<ErrorResponse> for (StatusCode, Json<OpenAICompatErrorResponse>) {
     fn from(err: ErrorResponse) -> Self {
         (StatusCode::from(&err.error_type), Json(err.into()))
+    }
+}
+
+impl From<serde_json::Error> for ErrorResponse {
+    fn from(err: serde_json::Error) -> Self {
+        ErrorResponse {
+            error: err.to_string(),
+            error_type: ErrorType::Validation,
+        }
     }
 }

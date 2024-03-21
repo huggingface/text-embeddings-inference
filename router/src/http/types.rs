@@ -383,31 +383,20 @@ pub(crate) struct SimpleToken {
 pub(crate) struct TokenizeResponse(pub Vec<Vec<SimpleToken>>);
 
 #[derive(Deserialize, ToSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub(crate) enum VertexInstance {
-    Embed(EmbedRequest),
-    EmbedAll(EmbedAllRequest),
-    EmbedSparse(EmbedSparseRequest),
-    Predict(PredictRequest),
-    Rerank(RerankRequest),
-    Tokenize(TokenizeRequest),
-}
-
-#[derive(Deserialize, ToSchema)]
 pub(crate) struct VertexRequest {
-    pub instances: Vec<VertexInstance>,
+    pub instances: Vec<serde_json::Value>,
 }
 
 #[derive(Serialize, ToSchema)]
-#[serde(tag = "type", content = "result", rename_all = "snake_case")]
+#[serde(untagged)]
 pub(crate) enum VertexResponseInstance {
     Embed(EmbedResponse),
-    EmbedAll(EmbedAllResponse),
     EmbedSparse(EmbedSparseResponse),
     Predict(PredictResponse),
     Rerank(RerankResponse),
-    Tokenize(TokenizeResponse),
 }
 
 #[derive(Serialize, ToSchema)]
-pub(crate) struct VertexResponse(pub Vec<VertexResponseInstance>);
+pub(crate) struct VertexResponse {
+    pub predictions: Vec<VertexResponseInstance>,
+}
