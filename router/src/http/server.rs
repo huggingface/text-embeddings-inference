@@ -20,8 +20,8 @@ use axum::routing::{get, post};
 use axum::{http, Json, Router};
 use axum_tracing_opentelemetry::middleware::OtelAxumLayer;
 use futures::future::join_all;
-use http::header::AUTHORIZATION;
 use futures::FutureExt;
+use http::header::AUTHORIZATION;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -1384,20 +1384,6 @@ pub async fn run(
         .route("/ping", get(health))
         // Prometheus metrics route
         .route("/metrics", get(metrics));
-
-    #[cfg(feature = "google")]
-    {
-        tracing::info!("Built with `google` feature");
-        tracing::info!(
-            "Environment variables `AIP_PREDICT_ROUTE` and `AIP_HEALTH_ROUTE` will be respected."
-        );
-        if let Ok(env_predict_route) = std::env::var("AIP_PREDICT_ROUTE") {
-            app = app.route(&env_predict_route, post(vertex_compatibility));
-        }
-        if let Ok(env_health_route) = std::env::var("AIP_HEALTH_ROUTE") {
-            app = app.route(&env_health_route, get(health));
-        }
-    let mut app = Router::new().merge(base_routes);
 
     #[cfg(feature = "google")]
     {
