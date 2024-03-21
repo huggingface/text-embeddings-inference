@@ -96,6 +96,12 @@ struct Args {
     #[clap(long, env)]
     huggingface_hub_cache: Option<String>,
 
+    /// Payload size limit in bytes
+    ///
+    /// Default is 2MB
+    #[clap(default_value = "2000000", long, env)]
+    payload_limit: usize,
+
     /// Outputs the logs in JSON format (useful for telemetry)
     #[clap(long, env)]
     json_output: bool,
@@ -136,6 +142,7 @@ async fn main() -> Result<()> {
         args.port,
         Some(args.uds_path),
         args.huggingface_hub_cache,
+        args.payload_limit,
         args.otlp_endpoint,
         args.cors_allow_origin,
     )

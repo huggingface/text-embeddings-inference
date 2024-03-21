@@ -12,7 +12,7 @@ use crate::{
 };
 use ::http::HeaderMap;
 use anyhow::Context;
-use axum::extract::Extension;
+use axum::extract::{DefaultBodyLimit, Extension};
 use axum::http::HeaderValue;
 use axum::http::{Method, StatusCode};
 use axum::routing::{get, post};
@@ -1262,6 +1262,7 @@ pub async fn run(
     info: Info,
     addr: SocketAddr,
     prom_builder: PrometheusBuilder,
+    payload_limit: usize,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<(), anyhow::Error> {
     // OpenAPI documentation
@@ -1370,7 +1371,8 @@ pub async fn run(
     };
 
     // Create router
-    let base_routes = Router::new()
+    let mut app = Router::new()
+        .layer(DefaultBodyLimit::max(payload_limit))
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", doc))
         // Base routes
         .route("/info", get(get_model_info))
@@ -1392,8 +1394,6 @@ pub async fn run(
         .route("/ping", get(health))
         // Prometheus metrics route
         .route("/metrics", get(metrics));
-
-    let mut app = Router::new().merge(base_routes);
 
     // Set default routes
     app = match &info.model_type {
