@@ -56,6 +56,7 @@ pub async fn run(
     port: u16,
     uds_path: Option<String>,
     huggingface_hub_cache: Option<String>,
+    payload_limit: usize,
     otlp_endpoint: Option<String>,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
@@ -268,7 +269,15 @@ pub async fn run(
     #[cfg(feature = "http")]
     {
         let server = tokio::spawn(async move {
-            http::server::run(infer, info, addr, prom_builder, cors_allow_origin).await
+            http::server::run(
+                infer,
+                info,
+                addr,
+                prom_builder,
+                payload_limit,
+                cors_allow_origin,
+            )
+            .await
         });
         tracing::info!("Ready");
         server.await??;

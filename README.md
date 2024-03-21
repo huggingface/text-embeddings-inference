@@ -223,10 +223,17 @@ Options:
           [default: /tmp/text-embeddings-inference-server]
 
       --huggingface-hub-cache <HUGGINGFACE_HUB_CACHE>
-          The location of the huggingface hub cache. Used to override the location if you want to provide a mounted disk
-          for instance
+          The location of the huggingface hub cache. Used to override the location if you want to provide a mounted disk for instance
 
           [env: HUGGINGFACE_HUB_CACHE=/data]
+
+      --payload-limit <PAYLOAD_LIMIT>
+          Payload size limit in bytes
+
+          Default is 2MB
+
+          [env: PAYLOAD_LIMIT=]
+          [default: 2000000]
 
       --json-output
           Outputs the logs in JSON format (useful for telemetry)
