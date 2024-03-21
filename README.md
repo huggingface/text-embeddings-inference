@@ -40,6 +40,7 @@ length of 512 tokens:
     - [gRPC](#grpc)
 - [Local Install](#local-install)
 - [Docker Build](#docker-build)
+    - [Apple M1/M2 Arm](#apple-m1m2-arm64-architectures)
 - [Examples](#examples)
 
 Text Embeddings Inference (TEI) is a toolkit for deploying and serving open source text embeddings and sequence
@@ -474,6 +475,11 @@ runtime_compute_cap=89
 runtime_compute_cap=90
 
 docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
+```
+
+### Apple M1/M2 arm64 architectures
+```
+docker build . -f Dockerfile-arm64 --platform=linux/arm64
 ```
 
 ## Examples
