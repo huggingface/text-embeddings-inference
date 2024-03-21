@@ -246,7 +246,7 @@ pub async fn run(
         std::env::var("AIP_HTTP_PORT")
             .ok()
             .and_then(|p| p.parse().ok())
-            .expect("Invalid or unset AIP_HTTP_PORT")
+            .context("`AIP_HTTP_PORT` env var must be set for Google Vertex deployments")?
     } else {
         port
     };
@@ -263,6 +263,9 @@ pub async fn run(
 
     #[cfg(all(feature = "grpc", feature = "http"))]
     compile_error!("Features `http` and `grpc` cannot be enabled at the same time.");
+
+    #[cfg(all(feature = "grpc", feature = "google"))]
+    compile_error!("Features `http` and `google` cannot be enabled at the same time.");
 
     #[cfg(not(any(feature = "http", feature = "grpc")))]
     compile_error!("Either feature `http` or `grpc` must be enabled.");

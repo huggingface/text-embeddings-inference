@@ -4,7 +4,8 @@ use crate::http::types::{
     EmbedSparseResponse, Input, OpenAICompatEmbedding, OpenAICompatErrorResponse,
     OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage, PredictInput, PredictRequest,
     PredictResponse, Prediction, Rank, RerankRequest, RerankResponse, Sequence, SimpleToken,
-    SparseValue, TokenizeRequest, TokenizeResponse, VertexRequest,
+    SparseValue, TokenizeRequest, TokenizeResponse, VertexRequest, VertexResponse,
+    VertexResponseInstance,
 };
 use crate::{
     shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
@@ -19,6 +20,7 @@ use axum::routing::{get, post};
 use axum::{http, Json, Router};
 use axum_tracing_opentelemetry::middleware::OtelAxumLayer;
 use futures::future::join_all;
+use futures::FutureExt;
 use http::header::AUTHORIZATION;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use std::net::SocketAddr;
@@ -1158,8 +1160,8 @@ tag = "Text Embeddings Inference",
 path = "/vertex",
 request_body = VertexRequest,
 responses(
-(status = 200, description = "Embeddings", body = EmbedResponse),
-(status = 424, description = "Embedding Error", body = ErrorResponse,
+(status = 200, description = "Results"),
+(status = 424, description = "Error", body = ErrorResponse,
 example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 (status = 429, description = "Model is overloaded", body = ErrorResponse,
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
@@ -1174,76 +1176,64 @@ async fn vertex_compatibility(
     infer: Extension<Infer>,
     info: Extension<Info>,
     Json(req): Json<VertexRequest>,
-) -> Result<(HeaderMap, Json<EmbedResponse>), (StatusCode, Json<ErrorResponse>)> {
-    let span = tracing::Span::current();
-    let start_time = Instant::now();
-
-    let batch_size = req.instances.len();
-    if batch_size > info.max_client_batch_size {
-        let message = format!(
-            "batch size {batch_size} > maximum allowed batch size {}",
-            info.max_client_batch_size
-        );
-        tracing::error!("{message}");
-        let err = ErrorResponse {
-            error: message,
-            error_type: ErrorType::Validation,
+) -> Result<Json<VertexResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let embed_future = move |infer: Extension<Infer>, info: Extension<Info>, req: EmbedRequest| async move {
+        let result = embed(infer, info, Json(req)).await?;
+        Ok(VertexResponseInstance::Embed(result.1 .0))
+    };
+    let embed_sparse_future =
+        move |infer: Extension<Infer>, info: Extension<Info>, req: EmbedSparseRequest| async move {
+            let result = embed_sparse(infer, info, Json(req)).await?;
+            Ok(VertexResponseInstance::EmbedSparse(result.1 .0))
         };
-        metrics::increment_counter!("te_request_failure", "err" => "batch_size");
-        Err(err)?;
-    }
+    let predict_future =
+        move |infer: Extension<Infer>, info: Extension<Info>, req: PredictRequest| async move {
+            let result = predict(infer, info, Json(req)).await?;
+            Ok(VertexResponseInstance::Predict(result.1 .0))
+        };
+    let rerank_future =
+        move |infer: Extension<Infer>, info: Extension<Info>, req: RerankRequest| async move {
+            let result = rerank(infer, info, Json(req)).await?;
+            Ok(VertexResponseInstance::Rerank(result.1 .0))
+        };
 
-    let mut futures = Vec::with_capacity(batch_size);
-    let mut compute_chars = 0;
-
-    for instance in req.instances.iter() {
-        let input = instance.inputs.clone();
-        compute_chars += input.chars().count();
-
+    let mut futures = Vec::with_capacity(req.instances.len());
+    for instance in req.instances {
         let local_infer = infer.clone();
-        futures.push(async move {
-            let permit = local_infer.acquire_permit().await;
-            local_infer
-                .embed_pooled(input, instance.truncate, instance.normalize, permit)
-                .await
-        })
+        let local_info = info.clone();
+
+        // Rerank is the only payload that can me matched safely
+        if let Ok(instance) = serde_json::from_value::<RerankRequest>(instance.clone()) {
+            futures.push(rerank_future(local_infer, local_info, instance).boxed());
+            continue;
+        }
+
+        match info.model_type {
+            ModelType::Classifier(_) | ModelType::Reranker(_) => {
+                let instance = serde_json::from_value::<PredictRequest>(instance)
+                    .map_err(ErrorResponse::from)?;
+                futures.push(predict_future(local_infer, local_info, instance).boxed());
+            }
+            ModelType::Embedding(_) => {
+                if infer.is_splade() {
+                    let instance = serde_json::from_value::<EmbedSparseRequest>(instance)
+                        .map_err(ErrorResponse::from)?;
+                    futures.push(embed_sparse_future(local_infer, local_info, instance).boxed());
+                } else {
+                    let instance = serde_json::from_value::<EmbedRequest>(instance)
+                        .map_err(ErrorResponse::from)?;
+                    futures.push(embed_future(local_infer, local_info, instance).boxed());
+                }
+            }
+        }
     }
-    let results = join_all(futures)
+
+    let predictions = join_all(futures)
         .await
         .into_iter()
-        .collect::<Result<Vec<PooledEmbeddingsInferResponse>, TextEmbeddingsError>>()
-        .map_err(ErrorResponse::from)?;
+        .collect::<Result<Vec<VertexResponseInstance>, (StatusCode, Json<ErrorResponse>)>>()?;
 
-    let mut embeddings = Vec::with_capacity(batch_size);
-    let mut total_tokenization_time = 0;
-    let mut total_queue_time = 0;
-    let mut total_inference_time = 0;
-    let mut total_compute_tokens = 0;
-
-    for r in results {
-        total_tokenization_time += r.metadata.tokenization.as_nanos() as u64;
-        total_queue_time += r.metadata.queue.as_nanos() as u64;
-        total_inference_time += r.metadata.inference.as_nanos() as u64;
-        total_compute_tokens += r.metadata.prompt_tokens;
-        embeddings.push(r.results);
-    }
-    let batch_size = batch_size as u64;
-
-    let response = EmbedResponse(embeddings);
-    let metadata = ResponseMetadata::new(
-        compute_chars,
-        total_compute_tokens,
-        start_time,
-        Duration::from_nanos(total_tokenization_time / batch_size),
-        Duration::from_nanos(total_queue_time / batch_size),
-        Duration::from_nanos(total_inference_time / batch_size),
-    );
-
-    metadata.record_span(&span);
-    metadata.record_metrics();
-    tracing::info!("Success");
-
-    Ok((HeaderMap::from(metadata), Json(response)))
+    Ok(Json(VertexResponse { predictions }))
 }
 
 /// Prometheus metrics scrape endpoint
@@ -1354,12 +1344,10 @@ pub async fn run(
         // avoid `mut` if possible
         #[cfg(feature = "google")]
         {
-            use crate::http::types::VertexInstance;
-
             #[derive(OpenApi)]
             #[openapi(
                 paths(vertex_compatibility),
-                components(schemas(VertexInstance, VertexRequest))
+                components(schemas(VertexRequest, VertexResponse, VertexResponseInstance))
             )]
             struct VertextApiDoc;
 
@@ -1397,43 +1385,42 @@ pub async fn run(
         // Prometheus metrics route
         .route("/metrics", get(metrics));
 
-    // Set default routes
-    app = match &info.model_type {
-        ModelType::Classifier(_) => {
-            app.route("/", post(predict))
-                // AWS Sagemaker route
-                .route("/invocations", post(predict))
-        }
-        ModelType::Reranker(_) => {
-            app.route("/", post(rerank))
-                // AWS Sagemaker route
-                .route("/invocations", post(rerank))
-        }
-        ModelType::Embedding(model) => {
-            if model.pooling == "splade" {
-                app.route("/", post(embed_sparse))
-                    // AWS Sagemaker route
-                    .route("/invocations", post(embed_sparse))
-            } else {
-                app.route("/", post(embed))
-                    // AWS Sagemaker route
-                    .route("/invocations", post(embed))
-            }
-        }
-    };
-
     #[cfg(feature = "google")]
     {
         tracing::info!("Built with `google` feature");
-        tracing::info!(
-            "Environment variables `AIP_PREDICT_ROUTE` and `AIP_HEALTH_ROUTE` will be respected."
-        );
-        if let Ok(env_predict_route) = std::env::var("AIP_PREDICT_ROUTE") {
-            app = app.route(&env_predict_route, post(vertex_compatibility));
-        }
-        if let Ok(env_health_route) = std::env::var("AIP_HEALTH_ROUTE") {
-            app = app.route(&env_health_route, get(health));
-        }
+        let env_predict_route = std::env::var("AIP_PREDICT_ROUTE")
+            .context("`AIP_PREDICT_ROUTE` env var must be set for Google Vertex deployments")?;
+        app = app.route(&env_predict_route, post(vertex_compatibility));
+        let env_health_route = std::env::var("AIP_HEALTH_ROUTE")
+            .context("`AIP_HEALTH_ROUTE` env var must be set for Google Vertex deployments")?;
+        app = app.route(&env_health_route, get(health));
+    }
+    #[cfg(not(feature = "google"))]
+    {
+        // Set default routes
+        app = match &info.model_type {
+            ModelType::Classifier(_) => {
+                app.route("/", post(predict))
+                    // AWS Sagemaker route
+                    .route("/invocations", post(predict))
+            }
+            ModelType::Reranker(_) => {
+                app.route("/", post(rerank))
+                    // AWS Sagemaker route
+                    .route("/invocations", post(rerank))
+            }
+            ModelType::Embedding(model) => {
+                if model.pooling == "splade" {
+                    app.route("/", post(embed_sparse))
+                        // AWS Sagemaker route
+                        .route("/invocations", post(embed_sparse))
+                } else {
+                    app.route("/", post(embed))
+                        // AWS Sagemaker route
+                        .route("/invocations", post(embed))
+                }
+            }
+        };
     }
 
     app = app
@@ -1508,5 +1495,14 @@ impl From<ErrorResponse> for (StatusCode, Json<ErrorResponse>) {
 impl From<ErrorResponse> for (StatusCode, Json<OpenAICompatErrorResponse>) {
     fn from(err: ErrorResponse) -> Self {
         (StatusCode::from(&err.error_type), Json(err.into()))
+    }
+}
+
+impl From<serde_json::Error> for ErrorResponse {
+    fn from(err: serde_json::Error) -> Self {
+        ErrorResponse {
+            error: err.to_string(),
+            error_type: ErrorType::Validation,
+        }
     }
 }

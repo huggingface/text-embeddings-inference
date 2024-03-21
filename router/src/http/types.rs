@@ -382,19 +382,21 @@ pub(crate) struct SimpleToken {
 #[schema(example = json!([[{"id": 0, "text": "test", "special": false, "start": 0, "stop": 2}]]))]
 pub(crate) struct TokenizeResponse(pub Vec<Vec<SimpleToken>>);
 
-#[derive(Clone, Deserialize, ToSchema)]
-pub(crate) struct VertexInstance {
-    #[schema(example = "What is Deep Learning?")]
-    pub inputs: String,
-    #[serde(default)]
-    #[schema(default = "false", example = "false")]
-    pub truncate: bool,
-    #[serde(default = "default_normalize")]
-    #[schema(default = "true", example = "true")]
-    pub normalize: bool,
-}
-
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct VertexRequest {
-    pub instances: Vec<VertexInstance>,
+    pub instances: Vec<serde_json::Value>,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(untagged)]
+pub(crate) enum VertexResponseInstance {
+    Embed(EmbedResponse),
+    EmbedSparse(EmbedSparseResponse),
+    Predict(PredictResponse),
+    Rerank(RerankResponse),
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct VertexResponse {
+    pub predictions: Vec<VertexResponseInstance>,
 }
