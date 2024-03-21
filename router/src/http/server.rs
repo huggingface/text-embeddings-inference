@@ -19,6 +19,7 @@ use axum::routing::{get, post};
 use axum::{http, Json, Router};
 use axum_tracing_opentelemetry::middleware::OtelAxumLayer;
 use futures::future::join_all;
+use http::header::AUTHORIZATION;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -1434,12 +1435,25 @@ pub async fn run(
         }
     }
 
-    let app = app
+    let auth = move |headers: HeaderMap,
+                     request: axum::extract::Request,
+                     next: axum::middleware::Next| async move {
+        match headers.get(AUTHORIZATION) {
+            Some(token) if token == "1234" => {
+                let response = next.run(request).await;
+                Ok(response)
+            }
+            _ => Err(StatusCode::UNAUTHORIZED),
+        }
+    };
+
+    app = app
         .layer(Extension(infer))
         .layer(Extension(info))
         .layer(Extension(prom_handle.clone()))
         .layer(OtelAxumLayer::default())
-        .layer(cors_layer);
+        .layer(cors_layer)
+        .layer(axum::middleware::from_fn(auth));
 
     // Run server
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();

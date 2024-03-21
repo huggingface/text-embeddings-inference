@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_stream::StreamExt;
 use tonic::codegen::http::HeaderMap;
-use tonic::metadata::MetadataMap;
+use tonic::metadata::{MetadataMap, MetadataValue};
 use tonic::server::NamedService;
 use tonic::transport::Server;
 use tonic::{Code, Extensions, Request, Response, Status, Streaming};
@@ -1429,6 +1429,13 @@ pub async fn run(
 
     // Main service
     let service = TextEmbeddingsService::new(infer, info);
+
+    let auth = |req: Request<()>| -> Result<Request<()>, Status> {
+        match req.metadata().get("authorization") {
+            Some(t) if token == t => Ok(req),
+            _ => Err(Status::unauthenticated("No valid auth token")),
+        }
+    };
 
     // Create gRPC server
     tracing::info!("Starting gRPC server: {}", &addr);
