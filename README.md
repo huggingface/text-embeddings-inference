@@ -478,6 +478,8 @@ docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_
 ```
 
 ### Apple M1/M2 arm64 architectures
+#### DISCLAIMER
+As explained here [MPS-Ready, ARM64 Docker Image](https://github.com/pytorch/pytorch/issues/81224), Metal / MPS is not supported via Docker. As such inference will be CPU bound and most likely pretty slow when using this docker image on an M1/M2 ARM CPU.
 ```
 docker build . -f Dockerfile-arm64 --platform=linux/arm64
 ```
