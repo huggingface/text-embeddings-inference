@@ -28,6 +28,9 @@ ARG ACTIONS_CACHE_URL
 ARG ACTIONS_RUNTIME_TOKEN
 ARG SCCACHE_GHA_ENABLED
 
+RUN echo "int mkl_serv_intel_cpu_true() {return 1;}" > fakeintel.c && \
+    gcc -shared -fPIC -o libfakeintel.so fakeintel.c
+
 COPY --from=planner /usr/src/recipe.json recipe.json
 
 RUN cargo chef cook --release --features candle --no-default-features --recipe-path recipe.json && sccache -s
@@ -69,6 +72,8 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     libssl-dev \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/src/libfakeintel.so /usr/local/libfakeintel.so
 
 FROM base as grpc
 
