@@ -120,6 +120,37 @@ impl Tokenization {
         // Unwrap is safe here
         response_receiver.await.expect("Tokenization background task dropped the sender without sending a response. This is a bug.")
     }
+
+    #[instrument(skip_all)]
+    pub async fn decode(
+        &self,
+        ids: Vec<u32>,
+        skip_special_tokens: bool,
+    ) -> Result<String, TextEmbeddingsError> {
+        // Check if inputs is empty
+        if ids.is_empty() {
+            return Err(TextEmbeddingsError::Validation(
+                "`input_ids` cannot be empty".to_string(),
+            ));
+        }
+
+        // Create response channel
+        let (response_sender, response_receiver) = oneshot::channel();
+        // Send request to the background validation task
+        // Unwrap is safe here
+        self.sender
+            .send(TokenizerRequest::Decode(
+                ids,
+                skip_special_tokens,
+                response_sender,
+                Span::current(),
+            ))
+            .expect("Tokenization background task dropped the receiver. This is a bug.");
+
+        // Await on response channel
+        // Unwrap is safe here
+        response_receiver.await.expect("Tokenization background task dropped the sender without sending a response. This is a bug.")
+    }
 }
 
 /// Start tokenization workers
@@ -161,8 +192,28 @@ fn tokenizer_worker(
                     }
                 })
             }
+            TokenizerRequest::Decode(ids, skip_special_tokens, response_tx, parent_span) => {
+                parent_span.in_scope(|| {
+                    if !response_tx.is_closed() {
+                        // It's possible that the user dropped its request resulting in a send error.
+                        // We just discard the error
+                        let _ =
+                            response_tx.send(decode_ids(ids, skip_special_tokens, &mut tokenizer));
+                    }
+                })
+            }
         }
     }
+}
+
+fn decode_ids(
+    ids: Vec<u32>,
+    skip_special_tokens: bool,
+    tokenizer: &mut Tokenizer,
+) -> Result<String, TextEmbeddingsError> {
+    Ok(tokenizer
+        .with_truncation(None)?
+        .decode(&ids, skip_special_tokens)?)
 }
 
 fn tokenize_input(
@@ -261,6 +312,12 @@ enum TokenizerRequest {
         EncodingInput,
         bool,
         oneshot::Sender<Result<RawEncoding, TextEmbeddingsError>>,
+        Span,
+    ),
+    Decode(
+        Vec<u32>,
+        bool,
+        oneshot::Sender<Result<String, TextEmbeddingsError>>,
         Span,
     ),
 }

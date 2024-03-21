@@ -30,6 +30,8 @@ service Rerank {
 service Tokenize {
     rpc Tokenize (EncodeRequest) returns (EncodeResponse);
     rpc TokenizeStream (stream EncodeRequest) returns (stream EncodeResponse);
+    rpc Decode (DecodeRequest) returns (DecodeResponse);
+    rpc DecodeStream (stream DecodeRequest) returns (stream DecodeResponse);
 }
 
 message InfoRequest {}
@@ -165,4 +167,13 @@ message SimpleToken {
 
 message EncodeResponse {
     repeated SimpleToken tokens = 1;
+}
+
+message DecodeRequest {
+    repeated uint32 ids = 1;
+    bool skip_special_tokens = 2;
+}
+
+message DecodeResponse {
+    string text = 1;
 }

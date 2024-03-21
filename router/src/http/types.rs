@@ -383,6 +383,29 @@ pub(crate) struct SimpleToken {
 pub(crate) struct TokenizeResponse(pub Vec<Vec<SimpleToken>>);
 
 #[derive(Deserialize, ToSchema)]
+#[serde(untagged)]
+pub(crate) enum InputIds {
+    Single(Vec<u32>),
+    Batch(Vec<Vec<u32>>),
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct DecodeRequest {
+    pub ids: InputIds,
+    #[serde(default = "default_skip_special_tokens")]
+    #[schema(default = "true", example = "true")]
+    pub skip_special_tokens: bool,
+}
+
+fn default_skip_special_tokens() -> bool {
+    true
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(example = json!(["test"]))]
+pub(crate) struct DecodeResponse(pub Vec<String>);
+
+#[derive(Deserialize, ToSchema)]
 pub(crate) struct VertexRequest {
     pub instances: Vec<serde_json::Value>,
 }
