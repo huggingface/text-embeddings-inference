@@ -102,6 +102,12 @@ struct Args {
     #[clap(default_value = "2000000", long, env)]
     payload_limit: usize,
 
+    /// Set an api key for request authorization.
+    ///
+    /// By default the server responds to every request. With an api key set, the requests must have the Authorization header set with the api key as Bearer token.
+    #[clap(long, env)]
+    api_key: Option<String>,
+
     /// Outputs the logs in JSON format (useful for telemetry)
     #[clap(long, env)]
     json_output: bool,
@@ -143,6 +149,7 @@ async fn main() -> Result<()> {
         Some(args.uds_path),
         args.huggingface_hub_cache,
         args.payload_limit,
+        args.api_key,
         args.otlp_endpoint,
         args.cors_allow_origin,
     )

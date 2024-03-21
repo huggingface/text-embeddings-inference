@@ -19,6 +19,7 @@ use axum::routing::{get, post};
 use axum::{http, Json, Router};
 use axum_tracing_opentelemetry::middleware::OtelAxumLayer;
 use futures::future::join_all;
+use http::header::AUTHORIZATION;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -1263,6 +1264,7 @@ pub async fn run(
     addr: SocketAddr,
     prom_builder: PrometheusBuilder,
     payload_limit: usize,
+    api_key: Option<String>,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<(), anyhow::Error> {
     // OpenAPI documentation
@@ -1434,12 +1436,34 @@ pub async fn run(
         }
     }
 
-    let app = app
+    app = app
         .layer(Extension(infer))
         .layer(Extension(info))
         .layer(Extension(prom_handle.clone()))
         .layer(OtelAxumLayer::default())
         .layer(cors_layer);
+
+    if let Some(api_key) = api_key {
+        let mut prefix = "Bearer ".to_string();
+        prefix.push_str(&api_key);
+
+        // Leak to allow FnMut
+        let api_key: &'static str = prefix.leak();
+
+        let auth = move |headers: HeaderMap,
+                         request: axum::extract::Request,
+                         next: axum::middleware::Next| async move {
+            match headers.get(AUTHORIZATION) {
+                Some(token) if token == api_key => {
+                    let response = next.run(request).await;
+                    Ok(response)
+                }
+                _ => Err(StatusCode::UNAUTHORIZED),
+            }
+        };
+
+        app = app.layer(axum::middleware::from_fn(auth));
+    }
 
     // Run server
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();

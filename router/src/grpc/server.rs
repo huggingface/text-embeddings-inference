@@ -1334,6 +1334,7 @@ pub async fn run(
     info: Info,
     addr: SocketAddr,
     prom_builder: PrometheusBuilder,
+    api_key: Option<String>,
 ) -> Result<(), anyhow::Error> {
     prom_builder.install()?;
     tracing::info!("Serving Prometheus metrics: 0.0.0.0:9000");
@@ -1431,17 +1432,46 @@ pub async fn run(
     let service = TextEmbeddingsService::new(infer, info);
 
     // Create gRPC server
+    let server = if let Some(api_key) = api_key {
+        let mut prefix = "Bearer ".to_string();
+        prefix.push_str(&api_key);
+
+        // Leak to allow FnMut
+        let api_key: &'static str = prefix.leak();
+
+        let auth = move |req: Request<()>| -> Result<Request<()>, Status> {
+            match req.metadata().get("authorization") {
+                Some(t) if t == api_key => Ok(req),
+                _ => Err(Status::unauthenticated("No valid auth token")),
+            }
+        };
+
+        Server::builder()
+            .add_service(health_service)
+            .add_service(reflection_service)
+            .add_service(grpc::InfoServer::with_interceptor(service.clone(), auth))
+            .add_service(grpc::TokenizeServer::with_interceptor(
+                service.clone(),
+                auth,
+            ))
+            .add_service(grpc::EmbedServer::with_interceptor(service.clone(), auth))
+            .add_service(grpc::PredictServer::with_interceptor(service.clone(), auth))
+            .add_service(grpc::RerankServer::with_interceptor(service, auth))
+            .serve_with_shutdown(addr, shutdown::shutdown_signal())
+    } else {
+        Server::builder()
+            .add_service(health_service)
+            .add_service(reflection_service)
+            .add_service(grpc::InfoServer::new(service.clone()))
+            .add_service(grpc::TokenizeServer::new(service.clone()))
+            .add_service(grpc::EmbedServer::new(service.clone()))
+            .add_service(grpc::PredictServer::new(service.clone()))
+            .add_service(grpc::RerankServer::new(service))
+            .serve_with_shutdown(addr, shutdown::shutdown_signal())
+    };
+
     tracing::info!("Starting gRPC server: {}", &addr);
-    Server::builder()
-        .add_service(health_service)
-        .add_service(reflection_service)
-        .add_service(grpc::InfoServer::new(service.clone()))
-        .add_service(grpc::TokenizeServer::new(service.clone()))
-        .add_service(grpc::EmbedServer::new(service.clone()))
-        .add_service(grpc::PredictServer::new(service.clone()))
-        .add_service(grpc::RerankServer::new(service))
-        .serve_with_shutdown(addr, shutdown::shutdown_signal())
-        .await?;
+    server.await?;
 
     Ok(())
 }
