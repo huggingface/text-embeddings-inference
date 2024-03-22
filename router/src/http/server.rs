@@ -1,5 +1,9 @@
 /// HTTP Server logic
 use crate::http::types::{
+    EmbedRequest, EmbedResponse, Input, OpenAICompatEmbedding,
+    OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage,
+    PredictInput, PredictRequest, PredictResponse, Prediction, Rank, RerankRequest, RerankResponse,
+    Sequence,
     DecodeRequest, DecodeResponse, EmbedAllRequest, EmbedAllResponse, EmbedRequest, EmbedResponse,
     EmbedSparseRequest, EmbedSparseResponse, Input, InputIds, OpenAICompatEmbedding,
     OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage,
@@ -474,7 +478,7 @@ async fn embed(
         Input::Single(input) => {
             metrics::increment_counter!("te_request_count", "method" => "single");
 
-            let compute_chars = input.chars().count();
+            let compute_chars = input.count_chars();
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
@@ -529,7 +533,7 @@ async fn embed(
             let mut compute_chars = 0;
 
             for input in inputs {
-                compute_chars += input.chars().count();
+                compute_chars += input.count_chars();
 
                 let local_infer = infer.clone();
                 futures.push(async move {
@@ -923,7 +927,7 @@ async fn openai_embed(
         Input::Single(input) => {
             metrics::increment_counter!("te_request_count", "method" => "single");
 
-            let compute_chars = input.chars().count();
+            let compute_chars = input.count_chars();
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
@@ -982,7 +986,7 @@ async fn openai_embed(
             let mut compute_chars = 0;
 
             for input in inputs {
-                compute_chars += input.chars().count();
+                compute_chars += input.count_chars();
 
                 let local_infer = infer.clone();
                 futures.push(async move {
