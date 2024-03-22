@@ -250,11 +250,33 @@ pub(crate) struct Rank {
 #[derive(Serialize, ToSchema)]
 pub(crate) struct RerankResponse(pub Vec<Rank>);
 
+#[derive(Deserialize, ToSchema, Debug)]
+#[serde(untagged)]
+pub(crate) enum InputType {
+    String(String),
+    Ids(Vec<u32>),
+}
+impl InputType {
+    pub(crate) fn count_chars(&self) -> usize {
+        match self {
+            InputType::String(s) => s.chars().count(),
+            InputType::Ids(v) => v.len(),
+        }
+    }
+}
+impl From<InputType> for EncodingInput {
+    fn from(value: InputType) -> Self {
+        match value {
+            InputType::String(s) => Self::Single(s),
+            InputType::Ids(v) => Self::Ids(v),
+        }
+    }
+}
 #[derive(Deserialize, ToSchema)]
 #[serde(untagged)]
 pub(crate) enum Input {
-    Single(String),
-    Batch(Vec<String>),
+    Single(InputType),
+    Batch(Vec<InputType>),
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -353,8 +375,15 @@ pub(crate) struct OpenAICompatErrorResponse {
 }
 
 #[derive(Deserialize, ToSchema)]
+#[serde(untagged)]
+pub(crate) enum TokenizeInput {
+    Single(String),
+    Batch(Vec<String>),
+}
+
+#[derive(Deserialize, ToSchema)]
 pub(crate) struct TokenizeRequest {
-    pub inputs: Input,
+    pub inputs: TokenizeInput,
     #[serde(default = "default_add_special_tokens")]
     #[schema(default = "true", example = "true")]
     pub add_special_tokens: bool,

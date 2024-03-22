@@ -2,7 +2,7 @@
 use crate::TextEmbeddingsError;
 use tokenizers::tokenizer::Tokenizer;
 pub use tokenizers::Encoding as RawEncoding;
-use tokenizers::{EncodeInput, TruncationDirection, TruncationParams, TruncationStrategy};
+use tokenizers::{TruncationDirection, TruncationParams, TruncationStrategy};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{instrument, Span};
 
@@ -222,14 +222,25 @@ fn tokenize_input(
     truncate_params: Option<TruncationParams>,
     tokenizer: &mut Tokenizer,
 ) -> Result<RawEncoding, TextEmbeddingsError> {
-    let inputs: EncodeInput = match inputs {
-        EncodingInput::Single(s) => s.into(),
-        EncodingInput::Dual(s1, s2) => (s1, s2).into(),
+    let encoding = match inputs {
+        // encode input
+        EncodingInput::Single(s) => tokenizer
+            .with_truncation(truncate_params)?
+            .encode::<String>(s, add_special_tokens)?,
+        EncodingInput::Dual(s1, s2) => {
+            tokenizer
+                .with_truncation(truncate_params)?
+                .encode::<(String, String)>((s1, s2), add_special_tokens)?
+        }
+        // input is encoded -> convert to tokenizers Encoding
+        EncodingInput::Ids(ids) => {
+            let text = tokenizer.decode(&ids, false)?;
+            tokenizer
+                .with_truncation(truncate_params)?
+                .encode::<String>(text, false)?
+        }
     };
-
-    Ok(tokenizer
-        .with_truncation(truncate_params)?
-        .encode(inputs, add_special_tokens)?)
+    Ok(encoding)
 }
 
 /// Get input length and optionally truncate it
@@ -256,9 +267,7 @@ fn encode_input(
             "`inputs` must have less than {max_input_length} tokens. Given: {seq_len}"
         )));
     }
-
     metrics::histogram!("te_request_input_length", seq_len as f64);
-
     Ok(ValidEncoding {
         input_ids: encoding.get_ids().to_vec(),
         token_type_ids: encoding.get_type_ids().to_vec(),
@@ -278,6 +287,7 @@ pub struct ValidEncoding {
 pub enum EncodingInput {
     Single(String),
     Dual(String, String),
+    Ids(Vec<u32>),
 }
 
 impl EncodingInput {
@@ -285,6 +295,7 @@ impl EncodingInput {
         match self {
             EncodingInput::Single(s) => s.is_empty(),
             EncodingInput::Dual(s1, s2) => s1.is_empty() && s2.is_empty(),
+            EncodingInput::Ids(v) => v.is_empty(),
         }
     }
 }

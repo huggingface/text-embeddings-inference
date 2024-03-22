@@ -1,11 +1,11 @@
 /// HTTP Server logic
 use crate::http::types::{
     DecodeRequest, DecodeResponse, EmbedAllRequest, EmbedAllResponse, EmbedRequest, EmbedResponse,
-    EmbedSparseRequest, EmbedSparseResponse, Input, InputIds, OpenAICompatEmbedding,
+    EmbedSparseRequest, EmbedSparseResponse, Input, InputIds, InputType, OpenAICompatEmbedding,
     OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage,
     PredictInput, PredictRequest, PredictResponse, Prediction, Rank, RerankRequest, RerankResponse,
-    Sequence, SimpleToken, SparseValue, TokenizeRequest, TokenizeResponse, VertexPrediction,
-    VertexRequest, VertexResponse,
+    Sequence, SimpleToken, SparseValue, TokenizeInput, TokenizeRequest, TokenizeResponse,
+    VertexPrediction, VertexRequest, VertexResponse,
 };
 use crate::{
     shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
@@ -474,7 +474,7 @@ async fn embed(
         Input::Single(input) => {
             metrics::increment_counter!("te_request_count", "method" => "single");
 
-            let compute_chars = input.chars().count();
+            let compute_chars = input.count_chars();
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
@@ -529,7 +529,7 @@ async fn embed(
             let mut compute_chars = 0;
 
             for input in inputs {
-                compute_chars += input.chars().count();
+                compute_chars += input.count_chars();
 
                 let local_infer = infer.clone();
                 futures.push(async move {
@@ -630,7 +630,7 @@ async fn embed_sparse(
         Input::Single(input) => {
             metrics::increment_counter!("te_request_count", "method" => "single");
 
-            let compute_chars = input.chars().count();
+            let compute_chars = input.count_chars();
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
@@ -685,7 +685,7 @@ async fn embed_sparse(
             let mut compute_chars = 0;
 
             for input in inputs {
-                compute_chars += input.chars().count();
+                compute_chars += input.count_chars();
 
                 let local_infer = infer.clone();
                 futures.push(async move {
@@ -778,7 +778,7 @@ async fn embed_all(
         Input::Single(input) => {
             metrics::increment_counter!("te_request_count", "method" => "single");
 
-            let compute_chars = input.chars().count();
+            let compute_chars = input.count_chars();
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
@@ -833,7 +833,7 @@ async fn embed_all(
             let mut compute_chars = 0;
 
             for input in inputs {
-                compute_chars += input.chars().count();
+                compute_chars += input.count_chars();
 
                 let local_infer = infer.clone();
                 futures.push(async move {
@@ -892,7 +892,7 @@ async fn embed_all(
 #[utoipa::path(
 post,
 tag = "Text Embeddings Inference",
-path = "/embeddings",
+path = "/v1/embeddings",
 request_body = OpenAICompatRequest,
 responses(
 (status = 200, description = "Embeddings", body = OpenAICompatResponse),
@@ -923,7 +923,7 @@ async fn openai_embed(
         Input::Single(input) => {
             metrics::increment_counter!("te_request_count", "method" => "single");
 
-            let compute_chars = input.chars().count();
+            let compute_chars = input.count_chars();
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
@@ -982,7 +982,7 @@ async fn openai_embed(
             let mut compute_chars = 0;
 
             for input in inputs {
-                compute_chars += input.chars().count();
+                compute_chars += input.count_chars();
 
                 let local_infer = infer.clone();
                 futures.push(async move {
@@ -1107,8 +1107,10 @@ async fn tokenize(
     };
 
     let tokens = match req.inputs {
-        Input::Single(input) => vec![tokenize_inner(input, req.add_special_tokens, infer.0).await?],
-        Input::Batch(inputs) => {
+        TokenizeInput::Single(input) => {
+            vec![tokenize_inner(input, req.add_special_tokens, infer.0).await?]
+        }
+        TokenizeInput::Batch(inputs) => {
             if inputs.is_empty() {
                 let message = "`inputs` cannot be empty".to_string();
                 tracing::error!("{message}");
@@ -1369,9 +1371,11 @@ pub async fn run(
     EmbedResponse,
     ErrorResponse,
     OpenAICompatErrorResponse,
+    TokenizeInput,
     TokenizeRequest,
     TokenizeResponse,
     SimpleToken,
+    InputType,
     InputIds,
     DecodeRequest,
     DecodeResponse,
@@ -1448,6 +1452,7 @@ pub async fn run(
         .route("/decode", post(decode))
         // OpenAI compat route
         .route("/embeddings", post(openai_embed))
+        .route("/v1/embeddings", post(openai_embed))
         // Vertex compat route
         .route("/vertex", post(vertex_compatibility))
         // Base Health route
