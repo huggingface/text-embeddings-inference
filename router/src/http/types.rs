@@ -412,7 +412,7 @@ pub(crate) struct VertexRequest {
 
 #[derive(Serialize, ToSchema)]
 #[serde(untagged)]
-pub(crate) enum VertexResponseInstance {
+pub(crate) enum VertexPrediction {
     Embed(EmbedResponse),
     EmbedSparse(EmbedSparseResponse),
     Predict(PredictResponse),
@@ -421,5 +421,5 @@ pub(crate) enum VertexResponseInstance {
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct VertexResponse {
-    pub predictions: Vec<VertexResponseInstance>,
+    pub predictions: Vec<VertexPrediction>,
 }

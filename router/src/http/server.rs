@@ -4,7 +4,8 @@ use crate::http::types::{
     EmbedSparseRequest, EmbedSparseResponse, Input, InputIds, OpenAICompatEmbedding,
     OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage,
     PredictInput, PredictRequest, PredictResponse, Prediction, Rank, RerankRequest, RerankResponse,
-    Sequence, SimpleToken, SparseValue, TokenizeRequest, TokenizeResponse, VertexRequest, VertexResponse, VertexResponseInstance
+    Sequence, SimpleToken, SparseValue, TokenizeRequest, TokenizeResponse, VertexPrediction,
+    VertexRequest, VertexResponse,
 };
 use crate::{
     shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
@@ -1247,22 +1248,22 @@ async fn vertex_compatibility(
 ) -> Result<Json<VertexResponse>, (StatusCode, Json<ErrorResponse>)> {
     let embed_future = move |infer: Extension<Infer>, info: Extension<Info>, req: EmbedRequest| async move {
         let result = embed(infer, info, Json(req)).await?;
-        Ok(VertexResponseInstance::Embed(result.1 .0))
+        Ok(VertexPrediction::Embed(result.1 .0))
     };
     let embed_sparse_future =
         move |infer: Extension<Infer>, info: Extension<Info>, req: EmbedSparseRequest| async move {
             let result = embed_sparse(infer, info, Json(req)).await?;
-            Ok(VertexResponseInstance::EmbedSparse(result.1 .0))
+            Ok(VertexPrediction::EmbedSparse(result.1 .0))
         };
     let predict_future =
         move |infer: Extension<Infer>, info: Extension<Info>, req: PredictRequest| async move {
             let result = predict(infer, info, Json(req)).await?;
-            Ok(VertexResponseInstance::Predict(result.1 .0))
+            Ok(VertexPrediction::Predict(result.1 .0))
         };
     let rerank_future =
         move |infer: Extension<Infer>, info: Extension<Info>, req: RerankRequest| async move {
             let result = rerank(infer, info, Json(req)).await?;
-            Ok(VertexResponseInstance::Rerank(result.1 .0))
+            Ok(VertexPrediction::Rerank(result.1 .0))
         };
 
     let mut futures = Vec::with_capacity(req.instances.len());
@@ -1299,7 +1300,7 @@ async fn vertex_compatibility(
     let predictions = join_all(futures)
         .await
         .into_iter()
-        .collect::<Result<Vec<VertexResponseInstance>, (StatusCode, Json<ErrorResponse>)>>()?;
+        .collect::<Result<Vec<VertexPrediction>, (StatusCode, Json<ErrorResponse>)>>()?;
 
     Ok(Json(VertexResponse { predictions }))
 }
@@ -1419,7 +1420,7 @@ pub async fn run(
             #[derive(OpenApi)]
             #[openapi(
                 paths(vertex_compatibility),
-                components(schemas(VertexRequest, VertexResponse, VertexResponseInstance))
+                components(schemas(VertexRequest, VertexResponse, VertexPrediction))
             )]
             struct VertextApiDoc;
 
