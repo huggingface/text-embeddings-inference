@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1.73-bookworm AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.75-bookworm AS chef
 WORKDIR /usr/src
 
 ENV SCCACHE=0.5.4
@@ -80,6 +80,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     libomp-dev \
     ca-certificates \
     libssl-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy a lot of the Intel shared objects because of the mkl_serv_intel_cpu_true patch...

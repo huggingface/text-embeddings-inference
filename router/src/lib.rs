@@ -5,11 +5,17 @@ mod prometheus;
 #[cfg(feature = "http")]
 mod http;
 
+#[cfg(feature = "http")]
+use ::http::HeaderMap;
+
 #[cfg(feature = "grpc")]
 mod grpc;
+
+#[cfg(feature = "grpc")]
+use tonic::codegen::http::HeaderMap;
+
 mod shutdown;
 
-use ::http::HeaderMap;
 use anyhow::{anyhow, Context, Result};
 use hf_hub::api::tokio::ApiBuilder;
 use hf_hub::{Repo, RepoType};
@@ -21,14 +27,14 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::DType;
-use text_embeddings_core::download::{download_artifacts, download_pool_config};
+use text_embeddings_core::download::{
+    download_artifacts, download_pool_config, download_st_config, ST_CONFIG_NAMES,
+};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
 use text_embeddings_core::tokenization::Tokenization;
 use text_embeddings_core::TextEmbeddingsError;
-use tokenizers::decoders::metaspace::PrependScheme;
-use tokenizers::pre_tokenizers::sequence::Sequence;
-use tokenizers::{PreTokenizerWrapper, Tokenizer};
+use tokenizers::Tokenizer;
 use tracing::Span;
 
 pub use logging::init_logging;
@@ -50,7 +56,10 @@ pub async fn run(
     port: u16,
     uds_path: Option<String>,
     huggingface_hub_cache: Option<String>,
+    payload_limit: usize,
+    api_key: Option<String>,
     otlp_endpoint: Option<String>,
+    cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
     let model_id_path = Path::new(&model_id);
     let model_root = if model_id_path.exists() && model_id_path.is_dir() {
@@ -78,6 +87,9 @@ pub async fn run(
             let _ = download_pool_config(&api_repo).await;
         }
 
+        // Download sentence transformers config
+        let _ = download_st_config(&api_repo).await;
+
         // Download model from the Hub
         download_artifacts(&api_repo)
             .await
@@ -91,45 +103,7 @@ pub async fn run(
         serde_json::from_str(&config).context("Failed to parse `config.json`")?;
 
     // Set model type from config
-    let backend_model_type = {
-        // Check if the model is a classifier
-        let mut classifier = false;
-        for arch in &config.architectures {
-            if arch.ends_with("Classification") {
-                classifier = true;
-                break;
-            }
-        }
-
-        if classifier {
-            if pooling.is_some() {
-                tracing::warn!(
-                    "`--pooling` arg is set but model is a classifier. Ignoring `--pooling` arg."
-                );
-            }
-            text_embeddings_backend::ModelType::Classifier
-        } else {
-            // Set pooling
-            let pool = match pooling {
-                Some(pool) => pool,
-                None => {
-                    // Load pooling config
-                    let config_path = model_root.join("1_Pooling/config.json");
-                    let config = fs::read_to_string(config_path).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.")?;
-                    let config: PoolConfig = serde_json::from_str(&config)
-                        .context("Failed to parse `1_Pooling/config.json`")?;
-                    if config.pooling_mode_cls_token {
-                        text_embeddings_backend::Pool::Cls
-                    } else if config.pooling_mode_mean_tokens {
-                        text_embeddings_backend::Pool::Mean
-                    } else {
-                        return Err(anyhow!("Pooling config {config:?} is not supported"));
-                    }
-                }
-            };
-            text_embeddings_backend::ModelType::Embedding(pool)
-        }
-    };
+    let backend_model_type = get_backend_model_type(&config, &model_root, pooling)?;
 
     // Info model type
     let model_type = match &backend_model_type {
@@ -162,44 +136,6 @@ pub async fn run(
     let mut tokenizer = Tokenizer::from_file(tokenizer_path).expect(
         "tokenizer.json not found. text-embeddings-inference only supports fast tokenizers",
     );
-    // See https://github.com/huggingface/tokenizers/pull/1357
-    if let Some(pre_tokenizer) = tokenizer.get_pre_tokenizer() {
-        if let PreTokenizerWrapper::Metaspace(m) = pre_tokenizer {
-            // We are forced to clone since `Tokenizer` does not have a `get_mut` for `pre_tokenizer`
-            let mut m = m.clone();
-            m.set_prepend_scheme(PrependScheme::First);
-            tokenizer.with_pre_tokenizer(PreTokenizerWrapper::Metaspace(m));
-        } else if let PreTokenizerWrapper::Sequence(s) = pre_tokenizer {
-            let pre_tokenizers = s.get_pre_tokenizers();
-            // Check if we have a Metaspace pre tokenizer in the sequence
-            let has_metaspace = pre_tokenizers
-                .iter()
-                .any(|t| matches!(t, PreTokenizerWrapper::Metaspace(_)));
-
-            if has_metaspace {
-                let mut new_pre_tokenizers = Vec::with_capacity(s.get_pre_tokenizers().len());
-
-                for pre_tokenizer in pre_tokenizers {
-                    if let PreTokenizerWrapper::WhitespaceSplit(_) = pre_tokenizer {
-                        // Remove WhitespaceSplit
-                        // This will be done by the Metaspace pre tokenizer
-                        continue;
-                    }
-
-                    let mut pre_tokenizer = pre_tokenizer.clone();
-
-                    if let PreTokenizerWrapper::Metaspace(ref mut m) = pre_tokenizer {
-                        m.set_prepend_scheme(PrependScheme::First);
-                    }
-                    new_pre_tokenizers.push(pre_tokenizer);
-                }
-                tokenizer.with_pre_tokenizer(PreTokenizerWrapper::Sequence(Sequence::new(
-                    new_pre_tokenizers,
-                )));
-            }
-        }
-    }
-
     tokenizer.with_padding(None);
 
     // Position IDs offset. Used for Roberta and camembert.
@@ -211,7 +147,25 @@ pub async fn run(
     } else {
         0
     };
-    let max_input_length = config.max_position_embeddings - position_offset;
+
+    // Try to load ST Config
+    let mut st_config: Option<STConfig> = None;
+    for name in ST_CONFIG_NAMES {
+        let config_path = model_root.join(name);
+        if let Ok(config) = fs::read_to_string(config_path) {
+            st_config =
+                Some(serde_json::from_str(&config).context(format!("Failed to parse `{}`", name))?);
+            break;
+        }
+    }
+    let max_input_length = match st_config {
+        Some(config) => config.max_seq_length,
+        None => {
+            tracing::warn!("Could not find a Sentence Transformers config");
+            config.max_position_embeddings - position_offset
+        }
+    };
+    tracing::info!("Maximum number of tokens per request: {max_input_length}");
 
     let tokenization_workers = tokenization_workers.unwrap_or_else(num_cpus::get_physical);
 
@@ -287,6 +241,16 @@ pub async fn run(
         docker_label: option_env!("DOCKER_LABEL"),
     };
 
+    // use AIP_HTTP_PORT if google feature is enabled
+    let port = if cfg!(feature = "google") {
+        std::env::var("AIP_HTTP_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .context("`AIP_HTTP_PORT` env var must be set for Google Vertex deployments")?
+    } else {
+        port
+    };
+
     let addr = match hostname.unwrap_or("0.0.0.0".to_string()).parse() {
         Ok(ip) => SocketAddr::new(ip, port),
         Err(_) => {
@@ -300,26 +264,90 @@ pub async fn run(
     #[cfg(all(feature = "grpc", feature = "http"))]
     compile_error!("Features `http` and `grpc` cannot be enabled at the same time.");
 
+    #[cfg(all(feature = "grpc", feature = "google"))]
+    compile_error!("Features `http` and `google` cannot be enabled at the same time.");
+
     #[cfg(not(any(feature = "http", feature = "grpc")))]
     compile_error!("Either feature `http` or `grpc` must be enabled.");
 
     #[cfg(feature = "http")]
     {
-        let server =
-            tokio::spawn(async move { http::server::run(infer, info, addr, prom_builder).await });
+        let server = tokio::spawn(async move {
+            http::server::run(
+                infer,
+                info,
+                addr,
+                prom_builder,
+                payload_limit,
+                api_key,
+                cors_allow_origin,
+            )
+            .await
+        });
         tracing::info!("Ready");
         server.await??;
     }
 
     #[cfg(feature = "grpc")]
     {
-        let server =
-            tokio::spawn(async move { grpc::server::run(infer, info, addr, prom_builder).await });
+        // cors_allow_origin and payload_limit are not used for gRPC servers
+        let _ = cors_allow_origin;
+        let _ = payload_limit;
+        let server = tokio::spawn(async move {
+            grpc::server::run(infer, info, addr, prom_builder, api_key).await
+        });
         tracing::info!("Ready");
         server.await??;
     }
 
     Ok(())
+}
+
+fn get_backend_model_type(
+    config: &ModelConfig,
+    model_root: &Path,
+    pooling: Option<text_embeddings_backend::Pool>,
+) -> Result<text_embeddings_backend::ModelType> {
+    for arch in &config.architectures {
+        if Some(text_embeddings_backend::Pool::Splade) == pooling && arch.ends_with("MaskedLM") {
+            return Ok(text_embeddings_backend::ModelType::Embedding(
+                text_embeddings_backend::Pool::Splade,
+            ));
+        } else if arch.ends_with("Classification") {
+            if pooling.is_some() {
+                tracing::warn!(
+                    "`--pooling` arg is set but model is a classifier. Ignoring `--pooling` arg."
+                );
+            }
+            return Ok(text_embeddings_backend::ModelType::Classifier);
+        }
+    }
+
+    if Some(text_embeddings_backend::Pool::Splade) == pooling {
+        return Err(anyhow!(
+            "Splade pooling is not supported: model is not a ForMaskedLM model"
+        ));
+    }
+
+    // Set pooling
+    let pool = match pooling {
+        Some(pool) => pool,
+        None => {
+            // Load pooling config
+            let config_path = model_root.join("1_Pooling/config.json");
+            let config = fs::read_to_string(config_path).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.")?;
+            let config: PoolConfig =
+                serde_json::from_str(&config).context("Failed to parse `1_Pooling/config.json`")?;
+            if config.pooling_mode_cls_token {
+                text_embeddings_backend::Pool::Cls
+            } else if config.pooling_mode_mean_tokens {
+                text_embeddings_backend::Pool::Mean
+            } else {
+                return Err(anyhow!("Pooling config {config:?} is not supported"));
+            }
+        }
+    };
+    Ok(text_embeddings_backend::ModelType::Embedding(pool))
 }
 
 #[derive(Debug, Deserialize)]
@@ -328,6 +356,7 @@ pub struct ModelConfig {
     pub model_type: String,
     #[serde(alias = "n_positions")]
     pub max_position_embeddings: usize,
+    #[serde(default)]
     pub pad_token_id: usize,
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
@@ -339,6 +368,11 @@ pub struct PoolConfig {
     pooling_mode_mean_tokens: bool,
     pooling_mode_max_tokens: bool,
     pooling_mode_mean_sqrt_len_tokens: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct STConfig {
+    pub max_seq_length: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]

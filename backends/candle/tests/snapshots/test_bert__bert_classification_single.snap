@@ -1,0 +1,7 @@
+---
+source: backends/candle/tests/test_bert.rs
+assertion_line: 211
+expression: predictions_single
+---
+- - 2.8580017
+  - -2.9722357

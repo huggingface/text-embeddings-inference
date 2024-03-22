@@ -7,18 +7,6 @@
        - 'main'
      tags:
        - 'v*'
-   pull_request:
-     paths:
-       - ".github/workflows/build_75.yaml"
-#       - "integration-tests/**"
-       - "backends/**"
-       - "core/**"
-       - "router/**"
-       - "Cargo.lock"
-       - "rust-toolchain.toml"
-       - "Dockerfile"
-     branches:
-       - 'main'
 
  jobs:
    build-and-push-image:

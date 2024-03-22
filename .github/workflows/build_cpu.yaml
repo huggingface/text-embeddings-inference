@@ -129,4 +129,3 @@
            tags: ${{ steps.meta-cpu-grpc.outputs.tags }}
            labels: ${{ steps.meta-cpu-grpc.outputs.labels }}
            cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-cpu,mode=max
-

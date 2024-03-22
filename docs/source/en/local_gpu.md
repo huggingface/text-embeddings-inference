@@ -16,12 +16,12 @@ rendered properly in your Markdown viewer.
 
 # Using TEI locally with GPU
 
-You can install `text-embeddings-inference` locally to run it on your own machine with a GPU. 
+You can install `text-embeddings-inference` locally to run it on your own machine with a GPU.
 To make sure that your hardware is supported, check out the [Supported models and hardware](supported_models) page.
 
 ## Step 1: CUDA and NVIDIA drivers
 
-Make sure you have CUDA and the NVIDIA drivers installed - we recommend using NVIDIA drivers with CUDA version 12.2 or higher. 
+Make sure you have CUDA and the NVIDIA drivers installed - NVIDIA drivers on your device need to be compatible with CUDA version 12.2 or higher.
 
 Add the NVIDIA binaries to your path:
 
@@ -31,7 +31,7 @@ export PATH=$PATH:/usr/local/cuda/bin
 
 ## Step 2: Install Rust
 
-[Install Rust]((https://rustup.rs/) on your machine by run the following in your terminal, then following the instructions:
+[Install Rust](https://rustup.rs/) on your machine by run the following in your terminal, then following the instructions:
 
 ```shell
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -44,18 +44,18 @@ This step  can take a while as we need to compile a lot of cuda kernels.
 ### For Turing GPUs (T4, RTX 2000 series ... )
 
 ```shell
-cargo install --path router -F candle-cuda-turing --no-default-features
+cargo install --path router -F candle-cuda-turing -F http --no-default-features
 ```
 
 ### For Ampere and Hopper
 
 ```shell
-cargo install --path router -F candle-cuda --no-default-features
+cargo install --path router -F candle-cuda -F http --no-default-features
 ```
 
 ## Step 4: Launch Text Embeddings Inference
 
-You can now launch Text Embeddings Inference on GPU with: 
+You can now launch Text Embeddings Inference on GPU with:
 
 ```shell
 model=BAAI/bge-large-en-v1.5

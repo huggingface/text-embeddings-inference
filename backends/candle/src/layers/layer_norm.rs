@@ -23,12 +23,15 @@ impl LayerNorm {
         })
     }
 
-    pub fn forward(&self, hidden_states: &Tensor, residual: &Tensor) -> Result<Tensor> {
+    pub fn forward(&self, hidden_states: &Tensor, residual: Option<&Tensor>) -> Result<Tensor> {
         let _enter = self.span.enter();
 
         match hidden_states.device() {
-            Device::Cpu => {
-                let hidden_states = hidden_states.add(residual)?;
+            Device::Cpu | Device::Metal(_) => {
+                let mut hidden_states = hidden_states.clone();
+                if let Some(residual) = residual {
+                    hidden_states = hidden_states.add(residual)?;
+                }
                 let hidden_states_dtype = hidden_states.dtype();
                 let internal_dtype = match hidden_states_dtype {
                     DType::F16 | DType::BF16 => DType::F32,
@@ -51,19 +54,25 @@ impl LayerNorm {
             Device::Cuda(_) => {
                 #[cfg(feature = "cuda")]
                 {
-                    use candle_layer_norm::fused_add_layer_norm;
+                    use candle_layer_norm::{fused_add_layer_norm, layer_norm};
 
                     let original_shape = hidden_states.shape();
                     let hidden_states = hidden_states.flatten_to(D::Minus2)?;
-                    let residual = residual.flatten_to(D::Minus2)?;
 
-                    let result = fused_add_layer_norm(
-                        &hidden_states,
-                        &residual,
-                        &self.weight,
-                        &self.bias,
-                        self.epsilon,
-                    )?;
+                    let result = if let Some(residual) = residual {
+                        let residual = residual.flatten_to(D::Minus2)?;
+
+                        let (result, _) = fused_add_layer_norm(
+                            &hidden_states,
+                            &residual,
+                            &self.weight,
+                            Some(&self.bias),
+                            self.epsilon,
+                        )?;
+                        Ok(result)
+                    } else {
+                        layer_norm(&hidden_states, &self.weight, Some(&self.bias), self.epsilon)
+                    }?;
                     result.reshape(original_shape)
                 }
                 #[cfg(not(feature = "cuda"))]

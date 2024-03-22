@@ -20,7 +20,7 @@ You can install `text-embeddings-inference` locally to run it on your own machin
 
 ## Step 1: Install Rust
 
-[Install Rust]((https://rustup.rs/) on your machine by run the following in your terminal, then following the instructions:
+[Install Rust](https://rustup.rs/) on your machine by run the following in your terminal, then following the instructions:
 
 ```shell
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -33,13 +33,13 @@ Depending on your machine's architecture, run one of the following commands:
 ### For x86 Machines
 
 ```shell
-cargo install --path router -F candle -F mkl
+cargo install --path router -F mkl
 ```
 
 ### For M1 or M2 Machines
 
 ```shell
-cargo install --path router -F candle -F accelerate
+cargo install --path router -F metal
 ```
 
 ## Step 3: Launch Text Embeddings Inference

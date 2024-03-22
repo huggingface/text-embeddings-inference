@@ -8,7 +8,7 @@ use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 // https://github.com/huggingface/transformers/blob/6eedfa6dd15dc1e22a55ae036f681914e5a0d9a1/src/transformers/models/bert/configuration_bert.py#L1
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct Config {
+pub struct BertConfig {
     pub vocab_size: usize,
     pub hidden_size: usize,
     pub num_hidden_layers: usize,
@@ -26,7 +26,6 @@ pub struct Config {
     #[serde(default)]
     pub use_cache: bool,
     pub classifier_dropout: Option<f64>,
-    pub model_type: Option<String>,
     pub id2label: Option<HashMap<String, String>>,
 }
 
@@ -39,7 +38,7 @@ pub enum PositionEmbeddingType {
 }
 
 #[derive(Debug)]
-struct BertEmbeddings {
+pub struct BertEmbeddings {
     word_embeddings: Embedding,
     token_type_embeddings: Embedding,
     position_embeddings: Embedding,
@@ -48,7 +47,7 @@ struct BertEmbeddings {
 }
 
 impl BertEmbeddings {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         if config.position_embedding_type != PositionEmbeddingType::Absolute {
             candle::bail!("Bert only supports absolute position embeddings");
         }
@@ -80,7 +79,7 @@ impl BertEmbeddings {
         })
     }
 
-    fn forward(
+    pub fn forward(
         &self,
         input_ids: &Tensor,
         token_type_ids: &Tensor,
@@ -93,7 +92,9 @@ impl BertEmbeddings {
         let position_embeddings = self.position_embeddings.forward(position_ids)?;
 
         let embeddings = input_embeddings.add(&token_type_embeddings)?;
-        let embeddings = self.layer_norm.forward(&embeddings, &position_embeddings)?;
+        let embeddings = self
+            .layer_norm
+            .forward(&embeddings, Some(&position_embeddings))?;
 
         Ok(embeddings)
     }
@@ -113,7 +114,7 @@ struct BertAttention {
 }
 
 impl BertAttention {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let attention_head_size = config.hidden_size / config.num_attention_heads;
         let all_head_size = config.num_attention_heads * attention_head_size;
         let hidden_size = config.hidden_size;
@@ -255,7 +256,7 @@ impl BertAttention {
         let context_layer = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?;
 
         let hidden_states = self.dense.forward(&context_layer)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -270,7 +271,7 @@ struct BertLayer {
 }
 
 impl BertLayer {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let attention = BertAttention::load(vb.pp("attention"), config)?;
 
         let intermediate_weight = vb
@@ -324,7 +325,7 @@ impl BertLayer {
 
         let hidden_states = self.intermediate.forward(&hidden_states)?;
         let hidden_states = self.output.forward(&hidden_states)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -336,7 +337,7 @@ struct BertEncoder {
 }
 
 impl BertEncoder {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let layers = (0..config.num_hidden_layers)
             .map(|index| BertLayer::load(vb.pp(format!("layer.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
@@ -359,14 +360,70 @@ impl BertEncoder {
     }
 }
 
-struct BertClassificationHead {
-    intermediate: Linear,
+pub trait ClassificationHead {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
+}
+
+pub struct BertClassificationHead {
+    pooler: Option<Linear>,
     output: Linear,
     span: tracing::Span,
 }
 
 impl BertClassificationHead {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub(crate) fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
+        let n_classes = match &config.id2label {
+            None => candle::bail!("`id2label` must be set for classifier models"),
+            Some(id2label) => id2label.len(),
+        };
+
+        let pooler = if let Ok(pooler_weight) = vb
+            .pp("bert.pooler.dense")
+            .get((config.hidden_size, config.hidden_size), "weight")
+        {
+            let pooler_bias = vb.pp("bert.pooler.dense").get(config.hidden_size, "bias")?;
+            Some(Linear::new(pooler_weight, Some(pooler_bias), None))
+        } else {
+            None
+        };
+
+        let output_weight = vb
+            .pp("classifier")
+            .get((n_classes, config.hidden_size), "weight")?;
+        let output_bias = vb.pp("classifier").get(n_classes, "bias")?;
+        let output = Linear::new(output_weight, Some(output_bias), None);
+
+        Ok(Self {
+            pooler,
+            output,
+            span: tracing::span!(tracing::Level::TRACE, "classifier"),
+        })
+    }
+}
+
+impl ClassificationHead for BertClassificationHead {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let mut hidden_states = hidden_states.clone();
+        if let Some(pooler) = self.pooler.as_ref() {
+            hidden_states = pooler.forward(&hidden_states)?;
+            hidden_states = hidden_states.tanh()?;
+        }
+
+        let hidden_states = self.output.forward(&hidden_states)?;
+        Ok(hidden_states)
+    }
+}
+
+pub struct RobertaClassificationHead {
+    intermediate: Linear,
+    output: Linear,
+    span: tracing::Span,
+}
+
+impl RobertaClassificationHead {
+    pub(crate) fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let n_classes = match &config.id2label {
             None => candle::bail!("`id2label` must be set for classifier models"),
             Some(id2label) => id2label.len(),
@@ -390,8 +447,10 @@ impl BertClassificationHead {
             span: tracing::span!(tracing::Level::TRACE, "classifier"),
         })
     }
+}
 
-    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+impl ClassificationHead for RobertaClassificationHead {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
         let hidden_states = self.intermediate.forward(hidden_states)?;
@@ -402,11 +461,95 @@ impl BertClassificationHead {
     }
 }
 
+#[derive(Debug)]
+pub struct BertSpladeHead {
+    transform: Linear,
+    transform_layer_norm: LayerNorm,
+    decoder: Linear,
+    span: tracing::Span,
+}
+
+impl BertSpladeHead {
+    pub(crate) fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
+        let vb = vb.pp("cls.predictions");
+        let transform_weight = vb
+            .pp("transform.dense")
+            .get((config.hidden_size, config.hidden_size), "weight")?;
+        let transform_bias = vb.pp("transform.dense").get(config.hidden_size, "bias")?;
+        let transform = Linear::new(
+            transform_weight,
+            Some(transform_bias),
+            Some(config.hidden_act.clone()),
+        );
+
+        let transform_layer_norm = LayerNorm::load(
+            vb.pp("transform.LayerNorm"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
+        )?;
+
+        let decoder_weight = vb
+            .pp("decoder")
+            .get((config.vocab_size, config.hidden_size), "weight")?;
+        let decoder_bias = vb.get(config.vocab_size, "bias")?;
+        let decoder = Linear::new(decoder_weight, Some(decoder_bias), Some(HiddenAct::Relu));
+
+        Ok(Self {
+            transform,
+            transform_layer_norm,
+            decoder,
+            span: tracing::span!(tracing::Level::TRACE, "splade"),
+        })
+    }
+
+    pub(crate) fn load_roberta(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
+        let vb = vb.pp("lm_head");
+        let transform_weight = vb
+            .pp("dense")
+            .get((config.hidden_size, config.hidden_size), "weight")?;
+        let transform_bias = vb.pp("dense").get(config.hidden_size, "bias")?;
+        let transform = Linear::new(
+            transform_weight,
+            Some(transform_bias),
+            Some(HiddenAct::Gelu),
+        );
+
+        let transform_layer_norm = LayerNorm::load(
+            vb.pp("layer_norm"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
+        )?;
+
+        let decoder_weight = vb
+            .pp("decoder")
+            .get((config.vocab_size, config.hidden_size), "weight")?;
+        let decoder_bias = vb.get(config.vocab_size, "bias")?;
+        let decoder = Linear::new(decoder_weight, Some(decoder_bias), Some(HiddenAct::Relu));
+
+        Ok(Self {
+            transform,
+            transform_layer_norm,
+            decoder,
+            span: tracing::span!(tracing::Level::TRACE, "splade"),
+        })
+    }
+
+    pub(crate) fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let hidden_states = self.transform.forward(hidden_states)?;
+        let hidden_states = self.transform_layer_norm.forward(&hidden_states, None)?;
+        let hidden_states = self.decoder.forward(&hidden_states)?;
+        (1.0 + hidden_states)?.log()
+    }
+}
+
 pub struct BertModel {
     embeddings: BertEmbeddings,
     encoder: BertEncoder,
     pool: Pool,
-    classifier: Option<BertClassificationHead>,
+    classifier: Option<Box<dyn ClassificationHead + Send>>,
+    splade: Option<BertSpladeHead>,
 
     num_attention_heads: usize,
 
@@ -417,30 +560,30 @@ pub struct BertModel {
 }
 
 impl BertModel {
-    pub fn load(vb: VarBuilder, config: &Config, model_type: ModelType) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig, model_type: ModelType) -> Result<Self> {
         // Check position embedding type
         if config.position_embedding_type != PositionEmbeddingType::Absolute {
             candle::bail!("Bert only supports absolute position embeddings")
         }
 
-        let (pool, classifier) = match model_type {
+        let (pool, classifier, splade) = match model_type {
             // Classifier models always use CLS pooling
             ModelType::Classifier => {
-                if config.model_type == Some("bert".to_string()) {
-                    candle::bail!("`classifier` model type is not supported for Bert");
-                }
-                (
-                    Pool::Cls,
-                    Some(BertClassificationHead::load(vb.pp("classifier"), config)?),
-                )
-            }
-            ModelType::Embedding(pool) => (pool, None),
-        };
+                let pool = Pool::Cls;
 
-        // Check pool type
-        if pool != Pool::Mean && pool != Pool::Cls {
-            candle::bail!("Pool type {pool:?} is not supported");
-        }
+                let classifier: Box<dyn ClassificationHead + Send> =
+                    Box::new(BertClassificationHead::load(vb.clone(), config)?);
+                (pool, Some(classifier), None)
+            }
+            ModelType::Embedding(pool) => {
+                let splade = if pool == Pool::Splade {
+                    Some(BertSpladeHead::load(vb.clone(), config)?)
+                } else {
+                    None
+                };
+                (pool, None, splade)
+            }
+        };
 
         let (embeddings, encoder) = match (
             BertEmbeddings::load(vb.pp("embeddings"), config),
@@ -448,16 +591,9 @@ impl BertModel {
         ) {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
-                let model_type = config.model_type.clone().unwrap_or("bert".to_string());
-
                 if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
-                    BertEncoder::load(vb.pp(format!("{model_type}.encoder")), config),
-                ) {
-                    (embeddings, encoder)
-                } else if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp("roberta.embeddings"), config),
-                    BertEncoder::load(vb.pp("roberta.encoder"), config),
+                    BertEmbeddings::load(vb.pp("bert.embeddings".to_string()), config),
+                    BertEncoder::load(vb.pp("bert.encoder".to_string()), config),
                 ) {
                     (embeddings, encoder)
                 } else {
@@ -471,6 +607,7 @@ impl BertModel {
             encoder,
             pool,
             classifier,
+            splade,
             num_attention_heads: config.num_attention_heads,
             device: vb.device().clone(),
             dtype: vb.dtype(),
@@ -478,10 +615,80 @@ impl BertModel {
         })
     }
 
-    pub fn forward(&self, batch: Batch) -> Result<Tensor> {
+    pub fn load_roberta(
+        vb: VarBuilder,
+        config: &BertConfig,
+        model_type: ModelType,
+    ) -> Result<Self> {
+        // Check position embedding type
+        if config.position_embedding_type != PositionEmbeddingType::Absolute {
+            candle::bail!("Bert only supports absolute position embeddings")
+        }
+
+        let (pool, classifier, splade) = match model_type {
+            // Classifier models always use CLS pooling
+            ModelType::Classifier => {
+                let pool = Pool::Cls;
+
+                let classifier: Box<dyn ClassificationHead + Send> = Box::new(
+                    RobertaClassificationHead::load(vb.pp("classifier"), config)?,
+                );
+                (pool, Some(classifier), None)
+            }
+            ModelType::Embedding(pool) => {
+                let splade = if pool == Pool::Splade {
+                    Some(BertSpladeHead::load_roberta(vb.clone(), config)?)
+                } else {
+                    None
+                };
+                (pool, None, splade)
+            }
+        };
+
+        let (embeddings, encoder) = match (
+            BertEmbeddings::load(vb.pp("embeddings"), config),
+            BertEncoder::load(vb.pp("encoder"), config),
+        ) {
+            (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
+            (Err(err), _) | (_, Err(err)) => {
+                if let (Ok(embeddings), Ok(encoder)) = (
+                    BertEmbeddings::load(vb.pp("roberta.embeddings".to_string()), config),
+                    BertEncoder::load(vb.pp("roberta.encoder".to_string()), config),
+                ) {
+                    (embeddings, encoder)
+                } else if let (Ok(embeddings), Ok(encoder)) = (
+                    BertEmbeddings::load(vb.pp("xlm-roberta.embeddings".to_string()), config),
+                    BertEncoder::load(vb.pp("xlm-roberta.encoder".to_string()), config),
+                ) {
+                    (embeddings, encoder)
+                } else if let (Ok(embeddings), Ok(encoder)) = (
+                    BertEmbeddings::load(vb.pp("camembert.embeddings".to_string()), config),
+                    BertEncoder::load(vb.pp("camembert.encoder".to_string()), config),
+                ) {
+                    (embeddings, encoder)
+                } else {
+                    return Err(err);
+                }
+            }
+        };
+
+        Ok(Self {
+            embeddings,
+            encoder,
+            pool,
+            classifier,
+            splade,
+            num_attention_heads: config.num_attention_heads,
+            device: vb.device().clone(),
+            dtype: vb.dtype(),
+            span: tracing::span!(tracing::Level::TRACE, "model"),
+        })
+    }
+
+    pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         let _enter = self.span.enter();
 
-        let batch_size = batch.cumulative_seq_lengths.len() - 1;
+        let batch_size = batch.len();
         let max_length = batch.max_length as usize;
 
         let shape = (batch_size, max_length);
@@ -511,7 +718,7 @@ impl BertModel {
                         input_ids.push(batch.input_ids[j]);
                         type_ids.push(batch.token_type_ids[j]);
                         position_ids.push(batch.position_ids[j]);
-                        attention_mask.push(1.0);
+                        attention_mask.push(1.0_f32);
                         attention_bias.push(0.0);
                     }
 
@@ -524,7 +731,7 @@ impl BertModel {
                             input_ids.push(0);
                             type_ids.push(0);
                             position_ids.push(0);
-                            attention_mask.push(0.0);
+                            attention_mask.push(0.0_f32);
                             attention_bias.push(f32::NEG_INFINITY);
                         }
                     }
@@ -597,25 +804,110 @@ impl BertModel {
             .embeddings
             .forward(&input_ids, &type_ids, &position_ids)?;
 
-        let mut outputs = self
+        let outputs = self
             .encoder
             .forward(&embedding_output, attention_bias.as_ref())?;
 
-        let results = match self.pool {
-            // CLS pooling
-            Pool::Cls => outputs.i((.., 0))?,
-            // Mean pooling
-            Pool::Mean => {
-                if let Some(attention_mask) = attention_mask {
-                    // Mask padded values
-                    outputs = outputs.broadcast_mul(&attention_mask)?;
-                }
+        let has_pooling_requests = !batch.pooled_indices.is_empty();
+        let has_raw_requests = !batch.raw_indices.is_empty();
 
-                (outputs.sum(1)?.broadcast_div(&input_lengths))?
-            }
+        let pooled_embeddings = if has_pooling_requests {
+            let pooled_indices_length = batch.pooled_indices.len();
+            let mut outputs = outputs.clone();
+
+            // Only use pooled_indices if at least one member of the batch ask for raw embeddings
+            let pooled_indices = if has_raw_requests {
+                let pooled_indices =
+                    Tensor::from_vec(batch.pooled_indices, pooled_indices_length, &self.device)?;
+
+                // Select values in the batch
+                outputs = outputs.index_select(&pooled_indices, 0)?;
+                Some(pooled_indices)
+            } else {
+                None
+            };
+
+            let pooled_embeddings = match self.pool {
+                // CLS pooling
+                Pool::Cls => outputs.i((.., 0))?,
+                // Mean pooling
+                Pool::Mean => {
+                    if let Some(ref attention_mask) = attention_mask {
+                        let mut attention_mask = attention_mask.clone();
+
+                        if let Some(pooled_indices) = pooled_indices {
+                            // Select values in the batch
+                            attention_mask = attention_mask.index_select(&pooled_indices, 0)?;
+                        };
+
+                        // Mask padded values
+                        outputs = outputs.broadcast_mul(&attention_mask)?;
+                    }
+
+                    (outputs.sum(1)?.broadcast_div(&input_lengths))?
+                }
+                Pool::Splade => {
+                    // Unwrap is safe here
+                    let splade_head = self.splade.as_ref().unwrap();
+                    let mut relu_log = splade_head.forward(&outputs)?;
+
+                    if let Some(ref attention_mask) = attention_mask {
+                        let mut attention_mask = attention_mask.clone();
+
+                        if let Some(pooled_indices) = pooled_indices {
+                            // Select values in the batch
+                            attention_mask = attention_mask.index_select(&pooled_indices, 0)?;
+                        };
+
+                        // Mask padded values
+                        relu_log = relu_log.broadcast_mul(&attention_mask)?;
+                    }
+
+                    relu_log.max(1)?
+                }
+            };
+            Some(pooled_embeddings)
+        } else {
+            None
         };
 
-        Ok(results)
+        let raw_embeddings = if has_raw_requests {
+            // Reshape outputs
+            let (b, l, h) = outputs.shape().dims3()?;
+            let outputs = outputs.reshape((b * l, h))?;
+
+            // We need to remove the padding tokens only if batch_size > 1 and there are some
+            // member of the batch that require pooling
+            // or if batch_size > 1 and the members of the batch have different lengths
+            if (attention_mask.is_some() || has_pooling_requests) && batch_size > 1 {
+                let mut final_indices: Vec<u32> = Vec::with_capacity(batch_size * max_length);
+
+                for i in batch.raw_indices.into_iter() {
+                    let start = i * batch.max_length;
+                    let i = i as usize;
+                    let length =
+                        batch.cumulative_seq_lengths[i + 1] - batch.cumulative_seq_lengths[i];
+
+                    for j in start..start + length {
+                        // Add indices for the tokens of this specific member of the batch
+                        final_indices.push(j);
+                    }
+                }
+
+                let final_indices_length = final_indices.len();
+                let final_indices =
+                    Tensor::from_vec(final_indices, final_indices_length, &self.device)?;
+
+                // Select the tokens with final indices
+                Some(outputs.index_select(&final_indices, 0)?)
+            } else {
+                Some(outputs)
+            }
+        } else {
+            None
+        };
+
+        Ok((pooled_embeddings, raw_embeddings))
     }
 }
 
@@ -624,7 +916,7 @@ impl Model for BertModel {
         true
     }
 
-    fn embed(&self, batch: Batch) -> Result<Tensor> {
+    fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
     }
 
@@ -632,8 +924,10 @@ impl Model for BertModel {
         match &self.classifier {
             None => candle::bail!("`predict` is not implemented for this model"),
             Some(classifier) => {
-                let hidden_states = self.forward(batch)?;
-                classifier.forward(&hidden_states)
+                let (pooled_embeddings, _raw_embeddings) = self.forward(batch)?;
+                let pooled_embeddings =
+                    pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
+                classifier.forward(&pooled_embeddings)
             }
         }
     }

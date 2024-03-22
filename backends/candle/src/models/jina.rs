@@ -1,13 +1,13 @@
 use crate::alibi::build_alibi_tensor;
 use crate::layers::{get_cublas_lt_wrapper, HiddenAct, LayerNorm, Linear};
 use crate::models::Model;
-use crate::models::{Config, PositionEmbeddingType};
+use crate::models::{BertConfig, PositionEmbeddingType};
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{Embedding, VarBuilder};
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 #[derive(Debug)]
-struct BertEmbeddings {
+pub struct BertEmbeddings {
     word_embeddings: Embedding,
     token_type_embeddings: Embedding,
     position_embeddings: Option<Embedding>,
@@ -16,7 +16,7 @@ struct BertEmbeddings {
 }
 
 impl BertEmbeddings {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let position_embeddings =
             if config.position_embedding_type == PositionEmbeddingType::Absolute {
                 Some(Embedding::new(
@@ -51,7 +51,7 @@ impl BertEmbeddings {
         })
     }
 
-    fn forward(
+    pub fn forward(
         &self,
         input_ids: &Tensor,
         token_type_ids: &Tensor,
@@ -65,10 +65,11 @@ impl BertEmbeddings {
         if let Some(position_embeddings) = &self.position_embeddings {
             let position_embeddings = position_embeddings.forward(position_ids)?;
             let embeddings = input_embeddings.add(&token_type_embeddings)?;
-            self.layer_norm.forward(&embeddings, &position_embeddings)
+            self.layer_norm
+                .forward(&embeddings, Some(&position_embeddings))
         } else {
             self.layer_norm
-                .forward(&input_embeddings, &token_type_embeddings)
+                .forward(&input_embeddings, Some(&token_type_embeddings))
         }
     }
 }
@@ -87,7 +88,7 @@ struct BertAttention {
 }
 
 impl BertAttention {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let attention_head_size = config.hidden_size / config.num_attention_heads;
         let all_head_size = config.num_attention_heads * attention_head_size;
         let hidden_size = config.hidden_size;
@@ -229,7 +230,7 @@ impl BertAttention {
         let context_layer = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?;
 
         let hidden_states = self.dense.forward(&context_layer)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -248,7 +249,7 @@ struct JinaBertLayer {
 }
 
 impl JinaBertLayer {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let attention = BertAttention::load(vb.pp("attention"), config)?;
 
         let gated_weight = vb
@@ -296,13 +297,14 @@ impl JinaBertLayer {
         let gated = match self.act {
             HiddenAct::Gelu => gated.gelu(),
             HiddenAct::Relu => gated.relu(),
+            HiddenAct::Swiglu => gated.silu(),
         }?;
 
         let non_gated = hidden_states.i((.., .., self.intermediate_size..))?;
         let hidden_states = (gated * non_gated)?;
 
         let hidden_states = self.output.forward(&hidden_states)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, &residual)?;
+        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -314,7 +316,7 @@ struct BertEncoder {
 }
 
 impl BertEncoder {
-    pub fn load(vb: VarBuilder, config: &Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let layers = (0..config.num_hidden_layers)
             .map(|index| JinaBertLayer::load(vb.pp(format!("layer.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
@@ -352,7 +354,7 @@ pub struct JinaBertModel {
 }
 
 impl JinaBertModel {
-    pub fn load(vb: VarBuilder, config: &Config, model_type: ModelType) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig, model_type: ModelType) -> Result<Self> {
         let alibi = match config.position_embedding_type {
             PositionEmbeddingType::Alibi => Some(build_alibi_tensor(
                 config.max_position_embeddings,
@@ -364,17 +366,16 @@ impl JinaBertModel {
         };
 
         let pool = match model_type {
-            // Classifier models always use CLS pooling
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for Jina")
             }
-            ModelType::Embedding(pool) => pool,
+            ModelType::Embedding(pool) => {
+                if pool == Pool::Splade {
+                    candle::bail!("`splade` is not supported for Jina")
+                }
+                pool
+            }
         };
-
-        // Check pool type
-        if pool != Pool::Mean && pool != Pool::Cls {
-            candle::bail!("Pool type {pool:?} is not supported");
-        }
 
         let (embeddings, encoder) = match (
             BertEmbeddings::load(vb.pp("embeddings"), config),
@@ -382,14 +383,7 @@ impl JinaBertModel {
         ) {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
-                let model_type = config.model_type.clone().unwrap_or("bert".to_string());
-
                 if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp(format!("{model_type}.embeddings")), config),
-                    BertEncoder::load(vb.pp(format!("{model_type}.encoder")), config),
-                ) {
-                    (embeddings, encoder)
-                } else if let (Ok(embeddings), Ok(encoder)) = (
                     BertEmbeddings::load(vb.pp("bert.embeddings"), config),
                     BertEncoder::load(vb.pp("bert.encoder"), config),
                 ) {
@@ -412,10 +406,10 @@ impl JinaBertModel {
         })
     }
 
-    pub fn forward(&self, batch: Batch) -> Result<Tensor> {
+    pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         let _enter = self.span.enter();
 
-        let batch_size = batch.cumulative_seq_lengths.len() - 1;
+        let batch_size = batch.len();
         let max_length = batch.max_length as usize;
 
         let shape = (batch_size, max_length);
@@ -445,7 +439,7 @@ impl JinaBertModel {
                         input_ids.push(batch.input_ids[j]);
                         type_ids.push(batch.token_type_ids[j]);
                         position_ids.push(batch.position_ids[j]);
-                        attention_mask.push(1.0);
+                        attention_mask.push(1.0_f32);
                         attention_bias.push(0.0);
                     }
 
@@ -458,7 +452,7 @@ impl JinaBertModel {
                             input_ids.push(0);
                             type_ids.push(0);
                             position_ids.push(0);
-                            attention_mask.push(0.0);
+                            attention_mask.push(0.0_f32);
                             attention_bias.push(f32::NEG_INFINITY);
                         }
                     }
@@ -574,25 +568,92 @@ impl JinaBertModel {
             .embeddings
             .forward(&input_ids, &type_ids, &position_ids)?;
 
-        let mut outputs = self
+        let outputs = self
             .encoder
             .forward(&embedding_output, attention_bias.as_ref())?;
 
-        let results = match self.pool {
-            // CLS pooling
-            Pool::Cls => outputs.i((.., 0))?,
-            // Mean pooling
-            Pool::Mean => {
-                if let Some(attention_mask) = attention_mask {
-                    // Mask padded values
-                    outputs = outputs.broadcast_mul(&attention_mask)?;
-                }
+        let has_pooling_requests = !batch.pooled_indices.is_empty();
+        let has_raw_requests = !batch.raw_indices.is_empty();
 
-                (outputs.sum(1)?.broadcast_div(&input_lengths))?
-            }
+        let pooled_embeddings = if has_pooling_requests {
+            let pooled_indices_length = batch.pooled_indices.len();
+            let mut outputs = outputs.clone();
+
+            // Only use pooled_indices if at least one member of the batch ask for raw embeddings
+            let pooled_indices = if has_raw_requests {
+                let pooled_indices =
+                    Tensor::from_vec(batch.pooled_indices, pooled_indices_length, &self.device)?;
+
+                // Select values in the batch
+                outputs = outputs.index_select(&pooled_indices, 0)?;
+                Some(pooled_indices)
+            } else {
+                None
+            };
+
+            let pooled_embeddings = match self.pool {
+                // CLS pooling
+                Pool::Cls => outputs.i((.., 0))?,
+                // Mean pooling
+                Pool::Mean => {
+                    if let Some(ref attention_mask) = attention_mask {
+                        let mut attention_mask = attention_mask.clone();
+
+                        if let Some(pooled_indices) = pooled_indices {
+                            // Select values in the batch
+                            attention_mask = attention_mask.index_select(&pooled_indices, 0)?;
+                        };
+
+                        // Mask padded values
+                        outputs = outputs.broadcast_mul(&attention_mask)?;
+                    }
+
+                    (outputs.sum(1)?.broadcast_div(&input_lengths))?
+                }
+                Pool::Splade => unreachable!(),
+            };
+            Some(pooled_embeddings)
+        } else {
+            None
         };
 
-        Ok(results)
+        let raw_embeddings = if has_raw_requests {
+            // Reshape outputs
+            let (b, l, h) = outputs.shape().dims3()?;
+            let outputs = outputs.reshape((b * l, h))?;
+
+            // We need to remove the padding tokens only if batch_size > 1 and there are some
+            // member of the batch that require pooling
+            // or if batch_size > 1 and the members of the batch have different lengths
+            if (attention_mask.is_some() || has_pooling_requests) && batch_size > 1 {
+                let mut final_indices: Vec<u32> = Vec::with_capacity(batch_size * max_length);
+
+                for i in batch.raw_indices.into_iter() {
+                    let start = i * batch.max_length;
+                    let i = i as usize;
+                    let length =
+                        batch.cumulative_seq_lengths[i + 1] - batch.cumulative_seq_lengths[i];
+
+                    for j in start..start + length {
+                        // Add indices for the tokens of this specific member of the batch
+                        final_indices.push(j);
+                    }
+                }
+
+                let final_indices_length = final_indices.len();
+                let final_indices =
+                    Tensor::from_vec(final_indices, final_indices_length, &self.device)?;
+
+                // Select the tokens with final indices
+                Some(outputs.index_select(&final_indices, 0)?)
+            } else {
+                Some(outputs)
+            }
+        } else {
+            None
+        };
+
+        Ok((pooled_embeddings, raw_embeddings))
     }
 }
 
@@ -600,7 +661,7 @@ impl Model for JinaBertModel {
     fn is_padded(&self) -> bool {
         true
     }
-    fn embed(&self, batch: Batch) -> Result<Tensor> {
+    fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
     }
 }
