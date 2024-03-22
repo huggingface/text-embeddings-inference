@@ -1,11 +1,11 @@
 /// HTTP Server logic
 use crate::http::types::{
-    EmbedAllRequest, EmbedAllResponse, EmbedRequest, EmbedResponse, EmbedSparseRequest,
-    EmbedSparseResponse, Input, OpenAICompatEmbedding, OpenAICompatErrorResponse,
-    OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage, PredictInput, PredictRequest,
-    PredictResponse, Prediction, Rank, RerankRequest, RerankResponse, Sequence, SimpleToken,
-    SparseValue, TokenizeRequest, TokenizeResponse, VertexRequest, VertexResponse,
-    VertexResponseInstance,
+    DecodeRequest, DecodeResponse, EmbedAllRequest, EmbedAllResponse, EmbedRequest, EmbedResponse,
+    EmbedSparseRequest, EmbedSparseResponse, Input, InputIds, OpenAICompatEmbedding,
+    OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage,
+    PredictInput, PredictRequest, PredictResponse, Prediction, Rank, RerankRequest, RerankResponse,
+    Sequence, SimpleToken, SparseValue, TokenizeRequest, TokenizeResponse, VertexPrediction,
+    VertexRequest, VertexResponse,
 };
 use crate::{
     shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
@@ -1059,7 +1059,7 @@ path = "/tokenize",
 request_body = TokenizeRequest,
 responses(
 (status = 200, description = "Tokenized ids", body = TokenizeResponse),
-(status = 422, description = "Tokenization error", body = OpenAICompatErrorResponse,
+(status = 422, description = "Tokenization error", body = ErrorResponse,
 example = json ! ({"message": "Tokenization error", "type": "tokenizer"})),
 )
 )]
@@ -1153,6 +1153,75 @@ async fn tokenize(
     Ok(Json(TokenizeResponse(tokens)))
 }
 
+/// Decode input ids
+#[utoipa::path(
+post,
+tag = "Text Embeddings Inference",
+path = "/decode",
+request_body = DecodeRequest,
+responses(
+(status = 200, description = "Decoded ids", body = DecodeResponse),
+(status = 422, description = "Tokenization error", body = ErrorResponse,
+example = json ! ({"message": "Tokenization error", "type": "tokenizer"})),
+)
+)]
+#[instrument(skip_all)]
+async fn decode(
+    infer: Extension<Infer>,
+    info: Extension<Info>,
+    Json(req): Json<DecodeRequest>,
+) -> Result<Json<DecodeResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let decode_inner = move |ids: Vec<u32>, skip_special_tokens: bool, infer: Infer| async move {
+        let text = infer
+            .decode(ids, skip_special_tokens)
+            .await
+            .map_err(ErrorResponse::from)?;
+        Ok::<String, ErrorResponse>(text)
+    };
+
+    let texts = match req.ids {
+        InputIds::Single(ids) => vec![decode_inner(ids, req.skip_special_tokens, infer.0).await?],
+        InputIds::Batch(ids) => {
+            if ids.is_empty() {
+                let message = "`ids` cannot be empty".to_string();
+                tracing::error!("{message}");
+                let err = ErrorResponse {
+                    error: message,
+                    error_type: ErrorType::Validation,
+                };
+                metrics::increment_counter!("te_request_failure", "err" => "validation");
+                Err(err)?;
+            }
+
+            let batch_size = ids.len();
+            if batch_size > info.max_client_batch_size {
+                let message = format!(
+                    "batch size {batch_size} > maximum allowed batch size {}",
+                    info.max_client_batch_size
+                );
+                tracing::error!("{message}");
+                let err = ErrorResponse {
+                    error: message,
+                    error_type: ErrorType::Validation,
+                };
+                metrics::increment_counter!("te_request_failure", "err" => "batch_size");
+                Err(err)?;
+            }
+
+            let mut futures = Vec::with_capacity(batch_size);
+            for ids in ids {
+                futures.push(decode_inner(ids, req.skip_special_tokens, infer.0.clone()));
+            }
+
+            join_all(futures)
+                .await
+                .into_iter()
+                .collect::<Result<Vec<String>, ErrorResponse>>()?
+        }
+    };
+    Ok(Json(DecodeResponse(texts)))
+}
+
 /// Generate embeddings from a Vertex request
 #[utoipa::path(
 post,
@@ -1179,22 +1248,22 @@ async fn vertex_compatibility(
 ) -> Result<Json<VertexResponse>, (StatusCode, Json<ErrorResponse>)> {
     let embed_future = move |infer: Extension<Infer>, info: Extension<Info>, req: EmbedRequest| async move {
         let result = embed(infer, info, Json(req)).await?;
-        Ok(VertexResponseInstance::Embed(result.1 .0))
+        Ok(VertexPrediction::Embed(result.1 .0))
     };
     let embed_sparse_future =
         move |infer: Extension<Infer>, info: Extension<Info>, req: EmbedSparseRequest| async move {
             let result = embed_sparse(infer, info, Json(req)).await?;
-            Ok(VertexResponseInstance::EmbedSparse(result.1 .0))
+            Ok(VertexPrediction::EmbedSparse(result.1 .0))
         };
     let predict_future =
         move |infer: Extension<Infer>, info: Extension<Info>, req: PredictRequest| async move {
             let result = predict(infer, info, Json(req)).await?;
-            Ok(VertexResponseInstance::Predict(result.1 .0))
+            Ok(VertexPrediction::Predict(result.1 .0))
         };
     let rerank_future =
         move |infer: Extension<Infer>, info: Extension<Info>, req: RerankRequest| async move {
             let result = rerank(infer, info, Json(req)).await?;
-            Ok(VertexResponseInstance::Rerank(result.1 .0))
+            Ok(VertexPrediction::Rerank(result.1 .0))
         };
 
     let mut futures = Vec::with_capacity(req.instances.len());
@@ -1231,7 +1300,7 @@ async fn vertex_compatibility(
     let predictions = join_all(futures)
         .await
         .into_iter()
-        .collect::<Result<Vec<VertexResponseInstance>, (StatusCode, Json<ErrorResponse>)>>()?;
+        .collect::<Result<Vec<VertexPrediction>, (StatusCode, Json<ErrorResponse>)>>()?;
 
     Ok(Json(VertexResponse { predictions }))
 }
@@ -1270,6 +1339,7 @@ pub async fn run(
     embed_sparse,
     openai_embed,
     tokenize,
+    decode,
     metrics,
     ),
     components(
@@ -1302,6 +1372,9 @@ pub async fn run(
     TokenizeRequest,
     TokenizeResponse,
     SimpleToken,
+    InputIds,
+    DecodeRequest,
+    DecodeResponse,
     ErrorType,
     )
     ),
@@ -1347,7 +1420,7 @@ pub async fn run(
             #[derive(OpenApi)]
             #[openapi(
                 paths(vertex_compatibility),
-                components(schemas(VertexRequest, VertexResponse, VertexResponseInstance))
+                components(schemas(VertexRequest, VertexResponse, VertexPrediction))
             )]
             struct VertextApiDoc;
 
@@ -1372,6 +1445,7 @@ pub async fn run(
         .route("/predict", post(predict))
         .route("/rerank", post(rerank))
         .route("/tokenize", post(tokenize))
+        .route("/decode", post(decode))
         // OpenAI compat route
         .route("/embeddings", post(openai_embed))
         // Vertex compat route

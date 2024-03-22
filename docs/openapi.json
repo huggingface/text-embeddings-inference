@@ -12,6 +12,52 @@
     "version": "1.1.0"
   },
   "paths": {
+    "/decode": {
+      "post": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Decode input ids",
+        "description": "Decode input ids",
+        "operationId": "decode",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Decoded ids",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecodeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "message": "Tokenization error",
+                  "type": "tokenizer"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/embed": {
       "post": {
         "tags": [
@@ -647,7 +693,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 },
                 "example": {
                   "message": "Tokenization error",
@@ -770,6 +816,31 @@
             }
           }
         }
+      },
+      "DecodeRequest": {
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "ids": {
+            "$ref": "#/components/schemas/InputIds"
+          },
+          "skip_special_tokens": {
+            "type": "boolean",
+            "default": "true",
+            "example": "true"
+          }
+        }
+      },
+      "DecodeResponse": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "example": [
+          "test"
+        ]
       },
       "EmbedAllRequest": {
         "type": "object",
@@ -999,6 +1070,29 @@
             "type": "array",
             "items": {
               "type": "string"
+            }
+          }
+        ]
+      },
+      "InputIds": {
+        "oneOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
             }
           }
         ]

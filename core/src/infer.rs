@@ -75,6 +75,22 @@ impl Infer {
     }
 
     #[instrument(skip(self))]
+    pub async fn decode(
+        &self,
+        ids: Vec<u32>,
+        skip_special_tokens: bool,
+    ) -> Result<String, TextEmbeddingsError> {
+        self.tokenization
+            .decode(ids, skip_special_tokens)
+            .await
+            .map_err(|err| {
+                metrics::increment_counter!("te_request_failure", "err" => "tokenization");
+                tracing::error!("{err}");
+                err
+            })
+    }
+
+    #[instrument(skip(self))]
     pub fn try_acquire_permit(&self) -> Result<OwnedSemaphorePermit, TextEmbeddingsError> {
         // Limit concurrent requests by acquiring a permit from the semaphore
         self.clone()
