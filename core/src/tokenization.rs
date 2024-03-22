@@ -1,12 +1,8 @@
 /// Payload tokenization logic
 use crate::TextEmbeddingsError;
 use tokenizers::tokenizer::Tokenizer;
-use tokenizers::{
-    Encoding as TokenizersEncoding, Token, TruncationDirection, TruncationParams,
-    TruncationStrategy,
-};
 pub use tokenizers::Encoding as RawEncoding;
-use tokenizers::{EncodeInput, TruncationDirection, TruncationParams, TruncationStrategy};
+use tokenizers::{TruncationDirection, TruncationParams, TruncationStrategy};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{instrument, Span};
 
@@ -226,14 +222,25 @@ fn tokenize_input(
     truncate_params: Option<TruncationParams>,
     tokenizer: &mut Tokenizer,
 ) -> Result<RawEncoding, TextEmbeddingsError> {
-    let inputs: EncodeInput = match inputs {
-        EncodingInput::Single(s) => s.into(),
-        EncodingInput::Dual(s1, s2) => (s1, s2).into(),
+    let encoding = match inputs {
+        // encode input
+        EncodingInput::Single(s) => tokenizer
+            .with_truncation(truncate_params)?
+            .encode::<String>(s, add_special_tokens)?,
+        EncodingInput::Dual(s1, s2) => {
+            tokenizer
+                .with_truncation(truncate_params)?
+                .encode::<(String, String)>((s1, s2), add_special_tokens)?
+        }
+        // input is encoded -> convert to tokenizers Encoding
+        EncodingInput::Ids(ids) => {
+            let text = tokenizer.decode(&ids, false)?;
+            tokenizer
+                .with_truncation(truncate_params)?
+                .encode::<String>(text, false)?
+        }
     };
-
-    Ok(tokenizer
-        .with_truncation(truncate_params)?
-        .encode(inputs, add_special_tokens)?)
+    Ok(encoding)
 }
 
 /// Get input length and optionally truncate it
@@ -252,25 +259,6 @@ fn encode_input(
         stride: 0,
     });
 
-    let encoding: TokenizersEncoding = match inputs {
-        // encode input
-        EncodingInput::Single(s) => tokenizer
-            .with_truncation(truncate_params)?
-            .encode::<String>(s.into(), true)?,
-        EncodingInput::Dual(s1, s2) => {
-            tokenizer
-                .with_truncation(truncate_params)?
-                .encode::<(String, String)>((s1, s2).into(), true)?
-        }
-        // input is encoded -> convert to tokenizers Encoding
-        EncodingInput::Vector(v) => {
-            let (tokens, token_type_ids) = create_tokens_and_type_ids(tokenizer, v)?;
-            let mut encoding = TokenizersEncoding::from_tokens(tokens, 0u32);
-            encoding.set_type_ids(token_type_ids);
-            encoding
-        }
-    };
-
     let encoding = tokenize_input(inputs, true, truncate_params, tokenizer)?;
     let seq_len = encoding.len();
 
@@ -280,44 +268,12 @@ fn encode_input(
         )));
     }
     metrics::histogram!("te_request_input_length", seq_len as f64);
-    Ok(Encoding {
-
     Ok(ValidEncoding {
         input_ids: encoding.get_ids().to_vec(),
         token_type_ids: encoding.get_type_ids().to_vec(),
         position_ids: (position_offset as u32..(seq_len + position_offset) as u32)
             .collect::<Vec<_>>(),
     })
-}
-
-// decode ids into tokens and assign token_type_ids
-fn create_tokens_and_type_ids(
-    tokenizer: &mut Tokenizer,
-    ids: Vec<u32>,
-) -> Result<(Vec<Token>, Vec<u32>), TextEmbeddingsError> {
-    let decoded = tokenizer.decode(&ids, false)?;
-    let splits = decoded.split(' ').map(|x| x.to_owned()).collect::<Vec<_>>();
-    let offsets: Vec<_> = splits
-        .iter()
-        .scan(0, |state, x| {
-            let res = (*state, *state + x.len());
-            *state += x.len() + 1;
-            Some(res)
-        })
-        .collect();
-    let mut sep_flag = false;
-    let (tokens, token_type_ids): (Vec<_>, Vec<_>) = splits
-        .iter()
-        .zip(ids.iter())
-        .zip(offsets.iter())
-        .map(|((value, id), offset)| {
-            let token = Token::new(*id, value.clone(), *offset);
-            let token_type_id = if sep_flag { 1 } else { 0 };
-            sep_flag = sep_flag || value == "[SEP]";
-            (token, token_type_id)
-        })
-        .unzip();
-    Ok((tokens, token_type_ids))
 }
 
 #[derive(Debug)]
@@ -331,7 +287,7 @@ pub struct ValidEncoding {
 pub enum EncodingInput {
     Single(String),
     Dual(String, String),
-    Vector(Vec<u32>),
+    Ids(Vec<u32>),
 }
 
 impl EncodingInput {
@@ -339,7 +295,7 @@ impl EncodingInput {
         match self {
             EncodingInput::Single(s) => s.is_empty(),
             EncodingInput::Dual(s1, s2) => s1.is_empty() && s2.is_empty(),
-            EncodingInput::Vector(v) => v.is_empty(),
+            EncodingInput::Ids(v) => v.is_empty(),
         }
     }
 }
