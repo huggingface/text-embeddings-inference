@@ -109,7 +109,7 @@ You can send multiple inputs in a batch. For example, for embeddings
 ```bash
 curl 127.0.0.1:8080/embed \
     -X POST \
-    -d '{"inputs":[["Today is a nice day"], ["I like you"]]}' \
+    -d '{"inputs":["Today is a nice day", "I like you"]}' \
     -H 'Content-Type: application/json'
 ```
 
