@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 fn main() {
     println!("cargo:rerun-if-env-changed=CUDA_COMPUTE_CAP");
@@ -22,10 +22,9 @@ fn set_compute_cap() -> Result<usize> {
             .context("`nvidia-smi` failed. Ensure that you have CUDA installed and that `nvidia-smi` is in your PATH.")?;
         let out = std::str::from_utf8(&out.stdout).context("stdout is not a utf8 string")?;
         let mut lines = out.lines();
-        assert_eq!(
-            lines.next().context("missing line in stdout")?,
-            "compute_cap"
-        );
+        if lines.next().context("missing line in stdout")? != "compute_cap" {
+            bail!("First line should be `compute_cap`");
+        }
         let cap = lines
             .next()
             .context("missing line in stdout")?

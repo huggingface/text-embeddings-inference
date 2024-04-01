@@ -7,6 +7,7 @@ use serde::Deserialize;
 pub enum HiddenAct {
     Gelu,
     Relu,
+    Swiglu,
 }
 
 #[derive(Debug)]
@@ -68,6 +69,7 @@ impl Linear {
                 match act {
                     HiddenAct::Gelu => x.gelu(),
                     HiddenAct::Relu => x.relu(),
+                    HiddenAct::Swiglu => candle_nn::ops::swiglu(&x),
                 }
             } else {
                 Ok(x)

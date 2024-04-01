@@ -20,33 +20,26 @@ We are continually expanding our support for other model types and plan to inclu
 
 ## Supported embeddings models
 
-Text Embeddings Inference currently supports BERT, CamemBERT, XLM-RoBERTa models with absolute positions and JinaBERT 
-model with Alibi positions. 
+Text Embeddings Inference currently supports BERT, CamemBERT, XLM-RoBERTa models with absolute positions and JinaBERT
+model with Alibi positions.
 
 Below are some examples of the currently supported models:
 
-
-| MTEB Rank | Model Type  | Model ID                                                                               | 
-|-----------|-------------|----------------------------------------------------------------------------------------|
-| 1         | Bert        | [BAAI/bge-large-en-v1.5](https://hf.co/BAAI/bge-large-en-v1.5)                         |
-| 2         |             | [BAAI/bge-base-en-v1.5](https://hf.co/BAAI/bge-base-en-v1.5)                           |
-| 3         |             | [llmrails/ember-v1](https://hf.co/llmrails/ember-v1)                                   |
-| 4         |             | [thenlper/gte-large](https://hf.co/thenlper/gte-large)                                 |
-| 5         |             | [thenlper/gte-base](https://hf.co/thenlper/gte-base)                                   |
-| 6         |             | [intfloat/e5-large-v2](https://hf.co/intfloat/e5-large-v2)                             |
-| 7         |             | [BAAI/bge-small-en-v1.5](https://hf.co/BAAI/bge-small-en-v1.5)                         |
-| 10        |             | [intfloat/e5-base-v2](https://hf.co/intfloat/e5-base-v2)                               |
-| 11        | XLM-RoBERTa | [intfloat/multilingual-e5-large](https://hf.co/intfloat/multilingual-e5-large)         |
-| N/A       | JinaBERT    | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)   |
-| N/A       | JinaBERT    | [jinaai/jina-embeddings-v2-small-en](https://hf.co/jinaai/jina-embeddings-v2-small-en) |
+| MTEB Rank | Model Type  | Model ID                                                                                         |
+|-----------|-------------|--------------------------------------------------------------------------------------------------|
+| 6         | Bert        | [WhereIsAI/UAE-Large-V1](https://hf.co/WhereIsAI/UAE-Large-V1)                                   |
+| 10        | XLM-RoBERTa | [intfloat/multilingual-e5-large-instruct](https://hf.co/intfloat/multilingual-e5-large-instruct) |
+| N/A       | NomicBert   | [nomic-ai/nomic-embed-text-v1](https://hf.co/nomic-ai/nomic-embed-text-v1)                       |
+| N/A       | NomicBert   | [nomic-ai/nomic-embed-text-v1.5](https://hf.co/nomic-ai/nomic-embed-text-v1.5)                   |
+| N/A       | JinaBERT    | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)             |
 
 
-To explore the list of best performing text embeddings models, visit the 
+To explore the list of best performing text embeddings models, visit the
 [Massive Text Embedding Benchmark (MTEB) Leaderboard](https://huggingface.co/spaces/mteb/leaderboard).
 
 ## Supported re-rankers and sequence classification models
 
-Text Embeddings Inference currently supports CamemBERT, and XLM-RoBERTa Sequence Classification models with absolute positions. 
+Text Embeddings Inference currently supports CamemBERT, and XLM-RoBERTa Sequence Classification models with absolute positions.
 
 Below are some examples of the currently supported models:
 
@@ -58,25 +51,25 @@ Below are some examples of the currently supported models:
 
 ## Supported hardware
 
-Text Embeddings Inference supports can be used on CPU, Turing (T4, RTX 2000 series, ...), Ampere 80 (A100, A30), 
-Ampere 86 (A10, A40, ...), Ada Lovelace (RTX 4000 series, ...), and Hopper (H100) architectures. 
+Text Embeddings Inference supports can be used on CPU, Turing (T4, RTX 2000 series, ...), Ampere 80 (A100, A30),
+Ampere 86 (A10, A40, ...), Ada Lovelace (RTX 4000 series, ...), and Hopper (H100) architectures.
 
 The library does **not** support CUDA compute capabilities < 7.5, which means V100, Titan V, GTX 1000 series, etc. are not supported.
-To leverage your GPUs, make sure to install the 
-[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html), and use 
-NVIDIA drivers with CUDA version 12.2 or higher. 
+To leverage your GPUs, make sure to install the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html), and use
+NVIDIA drivers with CUDA version 12.2 or higher.
 
 Find the appropriate Docker image for your hardware in the following table:
 
-| Architecture                        | Image                                                                     |
-|-------------------------------------|---------------------------------------------------------------------------|
-| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-0.6                     |
-| Volta                               | NOT SUPPORTED                                                             |
-| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-0.6 (experimental)   |
-| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:0.6                         |
-| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-0.6                      |
-| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-0.6                      |
-| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-0.4.0 (experimental) |
+| Architecture                        | Image                                                                    |
+|-------------------------------------|--------------------------------------------------------------------------|
+| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-1.2                    |
+| Volta                               | NOT SUPPORTED                                                            |
+| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-1.2 (experimental)  |
+| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:1.2                        |
+| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-1.2                     |
+| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-1.2                     |
+| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-1.2 (experimental)  |
 
 **Warning**: Flash Attention is turned off by default for the Turing image as it suffers from precision issues.
 You can turn Flash Attention v1 ON by using the `USE_FLASH_ATTENTION=True` environment variable.

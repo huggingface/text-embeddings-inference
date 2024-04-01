@@ -11,6 +11,10 @@ service Info {
 service Embed {
     rpc Embed (EmbedRequest) returns (EmbedResponse);
     rpc EmbedStream (stream EmbedRequest) returns (stream EmbedResponse);
+    rpc EmbedSparse (EmbedSparseRequest) returns (EmbedSparseResponse);
+    rpc EmbedSparseStream (stream EmbedSparseRequest) returns (stream EmbedSparseResponse);
+    rpc EmbedAll (EmbedAllRequest) returns (EmbedAllResponse);
+    rpc EmbedAllStream (stream EmbedAllRequest) returns (stream EmbedAllResponse);
 }
 
 service Predict {
@@ -21,6 +25,13 @@ service Predict {
 service Rerank {
     rpc Rerank (RerankRequest) returns (RerankResponse);
     rpc RerankStream (stream RerankStreamRequest) returns (RerankResponse);
+}
+
+service Tokenize {
+    rpc Tokenize (EncodeRequest) returns (EncodeResponse);
+    rpc TokenizeStream (stream EncodeRequest) returns (stream EncodeResponse);
+    rpc Decode (DecodeRequest) returns (DecodeResponse);
+    rpc DecodeStream (stream DecodeRequest) returns (stream DecodeResponse);
 }
 
 message InfoRequest {}
@@ -67,6 +78,35 @@ message EmbedResponse {
     Metadata metadata = 2;
 }
 
+message EmbedSparseRequest {
+    string inputs = 1;
+    bool truncate = 2;
+}
+
+message SparseValue {
+    uint32 index = 1;
+    float value = 2;
+}
+
+message EmbedSparseResponse {
+    repeated SparseValue sparse_embeddings = 1;
+    Metadata metadata = 2;
+}
+
+message EmbedAllRequest {
+    string inputs = 1;
+    bool truncate = 2;
+}
+
+message TokenEmbedding {
+    repeated float embeddings = 1;
+}
+
+message EmbedAllResponse {
+    repeated TokenEmbedding token_embeddings = 1;
+    Metadata metadata = 2;
+}
+
 message PredictRequest {
     string inputs = 1;
     bool truncate = 2;
@@ -110,4 +150,30 @@ message Rank {
 message RerankResponse {
     repeated Rank ranks = 1;
     Metadata metadata = 2;
+}
+
+message EncodeRequest {
+    string inputs = 1;
+    bool add_special_tokens = 2;
+}
+
+message SimpleToken {
+    uint32 id = 1;
+    string text = 2;
+    bool special = 3;
+    optional uint32 start = 4;
+    optional uint32 stop = 5;
+}
+
+message EncodeResponse {
+    repeated SimpleToken tokens = 1;
+}
+
+message DecodeRequest {
+    repeated uint32 ids = 1;
+    bool skip_special_tokens = 2;
+}
+
+message DecodeResponse {
+    string text = 1;
 }

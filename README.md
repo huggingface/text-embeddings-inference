@@ -35,16 +35,20 @@ length of 512 tokens:
     - [Using a private or gated model](#using-a-private-or-gated-model)
     - [Using Re-rankers models](#using-re-rankers-models)
     - [Using Sequence Classification models](#using-sequence-classification-models)
+    - [Using SPLADE pooling](#using-splade-pooling)
     - [Distributed Tracing](#distributed-tracing)
     - [gRPC](#grpc)
 - [Local Install](#local-install)
 - [Docker Build](#docker-build)
+    - [Apple M1/M2 Arm](#apple-m1m2-arm64-architectures)
+- [Examples](#examples)
 
 Text Embeddings Inference (TEI) is a toolkit for deploying and serving open source text embeddings and sequence
 classification models. TEI enables high-performance extraction for the most popular models, including FlagEmbedding,
 Ember, GTE and E5. TEI implements many features such as:
 
 * No model graph compilation step
+* Metal support for local execution on Macs
 * Small docker images and fast boot times. Get ready for true serverless!
 * Token based dynamic batching
 * Optimized transformers code for inference using [Flash Attention](https://github.com/HazyResearch/flash-attention),
@@ -66,26 +70,20 @@ with absolute positions in `text-embeddings-inference`.
 
 Examples of supported models:
 
-| MTEB Rank | Model Type  | Model ID                                                                               | 
-|-----------|-------------|----------------------------------------------------------------------------------------|
-| 1         | Bert        | [BAAI/bge-large-en-v1.5](https://hf.co/BAAI/bge-large-en-v1.5)                         |
-| 2         |             | [BAAI/bge-base-en-v1.5](https://hf.co/BAAI/bge-base-en-v1.5)                           |
-| 3         |             | [llmrails/ember-v1](https://hf.co/llmrails/ember-v1)                                   |
-| 4         |             | [thenlper/gte-large](https://hf.co/thenlper/gte-large)                                 |
-| 5         |             | [thenlper/gte-base](https://hf.co/thenlper/gte-base)                                   |
-| 6         |             | [intfloat/e5-large-v2](https://hf.co/intfloat/e5-large-v2)                             |
-| 7         |             | [BAAI/bge-small-en-v1.5](https://hf.co/BAAI/bge-small-en-v1.5)                         |
-| 10        |             | [intfloat/e5-base-v2](https://hf.co/intfloat/e5-base-v2)                               |
-| 11        | XLM-RoBERTa | [intfloat/multilingual-e5-large](https://hf.co/intfloat/multilingual-e5-large)         |
-| N/A       | JinaBERT    | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)   |
-| N/A       | JinaBERT    | [jinaai/jina-embeddings-v2-small-en](https://hf.co/jinaai/jina-embeddings-v2-small-en) |
+| MTEB Rank | Model Type  | Model ID                                                                                         |
+|-----------|-------------|--------------------------------------------------------------------------------------------------|
+| 6         | Bert        | [WhereIsAI/UAE-Large-V1](https://hf.co/WhereIsAI/UAE-Large-V1)                                   |
+| 10        | XLM-RoBERTa | [intfloat/multilingual-e5-large-instruct](https://hf.co/intfloat/multilingual-e5-large-instruct) |
+| N/A       | NomicBert   | [nomic-ai/nomic-embed-text-v1](https://hf.co/nomic-ai/nomic-embed-text-v1)                       |
+| N/A       | NomicBert   | [nomic-ai/nomic-embed-text-v1.5](https://hf.co/nomic-ai/nomic-embed-text-v1.5)                   |
+| N/A       | JinaBERT    | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)             |
 
 You can explore the list of best performing text embeddings
 models [here](https://huggingface.co/spaces/mteb/leaderboard).
 
 #### Sequence Classification and Re-Ranking
 
-`text-embeddings-inference` v0.4.0 added support for CamemBERT, RoBERTa and XLM-RoBERTa Sequence Classification models.
+`text-embeddings-inference` v0.4.0 added support for Bert, CamemBERT, RoBERTa and XLM-RoBERTa Sequence Classification models.
 
 Example of supported sequence classification models:
 
@@ -102,7 +100,7 @@ model=BAAI/bge-large-en-v1.5
 revision=refs/pr/5
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.6 --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2 --model-id $model --revision $revision
 ```
 
 And then you can make requests like
@@ -116,7 +114,7 @@ curl 127.0.0.1:8080/embed \
 
 **Note:** To use GPUs, you need to install
 the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
-We also recommend using NVIDIA drivers with CUDA version 12.0 or higher.
+NVIDIA drivers on your machine need to be compatible with CUDA version 12.2 or higher.
 
 To see all options to serve your models:
 
@@ -129,21 +127,21 @@ Usage: text-embeddings-router [OPTIONS]
 
 Options:
       --model-id <MODEL_ID>
-          The name of the model to load. Can be a MODEL_ID as listed on <https://hf.co/models> like `thenlper/gte-base`. 
-          Or it can be a local directory containing the necessary files as saved by `save_pretrained(...)` methods of 
+          The name of the model to load. Can be a MODEL_ID as listed on <https://hf.co/models> like `thenlper/gte-base`.
+          Or it can be a local directory containing the necessary files as saved by `save_pretrained(...)` methods of
           transformers
 
           [env: MODEL_ID=]
           [default: thenlper/gte-base]
 
       --revision <REVISION>
-          The actual revision of the model if you're referring to a model on the hub. You can use a specific commit id 
+          The actual revision of the model if you're referring to a model on the hub. You can use a specific commit id
           or a branch like `refs/pr/2`
 
           [env: REVISION=]
 
       --tokenization-workers <TOKENIZATION_WORKERS>
-          Optionally control the number of tokenizer workers used for payload tokenization, validation and truncation. 
+          Optionally control the number of tokenizer workers used for payload tokenization, validation and truncation.
           Default to the number of CPU cores on the machine
 
           [env: TOKENIZATION_WORKERS=]
@@ -157,17 +155,20 @@ Options:
       --pooling <POOLING>
           Optionally control the pooling method for embedding models.
 
-          If `pooling` is not set, the pooling configuration will be parsed from the model `1_Pooling/config.json` 
-          configuration.
+          If `pooling` is not set, the pooling configuration will be parsed from the model `1_Pooling/config.json` configuration.
 
           If `pooling` is set, it will override the model pooling configuration
 
           [env: POOLING=]
-          [possible values: cls, mean]
+
+          Possible values:
+          - cls:    Select the CLS token as embedding
+          - mean:   Apply Mean pooling to the model embeddings
+          - splade: Apply SPLADE (Sparse Lexical and Expansion) to the model embeddings. This option is only available if the loaded model is a `ForMaskedLM` Transformer model
 
       --max-concurrent-requests <MAX_CONCURRENT_REQUESTS>
-          The maximum amount of concurrent requests for this particular deployment. 
-          Having a low limit will refuse clients requests instead of having them wait for too long and is usually good 
+          The maximum amount of concurrent requests for this particular deployment.
+          Having a low limit will refuse clients requests instead of having them wait for too long and is usually good
           to handle backpressure correctly
 
           [env: MAX_CONCURRENT_REQUESTS=]
@@ -180,7 +181,7 @@ Options:
 
           For `max_batch_tokens=1000`, you could fit `10` queries of `total_tokens=100` or a single query of `1000` tokens.
 
-          Overall this number should be the largest possible until the model is compute bound. Since the actual memory 
+          Overall this number should be the largest possible until the model is compute bound. Since the actual memory
           overhead depends on the model implementation, text-embeddings-inference cannot infer this number automatically.
 
           [env: MAX_BATCH_TOKENS=]
@@ -215,17 +216,31 @@ Options:
           [default: 3000]
 
       --uds-path <UDS_PATH>
-          The name of the unix socket some text-embeddings-inference backends will use as they communicate internally 
+          The name of the unix socket some text-embeddings-inference backends will use as they communicate internally
           with gRPC
 
           [env: UDS_PATH=]
           [default: /tmp/text-embeddings-inference-server]
 
       --huggingface-hub-cache <HUGGINGFACE_HUB_CACHE>
-          The location of the huggingface hub cache. Used to override the location if you want to provide a mounted disk 
-          for instance
+          The location of the huggingface hub cache. Used to override the location if you want to provide a mounted disk for instance
 
           [env: HUGGINGFACE_HUB_CACHE=/data]
+
+      --payload-limit <PAYLOAD_LIMIT>
+          Payload size limit in bytes
+
+          Default is 2MB
+
+          [env: PAYLOAD_LIMIT=]
+          [default: 2000000]
+
+      --api-key <API_KEY>
+          Set an api key for request authorization.
+
+          By default the server responds to every request. With an api key set, the requests must have the Authorization header set with the api key as Bearer token.
+
+          [env: API_KEY=]
 
       --json-output
           Outputs the logs in JSON format (useful for telemetry)
@@ -233,6 +248,8 @@ Options:
           [env: JSON_OUTPUT=]
 
       --otlp-endpoint <OTLP_ENDPOINT>
+          The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC. e.g. `http://localhost:4317`
+
           [env: OTLP_ENDPOINT=]
 
       --cors-allow-origin <CORS_ALLOW_ORIGIN>
@@ -245,13 +262,13 @@ Text Embeddings Inference ships with multiple Docker images that you can use to 
 
 | Architecture                        | Image                                                                   |
 |-------------------------------------|-------------------------------------------------------------------------|
-| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-0.6                   |
+| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-1.2                   |
 | Volta                               | NOT SUPPORTED                                                           |
-| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-0.6 (experimental) |
-| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:0.6                       |
-| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-0.6                    |
-| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-0.6                    |
-| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-0.6 (experimental) |
+| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-1.2 (experimental) |
+| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:1.2                       |
+| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-1.2                    |
+| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-1.2                    |
+| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-1.2 (experimental) |
 
 **Warning**: Flash Attention is turned off by default for the Turing image as it suffers from precision issues.
 You can turn Flash Attention v1 ON by using the `USE_FLASH_ATTENTION=True` environment variable.
@@ -280,7 +297,7 @@ model=<your private model>
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 token=<your cli READ token>
 
-docker run --gpus all -e HUGGING_FACE_HUB_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.6 --model-id $model
+docker run --gpus all -e HUGGING_FACE_HUB_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2 --model-id $model
 ```
 
 ### Using Re-rankers models
@@ -298,7 +315,7 @@ model=BAAI/bge-reranker-large
 revision=refs/pr/4
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.6 --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2 --model-id $model --revision $revision
 ```
 
 And then you can rank the similarity between a query and a list of texts with:
@@ -318,13 +335,33 @@ You can also use classic Sequence Classification models like `SamLowe/roberta-ba
 model=SamLowe/roberta-base-go_emotions
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.6 --model-id $model 
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2 --model-id $model
 ```
 
 Once you have deployed the model you can use the `predict` endpoint to get the emotions most associated with an input:
 
 ```bash
 curl 127.0.0.1:8080/predict \
+    -X POST \
+    -d '{"inputs":"I like you."}' \
+    -H 'Content-Type: application/json'
+```
+
+### Using SPLADE pooling
+
+You can choose to activate SPLADE pooling for Bert and Distilbert MaskedLM architectures:
+
+```shell
+model=naver/efficient-splade-VI-BT-large-query
+volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
+
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2 --model-id $model --pooling splade
+```
+
+Once you have deployed the model you can use the `/embed_sparse` endpoint to get the sparse embedding:
+
+```bash
+curl 127.0.0.1:8080/embed_sparse \
     -X POST \
     -d '{"inputs":"I like you."}' \
     -H 'Content-Type: application/json'
@@ -347,7 +384,7 @@ model=BAAI/bge-large-en-v1.5
 revision=refs/pr/5
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:0.6-grpc --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2-grpc --model-id $model --revision $revision
 ```
 
 ```shell
@@ -370,9 +407,9 @@ Then run:
 
 ```shell
 # On x86
-cargo install --path router -F candle -F mkl
+cargo install --path router -F mkl
 # On M1 or M2
-cargo install --path router -F candle -F accelerate
+cargo install --path router -F metal
 ```
 
 You can now launch Text Embeddings Inference on CPU with:
@@ -394,8 +431,7 @@ sudo apt-get install libssl-dev gcc -y
 
 GPUs with Cuda compute capabilities < 7.5 are not supported (V100, Titan V, GTX 1000 series, ...).
 
-Make sure you have Cuda and the nvidia drivers installed. We recommend using NVIDIA drivers with CUDA version 12.0 or
-higher.
+Make sure you have Cuda and the nvidia drivers installed. NVIDIA drivers on your device need to be compatible with CUDA version 12.2 or higher.
 You also need to add the nvidia binaries to your path:
 
 ```shell
@@ -408,10 +444,10 @@ Then run:
 # This can take a while as we need to compile a lot of cuda kernels
 
 # On Turing GPUs (T4, RTX 2000 series ... )
-cargo install --path router -F candle-cuda-turing --no-default-features
+cargo install --path router -F candle-cuda-turing -F http --no-default-features
 
 # On Ampere and Hopper
-cargo install --path router -F candle-cuda --no-default-features
+cargo install --path router -F candle-cuda -F http --no-default-features
 ```
 
 You can now launch Text Embeddings Inference on GPU with:
@@ -454,3 +490,14 @@ runtime_compute_cap=90
 
 docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
 ```
+
+### Apple M1/M2 arm64 architectures
+#### DISCLAIMER
+As explained here [MPS-Ready, ARM64 Docker Image](https://github.com/pytorch/pytorch/issues/81224), Metal / MPS is not supported via Docker. As such inference will be CPU bound and most likely pretty slow when using this docker image on an M1/M2 ARM CPU.
+```
+docker build . -f Dockerfile-arm64 --platform=linux/arm64
+```
+
+## Examples
+- [Set up an Inference Endpoint with TEI](https://huggingface.co/learn/cookbook/automatic_embedding_tei_inference_endpoints)
+- [RAG containers with TEI](https://github.com/plaggy/rag-containers)

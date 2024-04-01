@@ -9,9 +9,55 @@
     "license": {
       "name": "HFOIL"
     },
-    "version": "0.6.0"
+    "version": "1.2.0"
   },
   "paths": {
+    "/decode": {
+      "post": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Decode input ids",
+        "description": "Decode input ids",
+        "operationId": "decode",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Decoded ids",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecodeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "message": "Tokenization error",
+                  "type": "tokenizer"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/embed": {
       "post": {
         "tags": [
@@ -37,6 +83,182 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EmbedResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Embedding Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Inference failed",
+                  "error_type": "backend"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Model is overloaded",
+                  "error_type": "overloaded"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/embed_all": {
+      "post": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Get all Embeddings without Pooling.",
+        "description": "Get all Embeddings without Pooling.\nReturns a 424 status code if the model is not an embedding model.",
+        "operationId": "embed_all",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbedAllRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Embeddings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbedAllResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Embedding Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Inference failed",
+                  "error_type": "backend"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Model is overloaded",
+                  "error_type": "overloaded"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/embed_sparse": {
+      "post": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Get Sparse Embeddings. Returns a 424 status code if the model is not an embedding model with SPLADE pooling.",
+        "description": "Get Sparse Embeddings. Returns a 424 status code if the model is not an embedding model with SPLADE pooling.",
+        "operationId": "embed_sparse",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbedSparseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Embeddings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbedSparseResponse"
                 }
               }
             }
@@ -436,6 +658,133 @@
           }
         }
       }
+    },
+    "/tokenize": {
+      "post": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Tokenize inputs",
+        "description": "Tokenize inputs",
+        "operationId": "tokenize",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenizeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Tokenized ids",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenizeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "message": "Tokenization error",
+                  "type": "tokenizer"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vertex": {
+      "post": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Generate embeddings from a Vertex request",
+        "description": "Generate embeddings from a Vertex request",
+        "operationId": "vertex_compatibility",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VertexRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Results"
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Inference failed",
+                  "error_type": "backend"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Model is overloaded",
+                  "error_type": "overloaded"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -467,6 +816,69 @@
             }
           }
         }
+      },
+      "DecodeRequest": {
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "ids": {
+            "$ref": "#/components/schemas/InputIds"
+          },
+          "skip_special_tokens": {
+            "type": "boolean",
+            "default": "true",
+            "example": "true"
+          }
+        }
+      },
+      "DecodeResponse": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "example": [
+          "test"
+        ]
+      },
+      "EmbedAllRequest": {
+        "type": "object",
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "inputs": {
+            "$ref": "#/components/schemas/Input"
+          },
+          "truncate": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false"
+          }
+        }
+      },
+      "EmbedAllResponse": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            }
+          }
+        },
+        "example": [
+          [
+            [
+              0.0,
+              1.0,
+              2.0
+            ]
+          ]
+        ]
       },
       "EmbedRequest": {
         "type": "object",
@@ -505,6 +917,31 @@
             2.0
           ]
         ]
+      },
+      "EmbedSparseRequest": {
+        "type": "object",
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "inputs": {
+            "$ref": "#/components/schemas/Input"
+          },
+          "truncate": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false"
+          }
+        }
+      },
+      "EmbedSparseResponse": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/SparseValue"
+          }
+        }
       },
       "EmbeddingModel": {
         "type": "object",
@@ -637,6 +1074,29 @@
           }
         ]
       },
+      "InputIds": {
+        "oneOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          }
+        ]
+      },
       "ModelType": {
         "oneOf": [
           {
@@ -658,6 +1118,17 @@
             "properties": {
               "embedding": {
                 "$ref": "#/components/schemas/EmbeddingModel"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "reranker"
+            ],
+            "properties": {
+              "reranker": {
+                "$ref": "#/components/schemas/ClassifierModel"
               }
             }
           }
@@ -952,6 +1423,363 @@
         "type": "array",
         "items": {
           "$ref": "#/components/schemas/Rank"
+        }
+      },
+      "SimpleToken": {
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "special"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32",
+            "example": 0,
+            "minimum": 0
+          },
+          "special": {
+            "type": "boolean",
+            "example": "false"
+          },
+          "start": {
+            "type": "integer",
+            "example": 0,
+            "nullable": true,
+            "minimum": 0
+          },
+          "stop": {
+            "type": "integer",
+            "example": 2,
+            "nullable": true,
+            "minimum": 0
+          },
+          "text": {
+            "type": "string",
+            "example": "test"
+          }
+        }
+      },
+      "SparseValue": {
+        "type": "object",
+        "required": [
+          "index",
+          "value"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "value": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "TokenizeRequest": {
+        "type": "object",
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "add_special_tokens": {
+            "type": "boolean",
+            "default": "true",
+            "example": "true"
+          },
+          "inputs": {
+            "$ref": "#/components/schemas/Input"
+          }
+        }
+      },
+      "TokenizeResponse": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/SimpleToken"
+          }
+        },
+        "example": [
+          [
+            {
+              "id": 0,
+              "special": false,
+              "start": 0,
+              "stop": 2,
+              "text": "test"
+            }
+          ]
+        ]
+      },
+      "VertexInstance": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EmbedRequest"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "embed"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EmbedAllRequest"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "embed_all"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EmbedSparseRequest"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "embed_sparse"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PredictRequest"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "predict"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RerankRequest"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "rerank"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TokenizeRequest"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "tokenize"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type"
+        }
+      },
+      "VertexRequest": {
+        "type": "object",
+        "required": [
+          "instances"
+        ],
+        "properties": {
+          "instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VertexInstance"
+            }
+          }
+        }
+      },
+      "VertexResponse": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/VertexResponseInstance"
+        }
+      },
+      "VertexResponseInstance": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/EmbedResponse"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "embed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/EmbedAllResponse"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "embed_all"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/EmbedSparseResponse"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "embed_sparse"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/PredictResponse"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "predict"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/RerankResponse"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "rerank"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "$ref": "#/components/schemas/TokenizeResponse"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "tokenize"
+                ]
+              }
+            }
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type"
         }
       }
     }

@@ -1,0 +1,6 @@
+---
+source: backends/candle/tests/test_flash_bert.rs
+expression: predictions_single
+---
+- - 2.8574219
+  - -2.9726563

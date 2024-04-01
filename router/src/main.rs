@@ -1,8 +1,12 @@
 use anyhow::Result;
 use clap::Parser;
+use mimalloc::MiMalloc;
 use opentelemetry::global;
 use text_embeddings_backend::DType;
 use veil::Redact;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 /// App Configuration
 #[derive(Parser, Redact)]
@@ -92,12 +96,30 @@ struct Args {
     #[clap(long, env)]
     huggingface_hub_cache: Option<String>,
 
+    /// Payload size limit in bytes
+    ///
+    /// Default is 2MB
+    #[clap(default_value = "2000000", long, env)]
+    payload_limit: usize,
+
+    /// Set an api key for request authorization.
+    ///
+    /// By default the server responds to every request. With an api key set, the requests must have the Authorization header set with the api key as Bearer token.
+    #[clap(long, env)]
+    api_key: Option<String>,
+
     /// Outputs the logs in JSON format (useful for telemetry)
     #[clap(long, env)]
     json_output: bool,
 
+    /// The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC.
+    /// e.g. `http://localhost:4317`
     #[clap(long, env)]
     otlp_endpoint: Option<String>,
+
+    // Unused for gRPC servers
+    #[clap(long, env)]
+    cors_allow_origin: Option<Vec<String>>,
 }
 
 #[tokio::main]
@@ -126,7 +148,10 @@ async fn main() -> Result<()> {
         args.port,
         Some(args.uds_path),
         args.huggingface_hub_cache,
+        args.payload_limit,
+        args.api_key,
         args.otlp_endpoint,
+        args.cors_allow_origin,
     )
     .await?;
 

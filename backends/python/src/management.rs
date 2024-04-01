@@ -89,7 +89,7 @@ impl BackendProcess {
                 // We read stderr in another thread as it seems that lines() can block in some cases
                 let (err_sender, err_receiver) = mpsc::channel();
                 thread::spawn(move || {
-                    for line in stderr_reader.lines().flatten() {
+                    for line in stderr_reader.lines().map_while(Result::ok) {
                         err_sender.send(line).unwrap_or(());
                     }
                 });

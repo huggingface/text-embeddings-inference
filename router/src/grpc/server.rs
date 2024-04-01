@@ -1,7 +1,10 @@
-use crate::grpc::pb::tei::v1::RerankStreamRequest;
+use crate::grpc::pb::tei::v1::{
+    EmbedAllRequest, EmbedAllResponse, EmbedSparseRequest, EmbedSparseResponse, EncodeRequest,
+    EncodeResponse, RerankStreamRequest, SimpleToken, SparseValue, TokenEmbedding,
+};
 use crate::grpc::{
-    EmbedRequest, EmbedResponse, InfoRequest, InfoResponse, PredictRequest, PredictResponse,
-    Prediction, Rank, RerankRequest, RerankResponse,
+    DecodeRequest, DecodeResponse, EmbedRequest, EmbedResponse, InfoRequest, InfoResponse,
+    PredictRequest, PredictResponse, Prediction, Rank, RerankRequest, RerankResponse,
 };
 use crate::ResponseMetadata;
 use crate::{grpc, shutdown, ErrorResponse, ErrorType, Info, ModelType};
@@ -65,7 +68,7 @@ impl TextEmbeddingsService {
             inference_time,
         )
     )]
-    async fn embed_inner(
+    async fn embed_pooled_inner(
         &self,
         request: EmbedRequest,
         permit: OwnedSemaphorePermit,
@@ -76,17 +79,17 @@ impl TextEmbeddingsService {
         let compute_chars = request.inputs.chars().count();
         let response = self
             .infer
-            .embed(request.inputs, request.truncate, request.normalize, permit)
+            .embed_pooled(request.inputs, request.truncate, request.normalize, permit)
             .await
             .map_err(ErrorResponse::from)?;
 
         let response_metadata = ResponseMetadata::new(
             compute_chars,
-            response.prompt_tokens,
+            response.metadata.prompt_tokens,
             start_time,
-            response.tokenization,
-            response.queue,
-            response.inference,
+            response.metadata.tokenization,
+            response.metadata.queue,
+            response.metadata.inference,
         );
         response_metadata.record_span(&span);
         response_metadata.record_metrics();
@@ -96,6 +99,119 @@ impl TextEmbeddingsService {
         Ok((
             EmbedResponse {
                 embeddings: response.results,
+                metadata: Some(grpc::Metadata::from(&response_metadata)),
+            },
+            response_metadata,
+        ))
+    }
+
+    #[instrument(
+        skip_all,
+        fields(
+            compute_chars,
+            compute_tokens,
+            total_time,
+            tokenization_time,
+            queue_time,
+            inference_time,
+        )
+    )]
+    async fn embed_sparse_inner(
+        &self,
+        request: EmbedSparseRequest,
+        permit: OwnedSemaphorePermit,
+    ) -> Result<(EmbedSparseResponse, ResponseMetadata), Status> {
+        let span = Span::current();
+        let start_time = Instant::now();
+
+        let compute_chars = request.inputs.chars().count();
+        let response = self
+            .infer
+            .embed_sparse(request.inputs, request.truncate, permit)
+            .await
+            .map_err(ErrorResponse::from)?;
+
+        let response_metadata = ResponseMetadata::new(
+            compute_chars,
+            response.metadata.prompt_tokens,
+            start_time,
+            response.metadata.tokenization,
+            response.metadata.queue,
+            response.metadata.inference,
+        );
+
+        let mut sparse_values = Vec::with_capacity(response.results.len());
+        for (index, value) in response.results.into_iter().enumerate() {
+            if value != 0.0 {
+                sparse_values.push(SparseValue {
+                    index: index as u32,
+                    value,
+                });
+            }
+        }
+
+        response_metadata.record_span(&span);
+        response_metadata.record_metrics();
+
+        tracing::info!("Success");
+
+        Ok((
+            EmbedSparseResponse {
+                sparse_embeddings: sparse_values,
+                metadata: Some(grpc::Metadata::from(&response_metadata)),
+            },
+            response_metadata,
+        ))
+    }
+
+    #[instrument(
+        skip_all,
+        fields(
+            compute_chars,
+            compute_tokens,
+            total_time,
+            tokenization_time,
+            queue_time,
+            inference_time,
+        )
+    )]
+    async fn embed_all_inner(
+        &self,
+        request: EmbedAllRequest,
+        permit: OwnedSemaphorePermit,
+    ) -> Result<(EmbedAllResponse, ResponseMetadata), Status> {
+        let span = Span::current();
+        let start_time = Instant::now();
+
+        let compute_chars = request.inputs.chars().count();
+        let response = self
+            .infer
+            .embed_all(request.inputs, request.truncate, permit)
+            .await
+            .map_err(ErrorResponse::from)?;
+
+        let response_metadata = ResponseMetadata::new(
+            compute_chars,
+            response.metadata.prompt_tokens,
+            start_time,
+            response.metadata.tokenization,
+            response.metadata.queue,
+            response.metadata.inference,
+        );
+        response_metadata.record_span(&span);
+        response_metadata.record_metrics();
+
+        tracing::info!("Success");
+
+        let token_embeddings = response
+            .results
+            .into_iter()
+            .map(|v| TokenEmbedding { embeddings: v })
+            .collect();
+
+        Ok((
+            EmbedAllResponse {
+                token_embeddings,
                 metadata: Some(grpc::Metadata::from(&response_metadata)),
             },
             response_metadata,
@@ -136,25 +252,28 @@ impl TextEmbeddingsService {
 
         let response_metadata = ResponseMetadata::new(
             compute_chars,
-            response.prompt_tokens,
+            response.metadata.prompt_tokens,
             start_time,
-            response.tokenization,
-            response.queue,
-            response.inference,
+            response.metadata.tokenization,
+            response.metadata.queue,
+            response.metadata.inference,
         );
 
-        let mut predictions: Vec<Prediction> = {
+        let mut predictions = Vec::with_capacity(response.results.len());
+        for (i, s) in response.results.into_iter().enumerate() {
+            // Check that s is not NaN or the partial_cmp below will panic
+            if s.is_nan() {
+                Err(ErrorResponse {
+                    error: "score is NaN".to_string(),
+                    error_type: ErrorType::Backend,
+                })?;
+            }
             // Map score to label
-            response
-                .results
-                .into_iter()
-                .enumerate()
-                .map(|(i, s)| Prediction {
-                    score: s,
-                    label: id2label.get(&i.to_string()).unwrap().clone(),
-                })
-                .collect()
-        };
+            predictions.push(Prediction {
+                score: s,
+                label: id2label.get(&i.to_string()).unwrap().clone(),
+            });
+        }
         // Reverse sort
         predictions.sort_by(|x, y| x.score.partial_cmp(&y.score).unwrap());
         predictions.reverse();
@@ -171,6 +290,57 @@ impl TextEmbeddingsService {
             },
             response_metadata,
         ))
+    }
+
+    #[instrument(skip_all)]
+    async fn tokenize_inner(&self, request: EncodeRequest) -> Result<EncodeResponse, Status> {
+        let inputs = request.inputs;
+        let encoding = self
+            .infer
+            .tokenize(inputs.clone(), request.add_special_tokens)
+            .await
+            .map_err(ErrorResponse::from)?;
+        let tokens: Vec<SimpleToken> = encoding
+            .get_ids()
+            .iter()
+            .zip(encoding.get_offsets())
+            .zip(encoding.get_special_tokens_mask())
+            .zip(encoding.get_tokens())
+            .map(|(((&id, &(start, stop)), special), token)| {
+                let special = *special == 1;
+                match special {
+                    true => SimpleToken {
+                        id,
+                        text: token.clone(),
+                        special,
+                        start: None,
+                        stop: None,
+                    },
+                    false => {
+                        let text: String = inputs.chars().skip(start).take(stop - start).collect();
+                        SimpleToken {
+                            id,
+                            text,
+                            special,
+                            start: Some(start as u32),
+                            stop: Some(stop as u32),
+                        }
+                    }
+                }
+            })
+            .collect();
+        Ok(EncodeResponse { tokens })
+    }
+
+    #[instrument(skip_all)]
+    async fn decode_inner(&self, request: DecodeRequest) -> Result<DecodeResponse, Status> {
+        let ids = request.ids;
+        let text = self
+            .infer
+            .decode(ids, request.skip_special_tokens)
+            .await
+            .map_err(ErrorResponse::from)?;
+        Ok(DecodeResponse { text })
     }
 }
 
@@ -216,7 +386,7 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
             .map_err(ErrorResponse::from)?;
 
         let request = request.into_inner();
-        let (response, metadata) = self.embed_inner(request, permit).await?;
+        let (response, metadata) = self.embed_pooled_inner(request, permit).await?;
         let headers = HeaderMap::from(metadata);
 
         metrics::increment_counter!("te_request_success", "method" => "single");
@@ -260,7 +430,231 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
                 tokio::spawn(async move {
                     // Select on closed to cancel work if the stream was closed
                     tokio::select! {
-                    response = task_local.embed_inner(request, permit) => {
+                    response = task_local.embed_pooled_inner(request, permit) => {
+                        let _ = sender.send(response.map(|(r, _m)| r));
+                    }
+                    _ = sender.closed() => {}
+                    }
+                });
+            }
+        });
+
+        // Intermediate channels
+        // Required to keep the order of the requests
+        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            // Iterate on input
+            while let Some(request) = request_stream.next().await {
+                // Create return channel
+                let (result_sender, result_receiver) = oneshot::channel();
+                // Push to intermediate channel and preserve ordering
+                intermediate_sender
+                    .send(result_receiver)
+                    .expect("`intermediate_receiver` was dropped. This is a bug.");
+
+                match request {
+                    Ok(request) => embed_sender
+                        .send((request, result_sender))
+                        .await
+                        .expect("`embed_receiver` was dropped. This is a bug."),
+                    Err(status) => {
+                        // Request is malformed
+                        let _ = result_sender.send(Err(status));
+                    }
+                };
+            }
+        });
+
+        // Final channel for the outputs
+        let (response_sender, response_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            while let Some(result_receiver) = intermediate_receiver.recv().await {
+                // Select on closed to cancel work if the stream was closed
+                tokio::select! {
+                response = result_receiver => {
+                    let _ = response_sender.send(response.expect("`result_sender` was dropped. This is a bug."));
+                }
+                _ = response_sender.closed() => {}
+                }
+            }
+        });
+
+        Ok(Response::new(UnboundedReceiverStream::new(
+            response_receiver,
+        )))
+    }
+
+    async fn embed_sparse(
+        &self,
+        request: Request<EmbedSparseRequest>,
+    ) -> Result<Response<EmbedSparseResponse>, Status> {
+        metrics::increment_counter!("te_request_count", "method" => "single");
+
+        let permit = self
+            .infer
+            .try_acquire_permit()
+            .map_err(ErrorResponse::from)?;
+
+        let request = request.into_inner();
+        let (response, metadata) = self.embed_sparse_inner(request, permit).await?;
+        let headers = HeaderMap::from(metadata);
+
+        metrics::increment_counter!("te_request_success", "method" => "single");
+
+        Ok(Response::from_parts(
+            MetadataMap::from_headers(headers),
+            response,
+            Extensions::default(),
+        ))
+    }
+
+    type EmbedSparseStreamStream = UnboundedReceiverStream<Result<EmbedSparseResponse, Status>>;
+
+    async fn embed_sparse_stream(
+        &self,
+        request: Request<Streaming<EmbedSparseRequest>>,
+    ) -> Result<Response<Self::EmbedSparseStreamStream>, Status> {
+        let mut request_stream = request.into_inner();
+
+        // Create bounded channel to have an upper bound of spawned tasks
+        // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
+        let (embed_sender, mut embed_receiver) = mpsc::channel::<(
+            EmbedSparseRequest,
+            oneshot::Sender<Result<EmbedSparseResponse, Status>>,
+        )>(self.max_parallel_stream_requests);
+
+        // Required for the async move below
+        let local = self.clone();
+
+        // Background task that uses the bounded channel
+        tokio::spawn(async move {
+            while let Some((request, mut sender)) = embed_receiver.recv().await {
+                // Wait on permit before spawning the task to avoid creating more tasks than needed
+                let permit = local.infer.acquire_permit().await;
+
+                // Required for the async move below
+                let task_local = local.clone();
+
+                // Create async task for this specific input
+                tokio::spawn(async move {
+                    // Select on closed to cancel work if the stream was closed
+                    tokio::select! {
+                    response = task_local.embed_sparse_inner(request, permit) => {
+                        let _ = sender.send(response.map(|(r, _m)| r));
+                    }
+                    _ = sender.closed() => {}
+                    }
+                });
+            }
+        });
+
+        // Intermediate channels
+        // Required to keep the order of the requests
+        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            // Iterate on input
+            while let Some(request) = request_stream.next().await {
+                // Create return channel
+                let (result_sender, result_receiver) = oneshot::channel();
+                // Push to intermediate channel and preserve ordering
+                intermediate_sender
+                    .send(result_receiver)
+                    .expect("`intermediate_receiver` was dropped. This is a bug.");
+
+                match request {
+                    Ok(request) => embed_sender
+                        .send((request, result_sender))
+                        .await
+                        .expect("`embed_receiver` was dropped. This is a bug."),
+                    Err(status) => {
+                        // Request is malformed
+                        let _ = result_sender.send(Err(status));
+                    }
+                };
+            }
+        });
+
+        // Final channel for the outputs
+        let (response_sender, response_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            while let Some(result_receiver) = intermediate_receiver.recv().await {
+                // Select on closed to cancel work if the stream was closed
+                tokio::select! {
+                response = result_receiver => {
+                    let _ = response_sender.send(response.expect("`result_sender` was dropped. This is a bug."));
+                }
+                _ = response_sender.closed() => {}
+                }
+            }
+        });
+
+        Ok(Response::new(UnboundedReceiverStream::new(
+            response_receiver,
+        )))
+    }
+
+    #[instrument(skip_all)]
+    async fn embed_all(
+        &self,
+        request: Request<EmbedAllRequest>,
+    ) -> Result<Response<EmbedAllResponse>, Status> {
+        metrics::increment_counter!("te_request_count", "method" => "single");
+
+        let permit = self
+            .infer
+            .try_acquire_permit()
+            .map_err(ErrorResponse::from)?;
+
+        let request = request.into_inner();
+        let (response, metadata) = self.embed_all_inner(request, permit).await?;
+        let headers = HeaderMap::from(metadata);
+
+        metrics::increment_counter!("te_request_success", "method" => "single");
+
+        Ok(Response::from_parts(
+            MetadataMap::from_headers(headers),
+            response,
+            Extensions::default(),
+        ))
+    }
+
+    type EmbedAllStreamStream = UnboundedReceiverStream<Result<EmbedAllResponse, Status>>;
+
+    #[instrument(skip_all)]
+    async fn embed_all_stream(
+        &self,
+        request: Request<Streaming<EmbedAllRequest>>,
+    ) -> Result<Response<Self::EmbedAllStreamStream>, Status> {
+        let mut request_stream = request.into_inner();
+
+        // Create bounded channel to have an upper bound of spawned tasks
+        // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
+        let (embed_sender, mut embed_receiver) = mpsc::channel::<(
+            EmbedAllRequest,
+            oneshot::Sender<Result<EmbedAllResponse, Status>>,
+        )>(self.max_parallel_stream_requests);
+
+        // Required for the async move below
+        let local = self.clone();
+
+        // Background task that uses the bounded channel
+        tokio::spawn(async move {
+            while let Some((request, mut sender)) = embed_receiver.recv().await {
+                // Wait on permit before spawning the task to avoid creating more tasks than needed
+                let permit = local.infer.acquire_permit().await;
+
+                // Required for the async move below
+                let task_local = local.clone();
+
+                // Create async task for this specific input
+                tokio::spawn(async move {
+                    // Select on closed to cancel work if the stream was closed
+                    tokio::select! {
+                    response = task_local.embed_all_inner(request, permit) => {
                         let _ = sender.send(response.map(|(r, _m)| r));
                     }
                     _ = sender.closed() => {}
@@ -455,6 +849,17 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
 
         let request = request.into_inner();
 
+        if request.texts.is_empty() {
+            let message = "`texts` cannot be empty".to_string();
+            tracing::error!("{message}");
+            let err = ErrorResponse {
+                error: message,
+                error_type: ErrorType::Validation,
+            };
+            metrics::increment_counter!("te_request_failure", "err" => "validation");
+            Err(err)?;
+        }
+
         match &self.info.model_type {
             ModelType::Classifier(_) => {
                 metrics::increment_counter!("te_request_failure", "err" => "model_type");
@@ -487,10 +892,10 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
             let score = response.results[0];
 
             Ok::<(usize, Duration, Duration, Duration, f32), ErrorResponse>((
-                response.prompt_tokens,
-                response.tokenization,
-                response.queue,
-                response.inference,
+                response.metadata.prompt_tokens,
+                response.metadata.tokenization,
+                response.metadata.queue,
+                response.metadata.inference,
                 score,
             ))
         };
@@ -549,10 +954,19 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
                 None
             };
 
+            let score = r.4;
+            // Check that s is not NaN or the partial_cmp below will panic
+            if score.is_nan() {
+                Err(ErrorResponse {
+                    error: "score is NaN".to_string(),
+                    error_type: ErrorType::Backend,
+                })?;
+            }
+
             ranks.push(Rank {
                 index: index as u32,
                 text,
-                score: r.4,
+                score,
             })
         }
 
@@ -643,10 +1057,10 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
 
             Ok::<(usize, usize, Duration, Duration, Duration, f32, String), ErrorResponse>((
                 index,
-                response.prompt_tokens,
-                response.tokenization,
-                response.queue,
-                response.inference,
+                response.metadata.prompt_tokens,
+                response.metadata.tokenization,
+                response.metadata.queue,
+                response.metadata.inference,
                 score,
                 text,
             ))
@@ -766,10 +1180,19 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
                 None
             };
 
+            let score = r.5;
+            // Check that s is not NaN or the partial_cmp below will panic
+            if score.is_nan() {
+                Err(ErrorResponse {
+                    error: "score is NaN".to_string(),
+                    error_type: ErrorType::Backend,
+                })?;
+            }
+
             ranks.push(Rank {
                 index: r.0 as u32,
                 text,
-                score: r.5,
+                score,
             })
         }
 
@@ -821,11 +1244,201 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
     }
 }
 
+#[tonic::async_trait]
+impl grpc::tokenize_server::Tokenize for TextEmbeddingsService {
+    async fn tokenize(
+        &self,
+        request: Request<EncodeRequest>,
+    ) -> Result<Response<EncodeResponse>, Status> {
+        let request = request.into_inner();
+        let tokens = self.tokenize_inner(request).await?;
+        Ok(Response::new(tokens))
+    }
+
+    type TokenizeStreamStream = UnboundedReceiverStream<Result<EncodeResponse, Status>>;
+
+    async fn tokenize_stream(
+        &self,
+        request: Request<Streaming<EncodeRequest>>,
+    ) -> Result<Response<Self::TokenizeStreamStream>, Status> {
+        let mut request_stream = request.into_inner();
+
+        // Create bounded channel to have an upper bound of spawned tasks
+        // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
+        let (encode_sender, mut encode_receiver) = mpsc::channel::<(
+            EncodeRequest,
+            oneshot::Sender<Result<EncodeResponse, Status>>,
+        )>(self.max_parallel_stream_requests);
+
+        // Required for the async move below
+        let local = self.clone();
+
+        // Background task that uses the bounded channel
+        tokio::spawn(async move {
+            while let Some((request, mut sender)) = encode_receiver.recv().await {
+                // Required for the async move below
+                let task_local = local.clone();
+
+                // Create async task for this specific input
+                tokio::spawn(async move {
+                    // Select on closed to cancel work if the stream was closed
+                    tokio::select! {
+                        response = task_local.tokenize_inner(request) => {
+                            let _ = sender.send(response);
+                        }
+                    _ = sender.closed() => {}
+                    }
+                });
+            }
+        });
+
+        // Intermediate channels
+        // Required to keep the order of the requests
+        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            // Iterate on input
+            while let Some(request) = request_stream.next().await {
+                // Create return channel
+                let (result_sender, result_receiver) = oneshot::channel();
+                // Push to intermediate channel and preserve ordering
+                intermediate_sender
+                    .send(result_receiver)
+                    .expect("`intermediate_receiver` was dropped. This is a bug.");
+
+                match request {
+                    Ok(request) => encode_sender
+                        .send((request, result_sender))
+                        .await
+                        .expect("`encode_receiver` was dropped. This is a bug."),
+                    Err(status) => {
+                        // Request is malformed
+                        let _ = result_sender.send(Err(status));
+                    }
+                };
+            }
+        });
+
+        // Final channel for the outputs
+        let (response_sender, response_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            while let Some(result_receiver) = intermediate_receiver.recv().await {
+                // Select on closed to cancel work if the stream was closed
+                tokio::select! {
+                response = result_receiver => {
+                    let _ = response_sender.send(response.expect("`result_sender` was dropped. This is a bug."));
+                }
+                _ = response_sender.closed() => {}
+                }
+            }
+        });
+
+        Ok(Response::new(UnboundedReceiverStream::new(
+            response_receiver,
+        )))
+    }
+
+    async fn decode(
+        &self,
+        request: Request<DecodeRequest>,
+    ) -> Result<Response<DecodeResponse>, Status> {
+        let request = request.into_inner();
+        let tokens = self.decode_inner(request).await?;
+        Ok(Response::new(tokens))
+    }
+
+    type DecodeStreamStream = UnboundedReceiverStream<Result<DecodeResponse, Status>>;
+
+    async fn decode_stream(
+        &self,
+        request: Request<Streaming<DecodeRequest>>,
+    ) -> Result<Response<Self::DecodeStreamStream>, Status> {
+        let mut request_stream = request.into_inner();
+
+        // Create bounded channel to have an upper bound of spawned tasks
+        // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
+        let (encode_sender, mut encode_receiver) = mpsc::channel::<(
+            DecodeRequest,
+            oneshot::Sender<Result<DecodeResponse, Status>>,
+        )>(self.max_parallel_stream_requests);
+
+        // Required for the async move below
+        let local = self.clone();
+
+        // Background task that uses the bounded channel
+        tokio::spawn(async move {
+            while let Some((request, mut sender)) = encode_receiver.recv().await {
+                // Required for the async move below
+                let task_local = local.clone();
+
+                // Create async task for this specific input
+                tokio::spawn(async move {
+                    // Select on closed to cancel work if the stream was closed
+                    tokio::select! {
+                        response = task_local.decode_inner(request) => {
+                            let _ = sender.send(response);
+                        }
+                    _ = sender.closed() => {}
+                    }
+                });
+            }
+        });
+
+        // Intermediate channels
+        // Required to keep the order of the requests
+        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            // Iterate on input
+            while let Some(request) = request_stream.next().await {
+                // Create return channel
+                let (result_sender, result_receiver) = oneshot::channel();
+                // Push to intermediate channel and preserve ordering
+                intermediate_sender
+                    .send(result_receiver)
+                    .expect("`intermediate_receiver` was dropped. This is a bug.");
+
+                match request {
+                    Ok(request) => encode_sender
+                        .send((request, result_sender))
+                        .await
+                        .expect("`encode_receiver` was dropped. This is a bug."),
+                    Err(status) => {
+                        // Request is malformed
+                        let _ = result_sender.send(Err(status));
+                    }
+                };
+            }
+        });
+
+        // Final channel for the outputs
+        let (response_sender, response_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            while let Some(result_receiver) = intermediate_receiver.recv().await {
+                // Select on closed to cancel work if the stream was closed
+                tokio::select! {
+                response = result_receiver => {
+                    let _ = response_sender.send(response.expect("`result_sender` was dropped. This is a bug."));
+                }
+                _ = response_sender.closed() => {}
+                }
+            }
+        });
+
+        Ok(Response::new(UnboundedReceiverStream::new(
+            response_receiver,
+        )))
+    }
+}
+
 pub async fn run(
     infer: Infer,
     info: Info,
     addr: SocketAddr,
     prom_builder: PrometheusBuilder,
+    api_key: Option<String>,
 ) -> Result<(), anyhow::Error> {
     prom_builder.install()?;
     tracing::info!("Serving Prometheus metrics: 0.0.0.0:9000");
@@ -835,6 +1448,10 @@ pub async fn run(
     // Info is always serving
     health_reporter
         .set_serving::<grpc::InfoServer<TextEmbeddingsService>>()
+        .await;
+    // Tokenize is always serving
+    health_reporter
+        .set_serving::<grpc::TokenizeServer<TextEmbeddingsService>>()
         .await;
     // Set all other services to not serving
     // Their health will be updated in the task below
@@ -919,16 +1536,46 @@ pub async fn run(
     let service = TextEmbeddingsService::new(infer, info);
 
     // Create gRPC server
+    let server = if let Some(api_key) = api_key {
+        let mut prefix = "Bearer ".to_string();
+        prefix.push_str(&api_key);
+
+        // Leak to allow FnMut
+        let api_key: &'static str = prefix.leak();
+
+        let auth = move |req: Request<()>| -> Result<Request<()>, Status> {
+            match req.metadata().get("authorization") {
+                Some(t) if t == api_key => Ok(req),
+                _ => Err(Status::unauthenticated("No valid auth token")),
+            }
+        };
+
+        Server::builder()
+            .add_service(health_service)
+            .add_service(reflection_service)
+            .add_service(grpc::InfoServer::with_interceptor(service.clone(), auth))
+            .add_service(grpc::TokenizeServer::with_interceptor(
+                service.clone(),
+                auth,
+            ))
+            .add_service(grpc::EmbedServer::with_interceptor(service.clone(), auth))
+            .add_service(grpc::PredictServer::with_interceptor(service.clone(), auth))
+            .add_service(grpc::RerankServer::with_interceptor(service, auth))
+            .serve_with_shutdown(addr, shutdown::shutdown_signal())
+    } else {
+        Server::builder()
+            .add_service(health_service)
+            .add_service(reflection_service)
+            .add_service(grpc::InfoServer::new(service.clone()))
+            .add_service(grpc::TokenizeServer::new(service.clone()))
+            .add_service(grpc::EmbedServer::new(service.clone()))
+            .add_service(grpc::PredictServer::new(service.clone()))
+            .add_service(grpc::RerankServer::new(service))
+            .serve_with_shutdown(addr, shutdown::shutdown_signal())
+    };
+
     tracing::info!("Starting gRPC server: {}", &addr);
-    Server::builder()
-        .add_service(health_service)
-        .add_service(reflection_service)
-        .add_service(grpc::InfoServer::new(service.clone()))
-        .add_service(grpc::EmbedServer::new(service.clone()))
-        .add_service(grpc::PredictServer::new(service.clone()))
-        .add_service(grpc::RerankServer::new(service))
-        .serve_with_shutdown(addr, shutdown::shutdown_signal())
-        .await?;
+    server.await?;
 
     Ok(())
 }
