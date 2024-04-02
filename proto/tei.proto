@@ -19,7 +19,9 @@ service Embed {
 
 service Predict {
     rpc Predict (PredictRequest) returns (PredictResponse);
+    rpc PredictPair (PredictPairRequest) returns (PredictResponse);
     rpc PredictStream (stream PredictRequest) returns (stream PredictResponse);
+    rpc PredictPairStream (stream PredictPairRequest) returns (stream PredictResponse);
 }
 
 service Rerank {
@@ -109,6 +111,12 @@ message EmbedAllResponse {
 
 message PredictRequest {
     string inputs = 1;
+    bool truncate = 2;
+    bool raw_scores = 3;
+}
+
+message PredictPairRequest {
+    repeated string inputs = 1;
     bool truncate = 2;
     bool raw_scores = 3;
 }
