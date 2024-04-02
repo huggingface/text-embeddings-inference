@@ -73,6 +73,12 @@ struct Args {
     #[clap(default_value = "32", long, env)]
     max_client_batch_size: usize,
 
+    /// Automatically truncate inputs that are longer than the maximum supported size
+    ///
+    /// Unused for gRPC servers
+    #[clap(long, env)]
+    auto_truncate: bool,
+
     /// Your HuggingFace hub token
     #[clap(long, env)]
     #[redact(partial)]
@@ -117,7 +123,7 @@ struct Args {
     #[clap(long, env)]
     otlp_endpoint: Option<String>,
 
-    // Unused for gRPC servers
+    /// Unused for gRPC servers
     #[clap(long, env)]
     cors_allow_origin: Option<Vec<String>>,
 }
@@ -143,6 +149,7 @@ async fn main() -> Result<()> {
         args.max_batch_tokens,
         args.max_batch_requests,
         args.max_client_batch_size,
+        args.auto_truncate,
         args.hf_api_token,
         Some(args.hostname),
         args.port,

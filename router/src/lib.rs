@@ -51,6 +51,7 @@ pub async fn run(
     max_batch_tokens: usize,
     max_batch_requests: Option<usize>,
     max_client_batch_size: usize,
+    auto_truncate: bool,
     hf_api_token: Option<String>,
     hostname: Option<String>,
     port: u16,
@@ -236,6 +237,7 @@ pub async fn run(
         tokenization_workers,
         max_batch_requests,
         max_client_batch_size,
+        auto_truncate,
         version: env!("CARGO_PKG_VERSION"),
         sha: option_env!("VERGEN_GIT_SHA"),
         docker_label: option_env!("DOCKER_LABEL"),
@@ -428,6 +430,7 @@ pub struct Info {
     pub max_batch_requests: Option<usize>,
     #[cfg_attr(feature = "http", schema(example = "32"))]
     pub max_client_batch_size: usize,
+    pub auto_truncate: bool,
     #[cfg_attr(feature = "http", schema(example = "4"))]
     pub tokenization_workers: usize,
     /// Router Info

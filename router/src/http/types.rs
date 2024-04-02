@@ -196,9 +196,8 @@ impl<'__s> ToSchema<'__s> for PredictInput {
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct PredictRequest {
     pub inputs: PredictInput,
-    #[serde(default)]
-    #[schema(default = "false", example = "false")]
-    pub truncate: bool,
+    #[schema(default = "false", example = "false", nullable = true)]
+    pub truncate: Option<bool>,
     #[serde(default)]
     #[schema(default = "false", example = "false")]
     pub raw_scores: bool,
@@ -226,8 +225,8 @@ pub(crate) struct RerankRequest {
     #[schema(example = json!(["Deep Learning is ..."]))]
     pub texts: Vec<String>,
     #[serde(default)]
-    #[schema(default = "false", example = "false")]
-    pub truncate: bool,
+    #[schema(default = "false", example = "false", nullable = true)]
+    pub truncate: Option<bool>,
     #[serde(default)]
     #[schema(default = "false", example = "false")]
     pub raw_scores: bool,
@@ -322,8 +321,8 @@ pub(crate) struct OpenAICompatResponse {
 pub(crate) struct EmbedRequest {
     pub inputs: Input,
     #[serde(default)]
-    #[schema(default = "false", example = "false")]
-    pub truncate: bool,
+    #[schema(default = "false", example = "false", nullable = true)]
+    pub truncate: Option<bool>,
     #[serde(default = "default_normalize")]
     #[schema(default = "true", example = "true")]
     pub normalize: bool,
@@ -341,8 +340,8 @@ pub(crate) struct EmbedResponse(pub Vec<Vec<f32>>);
 pub(crate) struct EmbedSparseRequest {
     pub inputs: Input,
     #[serde(default)]
-    #[schema(default = "false", example = "false")]
-    pub truncate: bool,
+    #[schema(default = "false", example = "false", nullable = true)]
+    pub truncate: Option<bool>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -358,8 +357,8 @@ pub(crate) struct EmbedSparseResponse(pub Vec<Vec<SparseValue>>);
 pub(crate) struct EmbedAllRequest {
     pub inputs: Input,
     #[serde(default)]
-    #[schema(default = "false", example = "false")]
-    pub truncate: bool,
+    #[schema(default = "false", example = "false", nullable = true)]
+    pub truncate: Option<bool>,
 }
 
 #[derive(Serialize, ToSchema)]
