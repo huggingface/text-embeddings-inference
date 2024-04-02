@@ -1,6 +1,7 @@
 use crate::grpc::pb::tei::v1::{
     EmbedAllRequest, EmbedAllResponse, EmbedSparseRequest, EmbedSparseResponse, EncodeRequest,
-    EncodeResponse, RerankStreamRequest, SimpleToken, SparseValue, TokenEmbedding,
+    EncodeResponse, PredictPairRequest, RerankStreamRequest, SimpleToken, SparseValue,
+    TokenEmbedding,
 };
 use crate::grpc::{
     DecodeRequest, DecodeResponse, EmbedRequest, EmbedResponse, InfoRequest, InfoResponse,
@@ -10,9 +11,11 @@ use crate::ResponseMetadata;
 use crate::{grpc, shutdown, ErrorResponse, ErrorType, Info, ModelType};
 use futures::future::join_all;
 use metrics_exporter_prometheus::PrometheusBuilder;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use text_embeddings_core::infer::Infer;
+use text_embeddings_core::tokenization::EncodingInput;
 use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_stream::StreamExt;
@@ -229,18 +232,26 @@ impl TextEmbeddingsService {
             inference_time,
         )
     )]
-    async fn predict_inner(
+    async fn predict_inner<I: Into<EncodingInput> + std::fmt::Debug>(
         &self,
-        request: PredictRequest,
+        inputs: I,
+        truncate: bool,
+        raw_scores: bool,
         permit: OwnedSemaphorePermit,
     ) -> Result<(PredictResponse, ResponseMetadata), Status> {
         let span = Span::current();
         let start_time = Instant::now();
 
-        let compute_chars = request.inputs.chars().count();
+        let inputs = inputs.into();
+        let compute_chars = match &inputs {
+            EncodingInput::Single(s) => s.chars().count(),
+            EncodingInput::Dual(s1, s2) => s1.chars().count() + s2.chars().count(),
+            EncodingInput::Ids(_) => unreachable!(),
+        };
+
         let response = self
             .infer
-            .predict(request.inputs, request.truncate, request.raw_scores, permit)
+            .predict(inputs, truncate, raw_scores, permit)
             .await
             .map_err(ErrorResponse::from)?;
 
@@ -342,6 +353,186 @@ impl TextEmbeddingsService {
             .map_err(ErrorResponse::from)?;
         Ok(DecodeResponse { text })
     }
+
+    #[instrument(skip_all)]
+    async fn stream<Req, Res, F, Fut>(
+        &self,
+        request: Request<Streaming<Req>>,
+        function: F,
+    ) -> Result<Response<UnboundedReceiverStream<Result<Res, Status>>>, Status>
+    where
+        Req: Send + 'static,
+        Res: Send + 'static,
+        F: FnOnce(Req, OwnedSemaphorePermit) -> Fut + Send + Clone + 'static,
+        Fut: Future<Output = Result<(Res, ResponseMetadata), Status>> + Send,
+    {
+        let mut request_stream = request.into_inner();
+
+        // Create bounded channel to have an upper bound of spawned tasks
+        // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
+        let (internal_sender, mut internal_receiver) = mpsc::channel::<(
+            Req,
+            oneshot::Sender<Result<Res, Status>>,
+        )>(self.max_parallel_stream_requests);
+
+        // Required for the async move below
+        let local = self.clone();
+
+        // Background task that uses the bounded channel
+        tokio::spawn(async move {
+            while let Some((request, mut sender)) = internal_receiver.recv().await {
+                // Wait on permit before spawning the task to avoid creating more tasks than needed
+                let permit = local.infer.acquire_permit().await;
+
+                // Required for the async move below
+                let function_local = function.clone();
+
+                // Create async task for this specific input
+                tokio::spawn(async move {
+                    // Select on closed to cancel work if the stream was closed
+                    tokio::select! {
+                    response = function_local(request, permit) => {
+                        let _ = sender.send(response.map(|(r, _m)| r));
+                    }
+                    _ = sender.closed() => {}
+                    }
+                });
+            }
+        });
+
+        // Intermediate channels
+        // Required to keep the order of the requests
+        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            // Iterate on input
+            while let Some(request) = request_stream.next().await {
+                // Create return channel
+                let (result_sender, result_receiver) = oneshot::channel();
+                // Push to intermediate channel and preserve ordering
+                intermediate_sender
+                    .send(result_receiver)
+                    .expect("`intermediate_receiver` was dropped. This is a bug.");
+
+                match request {
+                    Ok(request) => internal_sender
+                        .send((request, result_sender))
+                        .await
+                        .expect("`internal_receiver` was dropped. This is a bug."),
+                    Err(status) => {
+                        // Request is malformed
+                        let _ = result_sender.send(Err(status));
+                    }
+                };
+            }
+        });
+
+        // Final channel for the outputs
+        let (response_sender, response_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            while let Some(result_receiver) = intermediate_receiver.recv().await {
+                // Select on closed to cancel work if the stream was closed
+                tokio::select! {
+                response = result_receiver => {
+                    let _ = response_sender.send(response.expect("`result_sender` was dropped. This is a bug."));
+                }
+                _ = response_sender.closed() => {}
+                }
+            }
+        });
+
+        Ok(Response::new(UnboundedReceiverStream::new(
+            response_receiver,
+        )))
+    }
+
+    #[instrument(skip_all)]
+    async fn stream_no_permit<Req, Res, F, Fut>(
+        &self,
+        request: Request<Streaming<Req>>,
+        function: F,
+    ) -> Result<Response<UnboundedReceiverStream<Result<Res, Status>>>, Status>
+    where
+        Req: Send + 'static,
+        Res: Send + 'static,
+        F: FnOnce(Req) -> Fut + Send + Clone + 'static,
+        Fut: Future<Output = Result<Res, Status>> + Send,
+    {
+        let mut request_stream = request.into_inner();
+
+        // Create bounded channel to have an upper bound of spawned tasks
+        // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
+        let (internal_sender, mut internal_receiver) = mpsc::channel::<(
+            Req,
+            oneshot::Sender<Result<Res, Status>>,
+        )>(self.max_parallel_stream_requests);
+
+        // Background task that uses the bounded channel
+        tokio::spawn(async move {
+            while let Some((request, mut sender)) = internal_receiver.recv().await {
+                // Required for the async move below
+                let function_local = function.clone();
+
+                // Create async task for this specific input
+                tokio::spawn(async move {
+                    // Select on closed to cancel work if the stream was closed
+                    tokio::select! {
+                    response = function_local(request) => {
+                        let _ = sender.send(response);
+                    }
+                    _ = sender.closed() => {}
+                    }
+                });
+            }
+        });
+
+        // Intermediate channels
+        // Required to keep the order of the requests
+        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            // Iterate on input
+            while let Some(request) = request_stream.next().await {
+                // Create return channel
+                let (result_sender, result_receiver) = oneshot::channel();
+                // Push to intermediate channel and preserve ordering
+                intermediate_sender
+                    .send(result_receiver)
+                    .expect("`intermediate_receiver` was dropped. This is a bug.");
+
+                match request {
+                    Ok(request) => internal_sender
+                        .send((request, result_sender))
+                        .await
+                        .expect("`internal_receiver` was dropped. This is a bug."),
+                    Err(status) => {
+                        // Request is malformed
+                        let _ = result_sender.send(Err(status));
+                    }
+                };
+            }
+        });
+
+        // Final channel for the outputs
+        let (response_sender, response_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            while let Some(result_receiver) = intermediate_receiver.recv().await {
+                // Select on closed to cancel work if the stream was closed
+                tokio::select! {
+                response = result_receiver => {
+                    let _ = response_sender.send(response.expect("`result_sender` was dropped. This is a bug."));
+                }
+                _ = response_sender.closed() => {}
+                }
+            }
+        });
+
+        Ok(Response::new(UnboundedReceiverStream::new(
+            response_receiver,
+        )))
+    }
 }
 
 #[tonic::async_trait]
@@ -405,85 +596,13 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         &self,
         request: Request<Streaming<EmbedRequest>>,
     ) -> Result<Response<Self::EmbedStreamStream>, Status> {
-        let mut request_stream = request.into_inner();
+        // Clone for move below
+        let clone = self.clone();
+        let function = |req: EmbedRequest, permit: OwnedSemaphorePermit| async move {
+            clone.embed_pooled_inner(req, permit).await
+        };
 
-        // Create bounded channel to have an upper bound of spawned tasks
-        // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
-        let (embed_sender, mut embed_receiver) = mpsc::channel::<(
-            EmbedRequest,
-            oneshot::Sender<Result<EmbedResponse, Status>>,
-        )>(self.max_parallel_stream_requests);
-
-        // Required for the async move below
-        let local = self.clone();
-
-        // Background task that uses the bounded channel
-        tokio::spawn(async move {
-            while let Some((request, mut sender)) = embed_receiver.recv().await {
-                // Wait on permit before spawning the task to avoid creating more tasks than needed
-                let permit = local.infer.acquire_permit().await;
-
-                // Required for the async move below
-                let task_local = local.clone();
-
-                // Create async task for this specific input
-                tokio::spawn(async move {
-                    // Select on closed to cancel work if the stream was closed
-                    tokio::select! {
-                    response = task_local.embed_pooled_inner(request, permit) => {
-                        let _ = sender.send(response.map(|(r, _m)| r));
-                    }
-                    _ = sender.closed() => {}
-                    }
-                });
-            }
-        });
-
-        // Intermediate channels
-        // Required to keep the order of the requests
-        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
-
-        tokio::spawn(async move {
-            // Iterate on input
-            while let Some(request) = request_stream.next().await {
-                // Create return channel
-                let (result_sender, result_receiver) = oneshot::channel();
-                // Push to intermediate channel and preserve ordering
-                intermediate_sender
-                    .send(result_receiver)
-                    .expect("`intermediate_receiver` was dropped. This is a bug.");
-
-                match request {
-                    Ok(request) => embed_sender
-                        .send((request, result_sender))
-                        .await
-                        .expect("`embed_receiver` was dropped. This is a bug."),
-                    Err(status) => {
-                        // Request is malformed
-                        let _ = result_sender.send(Err(status));
-                    }
-                };
-            }
-        });
-
-        // Final channel for the outputs
-        let (response_sender, response_receiver) = mpsc::unbounded_channel();
-
-        tokio::spawn(async move {
-            while let Some(result_receiver) = intermediate_receiver.recv().await {
-                // Select on closed to cancel work if the stream was closed
-                tokio::select! {
-                response = result_receiver => {
-                    let _ = response_sender.send(response.expect("`result_sender` was dropped. This is a bug."));
-                }
-                _ = response_sender.closed() => {}
-                }
-            }
-        });
-
-        Ok(Response::new(UnboundedReceiverStream::new(
-            response_receiver,
-        )))
+        self.stream(request, function).await
     }
 
     async fn embed_sparse(
@@ -516,85 +635,13 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         &self,
         request: Request<Streaming<EmbedSparseRequest>>,
     ) -> Result<Response<Self::EmbedSparseStreamStream>, Status> {
-        let mut request_stream = request.into_inner();
+        // Clone for move below
+        let clone = self.clone();
+        let function = |req: EmbedSparseRequest, permit: OwnedSemaphorePermit| async move {
+            clone.embed_sparse_inner(req, permit).await
+        };
 
-        // Create bounded channel to have an upper bound of spawned tasks
-        // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
-        let (embed_sender, mut embed_receiver) = mpsc::channel::<(
-            EmbedSparseRequest,
-            oneshot::Sender<Result<EmbedSparseResponse, Status>>,
-        )>(self.max_parallel_stream_requests);
-
-        // Required for the async move below
-        let local = self.clone();
-
-        // Background task that uses the bounded channel
-        tokio::spawn(async move {
-            while let Some((request, mut sender)) = embed_receiver.recv().await {
-                // Wait on permit before spawning the task to avoid creating more tasks than needed
-                let permit = local.infer.acquire_permit().await;
-
-                // Required for the async move below
-                let task_local = local.clone();
-
-                // Create async task for this specific input
-                tokio::spawn(async move {
-                    // Select on closed to cancel work if the stream was closed
-                    tokio::select! {
-                    response = task_local.embed_sparse_inner(request, permit) => {
-                        let _ = sender.send(response.map(|(r, _m)| r));
-                    }
-                    _ = sender.closed() => {}
-                    }
-                });
-            }
-        });
-
-        // Intermediate channels
-        // Required to keep the order of the requests
-        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
-
-        tokio::spawn(async move {
-            // Iterate on input
-            while let Some(request) = request_stream.next().await {
-                // Create return channel
-                let (result_sender, result_receiver) = oneshot::channel();
-                // Push to intermediate channel and preserve ordering
-                intermediate_sender
-                    .send(result_receiver)
-                    .expect("`intermediate_receiver` was dropped. This is a bug.");
-
-                match request {
-                    Ok(request) => embed_sender
-                        .send((request, result_sender))
-                        .await
-                        .expect("`embed_receiver` was dropped. This is a bug."),
-                    Err(status) => {
-                        // Request is malformed
-                        let _ = result_sender.send(Err(status));
-                    }
-                };
-            }
-        });
-
-        // Final channel for the outputs
-        let (response_sender, response_receiver) = mpsc::unbounded_channel();
-
-        tokio::spawn(async move {
-            while let Some(result_receiver) = intermediate_receiver.recv().await {
-                // Select on closed to cancel work if the stream was closed
-                tokio::select! {
-                response = result_receiver => {
-                    let _ = response_sender.send(response.expect("`result_sender` was dropped. This is a bug."));
-                }
-                _ = response_sender.closed() => {}
-                }
-            }
-        });
-
-        Ok(Response::new(UnboundedReceiverStream::new(
-            response_receiver,
-        )))
+        self.stream(request, function).await
     }
 
     #[instrument(skip_all)]
@@ -629,85 +676,13 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         &self,
         request: Request<Streaming<EmbedAllRequest>>,
     ) -> Result<Response<Self::EmbedAllStreamStream>, Status> {
-        let mut request_stream = request.into_inner();
+        // Clone for move below
+        let clone = self.clone();
+        let function = |req: EmbedAllRequest, permit: OwnedSemaphorePermit| async move {
+            clone.embed_all_inner(req, permit).await
+        };
 
-        // Create bounded channel to have an upper bound of spawned tasks
-        // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
-        let (embed_sender, mut embed_receiver) = mpsc::channel::<(
-            EmbedAllRequest,
-            oneshot::Sender<Result<EmbedAllResponse, Status>>,
-        )>(self.max_parallel_stream_requests);
-
-        // Required for the async move below
-        let local = self.clone();
-
-        // Background task that uses the bounded channel
-        tokio::spawn(async move {
-            while let Some((request, mut sender)) = embed_receiver.recv().await {
-                // Wait on permit before spawning the task to avoid creating more tasks than needed
-                let permit = local.infer.acquire_permit().await;
-
-                // Required for the async move below
-                let task_local = local.clone();
-
-                // Create async task for this specific input
-                tokio::spawn(async move {
-                    // Select on closed to cancel work if the stream was closed
-                    tokio::select! {
-                    response = task_local.embed_all_inner(request, permit) => {
-                        let _ = sender.send(response.map(|(r, _m)| r));
-                    }
-                    _ = sender.closed() => {}
-                    }
-                });
-            }
-        });
-
-        // Intermediate channels
-        // Required to keep the order of the requests
-        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
-
-        tokio::spawn(async move {
-            // Iterate on input
-            while let Some(request) = request_stream.next().await {
-                // Create return channel
-                let (result_sender, result_receiver) = oneshot::channel();
-                // Push to intermediate channel and preserve ordering
-                intermediate_sender
-                    .send(result_receiver)
-                    .expect("`intermediate_receiver` was dropped. This is a bug.");
-
-                match request {
-                    Ok(request) => embed_sender
-                        .send((request, result_sender))
-                        .await
-                        .expect("`embed_receiver` was dropped. This is a bug."),
-                    Err(status) => {
-                        // Request is malformed
-                        let _ = result_sender.send(Err(status));
-                    }
-                };
-            }
-        });
-
-        // Final channel for the outputs
-        let (response_sender, response_receiver) = mpsc::unbounded_channel();
-
-        tokio::spawn(async move {
-            while let Some(result_receiver) = intermediate_receiver.recv().await {
-                // Select on closed to cancel work if the stream was closed
-                tokio::select! {
-                response = result_receiver => {
-                    let _ = response_sender.send(response.expect("`result_sender` was dropped. This is a bug."));
-                }
-                _ = response_sender.closed() => {}
-                }
-            }
-        });
-
-        Ok(Response::new(UnboundedReceiverStream::new(
-            response_receiver,
-        )))
+        self.stream(request, function).await
     }
 }
 
@@ -726,7 +701,51 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
             .map_err(ErrorResponse::from)?;
 
         let request = request.into_inner();
-        let (response, metadata) = self.predict_inner(request, permit).await?;
+        let (response, metadata) = self
+            .predict_inner(request.inputs, request.truncate, request.raw_scores, permit)
+            .await?;
+        let headers = HeaderMap::from(metadata);
+
+        metrics::increment_counter!("te_request_success", "method" => "single");
+
+        Ok(Response::from_parts(
+            MetadataMap::from_headers(headers),
+            response,
+            Extensions::default(),
+        ))
+    }
+
+    async fn predict_pair(
+        &self,
+        request: Request<PredictPairRequest>,
+    ) -> Result<Response<PredictResponse>, Status> {
+        metrics::increment_counter!("te_request_count", "method" => "single");
+        let request = request.into_inner();
+
+        let mut inputs = request.inputs;
+
+        let inputs = match inputs.len() {
+            1 => EncodingInput::Single(inputs.pop().unwrap()),
+            2 => EncodingInput::Dual(inputs.swap_remove(0), inputs.pop().unwrap()),
+            _ => {
+                return Err(Status::from(ErrorResponse {
+                    error: format!(
+                        "`inputs` must have a single or two elements. Given: {}",
+                        inputs.len()
+                    ),
+                    error_type: ErrorType::Validation,
+                }))
+            }
+        };
+
+        let permit = self
+            .infer
+            .try_acquire_permit()
+            .map_err(ErrorResponse::from)?;
+
+        let (response, metadata) = self
+            .predict_inner(inputs, request.truncate, request.raw_scores, permit)
+            .await?;
         let headers = HeaderMap::from(metadata);
 
         metrics::increment_counter!("te_request_success", "method" => "single");
@@ -745,85 +764,48 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
         &self,
         request: Request<Streaming<PredictRequest>>,
     ) -> Result<Response<Self::PredictStreamStream>, Status> {
-        let mut request_stream = request.into_inner();
+        // Clone for move below
+        let clone = self.clone();
+        let function = |req: PredictRequest, permit: OwnedSemaphorePermit| async move {
+            clone
+                .predict_inner(req.inputs, req.truncate, req.raw_scores, permit)
+                .await
+        };
 
-        // Create bounded channel to have an upper bound of spawned tasks
-        // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
-        let (predict_sender, mut predict_receiver) = mpsc::channel::<(
-            PredictRequest,
-            oneshot::Sender<Result<PredictResponse, Status>>,
-        )>(self.max_parallel_stream_requests);
+        self.stream(request, function).await
+    }
 
-        // Required for the async move below
-        let local = self.clone();
+    type PredictPairStreamStream = UnboundedReceiverStream<Result<PredictResponse, Status>>;
 
-        // Background task that uses the bounded channel
-        tokio::spawn(async move {
-            while let Some((request, mut sender)) = predict_receiver.recv().await {
-                // Wait on permit before spawning the task to avoid creating more tasks than needed
-                let permit = local.infer.acquire_permit().await;
+    async fn predict_pair_stream(
+        &self,
+        request: Request<Streaming<PredictPairRequest>>,
+    ) -> Result<Response<Self::PredictPairStreamStream>, Status> {
+        // Clone for move below
+        let clone = self.clone();
+        let function = |req: PredictPairRequest, permit: OwnedSemaphorePermit| async move {
+            let mut inputs = req.inputs;
 
-                // Required for the async move below
-                let task_local = local.clone();
-
-                // Create async task for this specific input
-                tokio::spawn(async move {
-                    // Select on closed to cancel work if the stream was closed
-                    tokio::select! {
-                    response = task_local.predict_inner(request, permit) => {
-                        let _ = sender.send(response.map(|(r, _m)| r));
-                    }
-                    _ = sender.closed() => {}
-                    }
-                });
-            }
-        });
-
-        // Intermediate channels
-        // Required to keep the order of the requests
-        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
-
-        tokio::spawn(async move {
-            // Iterate on input
-            while let Some(request) = request_stream.next().await {
-                // Create return channel
-                let (result_sender, result_receiver) = oneshot::channel();
-                // Push to intermediate channel and preserve ordering
-                intermediate_sender
-                    .send(result_receiver)
-                    .expect("`intermediate_receiver` was dropped. This is a bug.");
-
-                match request {
-                    Ok(request) => predict_sender
-                        .send((request, result_sender))
-                        .await
-                        .expect("`predict_receiver` was dropped. This is a bug."),
-                    Err(status) => {
-                        // Request is malformed
-                        let _ = result_sender.send(Err(status));
-                    }
-                };
-            }
-        });
-
-        // Final channel for the outputs
-        let (response_sender, response_receiver) = mpsc::unbounded_channel();
-
-        tokio::spawn(async move {
-            while let Some(result_receiver) = intermediate_receiver.recv().await {
-                // Select on closed to cancel work if the stream was closed
-                tokio::select! {
-                response = result_receiver => {
-                    let _ = response_sender.send(response.expect("`result_sender` was dropped. This is a bug."));
+            let inputs = match inputs.len() {
+                1 => EncodingInput::Single(inputs.pop().unwrap()),
+                2 => EncodingInput::Dual(inputs.swap_remove(0), inputs.pop().unwrap()),
+                _ => {
+                    return Err(Status::from(ErrorResponse {
+                        error: format!(
+                            "`inputs` must have a single or two elements. Given: {}",
+                            inputs.len()
+                        ),
+                        error_type: ErrorType::Validation,
+                    }))
                 }
-                _ = response_sender.closed() => {}
-                }
-            }
-        });
+            };
 
-        Ok(Response::new(UnboundedReceiverStream::new(
-            response_receiver,
-        )))
+            clone
+                .predict_inner(inputs, req.truncate, req.raw_scores, permit)
+                .await
+        };
+
+        self.stream(request, function).await
     }
 }
 
@@ -1261,82 +1243,11 @@ impl grpc::tokenize_server::Tokenize for TextEmbeddingsService {
         &self,
         request: Request<Streaming<EncodeRequest>>,
     ) -> Result<Response<Self::TokenizeStreamStream>, Status> {
-        let mut request_stream = request.into_inner();
+        // Clone for move below
+        let clone = self.clone();
+        let function = |req: EncodeRequest| async move { clone.tokenize_inner(req).await };
 
-        // Create bounded channel to have an upper bound of spawned tasks
-        // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
-        let (encode_sender, mut encode_receiver) = mpsc::channel::<(
-            EncodeRequest,
-            oneshot::Sender<Result<EncodeResponse, Status>>,
-        )>(self.max_parallel_stream_requests);
-
-        // Required for the async move below
-        let local = self.clone();
-
-        // Background task that uses the bounded channel
-        tokio::spawn(async move {
-            while let Some((request, mut sender)) = encode_receiver.recv().await {
-                // Required for the async move below
-                let task_local = local.clone();
-
-                // Create async task for this specific input
-                tokio::spawn(async move {
-                    // Select on closed to cancel work if the stream was closed
-                    tokio::select! {
-                        response = task_local.tokenize_inner(request) => {
-                            let _ = sender.send(response);
-                        }
-                    _ = sender.closed() => {}
-                    }
-                });
-            }
-        });
-
-        // Intermediate channels
-        // Required to keep the order of the requests
-        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
-
-        tokio::spawn(async move {
-            // Iterate on input
-            while let Some(request) = request_stream.next().await {
-                // Create return channel
-                let (result_sender, result_receiver) = oneshot::channel();
-                // Push to intermediate channel and preserve ordering
-                intermediate_sender
-                    .send(result_receiver)
-                    .expect("`intermediate_receiver` was dropped. This is a bug.");
-
-                match request {
-                    Ok(request) => encode_sender
-                        .send((request, result_sender))
-                        .await
-                        .expect("`encode_receiver` was dropped. This is a bug."),
-                    Err(status) => {
-                        // Request is malformed
-                        let _ = result_sender.send(Err(status));
-                    }
-                };
-            }
-        });
-
-        // Final channel for the outputs
-        let (response_sender, response_receiver) = mpsc::unbounded_channel();
-
-        tokio::spawn(async move {
-            while let Some(result_receiver) = intermediate_receiver.recv().await {
-                // Select on closed to cancel work if the stream was closed
-                tokio::select! {
-                response = result_receiver => {
-                    let _ = response_sender.send(response.expect("`result_sender` was dropped. This is a bug."));
-                }
-                _ = response_sender.closed() => {}
-                }
-            }
-        });
-
-        Ok(Response::new(UnboundedReceiverStream::new(
-            response_receiver,
-        )))
+        self.stream_no_permit(request, function).await
     }
 
     async fn decode(
@@ -1354,82 +1265,11 @@ impl grpc::tokenize_server::Tokenize for TextEmbeddingsService {
         &self,
         request: Request<Streaming<DecodeRequest>>,
     ) -> Result<Response<Self::DecodeStreamStream>, Status> {
-        let mut request_stream = request.into_inner();
+        // Clone for move below
+        let clone = self.clone();
+        let function = |req: DecodeRequest| async move { clone.decode_inner(req).await };
 
-        // Create bounded channel to have an upper bound of spawned tasks
-        // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
-        let (encode_sender, mut encode_receiver) = mpsc::channel::<(
-            DecodeRequest,
-            oneshot::Sender<Result<DecodeResponse, Status>>,
-        )>(self.max_parallel_stream_requests);
-
-        // Required for the async move below
-        let local = self.clone();
-
-        // Background task that uses the bounded channel
-        tokio::spawn(async move {
-            while let Some((request, mut sender)) = encode_receiver.recv().await {
-                // Required for the async move below
-                let task_local = local.clone();
-
-                // Create async task for this specific input
-                tokio::spawn(async move {
-                    // Select on closed to cancel work if the stream was closed
-                    tokio::select! {
-                        response = task_local.decode_inner(request) => {
-                            let _ = sender.send(response);
-                        }
-                    _ = sender.closed() => {}
-                    }
-                });
-            }
-        });
-
-        // Intermediate channels
-        // Required to keep the order of the requests
-        let (intermediate_sender, mut intermediate_receiver) = mpsc::unbounded_channel();
-
-        tokio::spawn(async move {
-            // Iterate on input
-            while let Some(request) = request_stream.next().await {
-                // Create return channel
-                let (result_sender, result_receiver) = oneshot::channel();
-                // Push to intermediate channel and preserve ordering
-                intermediate_sender
-                    .send(result_receiver)
-                    .expect("`intermediate_receiver` was dropped. This is a bug.");
-
-                match request {
-                    Ok(request) => encode_sender
-                        .send((request, result_sender))
-                        .await
-                        .expect("`encode_receiver` was dropped. This is a bug."),
-                    Err(status) => {
-                        // Request is malformed
-                        let _ = result_sender.send(Err(status));
-                    }
-                };
-            }
-        });
-
-        // Final channel for the outputs
-        let (response_sender, response_receiver) = mpsc::unbounded_channel();
-
-        tokio::spawn(async move {
-            while let Some(result_receiver) = intermediate_receiver.recv().await {
-                // Select on closed to cancel work if the stream was closed
-                tokio::select! {
-                response = result_receiver => {
-                    let _ = response_sender.send(response.expect("`result_sender` was dropped. This is a bug."));
-                }
-                _ = response_sender.closed() => {}
-                }
-            }
-        });
-
-        Ok(Response::new(UnboundedReceiverStream::new(
-            response_receiver,
-        )))
+        self.stream_no_permit(request, function).await
     }
 }
 
