@@ -1399,7 +1399,8 @@ pub async fn run(
     info(
     title = "Text Embeddings Inference",
     license(
-    name = "HFOIL",
+    name = "Apache 2.0",
+    url = "https://www.apache.org/licenses/LICENSE-2.0"
     )
     )
     )]
