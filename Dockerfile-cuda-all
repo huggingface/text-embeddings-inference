@@ -127,3 +127,11 @@ RUN chmod +x entrypoint.sh
 
 ENTRYPOINT ["./entrypoint.sh"]
 CMD ["--json-output"]
+
+# Amazon SageMaker compatible image
+FROM base AS sagemaker
+
+COPY sagemaker-entrypoint.sh entrypoint.sh
+RUN chmod +x entrypoint.sh
+
+ENTRYPOINT ["./entrypoint.sh"]
