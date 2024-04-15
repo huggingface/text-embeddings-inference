@@ -131,7 +131,6 @@ CMD ["--json-output"]
 # Amazon SageMaker compatible image
 FROM base AS sagemaker
 
-COPY sagemaker-entrypoint.sh entrypoint.sh
-RUN chmod +x entrypoint.sh
+COPY --chmod=775 sagemaker-entrypoint-cuda-all.sh entrypoint.sh
 
 ENTRYPOINT ["./entrypoint.sh"]
