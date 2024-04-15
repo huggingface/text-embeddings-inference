@@ -73,7 +73,7 @@ pub(crate) fn flash_attn_varlen(
             return attention;
         }
         #[cfg(not(feature = "flash-attn"))]
-        candle::bail!("Flash attention is not installed. Use `flash-attn-v1` feature.")
+        candle::bail!("Flash attention is not installed. Use `flash-attn` feature.")
     }
     candle::bail!(
         "GPU with CUDA capability {} is not supported",
