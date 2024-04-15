@@ -48,9 +48,9 @@ FROM builder as builder-75
 
 RUN if [ $VERTEX = "true" ]; \
     then \
-      CUDA_COMPUTE_CAP=75 cargo chef cook --release --features google --features candle-cuda-turing --no-default-features --recipe-path recipe.json && sccache -s; \
+      CUDA_COMPUTE_CAP=75 cargo chef cook --release --features google --features candle-cuda-turing --features http --no-default-features --recipe-path recipe.json && sccache -s; \
     else \
-      CUDA_COMPUTE_CAP=75 cargo chef cook --release --features candle-cuda-turing --no-default-features --recipe-path recipe.json && sccache -s; \
+      CUDA_COMPUTE_CAP=75 cargo chef cook --release --features candle-cuda-turing --no-default-features --features http --recipe-path recipe.json && sccache -s; \
     fi;
 
 COPY backends backends
@@ -70,9 +70,9 @@ FROM builder as builder-80
 
 RUN if [ $VERTEX = "true" ]; \
     then \
-      CUDA_COMPUTE_CAP=80 cargo chef cook --release --features google --features candle-cuda-turing --no-default-features --recipe-path recipe.json && sccache -s; \
+      CUDA_COMPUTE_CAP=80 cargo chef cook --release --features google --features candle-cuda --features http --no-default-features --recipe-path recipe.json && sccache -s; \
     else \
-      CUDA_COMPUTE_CAP=80 cargo chef cook --release --features candle-cuda-turing --no-default-features --recipe-path recipe.json && sccache -s; \
+      CUDA_COMPUTE_CAP=80 cargo chef cook --release --features candle-cuda --no-default-features --features http --recipe-path recipe.json && sccache -s; \
     fi;
 
 COPY backends backends
@@ -83,18 +83,18 @@ COPY Cargo.lock ./
 
 RUN if [ $VERTEX = "true" ]; \
     then \
-        CUDA_COMPUTE_CAP=80 cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F http -F google --no-default-features && sccache -s; \
+        CUDA_COMPUTE_CAP=80 cargo build --release --bin text-embeddings-router -F candle-cuda -F http -F google --no-default-features && sccache -s; \
     else \
-        CUDA_COMPUTE_CAP=80 cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F http --no-default-features && sccache -s; \
+        CUDA_COMPUTE_CAP=80 cargo build --release --bin text-embeddings-router -F candle-cuda -F http --no-default-features && sccache -s; \
     fi;
 
 FROM builder as builder-90
 
 RUN if [ $VERTEX = "true" ]; \
     then \
-      CUDA_COMPUTE_CAP=90 cargo chef cook --release --features google --features candle-cuda-turing --no-default-features --recipe-path recipe.json && sccache -s; \
+      CUDA_COMPUTE_CAP=90 cargo chef cook --release --features google --features candle-cuda --features http --no-default-features --recipe-path recipe.json && sccache -s; \
     else \
-      CUDA_COMPUTE_CAP=90 cargo chef cook --release --features candle-cuda-turing --no-default-features --recipe-path recipe.json && sccache -s; \
+      CUDA_COMPUTE_CAP=90 cargo chef cook --release --features candle-cuda --features http --no-default-features --recipe-path recipe.json && sccache -s; \
     fi;
 
 COPY backends backends
@@ -105,9 +105,9 @@ COPY Cargo.lock ./
 
 RUN if [ $VERTEX = "true" ]; \
     then \
-        CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F http -F google --no-default-features && sccache -s; \
+        CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda -F http -F google --no-default-features && sccache -s; \
     else \
-        CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F http --no-default-features && sccache -s; \
+        CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda -F http --no-default-features && sccache -s; \
     fi;
 
 FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04 as base
