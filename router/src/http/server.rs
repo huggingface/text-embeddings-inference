@@ -1479,12 +1479,16 @@ pub async fn run(
     #[cfg(feature = "google")]
     {
         tracing::info!("Built with `google` feature");
-        let env_predict_route = std::env::var("AIP_PREDICT_ROUTE")
-            .context("`AIP_PREDICT_ROUTE` env var must be set for Google Vertex deployments")?;
-        app = app.route(&env_predict_route, post(vertex_compatibility));
-        let env_health_route = std::env::var("AIP_HEALTH_ROUTE")
-            .context("`AIP_HEALTH_ROUTE` env var must be set for Google Vertex deployments")?;
-        app = app.route(&env_health_route, get(health));
+
+        if let Ok(env_predict_route) = std::env::var("AIP_PREDICT_ROUTE") {
+            tracing::info!("Serving Vertex compatible route on {env_predict_route}");
+            app = app.route(&env_predict_route, post(vertex_compatibility));
+        }
+
+        if let Ok(env_health_route) = std::env::var("AIP_HEALTH_ROUTE") {
+            tracing::info!("Serving Vertex compatible health route on {env_health_route}");
+            app = app.route(&env_health_route, get(health));
+        }
     }
     #[cfg(not(feature = "google"))]
     {
@@ -1545,6 +1549,9 @@ pub async fn run(
 
     // Run server
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+
+    tracing::info!("Starting HTTP server: {}", &addr);
+    tracing::info!("Ready");
 
     axum::serve(listener, app)
         // Wait until all requests are finished to shut down

@@ -1415,6 +1415,7 @@ pub async fn run(
     };
 
     tracing::info!("Starting gRPC server: {}", &addr);
+    tracing::info!("Ready");
     server.await?;
 
     Ok(())

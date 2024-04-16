@@ -248,7 +248,11 @@ pub async fn run(
         std::env::var("AIP_HTTP_PORT")
             .ok()
             .and_then(|p| p.parse().ok())
-            .context("`AIP_HTTP_PORT` env var must be set for Google Vertex deployments")?
+            .map(|p| {
+                tracing::info!("`AIP_HTTP_PORT` is set: overriding port {port} by port {p}");
+                p
+            })
+            .unwrap_or(port)
     } else {
         port
     };
@@ -274,20 +278,16 @@ pub async fn run(
 
     #[cfg(feature = "http")]
     {
-        let server = tokio::spawn(async move {
-            http::server::run(
-                infer,
-                info,
-                addr,
-                prom_builder,
-                payload_limit,
-                api_key,
-                cors_allow_origin,
-            )
-            .await
-        });
-        tracing::info!("Ready");
-        server.await??;
+        http::server::run(
+            infer,
+            info,
+            addr,
+            prom_builder,
+            payload_limit,
+            api_key,
+            cors_allow_origin,
+        )
+        .await?;
     }
 
     #[cfg(feature = "grpc")]
@@ -295,11 +295,7 @@ pub async fn run(
         // cors_allow_origin and payload_limit are not used for gRPC servers
         let _ = cors_allow_origin;
         let _ = payload_limit;
-        let server = tokio::spawn(async move {
-            grpc::server::run(infer, info, addr, prom_builder, api_key).await
-        });
-        tracing::info!("Ready");
-        server.await??;
+        grpc::server::run(infer, info, addr, prom_builder, api_key).await?;
     }
 
     Ok(())
