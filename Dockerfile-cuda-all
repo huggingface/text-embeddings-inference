@@ -40,6 +40,9 @@ ARG ACTIONS_CACHE_URL
 ARG ACTIONS_RUNTIME_TOKEN
 ARG SCCACHE_GHA_ENABLED
 
+# limit the number of kernels built at the same time
+ARG RAYON_NUM_THREADS=2
+
 WORKDIR /usr/src
 
 COPY --from=planner /usr/src/recipe.json recipe.json
@@ -122,15 +125,17 @@ COPY --from=builder-75 /usr/src/target/release/text-embeddings-router /usr/local
 COPY --from=builder-80 /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router-80
 COPY --from=builder-90 /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router-90
 
-COPY cuda-all-entrypoint.sh entrypoint.sh
-RUN chmod +x entrypoint.sh
-
-ENTRYPOINT ["./entrypoint.sh"]
-CMD ["--json-output"]
-
 # Amazon SageMaker compatible image
 FROM base AS sagemaker
 
 COPY --chmod=775 sagemaker-entrypoint-cuda-all.sh entrypoint.sh
 
 ENTRYPOINT ["./entrypoint.sh"]
+
+# Default image
+FROM base
+
+COPY --chmod=775 cuda-all-entrypoint.sh entrypoint.sh
+
+ENTRYPOINT ["./entrypoint.sh"]
+CMD ["--json-output"]

@@ -102,17 +102,18 @@ COPY --from=grpc-builder /usr/src/target/release/text-embeddings-router /usr/loc
 ENTRYPOINT ["text-embeddings-router"]
 CMD ["--json-output"]
 
-FROM base
+FROM base AS http
 
 COPY --from=http-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
-
-ENTRYPOINT ["text-embeddings-router"]
-CMD ["--json-output"]
 
 # Amazon SageMaker compatible image
-FROM base AS sagemaker
-
-COPY --from=http-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
+FROM http as sagemaker
 COPY --chmod=775 sagemaker-entrypoint.sh entrypoint.sh
 
 ENTRYPOINT ["./entrypoint.sh"]
+
+# Default image
+FROM http
+
+ENTRYPOINT ["text-embeddings-router"]
+CMD ["--json-output"]
