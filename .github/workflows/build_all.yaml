@@ -91,6 +91,9 @@
          id: build-and-push-sagemaker
          uses: docker/build-push-action@v4
          with:
+           config-inline: |
+             [worker.oci]
+               max-parallelism = 1
            context: .
            file: Dockerfile-cuda-all
            push: ${{ github.event_name != 'pull_request' }}
