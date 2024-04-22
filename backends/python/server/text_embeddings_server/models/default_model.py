@@ -5,16 +5,22 @@ from pathlib import Path
 from typing import Type, List
 from transformers import AutoModel
 from opentelemetry import trace
+from loguru import logger
 
 from text_embeddings_server.models import Model
 from text_embeddings_server.models.types import PaddedBatch, Embedding
-
+from text_embeddings_server.utils.device import is_ipex_available, use_ipex
 tracer = trace.get_tracer(__name__)
 
 
 class DefaultModel(Model):
     def __init__(self, model_path: Path, device: torch.device, dtype: torch.dtype):
         model = AutoModel.from_pretrained(model_path).to(dtype).to(device)
+        model.eval()
+        if use_ipex() and device.type != "cuda":
+            import intel_extension_for_pytorch as ipex
+            model = ipex.optimize(model, dtype=dtype)
+
         self.hidden_size = model.config.hidden_size
 
         self.has_position_ids = (
@@ -39,10 +45,9 @@ class DefaultModel(Model):
             kwargs["token_type_ids"] = batch.token_type_ids
         if self.has_position_ids:
             kwargs["position_ids"] = batch.position_ids
-
         output = self.model(**kwargs)
         embedding = output[0][:, 0]
-        cpu_results = embedding.view(-1).tolist()
+        cpu_results = embedding.reshape(-1).tolist()
 
         return [
             Embedding(

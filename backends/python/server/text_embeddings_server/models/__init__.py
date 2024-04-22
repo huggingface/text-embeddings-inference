@@ -8,6 +8,7 @@ from transformers.models.bert import BertConfig
 
 from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.default_model import DefaultModel
+from text_embeddings_server.utils.device import get_device
 
 __all__ = ["Model"]
 
@@ -35,13 +36,7 @@ def get_model(model_path: Path, dtype: Optional[str]):
     else:
         raise RuntimeError(f"Unknown dtype {dtype}")
 
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        if dtype != torch.float32:
-            raise ValueError("CPU device only supports float32 dtype")
-        device = torch.device("cpu")
-
+    device = get_device()
     config = AutoConfig.from_pretrained(model_path)
 
     if config.model_type == "bert":
