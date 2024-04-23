@@ -405,13 +405,14 @@ impl ClassificationHead for BertClassificationHead {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let mut hidden_states = hidden_states.clone();
+        let mut hidden_states = hidden_states.unsqueeze(1)?;
         if let Some(pooler) = self.pooler.as_ref() {
             hidden_states = pooler.forward(&hidden_states)?;
             hidden_states = hidden_states.tanh()?;
         }
 
         let hidden_states = self.output.forward(&hidden_states)?;
+        let hidden_states = hidden_states.squeeze(1)?;
         Ok(hidden_states)
     }
 }
@@ -453,10 +454,11 @@ impl ClassificationHead for RobertaClassificationHead {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let hidden_states = self.intermediate.forward(hidden_states)?;
+        let hidden_states = hidden_states.unsqueeze(1)?;
+        let hidden_states = self.intermediate.forward(&hidden_states)?;
         let hidden_states = hidden_states.tanh()?;
         let hidden_states = self.output.forward(&hidden_states)?;
-
+        let hidden_states = hidden_states.squeeze(1)?;
         Ok(hidden_states)
     }
 }

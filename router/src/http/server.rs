@@ -1548,7 +1548,9 @@ pub async fn run(
     }
 
     // Run server
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .context(format!("Could not bind TCP Listener on {addr}"))?;
 
     tracing::info!("Starting HTTP server: {}", &addr);
     tracing::info!("Ready");

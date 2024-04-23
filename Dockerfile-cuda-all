@@ -33,7 +33,7 @@ FROM base-builder AS builder
 
 ARG GIT_SHA
 ARG DOCKER_LABEL
-ARG VERTEX
+ARG VERTEX="false"
 
 # sccache specific variables
 ARG ACTIONS_CACHE_URL
@@ -41,19 +41,38 @@ ARG ACTIONS_RUNTIME_TOKEN
 ARG SCCACHE_GHA_ENABLED
 
 # limit the number of kernels built at the same time
-ARG RAYON_NUM_THREADS=2
+ARG RAYON_NUM_THREADS=4
 
 WORKDIR /usr/src
 
 COPY --from=planner /usr/src/recipe.json recipe.json
 
-FROM builder as builder-75
+RUN if [ $VERTEX = "true" ]; \
+    then \
+      cargo chef cook --release --features google --recipe-path recipe.json && sccache -s; \
+    else \
+      cargo chef cook --release --recipe-path recipe.json && sccache -s; \
+    fi;
 
 RUN if [ $VERTEX = "true" ]; \
     then \
-      CUDA_COMPUTE_CAP=75 cargo chef cook --release --features google --features candle-cuda-turing --features http --no-default-features --recipe-path recipe.json && sccache -s; \
+      CUDA_COMPUTE_CAP=75 cargo chef cook --release --features google --features candle-cuda-turing --recipe-path recipe.json && sccache -s; \
     else \
-      CUDA_COMPUTE_CAP=75 cargo chef cook --release --features candle-cuda-turing --no-default-features --features http --recipe-path recipe.json && sccache -s; \
+      CUDA_COMPUTE_CAP=75 cargo chef cook --release --features candle-cuda-turing --recipe-path recipe.json && sccache -s; \
+    fi;
+
+RUN if [ $VERTEX = "true" ]; \
+    then \
+      CUDA_COMPUTE_CAP=80 cargo chef cook --release --features google --features candle-cuda --recipe-path recipe.json && sccache -s; \
+    else \
+      CUDA_COMPUTE_CAP=80 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s; \
+    fi;
+
+RUN if [ $VERTEX = "true" ]; \
+    then \
+      CUDA_COMPUTE_CAP=90 cargo chef cook --release --features google --features candle-cuda --recipe-path recipe.json && sccache -s; \
+    else \
+      CUDA_COMPUTE_CAP=90 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s; \
     fi;
 
 COPY backends backends
@@ -64,54 +83,30 @@ COPY Cargo.lock ./
 
 RUN if [ $VERTEX = "true" ]; \
     then \
-        CUDA_COMPUTE_CAP=75 cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F http -F google --no-default-features && sccache -s; \
+        CUDA_COMPUTE_CAP=75 cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F google  && sccache -s; \
     else \
-        CUDA_COMPUTE_CAP=75 cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F http --no-default-features && sccache -s; \
+        CUDA_COMPUTE_CAP=75 cargo build --release --bin text-embeddings-router -F candle-cuda-turing && sccache -s; \
     fi;
 
-FROM builder as builder-80
+RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-75
 
 RUN if [ $VERTEX = "true" ]; \
     then \
-      CUDA_COMPUTE_CAP=80 cargo chef cook --release --features google --features candle-cuda --features http --no-default-features --recipe-path recipe.json && sccache -s; \
+        CUDA_COMPUTE_CAP=80 cargo build --release --bin text-embeddings-router -F candle-cuda -F google  && sccache -s; \
     else \
-      CUDA_COMPUTE_CAP=80 cargo chef cook --release --features candle-cuda --no-default-features --features http --recipe-path recipe.json && sccache -s; \
+        CUDA_COMPUTE_CAP=80 cargo build --release --bin text-embeddings-router -F candle-cuda && sccache -s; \
     fi;
 
-COPY backends backends
-COPY core core
-COPY router router
-COPY Cargo.toml ./
-COPY Cargo.lock ./
+RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-80
 
 RUN if [ $VERTEX = "true" ]; \
     then \
-        CUDA_COMPUTE_CAP=80 cargo build --release --bin text-embeddings-router -F candle-cuda -F http -F google --no-default-features && sccache -s; \
+        CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda -F google  && sccache -s; \
     else \
-        CUDA_COMPUTE_CAP=80 cargo build --release --bin text-embeddings-router -F candle-cuda -F http --no-default-features && sccache -s; \
+        CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda && sccache -s; \
     fi;
 
-FROM builder as builder-90
-
-RUN if [ $VERTEX = "true" ]; \
-    then \
-      CUDA_COMPUTE_CAP=90 cargo chef cook --release --features google --features candle-cuda --features http --no-default-features --recipe-path recipe.json && sccache -s; \
-    else \
-      CUDA_COMPUTE_CAP=90 cargo chef cook --release --features candle-cuda --features http --no-default-features --recipe-path recipe.json && sccache -s; \
-    fi;
-
-COPY backends backends
-COPY core core
-COPY router router
-COPY Cargo.toml ./
-COPY Cargo.lock ./
-
-RUN if [ $VERTEX = "true" ]; \
-    then \
-        CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda -F http -F google --no-default-features && sccache -s; \
-    else \
-        CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda -F http --no-default-features && sccache -s; \
-    fi;
+RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-90
 
 FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04 as base
 
@@ -121,9 +116,9 @@ ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80 \
     USE_FLASH_ATTENTION=$DEFAULT_USE_FLASH_ATTENTION
 
-COPY --from=builder-75 /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router-75
-COPY --from=builder-80 /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router-80
-COPY --from=builder-90 /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router-90
+COPY --from=builder /usr/src/target/release/text-embeddings-router-75 /usr/local/bin/text-embeddings-router-75
+COPY --from=builder /usr/src/target/release/text-embeddings-router-80 /usr/local/bin/text-embeddings-router-80
+COPY --from=builder /usr/src/target/release/text-embeddings-router-90 /usr/local/bin/text-embeddings-router-90
 
 # Amazon SageMaker compatible image
 FROM base AS sagemaker
