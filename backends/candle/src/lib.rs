@@ -8,7 +8,7 @@ mod models;
 
 #[cfg(feature = "cuda")]
 use crate::compute_cap::{
-    get_compile_compute_cap, get_runtime_compute_cap, incompatible_compute_cap,
+    compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
 };
 use crate::models::{
     BertModel, DistilBertConfig, DistilBertModel, JinaBertModel, Model, NomicBertModel,
@@ -43,6 +43,7 @@ enum Config {
 }
 
 pub struct CandleBackend {
+    device: Device,
     model: Box<dyn Model + Send>,
 }
 
@@ -61,14 +62,23 @@ impl CandleBackend {
         // Get candle device
         let device = if candle::utils::cuda_is_available() {
             #[cfg(feature = "cuda")]
-            if incompatible_compute_cap() {
-                return Err(BackendError::Start(format!(
-                    "Runtime compute cap {} is not compatible with compile time compute cap {}",
-                    get_runtime_compute_cap(),
-                    get_compile_compute_cap()
-                )));
+            match compatible_compute_cap() {
+                Ok(true) => Device::new_cuda(0),
+                Ok(false) => {
+                    return Err(BackendError::Start(format!(
+                        "Runtime compute cap {} is not compatible with compile time compute cap {}",
+                        get_runtime_compute_cap().unwrap(),
+                        get_compile_compute_cap().unwrap()
+                    )))
+                }
+                Err(err) => {
+                    tracing::warn!("Could not find a compatible CUDA device on host: {err}");
+                    tracing::warn!("Using CPU instead");
+                    Ok(Device::Cpu)
+                }
             }
-            Device::new_cuda(0)
+            #[cfg(not(feature = "cuda"))]
+            Ok(Device::Cpu)
         } else if candle::utils::metal_is_available() {
             Device::new_metal(0)
         } else {
@@ -225,11 +235,22 @@ impl CandleBackend {
             }
         };
 
-        Ok(Self { model: model? })
+        Ok(Self {
+            device,
+            model: model?,
+        })
     }
 }
 
 impl Backend for CandleBackend {
+    fn max_batch_size(&self) -> Option<usize> {
+        // Limit max batch size to 4 on CPU
+        if matches!(self.device, Device::Cpu) {
+            return Some(4);
+        }
+        None
+    }
+
     fn health(&self) -> Result<(), BackendError> {
         Ok(())
     }
