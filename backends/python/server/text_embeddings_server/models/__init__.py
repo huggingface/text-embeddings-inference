@@ -8,8 +8,7 @@ from transformers.models.bert import BertConfig
 
 from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.default_model import DefaultModel
-from text_embeddings_server.utils.device import get_device
-
+from text_embeddings_server.utils.device import get_device, use_ipex
 __all__ = ["Model"]
 
 # Disable gradients
@@ -47,6 +46,12 @@ def get_model(model_path: Path, dtype: Optional[str]):
             and dtype in [torch.float16, torch.bfloat16]
             and FLASH_ATTENTION
         ):
+            return FlashBert(model_path, device, dtype)
+        elif (
+              device.type == "cpu"
+              and use_ipex()
+        ):
+            logger.info("Use the flashBert for CPU")
             return FlashBert(model_path, device, dtype)
         else:
             return DefaultModel(model_path, device, dtype)
