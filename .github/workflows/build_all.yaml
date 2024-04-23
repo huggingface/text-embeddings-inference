@@ -3,20 +3,10 @@
  on:
    workflow_dispatch:
    push:
-     tags:
-       - 'v*'
-   pull_request:
-     paths:
-       - ".github/workflows/build.yaml"
-       #       - "integration-tests/**"
-       - "backends/**"
-       - "core/**"
-       - "router/**"
-       - "Cargo.lock"
-       - "rust-toolchain.toml"
-       - "Dockerfile"
      branches:
        - 'main'
+     tags:
+       - 'v*'
 
  jobs:
    build-and-push-image:
