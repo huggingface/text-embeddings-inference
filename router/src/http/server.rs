@@ -1410,11 +1410,15 @@ pub async fn run(
     // map to go inside the option and then map to parse from String to HeaderValue
     // Finally, convert to AllowOrigin
     let allow_origin: Option<AllowOrigin> = cors_allow_origin.map(|cors_allow_origin| {
-        AllowOrigin::list(
-            cors_allow_origin
-                .into_iter()
-                .map(|origin| origin.parse::<HeaderValue>().unwrap()),
-        )
+        if cors_allow_origin.iter().any(|origin| origin == "*") {
+            AllowOrigin::any()
+        } else {
+            AllowOrigin::list(
+                cors_allow_origin
+                    .into_iter()
+                    .map(|origin| origin.parse::<HeaderValue>().unwrap()),
+            )
+        }
     });
 
     let prom_handle = prom_builder
