@@ -13,7 +13,7 @@
      concurrency:
        group: ${{ github.workflow }}-${{ github.job }}-all-${{ github.head_ref || github.run_id }}
        cancel-in-progress: true
-     runs-on: [self-hosted, intel-cpu, 32-cpu, tgi-ci]
+     runs-on: [self-hosted, intel-cpu, 32-cpu, 256-ram, ci]
      permissions:
        contents: write
        packages: write
@@ -31,7 +31,7 @@
        - name: Inject slug/short variables
          uses: rlespinasse/github-slug-action@v4.4.1
        - name: Tailscale
-         uses: tailscale/github-action@7bd8039bf25c23c4ab1b8d6e2cc2da2280601966
+         uses: huggingface/tailscale-action@v1
          with:
            authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
        - name: Login to GitHub Container Registry
