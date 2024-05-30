@@ -87,11 +87,11 @@ models [here](https://huggingface.co/spaces/mteb/leaderboard).
 
 Example of supported sequence classification models:
 
-| Task               | Model Type  | Model ID                                                                                    | Revision    |
-|--------------------|-------------|---------------------------------------------------------------------------------------------|-------------|
-| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-large](https://huggingface.co/BAAI/bge-reranker-large)                   | `refs/pr/4` |
-| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)                     | `refs/pr/5` |
-| Sentiment Analysis | RoBERTa     | [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions) |             |
+| Task               | Model Type  | Model ID                                                                                    |
+|--------------------|-------------|---------------------------------------------------------------------------------------------|
+| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-large](https://huggingface.co/BAAI/bge-reranker-large)                   | 
+| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)                     |
+| Sentiment Analysis | RoBERTa     | [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions) | 
 
 ### Docker
 
