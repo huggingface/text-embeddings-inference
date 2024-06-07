@@ -58,6 +58,12 @@ get_compute_cap() {
     # Check if the GPU name contains "H100"
     elif [[ "$gpu_name" == *"H100"* ]]; then
         echo "90"
+    # Cover Nvidia T4
+    elif [[ "$gpu_name" == *"T4"* ]]; then
+        echo "75"
+    # Cover Nvidia L4
+    elif [[ "$gpu_name" == *"L4"* ]]; then
+        echo "89"
     else
         echo "80"  # Default compute capability
     fi
