@@ -38,6 +38,7 @@ impl Backend {
         model_type: ModelType,
         uds_path: String,
         otlp_endpoint: Option<String>,
+        otlp_service_name: String,
     ) -> Result<Self, BackendError> {
         let (backend_sender, backend_receiver) = mpsc::unbounded_channel();
 
@@ -47,6 +48,7 @@ impl Backend {
             model_type.clone(),
             uds_path,
             otlp_endpoint,
+            otlp_service_name,
         )?;
         let padded_model = backend.is_padded();
         let max_batch_size = backend.max_batch_size();
@@ -135,6 +137,7 @@ fn init_backend(
     model_type: ModelType,
     uds_path: String,
     otlp_endpoint: Option<String>,
+    otlp_service_name: String,
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     if cfg!(feature = "candle") {
         #[cfg(feature = "candle")]
@@ -154,6 +157,7 @@ fn init_backend(
                         model_type,
                         uds_path,
                         otlp_endpoint,
+                        otlp_service_name,
                     )
                 })
                 .join()
