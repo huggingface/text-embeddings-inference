@@ -141,7 +141,7 @@ async fn main() -> Result<()> {
     // Initialize logging and telemetry
     let global_tracer = text_embeddings_router::init_logging(
         args.otlp_endpoint.as_ref(),
-        args.otlp_service_name.as_ref(),
+        args.otlp_service_name.clone(),
         args.json_output,
     );
 
@@ -166,6 +166,7 @@ async fn main() -> Result<()> {
         args.payload_limit,
         args.api_key,
         args.otlp_endpoint,
+        args.otlp_service_name,
         args.cors_allow_origin,
     )
     .await?;
