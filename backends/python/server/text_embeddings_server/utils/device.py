@@ -27,8 +27,8 @@ def is_ipex_available():
     return True
 
 def use_ipex() :
-    value = os.environ.get("USE_IPEX", "True")
-    if value in ["True", "true", "1"] and is_ipex_available():
+    value = os.environ.get("USE_IPEX", "True").lower()
+    if value in ["true", "1"] and is_ipex_available():
         return True
     else:
         return False

@@ -54,21 +54,14 @@ COPY proto proto
 
 RUN cargo build --release --bin text-embeddings-router -F grpc -F python --no-default-features && sccache -s
 
-FROM ubuntu:22.04 as base
+FROM intel/intel-optimized-pytorch:2.3.0-pip-base as base
 
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        build-essential \
-        ca-certificates \
-        ccache \
-        curl \
-        python3 \
-        python3-pip \
-        git && \
+        build-essential &&\
         rm -rf /var/lib/apt/lists/*
-RUN ln -s /usr/bin/python3.10 /usr/bin/python
 
 WORKDIR /usr/src
 COPY backends backends
@@ -77,8 +70,8 @@ COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
 COPY backends/python/server/requirements.txt backends/python/server/requirements.txt
 RUN cd backends/python/server && \
     make install
-RUN python -m pip install torch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 --index-url https://download.pytorch.org/whl/cpu
-RUN python -m pip install intel-extension-for-pytorch
+
+RUN python -m pip install 'https://intel-extension-for-pytorch.s3.amazonaws.com/ipex_dev/cpu/intel_extension_for_pytorch-2.3.0%2Bgit1e79114-cp310-cp310-linux_x86_64.whl'
 
 FROM base as grpc
 

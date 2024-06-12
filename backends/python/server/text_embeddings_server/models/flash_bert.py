@@ -11,6 +11,7 @@ from opentelemetry import trace
 
 from text_embeddings_server.models import Model
 from text_embeddings_server.models.types import FlashBatch, Embedding
+from text_embeddings_server.utils.flash_attn import attention
 
 tracer = trace.get_tracer(__name__)
 
@@ -47,16 +48,16 @@ class FastLayerNorm:
                 res = hidden_states
         else:
             import intel_extension_for_pytorch as ipex
-            normed_hidden_states = ipex.llm.functional.fast_layer_norm(
+            normed_hidden_states = ipex.llm.functional.add_layer_norm(
+                residual,
                 hidden_states,
-                hidden_states.size(dim=-1),
                 self.weight,
-                self.bias
-            )
-            if residual is not None:
-                hidden_states += residual
+                self.bias,
+                self.variance_epsilon,
+                residual is not None
+             )
 
-            res = hidden_states
+            res = residual if residual is not None else hidden_states
 
         return normed_hidden_states, res
 
@@ -143,12 +144,7 @@ class BertAttention:
         )
 
         attn_output = torch.empty_like(q)
-        if self.device.type == "cuda":
-            from text_embeddings_server.utils.flash_attn import attention
-            attention(q, k, v, attn_output, cu_seqlens, max_s, self.softmax_scale)
-        else:
-            import intel_extension_for_pytorch as ipex
-            ipex.llm.functional.varlen_attention(q, k, v, attn_output, cu_seqlens, cu_seqlens, max_s, max_s, 0, self.softmax_scale, zero_tensors=False, is_causal=False, return_softmax=False, gen_=None)          
+        attention(q, k, v, attn_output, cu_seqlens, max_s, self.softmax_scale)
 
         hidden_states = torch.addmm(
             self.dense_bias,
