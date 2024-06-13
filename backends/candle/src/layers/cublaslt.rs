@@ -11,21 +11,27 @@ static mut CUBLASLT: Option<CublasLtWrapper> = None;
 pub fn get_cublas_lt_wrapper() -> Option<&'static CublasLtWrapper> {
     unsafe {
         INIT.call_once(|| {
-            CUBLASLT = match Device::cuda_if_available(0) {
-                Ok(device) => {
-                    #[cfg(feature = "cuda")]
-                    {
-                        Some(CublasLtWrapper {
+            #[cfg(not(feature = "cuda"))]
+            {
+                CUBLASLT = None;
+            }
+
+            #[cfg(feature = "cuda")]
+            {
+                // Check if we can call the driver
+                // Then check if we can create a device
+                // Then check that the device is CUDA
+                use candle::cuda_backend::cudarc::driver;
+                CUBLASLT = driver::result::init()
+                    .ok()
+                    .and_then(|_| Device::cuda_if_available(0).ok())
+                    .and_then(|device| match device {
+                        Device::Cuda(_) => Some(CublasLtWrapper {
                             cublaslt: CublasLt::new(&device).unwrap(),
-                        })
-                    }
-                    #[cfg(not(feature = "cuda"))]
-                    {
-                        None
-                    }
-                }
-                Err(_) => None,
-            };
+                        }),
+                        _ => None,
+                    });
+            }
         });
         CUBLASLT.as_ref()
     }
