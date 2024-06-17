@@ -64,6 +64,7 @@ pub async fn start_server(model_id: String, revision: Option<String>, dtype: DTy
             2_000_000,
             None,
             None,
+            "text-embeddings-inference.server".to_owned(),
             None,
         )
     });

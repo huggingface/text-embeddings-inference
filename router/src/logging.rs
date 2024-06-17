@@ -10,7 +10,11 @@ use tracing_subscriber::{EnvFilter, Layer};
 /// Init logging using env variables LOG_LEVEL and LOG_FORMAT:
 ///     - otlp_endpoint is an optional URL to an Open Telemetry collector
 ///     - LOG_LEVEL may be TRACE, DEBUG, INFO, WARN or ERROR (default to INFO)
-pub fn init_logging(otlp_endpoint: Option<&String>, json_output: bool) -> bool {
+pub fn init_logging(
+    otlp_endpoint: Option<&String>,
+    otlp_service_name: String,
+    json_output: bool,
+) -> bool {
     let mut layers = Vec::new();
 
     // STDOUT/STDERR layer
@@ -40,7 +44,7 @@ pub fn init_logging(otlp_endpoint: Option<&String>, json_output: bool) -> bool {
                 trace::config()
                     .with_resource(Resource::new(vec![KeyValue::new(
                         "service.name",
-                        "text-embeddings-inference.router",
+                        otlp_service_name,
                     )]))
                     .with_sampler(Sampler::AlwaysOn),
             )

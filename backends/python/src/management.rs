@@ -21,6 +21,7 @@ impl BackendProcess {
         dtype: String,
         uds_path: &str,
         otlp_endpoint: Option<String>,
+        otlp_service_name: String,
     ) -> Result<Self, BackendError> {
         // Get UDS path
         let uds = Path::new(uds_path);
@@ -33,20 +34,23 @@ impl BackendProcess {
         // Process args
         let mut python_server_args = vec![
             model_path,
-            "--dtype".to_string(),
+            "--dtype".to_owned(),
             dtype,
-            "--uds-path".to_string(),
-            uds_path.to_string(),
-            "--logger-level".to_string(),
-            "INFO".to_string(),
-            "--json-output".to_string(),
+            "--uds-path".to_owned(),
+            uds_path.to_owned(),
+            "--logger-level".to_owned(),
+            "INFO".to_owned(),
+            "--json-output".to_owned(),
         ];
 
         // OpenTelemetry
         if let Some(otlp_endpoint) = otlp_endpoint {
-            python_server_args.push("--otlp-endpoint".to_string());
+            python_server_args.push("--otlp-endpoint".to_owned());
             python_server_args.push(otlp_endpoint);
         }
+
+        python_server_args.push("--otlp-service-name".to_owned());
+        python_server_args.push(otlp_service_name);
 
         // Copy current process env
         let envs: Vec<(OsString, OsString)> = env::vars_os().collect();
@@ -64,7 +68,7 @@ impl BackendProcess {
             Err(err) => {
                 if err.kind() == io::ErrorKind::NotFound {
                     return Err(BackendError::Start(
-                        "python-text-embeddings-server not found in PATH".to_string(),
+                        "python-text-embeddings-server not found in PATH".to_owned(),
                     ));
                 }
                 return Err(BackendError::Start(err.to_string()));
