@@ -1,4 +1,5 @@
 use crate::logging::log_lines;
+use backend_grpc_client::Client;
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -13,17 +14,18 @@ use text_embeddings_backend_core::BackendError;
 #[derive(Debug)]
 pub(crate) struct BackendProcess {
     inner: Child,
+    pub client: Client,
 }
 
 impl BackendProcess {
     pub(crate) fn new(
         model_path: String,
         dtype: String,
-        uds_path: &str,
+        uds_path: String,
         otlp_endpoint: Option<String>,
     ) -> Result<Self, BackendError> {
         // Get UDS path
-        let uds = Path::new(uds_path);
+        let uds = Path::new(&uds_path);
 
         // Clean previous runs
         if uds.exists() {
@@ -83,7 +85,7 @@ impl BackendProcess {
         let start_time = Instant::now();
         let mut wait_time = Instant::now();
 
-        loop {
+        let client = loop {
             // Process exited
             if let Some(exit_status) = p.try_wait().unwrap() {
                 // We read stderr in another thread as it seems that lines() can block in some cases
@@ -110,18 +112,22 @@ impl BackendProcess {
                 ));
             }
 
-            // Shard is ready
-            if uds.exists() {
-                tracing::info!("Python backend ready in {:?}", start_time.elapsed());
-                break;
-            } else if wait_time.elapsed() > Duration::from_secs(10) {
-                tracing::info!("Waiting for Python backend to be ready...");
-                wait_time = Instant::now();
-            }
-            sleep(Duration::from_millis(5));
-        }
+            match Client::connect_uds(&uds_path) {
+                Ok(client) => {
+                    tracing::info!("Python backend ready in {:?}", start_time.elapsed());
+                    break client;
+                }
+                Err(_) if wait_time.elapsed() > Duration::from_secs(10) => {
+                    tracing::info!("Waiting for Python backend to be ready...");
+                    wait_time = Instant::now();
+                }
+                _ => {}
+            };
 
-        Ok(Self { inner: p })
+            sleep(Duration::from_millis(5));
+        };
+
+        Ok(Self { inner: p, client })
     }
 }
 

@@ -3596,7 +3596,6 @@ dependencies = [
  "serde_json",
  "text-embeddings-backend-core",
  "thiserror",
- "tokio",
  "tracing",
 ]
 
