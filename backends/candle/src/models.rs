@@ -16,6 +16,9 @@ mod flash_bert;
 mod flash_jina;
 
 #[cfg(feature = "cuda")]
+mod flash_jina_code;
+
+#[cfg(feature = "cuda")]
 mod flash_nomic;
 
 #[cfg(feature = "cuda")]
@@ -24,7 +27,8 @@ mod flash_distilbert;
 pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
 use candle::{Result, Tensor};
 pub use distilbert::{DistilBertConfig, DistilBertModel};
-pub use jina::JinaBertModel;
+pub use jina::{JinaConfig, JinaBertModel};
+pub use jina_code::{JinaCodeConfig, JinaCodeBertModel};
 pub use nomic::{NomicBertModel, NomicConfig};
 use text_embeddings_backend_core::Batch;
 
@@ -33,6 +37,10 @@ pub use flash_bert::FlashBertModel;
 
 #[cfg(feature = "cuda")]
 pub use flash_jina::FlashJinaBertModel;
+
+#[cfg(feature = "cuda")]
+pub use flash_jina_code::FlashJinaCodeBertModel;
+
 
 #[cfg(feature = "cuda")]
 pub use flash_nomic::FlashNomicBertModel;
