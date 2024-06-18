@@ -198,6 +198,7 @@ pub async fn run(
         backend_model_type,
         uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_string()),
         otlp_endpoint.clone(),
+        pooling.to_string(),
     )
     .context("Could not create backend")?;
     backend
