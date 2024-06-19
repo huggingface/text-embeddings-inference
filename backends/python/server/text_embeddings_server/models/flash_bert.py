@@ -233,6 +233,5 @@ class FlashBert(Model):
                 )
                 for i in range(len(batch))
             ]
-
         else:
             raise NotImplementedError(f"Pooling {self.pooling_mode} is not implemented in the python backend")

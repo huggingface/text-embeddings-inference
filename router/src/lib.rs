@@ -105,7 +105,7 @@ pub async fn run(
         serde_json::from_str(&config).context("Failed to parse `config.json`")?;
 
     // Set model type from config
-    let backend_model_type = get_backend_model_type(&config, &model_root, &pooling)?;
+    let (backend_model_type, inferred_pooling) = get_backend_model_type(&config, &model_root, &pooling)?;
 
     // Info model type
     let model_type = match &backend_model_type {
@@ -191,7 +191,7 @@ pub async fn run(
         }
     });
 
-    let pooling_str = match pooling {
+    let pooling_str = match inferred_pooling {
         Some(pool) => pool.to_string(),
         None => "none".to_string(),
     };
@@ -313,19 +313,19 @@ fn get_backend_model_type(
     config: &ModelConfig,
     model_root: &Path,
     pooling: &Option<text_embeddings_backend::Pool>,
-) -> Result<text_embeddings_backend::ModelType> {
+) -> Result<(text_embeddings_backend::ModelType, Option<text_embeddings_backend::Pool>)> {
     for arch in &config.architectures {
         if Some(text_embeddings_backend::Pool::Splade) == *pooling && arch.ends_with("MaskedLM") {
-            return Ok(text_embeddings_backend::ModelType::Embedding(
+            return Ok((text_embeddings_backend::ModelType::Embedding(
                 text_embeddings_backend::Pool::Splade,
-            ));
+            ), Some(text_embeddings_backend::Pool::Splade)));
         } else if arch.ends_with("Classification") {
             if pooling.is_some() {
                 tracing::warn!(
                     "`--pooling` arg is set but model is a classifier. Ignoring `--pooling` arg."
                 );
             }
-            return Ok(text_embeddings_backend::ModelType::Classifier);
+            return Ok((text_embeddings_backend::ModelType::Classifier, None));
         }
     }
 
@@ -353,7 +353,7 @@ fn get_backend_model_type(
             }
         }
     };
-    Ok(text_embeddings_backend::ModelType::Embedding(pool))
+    Ok((text_embeddings_backend::ModelType::Embedding(pool.clone()), Some(pool)))
 }
 
 #[derive(Debug, Deserialize)]
