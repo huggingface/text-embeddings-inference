@@ -105,7 +105,7 @@ pub async fn run(
         serde_json::from_str(&config).context("Failed to parse `config.json`")?;
 
     // Set model type from config
-    let backend_model_type = get_backend_model_type(&config, &model_root, pooling)?;
+    let backend_model_type = get_backend_model_type(&config, &model_root, &pooling)?;
 
     // Info model type
     let model_type = match &backend_model_type {
@@ -191,6 +191,11 @@ pub async fn run(
         }
     });
 
+    let pooling_str = match pooling {
+        Some(pool) => pool.to_string(),
+        None => "none".to_string(),
+    };
+
     // Create backend
     tracing::info!("Starting model backend");
     let backend = text_embeddings_backend::Backend::new(
@@ -200,7 +205,7 @@ pub async fn run(
         uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_string()),
         otlp_endpoint.clone(),
         otlp_service_name.clone(),
-        pooling.to_string(),
+        pooling_str,
     )
     .context("Could not create backend")?;
     backend
@@ -307,10 +312,10 @@ pub async fn run(
 fn get_backend_model_type(
     config: &ModelConfig,
     model_root: &Path,
-    pooling: Option<text_embeddings_backend::Pool>,
+    pooling: &Option<text_embeddings_backend::Pool>,
 ) -> Result<text_embeddings_backend::ModelType> {
     for arch in &config.architectures {
-        if Some(text_embeddings_backend::Pool::Splade) == pooling && arch.ends_with("MaskedLM") {
+        if Some(text_embeddings_backend::Pool::Splade) == *pooling && arch.ends_with("MaskedLM") {
             return Ok(text_embeddings_backend::ModelType::Embedding(
                 text_embeddings_backend::Pool::Splade,
             ));
@@ -324,7 +329,7 @@ fn get_backend_model_type(
         }
     }
 
-    if Some(text_embeddings_backend::Pool::Splade) == pooling {
+    if Some(text_embeddings_backend::Pool::Splade) == *pooling {
         return Err(anyhow!(
             "Splade pooling is not supported: model is not a ForMaskedLM model"
         ));
@@ -332,7 +337,7 @@ fn get_backend_model_type(
 
     // Set pooling
     let pool = match pooling {
-        Some(pool) => pool,
+        Some(pool) => pool.clone(),
         None => {
             // Load pooling config
             let config_path = model_root.join("1_Pooling/config.json");

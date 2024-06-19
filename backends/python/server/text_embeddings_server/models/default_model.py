@@ -8,14 +8,16 @@ from opentelemetry import trace
 
 from text_embeddings_server.models import Model
 from text_embeddings_server.models.types import PaddedBatch, Embedding
+from typing import Optional
 
 tracer = trace.get_tracer(__name__)
 
 
 class DefaultModel(Model):
-    def __init__(self, model_path: Path, device: torch.device, dtype: torch.dtype):
+    def __init__(self, model_path: Path, device: torch.device, dtype: torch.dtype, pooling_mode: Optional[str]):
         model = AutoModel.from_pretrained(model_path).to(dtype).to(device)
         self.hidden_size = model.config.hidden_size
+        self.pooling_mode = pooling_mode
 
         self.has_position_ids = (
             inspect.signature(model.forward).parameters.get("position_ids", None)

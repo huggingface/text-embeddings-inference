@@ -12,7 +12,8 @@ from text_embeddings_server.models import Model
 from text_embeddings_server.models.types import FlashBatch, Embedding
 from text_embeddings_server.layers.attention import attention
 from text_embeddings_server.layers.layernorm import FastLayerNorm
-from loguru import logger
+from text_embeddings_server.layers.pooling import mean_pooling
+from typing import Optional
 
 tracer = trace.get_tracer(__name__)
 
@@ -190,12 +191,13 @@ class FlashBertModel:
 
 
 class FlashBert(Model):
-    def __init__(self, model_path: Path, device: torch.device, dtype: torch.dtype):
+    def __init__(self, model_path: Path, device: torch.device, dtype: torch.dtype, pooling_mode: Optional[str]):
         config = BertConfig.from_pretrained(model_path)
         with safe_open(model_path / "model.safetensors", framework="pt") as f:
             model = FlashBertModel(f, device, dtype, config)
 
         self.hidden_size = config.hidden_size
+        self.pooling_mode = pooling_mode
 
         super(FlashBert, self).__init__(model=model, dtype=dtype, device=device)
 
@@ -205,7 +207,6 @@ class FlashBert(Model):
 
     @tracer.start_as_current_span("embed")
     def embed(self, batch: FlashBatch) -> List[Embedding]:
-        logger.info(f"batch.input_ids {batch.input_ids}")
         embedding = self.model.forward(
             input_ids=batch.input_ids,
             token_type_ids=batch.token_type_ids,
@@ -214,9 +215,8 @@ class FlashBert(Model):
             max_s=batch.max_s,
         )
 
-        if True:
+        if self.pooling_mode == "cls":
             embedding = embedding[batch.cu_seqlens[:-1]]
-            logger.info(f"embedding {embedding.shape}")
             cpu_results = embedding.view(-1).tolist()
 
             return [
@@ -225,4 +225,14 @@ class FlashBert(Model):
                 )
                 for i in range(len(batch))
             ]
-        elif 
+        elif self.pooling_mode == "mean":
+            res = mean_pooling(embedding, batch.cu_seqlens, batch.max_s)
+            return [
+                Embedding(
+                    values=res[i]
+                )
+                for i in range(len(batch))
+            ]
+
+        else:
+            raise NotImplementedError(f"Pooling {self.pooling_mode} is not implemented in the python backend")
