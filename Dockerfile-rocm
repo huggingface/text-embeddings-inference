@@ -111,6 +111,11 @@ ARG DEFAULT_USE_FLASH_ATTENTION=True
 COPY backends/python/Makefile-flash-att-v2 Makefile-flash-att-v2
 RUN make -f Makefile-flash-att-v2 install-flash-attention-v2-rocm
 
+# Install python backend
+COPY backends/python/server /tei_backends/python/server
+COPY backends/proto tei_backends/proto
+RUN make -C /tei_backends/python/server install
+
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80 \
     USE_FLASH_ATTENTION=$DEFAULT_USE_FLASH_ATTENTION
