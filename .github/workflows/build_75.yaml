@@ -37,7 +37,7 @@
        - name: Inject slug/short variables
          uses: rlespinasse/github-slug-action@v4.4.1
        - name: Tailscale
-         uses: huggingface/tailscale-action@v1
+         uses: huggingface/tailscale-action@main
          with:
            authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
        - name: Login to GitHub Container Registry
