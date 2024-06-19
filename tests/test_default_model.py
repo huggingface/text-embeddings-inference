@@ -23,6 +23,6 @@ async def test_single_query(default_model):
     response = requests.post(url, json=data, headers=headers)
 
     embedding = torch.Tensor(json.loads(response.text))
-    # reference_embedding = torch.load("assets/default_model.pt")
+    reference_embedding = torch.load("./tests/assets/sentence-transformers-all-MiniLM-L6-v2_inp1_no_flash.pt")
 
-    # assert torch.allclose(embedding, reference_embedding)
+    assert torch.allclose(embedding, reference_embedding, atol=1e-3, rtol=1e-3)
