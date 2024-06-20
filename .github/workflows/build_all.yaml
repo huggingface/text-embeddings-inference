@@ -24,16 +24,23 @@
      steps:
        - name: Checkout repository
          uses: actions/checkout@v3
-       - name: Initialize Docker Buildx
-         uses: docker/setup-buildx-action@v2.0.0
-         with:
-           install: true
-       - name: Inject slug/short variables
-         uses: rlespinasse/github-slug-action@v4.4.1
+
        - name: Tailscale
          uses: huggingface/tailscale-action@v1
          with:
            authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+       - name: Initialize Docker Buildx
+         uses: docker/setup-buildx-action@v2.0.0
+         with:
+           install: true
+           config-inline: |
+             [registry."docker.io"]
+               mirrors = ["registry.github-runners.huggingface.tech"]
+
+       - name: Inject slug/short variables
+         uses: rlespinasse/github-slug-action@v4.4.1
+
        - name: Login to GitHub Container Registry
          if: github.event_name != 'pull_request'
          uses: docker/login-action@v2
@@ -41,12 +48,14 @@
            registry: ghcr.io
            username: ${{ github.actor }}
            password: ${{ secrets.GITHUB_TOKEN }}
+
        - name: Login to internal Container Registry
          uses: docker/login-action@v2.1.0
          with:
            username: ${{ secrets.TAILSCALE_DOCKER_USERNAME }}
            password: ${{ secrets.TAILSCALE_DOCKER_PASSWORD }}
            registry: registry.internal.huggingface.tech
+
        - name: Extract metadata (tags, labels) for Docker
          id: meta
          uses: docker/metadata-action@v4.3.0
@@ -61,6 +70,7 @@
              type=semver,pattern=cuda-{{major}}.{{minor}}
              type=raw,value=cuda-latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
              type=raw,value=cuda-sha-${{ env.GITHUB_SHA_SHORT }}
+
        - name: Build and push Docker image
          id: build-and-push
          uses: docker/build-push-action@v4
@@ -76,6 +86,7 @@
            labels: ${{ steps.meta.outputs.labels }}
            cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-all,mode=max
            cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-all,mode=max
+
        - name: Extract metadata (tags, labels) for Docker
          id: meta-sagemaker
          uses: docker/metadata-action@v4.3.0
@@ -89,6 +100,7 @@
              type=semver,pattern=cuda-{{major}}.{{minor}}
              type=raw,value=cuda-latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
              type=raw,value=cuda-sha-${{ env.GITHUB_SHA_SHORT }}
+
        - name: Build and push Docker image
          id: build-and-push-sagemaker
          uses: docker/build-push-action@v4
