@@ -69,10 +69,16 @@ message Metadata {
     uint64 inference_time_ns = 6;
 }
 
+enum TruncationDirection {
+    TRUNCATION_DIRECTION_RIGHT = 0;
+    TRUNCATION_DIRECTION_LEFT = 1;
+}
+
 message EmbedRequest {
     string inputs = 1;
     bool truncate = 2;
     bool normalize = 3;
+    TruncationDirection truncation_direction = 4;
 }
 
 message EmbedResponse {
@@ -83,6 +89,7 @@ message EmbedResponse {
 message EmbedSparseRequest {
     string inputs = 1;
     bool truncate = 2;
+    TruncationDirection truncation_direction = 3;
 }
 
 message SparseValue {
@@ -98,6 +105,7 @@ message EmbedSparseResponse {
 message EmbedAllRequest {
     string inputs = 1;
     bool truncate = 2;
+    TruncationDirection truncation_direction = 3;
 }
 
 message TokenEmbedding {
@@ -113,12 +121,14 @@ message PredictRequest {
     string inputs = 1;
     bool truncate = 2;
     bool raw_scores = 3;
+    TruncationDirection truncation_direction = 4;
 }
 
 message PredictPairRequest {
     repeated string inputs = 1;
     bool truncate = 2;
     bool raw_scores = 3;
+    TruncationDirection truncation_direction = 4;
 }
 
 message Prediction {
@@ -137,6 +147,7 @@ message RerankRequest {
     bool truncate = 3;
     bool raw_scores = 4;
     bool return_text = 5;
+    TruncationDirection truncation_direction = 6;
 }
 
 message RerankStreamRequest{
@@ -147,6 +158,7 @@ message RerankStreamRequest{
     bool raw_scores = 4;
     // The server will only consider the first value
     bool return_text = 5;
+    TruncationDirection truncation_direction = 6;
 }
 
 message Rank {
