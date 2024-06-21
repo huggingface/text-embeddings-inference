@@ -1,38 +1,13 @@
 use crate::alibi::build_alibi_tensor;
 use crate::layers::{get_cublas_lt_wrapper, HiddenAct, LayerNorm, Linear};
-use crate::models::Model;
 use crate::models::PositionEmbeddingType;
+use crate::models::{BertConfig, Model};
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{Embedding, VarBuilder};
-use serde::Deserialize;
-use std::collections::HashMap;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct JinaConfig {
-    pub vocab_size: usize,
-    pub hidden_size: usize,
-    pub num_hidden_layers: usize,
-    pub num_attention_heads: usize,
-    pub intermediate_size: usize,
-    pub hidden_act: HiddenAct,
-    pub hidden_dropout_prob: f64,
-    pub max_position_embeddings: usize,
-    pub type_vocab_size: usize,
-    pub initializer_range: f64,
-    pub layer_norm_eps: f64,
-    pub pad_token_id: usize,
-    #[serde(default)]
-    pub position_embedding_type: PositionEmbeddingType,
-    #[serde(default)]
-    pub use_cache: bool,
-    pub classifier_dropout: Option<f64>,
-    pub id2label: Option<HashMap<String, String>>,
-}
-
-
 #[derive(Debug)]
-pub struct BertEmbeddings {
+pub struct JinaEmbeddings {
     word_embeddings: Embedding,
     token_type_embeddings: Embedding,
     position_embeddings: Option<Embedding>,
@@ -40,8 +15,8 @@ pub struct BertEmbeddings {
     span: tracing::Span,
 }
 
-impl BertEmbeddings {
-    pub fn load(vb: VarBuilder, config: &JinaConfig) -> Result<Self> {
+impl JinaEmbeddings {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let position_embeddings =
             if config.position_embedding_type == PositionEmbeddingType::Absolute {
                 Some(Embedding::new(
@@ -99,7 +74,7 @@ impl BertEmbeddings {
     }
 }
 
-struct BertAttention {
+struct JinaAttention {
     qkv_linear: Linear,
 
     dense: Linear,
@@ -112,8 +87,8 @@ struct BertAttention {
     span: tracing::Span,
 }
 
-impl BertAttention {
-    pub fn load(vb: VarBuilder, config: &JinaConfig) -> Result<Self> {
+impl JinaAttention {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let attention_head_size = config.hidden_size / config.num_attention_heads;
         let all_head_size = config.num_attention_heads * attention_head_size;
         let hidden_size = config.hidden_size;
@@ -262,7 +237,7 @@ impl BertAttention {
 }
 
 struct JinaBertLayer {
-    attention: BertAttention,
+    attention: JinaAttention,
     gated: Linear,
     output: Linear,
     layer_norm: LayerNorm,
@@ -274,8 +249,8 @@ struct JinaBertLayer {
 }
 
 impl JinaBertLayer {
-    pub fn load(vb: VarBuilder, config: &JinaConfig) -> Result<Self> {
-        let attention = BertAttention::load(vb.pp("attention"), config)?;
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
+        let attention = JinaAttention::load(vb.pp("attention"), config)?;
 
         let gated_weight = vb
             .pp("mlp")
@@ -335,19 +310,19 @@ impl JinaBertLayer {
     }
 }
 
-struct BertEncoder {
+struct JinaBertEncoder {
     layers: Vec<JinaBertLayer>,
     span: tracing::Span,
 }
 
-impl BertEncoder {
-    pub fn load(vb: VarBuilder, config: &JinaConfig) -> Result<Self> {
+impl JinaBertEncoder {
+    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let layers = (0..config.num_hidden_layers)
             .map(|index| JinaBertLayer::load(vb.pp(format!("layer.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
         let span = tracing::span!(tracing::Level::TRACE, "encoder");
 
-        Ok(BertEncoder { layers, span })
+        Ok(JinaBertEncoder { layers, span })
     }
 
     fn forward(&self, hidden_states: &Tensor, attention_bias: Option<&Tensor>) -> Result<Tensor> {
@@ -365,8 +340,8 @@ impl BertEncoder {
 }
 
 pub struct JinaBertModel {
-    embeddings: BertEmbeddings,
-    encoder: BertEncoder,
+    embeddings: JinaEmbeddings,
+    encoder: JinaBertEncoder,
     pool: Pool,
     alibi: Option<Tensor>,
 
@@ -379,7 +354,7 @@ pub struct JinaBertModel {
 }
 
 impl JinaBertModel {
-    pub fn load(vb: VarBuilder, config: &JinaConfig, model_type: ModelType) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &BertConfig, model_type: ModelType) -> Result<Self> {
         let alibi = match config.position_embedding_type {
             PositionEmbeddingType::Alibi => Some(build_alibi_tensor(
                 config.max_position_embeddings,
@@ -403,14 +378,14 @@ impl JinaBertModel {
         };
 
         let (embeddings, encoder) = match (
-            BertEmbeddings::load(vb.pp("embeddings"), config),
-            BertEncoder::load(vb.pp("encoder"), config),
+            JinaEmbeddings::load(vb.pp("embeddings"), config),
+            JinaBertEncoder::load(vb.pp("encoder"), config),
         ) {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
                 if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp("bert.embeddings"), config),
-                    BertEncoder::load(vb.pp("bert.encoder"), config),
+                    JinaEmbeddings::load(vb.pp("bert.embeddings"), config),
+                    JinaBertEncoder::load(vb.pp("bert.encoder"), config),
                 ) {
                     (embeddings, encoder)
                 } else {
