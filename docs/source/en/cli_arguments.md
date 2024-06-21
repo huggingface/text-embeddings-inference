@@ -153,6 +153,12 @@ Options:
 
           [env: OTLP_ENDPOINT=]
 
+      --otlp-service-name <OTLP_SERVICE_NAME>
+          The service name for opentelemetry.
+
+          [env: OTLP_SERVICE_NAME=]
+          [default: text-embeddings-inference.server]
+
       --cors-allow-origin <CORS_ALLOW_ORIGIN>
           [env: CORS_ALLOW_ORIGIN=]
 ```

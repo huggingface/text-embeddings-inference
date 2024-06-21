@@ -123,6 +123,11 @@ struct Args {
     #[clap(long, env)]
     otlp_endpoint: Option<String>,
 
+    /// The service name for opentelemetry.
+    /// e.g. `text-embeddings-inference.server`
+    #[clap(default_value = "text-embeddings-inference.server", long, env)]
+    otlp_service_name: String,
+
     /// Unused for gRPC servers
     #[clap(long, env)]
     cors_allow_origin: Option<Vec<String>>,
@@ -134,8 +139,11 @@ async fn main() -> Result<()> {
     let args: Args = Args::parse();
 
     // Initialize logging and telemetry
-    let global_tracer =
-        text_embeddings_router::init_logging(args.otlp_endpoint.as_ref(), args.json_output);
+    let global_tracer = text_embeddings_router::init_logging(
+        args.otlp_endpoint.as_ref(),
+        args.otlp_service_name.clone(),
+        args.json_output,
+    );
 
     tracing::info!("{args:?}");
 
@@ -158,6 +166,7 @@ async fn main() -> Result<()> {
         args.payload_limit,
         args.api_key,
         args.otlp_endpoint,
+        args.otlp_service_name,
         args.cors_allow_origin,
     )
     .await?;

@@ -60,6 +60,7 @@ pub async fn run(
     payload_limit: usize,
     api_key: Option<String>,
     otlp_endpoint: Option<String>,
+    otlp_service_name: String,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
     let model_id_path = Path::new(&model_id);
@@ -198,6 +199,7 @@ pub async fn run(
         backend_model_type,
         uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_string()),
         otlp_endpoint.clone(),
+        otlp_service_name.clone(),
     )
     .context("Could not create backend")?;
     backend
