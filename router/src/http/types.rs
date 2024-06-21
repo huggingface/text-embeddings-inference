@@ -285,6 +285,14 @@ pub(crate) enum Input {
     Batch(Vec<InputType>),
 }
 
+#[derive(Deserialize, ToSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EncodingFormat {
+    #[default]
+    Float,
+    Base64,
+}
+
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct OpenAICompatRequest {
     pub input: Input,
@@ -294,6 +302,16 @@ pub(crate) struct OpenAICompatRequest {
     #[allow(dead_code)]
     #[schema(nullable = true, example = "null")]
     pub user: Option<String>,
+    #[schema(default = "float", example = "float")]
+    #[serde(default)]
+    pub encoding_format: EncodingFormat,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(untagged)]
+pub(crate) enum Embedding {
+    Float(Vec<f32>),
+    Base64(String),
 }
 
 #[derive(Serialize, ToSchema)]
@@ -301,7 +319,7 @@ pub(crate) struct OpenAICompatEmbedding {
     #[schema(example = "embedding")]
     pub object: &'static str,
     #[schema(example = json!([0.0, 1.0, 2.0]))]
-    pub embedding: Vec<f32>,
+    pub embedding: Embedding,
     #[schema(example = "0")]
     pub index: usize,
 }
