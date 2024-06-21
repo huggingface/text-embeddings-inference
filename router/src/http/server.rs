@@ -1451,7 +1451,6 @@ pub async fn run(
 
     // Create router
     let mut app = Router::new()
-        .layer(DefaultBodyLimit::max(payload_limit))
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", doc))
         // Base routes
         .route("/info", get(get_model_info))
@@ -1474,7 +1473,9 @@ pub async fn run(
         // AWS Sagemaker health route
         .route("/ping", get(health))
         // Prometheus metrics route
-        .route("/metrics", get(metrics));
+        .route("/metrics", get(metrics))
+        // Update payload limit
+        .layer(DefaultBodyLimit::max(payload_limit));
 
     #[cfg(feature = "google")]
     {
