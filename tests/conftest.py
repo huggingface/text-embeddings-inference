@@ -26,7 +26,7 @@ class ProcessLauncherHandle:
 
     def _inner_health(self) -> bool:
         return self.process.poll() is None
-    
+
     def health(self, timeout: int = 60):
         assert timeout > 0
         for _ in range(timeout):
@@ -109,5 +109,5 @@ def launcher(event_loop):
 
         if not use_flash_attention:
             del env["USE_FLASH_ATTENTION"]
-    
+
     return local_launcher

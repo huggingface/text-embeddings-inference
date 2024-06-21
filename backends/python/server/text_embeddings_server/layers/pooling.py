@@ -16,7 +16,7 @@ def mean_pooling(embedding, cu_seqlens, max_s):
     indices = torch.nonzero(mask.flatten(), as_tuple=False).flatten()
 
     embedding_padded = pad_input(embedding, indices, batch_size, max_s)
-    
+
     sum_embeddings = torch.sum(embedding_padded, 1)
 
     return sum_embeddings / seqlens[:, None]

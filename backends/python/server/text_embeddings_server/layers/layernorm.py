@@ -41,7 +41,7 @@ elif SYSTEM == "rocm":
             self.weight = handle.get_tensor(f"{prefix}.weight").to(dtype).to(device)
             self.bias = handle.get_tensor(f"{prefix}.bias").to(dtype).to(device)
             self.variance_epsilon = config.layer_norm_eps
-        
+
         def forward(self, hidden_states, residual=None):
             if residual is not None:
                 hidden_states += residual

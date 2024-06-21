@@ -79,7 +79,7 @@
              type=semver,pattern=rocm-{{major}}.{{minor}}
              type=raw,value=rocm-latest
              type=raw,value=rocm-sha-${{ env.GITHUB_SHA_SHORT }}
-       
+
        - name: Build and push Docker image
          id: build-and-push-rocm
          uses: docker/build-push-action@v4
@@ -98,7 +98,7 @@
            labels: ${{ steps.meta-rocm.outputs.labels }}
            cache-from: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-rocm,mode=max
            cache-to: type=registry,ref=registry.internal.huggingface.tech/api-inference/text-embeddings-inference:cache-rocm,mode=max
-       
+
        - name: Extract metadata (tags, labels) for Docker
          id: meta-rocm-grpc
          uses: docker/metadata-action@v4.3.0
@@ -113,7 +113,7 @@
              type=semver,pattern=rocm-{{major}}.{{minor}}-grpc
              type=raw,value=rocm-latest-grpc
              type=raw,value=rocm-sha-${{ env.GITHUB_SHA_SHORT }}-grpc
-       
+
        - name: Build and push Docker image
          id: build-and-push-rocm-grpc
          uses: docker/build-push-action@v4

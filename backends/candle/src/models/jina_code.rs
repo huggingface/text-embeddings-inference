@@ -30,7 +30,6 @@ pub struct JinaCodeConfig {
     pub id2label: Option<HashMap<String, String>>,
 }
 
-
 #[derive(Debug)]
 pub struct BertEmbeddings {
     word_embeddings: Embedding,
@@ -201,9 +200,15 @@ impl BertAttention {
         new_qkv_shape.push(self.num_attention_heads);
         new_qkv_shape.push(self.attention_head_size);
 
-        let query_layer = query_layer.reshape(new_qkv_shape.as_slice())?.transpose(1, 2)?;
-        let key_layer = key_layer.reshape(new_qkv_shape.as_slice())?.transpose(1, 2)?;
-        let value_layer = value_layer.reshape(new_qkv_shape.as_slice())?.transpose(1, 2)?;
+        let query_layer = query_layer
+            .reshape(new_qkv_shape.as_slice())?
+            .transpose(1, 2)?;
+        let key_layer = key_layer
+            .reshape(new_qkv_shape.as_slice())?
+            .transpose(1, 2)?;
+        let value_layer = value_layer
+            .reshape(new_qkv_shape.as_slice())?
+            .transpose(1, 2)?;
 
         #[allow(unused_variables)]
         let context_layer = if let (Device::Cuda(_), Some(cublaslt)) =
@@ -276,7 +281,9 @@ impl BertAttention {
         let context_layer = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?;
 
         let hidden_states = self.dense.forward(&context_layer)?;
-        let hidden_states = self.layer_norm_out.forward(&hidden_states, Some(&residual))?;
+        let hidden_states = self
+            .layer_norm_out
+            .forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -309,7 +316,10 @@ impl JinaCodeBertLayer {
             .pp("mlp")
             .pp("down_layer")
             .get((config.hidden_size, config.intermediate_size), "weight")?;
-        let down_bias = vb.pp("mlp").pp("down_layer").get(config.hidden_size, "bias")?;
+        let down_bias = vb
+            .pp("mlp")
+            .pp("down_layer")
+            .get(config.hidden_size, "bias")?;
         let down_layer = Linear::new(down_weight, Some(down_bias), None);
 
         let layer_norm_1 = LayerNorm::load(

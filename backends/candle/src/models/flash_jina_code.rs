@@ -2,7 +2,7 @@ use crate::alibi::alibi_head_slopes;
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{HiddenAct, LayerNorm, Linear};
 use crate::models::bert::PositionEmbeddingType;
-use crate::models::jina::{JinaCodeConfig, BertEmbeddings};
+use crate::models::jina::{BertEmbeddings, JinaCodeConfig};
 use crate::models::Model;
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::VarBuilder;
@@ -28,7 +28,11 @@ struct AlibiBertAttention {
 }
 
 impl AlibiBertAttention {
-    pub fn load(vb: VarBuilder, config: &JinaCodeConfig, alibi_slopes: Option<Tensor>) -> Result<Self> {
+    pub fn load(
+        vb: VarBuilder,
+        config: &JinaCodeConfig,
+        alibi_slopes: Option<Tensor>,
+    ) -> Result<Self> {
         let attention_head_size = config.hidden_size / config.num_attention_heads;
         let all_head_size = config.num_attention_heads * attention_head_size;
         let hidden_size = config.hidden_size;
@@ -116,9 +120,15 @@ impl AlibiBertAttention {
         new_qkv_shape.push(self.num_attention_heads);
         new_qkv_shape.push(self.attention_head_size);
 
-        let query_layer = query_layer.reshape(new_qkv_shape.as_slice())?.transpose(1, 2)?;
-        let key_layer = key_layer.reshape(new_qkv_shape.as_slice())?.transpose(1, 2)?;
-        let value_layer = value_layer.reshape(new_qkv_shape.as_slice())?.transpose(1, 2)?;
+        let query_layer = query_layer
+            .reshape(new_qkv_shape.as_slice())?
+            .transpose(1, 2)?;
+        let key_layer = key_layer
+            .reshape(new_qkv_shape.as_slice())?
+            .transpose(1, 2)?;
+        let value_layer = value_layer
+            .reshape(new_qkv_shape.as_slice())?
+            .transpose(1, 2)?;
 
         let attention = flash_attn_varlen(
             query_layer,
@@ -135,7 +145,9 @@ impl AlibiBertAttention {
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
         let hidden_states = self.dense.forward(&attention)?;
-        let hidden_states = self.layer_norm_out.forward(&hidden_states, Some(&residual))?;
+        let hidden_states = self
+            .layer_norm_out
+            .forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
@@ -168,7 +180,10 @@ impl JinaBertLayer {
             .pp("mlp")
             .pp("down_layer")
             .get((config.hidden_size, config.intermediate_size), "weight")?;
-        let down_bias = vb.pp("mlp").pp("down_layer").get(config.hidden_size, "bias")?;
+        let down_bias = vb
+            .pp("mlp")
+            .pp("down_layer")
+            .get(config.hidden_size, "bias")?;
         let down_layer = Linear::new(down_weight, Some(down_bias), None);
 
         let layer_norm_1 = LayerNorm::load(

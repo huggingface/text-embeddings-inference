@@ -30,7 +30,6 @@ pub struct JinaConfig {
     pub id2label: Option<HashMap<String, String>>,
 }
 
-
 #[derive(Debug)]
 pub struct BertEmbeddings {
     word_embeddings: Embedding,

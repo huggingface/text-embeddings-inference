@@ -39,7 +39,6 @@ impl Backend {
         uds_path: String,
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
-        pooling_mode: String,
     ) -> Result<Self, BackendError> {
         let (backend_sender, backend_receiver) = mpsc::unbounded_channel();
 
@@ -50,7 +49,6 @@ impl Backend {
             uds_path,
             otlp_endpoint,
             otlp_service_name,
-            pooling_mode,
         )?;
         let padded_model = backend.is_padded();
         let max_batch_size = backend.max_batch_size();
@@ -140,7 +138,6 @@ fn init_backend(
     uds_path: String,
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
-    pooling_mode: String,
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     if cfg!(feature = "candle") {
         #[cfg(feature = "candle")]
@@ -161,7 +158,6 @@ fn init_backend(
                         uds_path,
                         otlp_endpoint,
                         otlp_service_name,
-                        pooling_mode,
                     )
                 })
                 .join()
