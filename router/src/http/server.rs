@@ -1,11 +1,11 @@
 /// HTTP Server logic
 use crate::http::types::{
     DecodeRequest, DecodeResponse, EmbedAllRequest, EmbedAllResponse, EmbedRequest, EmbedResponse,
-    EmbedSparseRequest, EmbedSparseResponse, Input, InputIds, InputType, OpenAICompatEmbedding,
-    OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage,
-    PredictInput, PredictRequest, PredictResponse, Prediction, Rank, RerankRequest, RerankResponse,
-    Sequence, SimpleToken, SparseValue, TokenizeInput, TokenizeRequest, TokenizeResponse,
-    VertexPrediction, VertexRequest, VertexResponse,
+    EmbedSparseRequest, EmbedSparseResponse, Embedding, EncodingFormat, Input, InputIds, InputType,
+    OpenAICompatEmbedding, OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse,
+    OpenAICompatUsage, PredictInput, PredictRequest, PredictResponse, Prediction, Rank,
+    RerankRequest, RerankResponse, Sequence, SimpleToken, SparseValue, TokenizeInput,
+    TokenizeRequest, TokenizeResponse, VertexPrediction, VertexRequest, VertexResponse,
 };
 use crate::{
     shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
@@ -19,6 +19,8 @@ use axum::http::{Method, StatusCode};
 use axum::routing::{get, post};
 use axum::{http, Json, Router};
 use axum_tracing_opentelemetry::middleware::OtelAxumLayer;
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use futures::future::join_all;
 use futures::FutureExt;
 use http::header::AUTHORIZATION;
@@ -938,6 +940,21 @@ async fn openai_embed(
     Json(req): Json<OpenAICompatRequest>,
 ) -> Result<(HeaderMap, Json<OpenAICompatResponse>), (StatusCode, Json<OpenAICompatErrorResponse>)>
 {
+    let encode_embedding = |array: Vec<f32>| {
+        match req.encoding_format {
+            EncodingFormat::Float => Embedding::Float(array),
+            EncodingFormat::Base64 => {
+                // Unsafe is fine here since we do not violate memory ownership: bytes
+                // is only used in this scope and we return an owned string
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(array.as_ptr() as *const u8, array.len() * 4)
+                };
+
+                Embedding::Base64(BASE64_STANDARD.encode(bytes))
+            }
+        }
+    };
+
     let span = tracing::Span::current();
     let start_time = Instant::now();
 
@@ -957,10 +974,11 @@ async fn openai_embed(
 
             metrics::increment_counter!("te_request_success", "method" => "single");
 
+            let embedding = encode_embedding(response.results);
             (
                 vec![OpenAICompatEmbedding {
                     object: "embedding",
-                    embedding: response.results,
+                    embedding,
                     index: 0,
                 }],
                 ResponseMetadata::new(
@@ -1033,9 +1051,10 @@ async fn openai_embed(
                 total_queue_time += r.metadata.queue.as_nanos() as u64;
                 total_inference_time += r.metadata.inference.as_nanos() as u64;
                 total_compute_tokens += r.metadata.prompt_tokens;
+                let embedding = encode_embedding(r.results);
                 embeddings.push(OpenAICompatEmbedding {
                     object: "embedding",
-                    embedding: r.results,
+                    embedding,
                     index: i,
                 });
             }
