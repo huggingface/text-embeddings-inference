@@ -30,6 +30,10 @@ use text_embeddings_backend_core::{
     Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Predictions,
 };
 
+/// This enum is needed to be able to differentiate between jina models that also use
+/// the `bert` model type and valid Bert models.
+/// We use the `_name_or_path` field in the config to do so. This might not be robust in the long
+/// run but is still better than the other options...
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "_name_or_path")]
 pub enum BertConfigWrapper {
