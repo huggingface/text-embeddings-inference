@@ -1,7 +1,7 @@
 use crate::grpc::pb::tei::v1::{
     EmbedAllRequest, EmbedAllResponse, EmbedSparseRequest, EmbedSparseResponse, EncodeRequest,
     EncodeResponse, PredictPairRequest, RerankStreamRequest, SimpleToken, SparseValue,
-    TokenEmbedding,
+    TokenEmbedding, TruncationDirection,
 };
 use crate::grpc::{
     DecodeRequest, DecodeResponse, EmbedRequest, EmbedResponse, InfoRequest, InfoResponse,
@@ -80,9 +80,16 @@ impl TextEmbeddingsService {
         let start_time = Instant::now();
 
         let compute_chars = request.inputs.chars().count();
+        let truncation_direction = convert_truncation_direction(request.truncation_direction);
         let response = self
             .infer
-            .embed_pooled(request.inputs, request.truncate, request.normalize, permit)
+            .embed_pooled(
+                request.inputs,
+                request.truncate,
+                truncation_direction,
+                request.normalize,
+                permit,
+            )
             .await
             .map_err(ErrorResponse::from)?;
 
@@ -128,9 +135,15 @@ impl TextEmbeddingsService {
         let start_time = Instant::now();
 
         let compute_chars = request.inputs.chars().count();
+        let truncation_direction = convert_truncation_direction(request.truncation_direction);
         let response = self
             .infer
-            .embed_sparse(request.inputs, request.truncate, permit)
+            .embed_sparse(
+                request.inputs,
+                request.truncate,
+                truncation_direction,
+                permit,
+            )
             .await
             .map_err(ErrorResponse::from)?;
 
@@ -187,9 +200,15 @@ impl TextEmbeddingsService {
         let start_time = Instant::now();
 
         let compute_chars = request.inputs.chars().count();
+        let truncation_direction = convert_truncation_direction(request.truncation_direction);
         let response = self
             .infer
-            .embed_all(request.inputs, request.truncate, permit)
+            .embed_all(
+                request.inputs,
+                request.truncate,
+                truncation_direction,
+                permit,
+            )
             .await
             .map_err(ErrorResponse::from)?;
 
@@ -236,6 +255,7 @@ impl TextEmbeddingsService {
         &self,
         inputs: I,
         truncate: bool,
+        truncation_direction: tokenizers::TruncationDirection,
         raw_scores: bool,
         permit: OwnedSemaphorePermit,
     ) -> Result<(PredictResponse, ResponseMetadata), Status> {
@@ -251,7 +271,7 @@ impl TextEmbeddingsService {
 
         let response = self
             .infer
-            .predict(inputs, truncate, raw_scores, permit)
+            .predict(inputs, truncate, truncation_direction, raw_scores, permit)
             .await
             .map_err(ErrorResponse::from)?;
 
@@ -701,8 +721,15 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
             .map_err(ErrorResponse::from)?;
 
         let request = request.into_inner();
+        let truncation_direction = convert_truncation_direction(request.truncation_direction);
         let (response, metadata) = self
-            .predict_inner(request.inputs, request.truncate, request.raw_scores, permit)
+            .predict_inner(
+                request.inputs,
+                request.truncate,
+                truncation_direction,
+                request.raw_scores,
+                permit,
+            )
             .await?;
         let headers = HeaderMap::from(metadata);
 
@@ -743,8 +770,15 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
             .try_acquire_permit()
             .map_err(ErrorResponse::from)?;
 
+        let truncation_direction = convert_truncation_direction(request.truncation_direction);
         let (response, metadata) = self
-            .predict_inner(inputs, request.truncate, request.raw_scores, permit)
+            .predict_inner(
+                inputs,
+                request.truncate,
+                truncation_direction,
+                request.raw_scores,
+                permit,
+            )
             .await?;
         let headers = HeaderMap::from(metadata);
 
@@ -767,8 +801,15 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
         // Clone for move below
         let clone = self.clone();
         let function = |req: PredictRequest, permit: OwnedSemaphorePermit| async move {
+            let truncation_direction = convert_truncation_direction(req.truncation_direction);
             clone
-                .predict_inner(req.inputs, req.truncate, req.raw_scores, permit)
+                .predict_inner(
+                    req.inputs,
+                    req.truncate,
+                    truncation_direction,
+                    req.raw_scores,
+                    permit,
+                )
                 .await
         };
 
@@ -800,8 +841,15 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
                 }
             };
 
+            let truncation_direction = convert_truncation_direction(req.truncation_direction);
             clone
-                .predict_inner(inputs, req.truncate, req.raw_scores, permit)
+                .predict_inner(
+                    inputs,
+                    req.truncate,
+                    truncation_direction,
+                    req.raw_scores,
+                    permit,
+                )
                 .await
         };
 
@@ -862,12 +910,19 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
         let rerank_inner = move |query: String,
                                  text: String,
                                  truncate: bool,
+                                 truncation_direction: tokenizers::TruncationDirection,
                                  raw_scores: bool,
                                  infer: Infer| async move {
             let permit = infer.acquire_permit().await;
 
             let response = infer
-                .predict((query, text), truncate, raw_scores, permit)
+                .predict(
+                    (query, text),
+                    truncate,
+                    truncation_direction,
+                    raw_scores,
+                    permit,
+                )
                 .await
                 .map_err(ErrorResponse::from)?;
 
@@ -902,6 +957,7 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
         let mut futures = Vec::with_capacity(batch_size);
         let query_chars = request.query.chars().count();
         let mut total_compute_chars = query_chars * batch_size;
+        let truncation_direction = convert_truncation_direction(request.truncation_direction);
 
         for text in &request.texts {
             total_compute_chars += text.chars().count();
@@ -910,6 +966,7 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
                 request.query.clone(),
                 text.clone(),
                 request.truncate,
+                truncation_direction,
                 request.raw_scores,
                 local_infer,
             ))
@@ -1027,11 +1084,18 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
                                  query: String,
                                  text: String,
                                  truncate: bool,
+                                 truncation_direction: tokenizers::TruncationDirection,
                                  raw_scores: bool,
                                  infer: Infer,
                                  permit: OwnedSemaphorePermit| async move {
             let response = infer
-                .predict((query, text.clone()), truncate, raw_scores, permit)
+                .predict(
+                    (query, text.clone()),
+                    truncate,
+                    truncation_direction,
+                    raw_scores,
+                    permit,
+                )
                 .await
                 .map_err(ErrorResponse::from)?;
 
@@ -1055,7 +1119,14 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
         // Create bounded channel to have an upper bound of spawned tasks
         // We will have at most `max_parallel_stream_requests` messages from this stream in the queue
         let (rerank_sender, mut rerank_receiver) = mpsc::channel::<(
-            (usize, String, String, bool, bool),
+            (
+                usize,
+                String,
+                String,
+                bool,
+                tokenizers::TruncationDirection,
+                bool,
+            ),
             oneshot::Sender<
                 Result<(usize, usize, Duration, Duration, Duration, f32, String), ErrorResponse>,
             >,
@@ -1066,8 +1137,10 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
 
         // Background task that uses the bounded channel
         tokio::spawn(async move {
-            while let Some(((index, query, text, truncate, raw_scores), mut sender)) =
-                rerank_receiver.recv().await
+            while let Some((
+                (index, query, text, truncate, truncation_direction, raw_scores),
+                mut sender,
+            )) = rerank_receiver.recv().await
             {
                 // Wait on permit before spawning the task to avoid creating more tasks than needed
                 let permit = local_infer.acquire_permit().await;
@@ -1079,7 +1152,7 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
                 tokio::spawn(async move {
                     // Select on closed to cancel work if the stream was closed
                     tokio::select! {
-                    result = rerank_inner(index, query, text, truncate, raw_scores, task_infer, permit) => {
+                    result = rerank_inner(index, query, text, truncate, truncation_direction, raw_scores, task_infer, permit) => {
                         let _ = sender.send(result);
                     }
                     _ = sender.closed() => {}
@@ -1118,6 +1191,7 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
             total_compute_chars += request.query.chars().count();
             total_compute_chars += request.text.chars().count();
 
+            let truncation_direction = convert_truncation_direction(request.truncation_direction);
             rerank_sender
                 .send((
                     (
@@ -1125,6 +1199,7 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
                         request.query,
                         request.text,
                         request.truncate,
+                        truncation_direction,
                         raw_scores.unwrap(),
                     ),
                     result_sender,
@@ -1432,5 +1507,12 @@ impl From<ErrorResponse> for Status {
         };
 
         Status::new(code, value.error)
+    }
+}
+
+fn convert_truncation_direction(value: i32) -> tokenizers::TruncationDirection {
+    match TruncationDirection::try_from(value).expect("Unexpected enum value") {
+        TruncationDirection::Right => tokenizers::TruncationDirection::Right,
+        TruncationDirection::Left => tokenizers::TruncationDirection::Left,
     }
 }

@@ -24,12 +24,18 @@ candle-transformers = { git = "https://github.com/OlivierDehaene/candle", rev = 
 candle-flash-attn = { git = "https://github.com/OlivierDehaene/candle", rev = "33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3", package = "candle-flash-attn" }
 hf-hub = { git = "https://github.com/huggingface/hf-hub", rev = "b167f69692be5f49eb8003788f7f8a499a98b096" }
 
-
 [profile.release]
 debug = 0
-incremental = true
 lto = "fat"
 opt-level = 3
 codegen-units = 1
 strip = "symbols"
 panic = "abort"
+
+[profile.release-debug]
+inherits = "release"
+debug = 1
+lto = "thin"
+codegen-units = 16
+strip = "none"
+incremental = true

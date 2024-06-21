@@ -64,6 +64,7 @@ impl Tokenization {
         &self,
         inputs: EncodingInput,
         truncate: bool,
+        truncation_direction: TruncationDirection,
     ) -> Result<ValidEncoding, TextEmbeddingsError> {
         // Check if inputs is empty
         if inputs.is_empty() {
@@ -80,6 +81,7 @@ impl Tokenization {
             .send(TokenizerRequest::Encode(
                 inputs,
                 truncate,
+                truncation_direction,
                 response_sender,
                 Span::current(),
             ))
@@ -163,7 +165,13 @@ fn tokenizer_worker(
     // Loop over requests
     while let Some(request) = receiver.blocking_recv() {
         match request {
-            TokenizerRequest::Encode(inputs, truncate, response_tx, parent_span) => {
+            TokenizerRequest::Encode(
+                inputs,
+                truncate,
+                truncation_direction,
+                response_tx,
+                parent_span,
+            ) => {
                 parent_span.in_scope(|| {
                     if !response_tx.is_closed() {
                         // It's possible that the user dropped its request resulting in a send error.
@@ -171,6 +179,7 @@ fn tokenizer_worker(
                         let _ = response_tx.send(encode_input(
                             inputs,
                             truncate,
+                            truncation_direction,
                             max_input_length,
                             position_offset,
                             &mut tokenizer,
@@ -247,13 +256,14 @@ fn tokenize_input(
 fn encode_input(
     inputs: EncodingInput,
     truncate: bool,
+    truncation_direction: TruncationDirection,
     max_input_length: usize,
     position_offset: usize,
     tokenizer: &mut Tokenizer,
 ) -> Result<ValidEncoding, TextEmbeddingsError> {
     // Default truncation params
     let truncate_params = truncate.then_some(TruncationParams {
-        direction: TruncationDirection::Right,
+        direction: truncation_direction,
         max_length: max_input_length,
         strategy: TruncationStrategy::LongestFirst,
         stride: 0,
@@ -316,6 +326,7 @@ enum TokenizerRequest {
     Encode(
         EncodingInput,
         bool,
+        TruncationDirection,
         oneshot::Sender<Result<ValidEncoding, TextEmbeddingsError>>,
         Span,
     ),

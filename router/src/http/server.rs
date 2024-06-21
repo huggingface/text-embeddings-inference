@@ -30,6 +30,7 @@ use text_embeddings_core::infer::{
     AllEmbeddingsInferResponse, Infer, InferMetadata, PooledEmbeddingsInferResponse,
 };
 use text_embeddings_core::TextEmbeddingsError;
+use tokenizers::TruncationDirection;
 use tokio::sync::OwnedSemaphorePermit;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::instrument;
@@ -103,7 +104,6 @@ async fn predict(
     // Closure for predict
     let predict_inner = move |inputs: Sequence,
                               truncate: bool,
-                              raw_scores: bool,
                               infer: Infer,
                               info: Info,
                               permit: Option<OwnedSemaphorePermit>| async move {
@@ -113,7 +113,13 @@ async fn predict(
         };
 
         let response = infer
-            .predict(inputs, truncate, raw_scores, permit)
+            .predict(
+                inputs,
+                truncate,
+                req.truncation_direction,
+                req.raw_scores,
+                permit,
+            )
             .await
             .map_err(ErrorResponse::from)?;
 
@@ -159,15 +165,8 @@ async fn predict(
 
             let compute_chars = inputs.count_chars();
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
-            let (prompt_tokens, tokenization, queue, inference, predictions) = predict_inner(
-                inputs,
-                truncate,
-                req.raw_scores,
-                infer.0,
-                info.0,
-                Some(permit),
-            )
-            .await?;
+            let (prompt_tokens, tokenization, queue, inference, predictions) =
+                predict_inner(inputs, truncate, infer.0, info.0, Some(permit)).await?;
 
             metrics::increment_counter!("te_request_success", "method" => "single");
 
@@ -211,7 +210,6 @@ async fn predict(
                 futures.push(predict_inner(
                     input,
                     truncate,
-                    req.raw_scores,
                     local_infer.0,
                     local_info.0,
                     None,
@@ -321,15 +319,17 @@ async fn rerank(
     })?;
 
     // Closure for rerank
-    let rerank_inner = move |query: String,
-                             text: String,
-                             truncate: bool,
-                             raw_scores: bool,
-                             infer: Infer| async move {
+    let rerank_inner = move |query: String, text: String, truncate: bool, infer: Infer| async move {
         let permit = infer.acquire_permit().await;
 
         let response = infer
-            .predict((query, text), truncate, raw_scores, permit)
+            .predict(
+                (query, text),
+                truncate,
+                req.truncation_direction,
+                req.raw_scores,
+                permit,
+            )
             .await
             .map_err(ErrorResponse::from)?;
 
@@ -375,7 +375,6 @@ async fn rerank(
                 req.query.clone(),
                 text.clone(),
                 truncate,
-                req.raw_scores,
                 local_infer.0,
             ))
         }
@@ -484,7 +483,13 @@ async fn embed(
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
-                .embed_pooled(input, truncate, req.normalize, permit)
+                .embed_pooled(
+                    input,
+                    truncate,
+                    req.truncation_direction,
+                    req.normalize,
+                    permit,
+                )
                 .await
                 .map_err(ErrorResponse::from)?;
 
@@ -541,7 +546,13 @@ async fn embed(
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
                     local_infer
-                        .embed_pooled(input, truncate, req.normalize, permit)
+                        .embed_pooled(
+                            input,
+                            truncate,
+                            req.truncation_direction,
+                            req.normalize,
+                            permit,
+                        )
                         .await
                 })
             }
@@ -641,7 +652,7 @@ async fn embed_sparse(
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
-                .embed_sparse(input, truncate, permit)
+                .embed_sparse(input, truncate, req.truncation_direction, permit)
                 .await
                 .map_err(ErrorResponse::from)?;
 
@@ -697,7 +708,9 @@ async fn embed_sparse(
                 let local_infer = infer.clone();
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
-                    let response = local_infer.embed_sparse(input, truncate, permit).await?;
+                    let response = local_infer
+                        .embed_sparse(input, truncate, req.truncation_direction, permit)
+                        .await?;
                     Ok((sparsify(response.results), response.metadata))
                 })
             }
@@ -789,7 +802,7 @@ async fn embed_all(
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
-                .embed_all(input, truncate, permit)
+                .embed_all(input, truncate, req.truncation_direction, permit)
                 .await
                 .map_err(ErrorResponse::from)?;
 
@@ -845,7 +858,9 @@ async fn embed_all(
                 let local_infer = infer.clone();
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
-                    local_infer.embed_all(input, truncate, permit).await
+                    local_infer
+                        .embed_all(input, truncate, req.truncation_direction, permit)
+                        .await
                 })
             }
             let results = join_all(futures)
@@ -936,7 +951,7 @@ async fn openai_embed(
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
-                .embed_pooled(input, truncate, true, permit)
+                .embed_pooled(input, truncate, TruncationDirection::Right, true, permit)
                 .await
                 .map_err(ErrorResponse::from)?;
 
@@ -997,7 +1012,7 @@ async fn openai_embed(
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
                     local_infer
-                        .embed_pooled(input, truncate, true, permit)
+                        .embed_pooled(input, truncate, TruncationDirection::Right, true, permit)
                         .await
                 })
             }

@@ -4,6 +4,7 @@ use crate::TextEmbeddingsError;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{Backend, BackendError, Embedding, ModelType};
+use tokenizers::TruncationDirection;
 use tokio::sync::{mpsc, oneshot, watch, Notify, OwnedSemaphorePermit, Semaphore};
 use tracing::instrument;
 
@@ -117,6 +118,7 @@ impl Infer {
         &self,
         inputs: I,
         truncate: bool,
+        truncation_direction: TruncationDirection,
         permit: OwnedSemaphorePermit,
     ) -> Result<AllEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
@@ -131,7 +133,14 @@ impl Infer {
         }
 
         let results = self
-            .embed(inputs, truncate, false, &start_time, permit)
+            .embed(
+                inputs,
+                truncate,
+                truncation_direction,
+                false,
+                &start_time,
+                permit,
+            )
             .await?;
 
         let InferResult::AllEmbedding(response) = results else {
@@ -165,6 +174,7 @@ impl Infer {
         &self,
         inputs: I,
         truncate: bool,
+        truncation_direction: TruncationDirection,
         permit: OwnedSemaphorePermit,
     ) -> Result<PooledEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
@@ -179,7 +189,14 @@ impl Infer {
         }
 
         let results = self
-            .embed(inputs, truncate, true, &start_time, permit)
+            .embed(
+                inputs,
+                truncate,
+                truncation_direction,
+                true,
+                &start_time,
+                permit,
+            )
             .await?;
 
         let InferResult::PooledEmbedding(response) = results else {
@@ -213,6 +230,7 @@ impl Infer {
         &self,
         inputs: I,
         truncate: bool,
+        truncation_direction: TruncationDirection,
         normalize: bool,
         permit: OwnedSemaphorePermit,
     ) -> Result<PooledEmbeddingsInferResponse, TextEmbeddingsError> {
@@ -228,7 +246,14 @@ impl Infer {
         }
 
         let results = self
-            .embed(inputs, truncate, true, &start_time, permit)
+            .embed(
+                inputs,
+                truncate,
+                truncation_direction,
+                true,
+                &start_time,
+                permit,
+            )
             .await?;
 
         let InferResult::PooledEmbedding(mut response) = results else {
@@ -278,6 +303,7 @@ impl Infer {
         &self,
         inputs: I,
         truncate: bool,
+        truncation_direction: TruncationDirection,
         pooling: bool,
         start_time: &Instant,
         _permit: OwnedSemaphorePermit,
@@ -296,7 +322,7 @@ impl Infer {
         // Tokenization
         let encoding = self
             .tokenization
-            .encode(inputs.into(), truncate)
+            .encode(inputs.into(), truncate, truncation_direction)
             .await
             .map_err(|err| {
                 metrics::increment_counter!("te_request_failure", "err" => "tokenization");
@@ -340,6 +366,7 @@ impl Infer {
         &self,
         inputs: I,
         truncate: bool,
+        truncation_direction: TruncationDirection,
         raw_scores: bool,
         _permit: OwnedSemaphorePermit,
     ) -> Result<ClassificationInferResponse, TextEmbeddingsError> {
@@ -357,7 +384,7 @@ impl Infer {
         // Tokenization
         let encoding = self
             .tokenization
-            .encode(inputs.into(), truncate)
+            .encode(inputs.into(), truncate, truncation_direction)
             .await
             .map_err(|err| {
                 metrics::increment_counter!("te_request_failure", "err" => "tokenization");

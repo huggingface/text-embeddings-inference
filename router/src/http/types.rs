@@ -4,6 +4,7 @@ use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::json;
 use std::fmt::Formatter;
 use text_embeddings_core::tokenization::EncodingInput;
+use tokenizers::TruncationDirection;
 use utoipa::openapi::{RefOr, Schema};
 use utoipa::ToSchema;
 
@@ -199,6 +200,9 @@ pub(crate) struct PredictRequest {
     #[schema(default = "false", example = "false", nullable = true)]
     pub truncate: Option<bool>,
     #[serde(default)]
+    #[schema(default = "right", example = "right")]
+    pub truncation_direction: TruncationDirection,
+    #[serde(default)]
     #[schema(default = "false", example = "false")]
     pub raw_scores: bool,
 }
@@ -227,6 +231,9 @@ pub(crate) struct RerankRequest {
     #[serde(default)]
     #[schema(default = "false", example = "false", nullable = true)]
     pub truncate: Option<bool>,
+    #[serde(default)]
+    #[schema(default = "right", example = "right")]
+    pub truncation_direction: TruncationDirection,
     #[serde(default)]
     #[schema(default = "false", example = "false")]
     pub raw_scores: bool,
@@ -323,6 +330,9 @@ pub(crate) struct EmbedRequest {
     #[serde(default)]
     #[schema(default = "false", example = "false", nullable = true)]
     pub truncate: Option<bool>,
+    #[serde(default)]
+    #[schema(default = "right", example = "right")]
+    pub truncation_direction: TruncationDirection,
     #[serde(default = "default_normalize")]
     #[schema(default = "true", example = "true")]
     pub normalize: bool,
@@ -342,6 +352,9 @@ pub(crate) struct EmbedSparseRequest {
     #[serde(default)]
     #[schema(default = "false", example = "false", nullable = true)]
     pub truncate: Option<bool>,
+    #[serde(default)]
+    #[schema(default = "right", example = "right")]
+    pub truncation_direction: TruncationDirection,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -359,6 +372,9 @@ pub(crate) struct EmbedAllRequest {
     #[serde(default)]
     #[schema(default = "false", example = "false", nullable = true)]
     pub truncate: Option<bool>,
+    #[serde(default)]
+    #[schema(default = "right", example = "right")]
+    pub truncation_direction: TruncationDirection,
 }
 
 #[derive(Serialize, ToSchema)]
