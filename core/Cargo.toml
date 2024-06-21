@@ -6,6 +6,7 @@ authors.workspace = true
 homepage.workspace = true
 
 [dependencies]
+async-channel = "^1.9"
 hf-hub = { version = "^0.3.0", features = ["tokio"], default-features = false }
 metrics = "^0.21"
 text-embeddings-backend = { path = "../backends" }

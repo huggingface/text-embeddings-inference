@@ -30,7 +30,7 @@ impl Infer {
     ) -> Self {
         let notify_batching_task = Arc::new(Notify::new());
 
-        let (embed_sender, embed_receiver) = mpsc::unbounded_channel();
+        let (embed_sender, embed_receiver) = mpsc::channel(8);
 
         // Create two batching tasks to prefetch batches
         tokio::spawn(batching_task(
@@ -498,7 +498,7 @@ impl Infer {
 async fn batching_task(
     queue: Queue,
     notify: Arc<Notify>,
-    embed_sender: mpsc::UnboundedSender<(NextBatch, oneshot::Sender<()>)>,
+    embed_sender: mpsc::Sender<(NextBatch, oneshot::Sender<()>)>,
 ) {
     loop {
         notify.notified().await;
@@ -506,7 +506,7 @@ async fn batching_task(
         while let Some(next_batch) = queue.next_batch().await {
             let (callback_sender, callback_receiver) = oneshot::channel();
             embed_sender
-                .send((next_batch, callback_sender))
+                .try_send((next_batch, callback_sender))
                 .expect("embed receiver was dropped. This is a bug.");
             let _ = callback_receiver.await;
         }
@@ -516,7 +516,7 @@ async fn batching_task(
 #[instrument(skip_all)]
 async fn backend_task(
     backend: Backend,
-    mut embed_receiver: mpsc::UnboundedReceiver<(NextBatch, oneshot::Sender<()>)>,
+    mut embed_receiver: mpsc::Receiver<(NextBatch, oneshot::Sender<()>)>,
 ) {
     while let Some((batch, _callback)) = embed_receiver.recv().await {
         match &backend.model_type {
