@@ -2,14 +2,13 @@ use crate::alibi::alibi_head_slopes;
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{HiddenAct, LayerNorm, Linear};
 use crate::models::bert::PositionEmbeddingType;
-use crate::models::jina::{JinaConfig, BertEmbeddings};
-use crate::models::jina::BertEmbeddings;
-use crate::models::Model;
+use crate::models::jina::JinaEmbeddings;
+use crate::models::{BertConfig, Model};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::VarBuilder;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
-struct AlibiBertAttention {
+struct JinaAttention {
     qkv_linear: Linear,
     dense: Linear,
     layer_norm: LayerNorm,
@@ -23,7 +22,7 @@ struct AlibiBertAttention {
     span: tracing::Span,
 }
 
-impl AlibiBertAttention {
+impl JinaAttention {
     pub fn load(vb: VarBuilder, config: &BertConfig, alibi_slopes: Option<Tensor>) -> Result<Self> {
         let attention_head_size = config.hidden_size / config.num_attention_heads;
         let all_head_size = config.num_attention_heads * attention_head_size;
@@ -117,7 +116,7 @@ impl AlibiBertAttention {
 }
 
 struct JinaBertLayer {
-    attention: AlibiBertAttention,
+    attention: JinaAttention,
     gated: Linear,
     output: Linear,
     layer_norm: LayerNorm,
@@ -130,7 +129,7 @@ struct JinaBertLayer {
 
 impl JinaBertLayer {
     pub fn load(vb: VarBuilder, config: &BertConfig, alibi: Option<Tensor>) -> Result<Self> {
-        let attention = AlibiBertAttention::load(vb.pp("attention"), config, alibi)?;
+        let attention = JinaAttention::load(vb.pp("attention"), config, alibi)?;
 
         let gated_weight = vb
             .pp("mlp")
@@ -174,14 +173,14 @@ impl JinaBertLayer {
         let residual = hidden_states.clone();
 
         let hidden_states = self.gated.forward(&hidden_states)?;
-        let gated = hidden_states.i((.., 0..self.intermediate_size))?;
+        let gated = hidden_states.narrow(1, 0, self.intermediate_size)?;
         let gated = match self.act {
             HiddenAct::Gelu => gated.gelu(),
             HiddenAct::Relu => gated.relu(),
             HiddenAct::Swiglu => gated.silu(),
         }?;
 
-        let non_gated = hidden_states.i((.., self.intermediate_size..))?;
+        let non_gated = hidden_states.narrow(1, self.intermediate_size, self.intermediate_size)?;
         let hidden_states = (gated * non_gated)?;
 
         let hidden_states = self.output.forward(&hidden_states)?;
@@ -191,12 +190,12 @@ impl JinaBertLayer {
     }
 }
 
-struct BertEncoder {
+struct JinaBertEncoder {
     layers: Vec<JinaBertLayer>,
     span: tracing::Span,
 }
 
-impl BertEncoder {
+impl JinaBertEncoder {
     pub fn load(vb: VarBuilder, config: &BertConfig, alibi: Option<Tensor>) -> Result<Self> {
         let layers = (0..config.num_hidden_layers)
             .map(|index| {
@@ -205,7 +204,7 @@ impl BertEncoder {
             .collect::<Result<Vec<_>>>()?;
         let span = tracing::span!(tracing::Level::TRACE, "encoder");
 
-        Ok(BertEncoder { layers, span })
+        Ok(JinaBertEncoder { layers, span })
     }
 
     fn forward(&self, hidden_states: &Tensor, cu_seqlens: &Tensor, max_s: usize) -> Result<Tensor> {
@@ -223,8 +222,8 @@ impl BertEncoder {
 }
 
 pub struct FlashJinaBertModel {
-    embeddings: BertEmbeddings,
-    encoder: BertEncoder,
+    embeddings: JinaEmbeddings,
+    encoder: JinaBertEncoder,
     pool: Pool,
     pub device: Device,
 
@@ -266,14 +265,14 @@ impl FlashJinaBertModel {
         };
 
         let (embeddings, encoder) = match (
-            BertEmbeddings::load(vb.pp("embeddings"), config),
-            BertEncoder::load(vb.pp("encoder"), config, alibi.clone()),
+            JinaEmbeddings::load(vb.pp("embeddings"), config),
+            JinaBertEncoder::load(vb.pp("encoder"), config, alibi.clone()),
         ) {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
                 if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp("bert.embeddings"), config),
-                    BertEncoder::load(vb.pp("bert.encoder"), config, alibi.clone()),
+                    JinaEmbeddings::load(vb.pp("bert.embeddings"), config),
+                    JinaBertEncoder::load(vb.pp("bert.encoder"), config, alibi.clone()),
                 ) {
                     (embeddings, encoder)
                 } else {
