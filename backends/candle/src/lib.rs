@@ -11,12 +11,12 @@ use crate::compute_cap::{
     compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
 };
 use crate::models::{
-    BertModel, DistilBertConfig, DistilBertModel, JinaBertModel, Model, NomicBertModel,
-    NomicConfig, PositionEmbeddingType,
+    BertConfig, BertModel, DistilBertConfig, DistilBertModel, JinaConfig, JinaBertModel, JinaCodeConfig, JinaCodeBertModel, 
+    Model, NomicBertModel, NomicConfig,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
-    FlashBertModel, FlashDistilBertModel, FlashJinaBertModel, FlashNomicBertModel,
+    FlashBertModel, FlashDistilBertModel, FlashJinaBertModel, FlashJinaCodeBertModel, FlashNomicBertModel,
 };
 use anyhow::Context;
 use candle::{DType, Device};
@@ -37,6 +37,10 @@ enum Config {
     XlmRoberta(BertConfig),
     Camembert(BertConfig),
     Roberta(BertConfig),
+    #[serde(rename(deserialize = "jina_bert"))]
+    JinaBert(JinaConfig),
+    #[serde(rename(deserialize = "jina_code_bert"))]
+    JinaCodeBert(JinaCodeConfig),
     #[serde(rename(deserialize = "distilbert"))]
     DistilBert(DistilBertConfig),
     #[serde(rename(deserialize = "nomic_bert"))]
@@ -120,13 +124,16 @@ impl CandleBackend {
                 "`cuda` feature is not enabled".to_string(),
             )),
             (Config::Bert(config), Device::Cpu | Device::Metal(_)) => {
-                if config.position_embedding_type == PositionEmbeddingType::Alibi {
-                    tracing::info!("Starting JinaBertModel model on {:?}", device);
-                    Ok(Box::new(JinaBertModel::load(vb, &config, model_type).s()?))
-                } else {
-                    tracing::info!("Starting Bert model on {:?}", device);
-                    Ok(Box::new(BertModel::load(vb, &config, model_type).s()?))
-                }
+                tracing::info!("Starting Bert model on {:?}", device);
+                Ok(Box::new(BertModel::load(vb, &config, model_type).s()?))
+            }
+            (Config::JinaBert(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting JinaBertModel model on {:?}", device);
+                Ok(Box::new(JinaBertModel::load(vb, &config, model_type).s()?))
+            }
+            (Config::JinaCodeBert(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting JinaCodeBertModel model on {:?}", device);
+                Ok(Box::new(JinaCodeBertModel::load(vb, &config, model_type).s()?))
             }
             (
                 Config::XlmRoberta(config) | Config::Camembert(config) | Config::Roberta(config),
@@ -157,22 +164,42 @@ impl CandleBackend {
                     && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
                 {
                     if config.position_embedding_type == PositionEmbeddingType::Alibi {
-                        tracing::info!("Starting FlashJinaBertModel model on {:?}", device);
-                        Ok(Box::new(
-                            FlashJinaBertModel::load(vb, &config, model_type).s()?,
-                        ))
-                    } else {
                         tracing::info!("Starting FlashBert model on {:?}", device);
                         Ok(Box::new(FlashBertModel::load(vb, &config, model_type).s()?))
-                    }
-                } else {
-                    if config.position_embedding_type == PositionEmbeddingType::Alibi {
-                        tracing::info!("Starting JinaBertModel model on {:?}", device);
-                        Ok(Box::new(JinaBertModel::load(vb, &config, model_type).s()?))
                     } else {
                         tracing::info!("Starting Bert model on {:?}", device);
                         Ok(Box::new(BertModel::load(vb, &config, model_type).s()?))
                     }
+                }
+                #[cfg(feature = "cuda")]
+                (Config::JinaBert(config), Device::Cuda(_)) => {
+                if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                    && dtype == DType::F16
+                    && ((config.position_embedding_type == PositionEmbeddingType::Absolute) | (config.position_embedding_type == PositionEmbeddingType::Alibi))
+                    // Allow disabling because of flash attention v1 precision problems
+                    // See: https://github.com/huggingface/text-embeddings-inference/issues/37
+                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
+                {
+                    tracing::info!("Starting FlashJinaBertModel model on {:?}", device);
+                    Ok(Box::new(FlashJinaBertModel::load(vb, &config, model_type).s()?,))
+                } else {
+                    tracing::info!("Starting JinaBertModel model on {:?}", device);
+                    Ok(Box::new(JinaBertModel::load(vb, &config, model_type).s()?))
+                }
+                #[cfg(feature = "cuda")]
+                (Config::JinaCodeBert(config), Device::Cuda(_)) => {
+                    if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                        && dtype == DType::F16
+                        && ((config.position_embedding_type == PositionEmbeddingType::Absolute) | (config.position_embedding_type == PositionEmbeddingType::Alibi))
+                        // Allow disabling because of flash attention v1 precision problems
+                        // See: https://github.com/huggingface/text-embeddings-inference/issues/37
+                        && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
+                    {
+                        tracing::info!("Starting FlashJinaCodeBertModel model on {:?}", device);
+                        Ok(Box::new(FlashJinaCodeBertModel::load(vb, &config, model_type).s()?,))
+                    } else {
+                        tracing::info!("Starting JinaCodeBertModel model on {:?}", device);
+                        Ok(Box::new(JinaCodeBertModel::load(vb, &config, model_type).s()?))
                 }
             }
             #[cfg(feature = "cuda")]
