@@ -4,6 +4,7 @@ use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::json;
 use std::fmt::Formatter;
 use text_embeddings_core::tokenization::EncodingInput;
+use tokenizers::TruncationDirection;
 use utoipa::openapi::{RefOr, Schema};
 use utoipa::ToSchema;
 
@@ -199,6 +200,9 @@ pub(crate) struct PredictRequest {
     #[schema(default = "false", example = "false", nullable = true)]
     pub truncate: Option<bool>,
     #[serde(default)]
+    #[schema(default = "right", example = "right")]
+    pub truncation_direction: TruncationDirection,
+    #[serde(default)]
     #[schema(default = "false", example = "false")]
     pub raw_scores: bool,
 }
@@ -227,6 +231,9 @@ pub(crate) struct RerankRequest {
     #[serde(default)]
     #[schema(default = "false", example = "false", nullable = true)]
     pub truncate: Option<bool>,
+    #[serde(default)]
+    #[schema(default = "right", example = "right")]
+    pub truncation_direction: TruncationDirection,
     #[serde(default)]
     #[schema(default = "false", example = "false")]
     pub raw_scores: bool,
@@ -278,6 +285,14 @@ pub(crate) enum Input {
     Batch(Vec<InputType>),
 }
 
+#[derive(Deserialize, ToSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EncodingFormat {
+    #[default]
+    Float,
+    Base64,
+}
+
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct OpenAICompatRequest {
     pub input: Input,
@@ -287,6 +302,16 @@ pub(crate) struct OpenAICompatRequest {
     #[allow(dead_code)]
     #[schema(nullable = true, example = "null")]
     pub user: Option<String>,
+    #[schema(default = "float", example = "float")]
+    #[serde(default)]
+    pub encoding_format: EncodingFormat,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(untagged)]
+pub(crate) enum Embedding {
+    Float(Vec<f32>),
+    Base64(String),
 }
 
 #[derive(Serialize, ToSchema)]
@@ -294,7 +319,7 @@ pub(crate) struct OpenAICompatEmbedding {
     #[schema(example = "embedding")]
     pub object: &'static str,
     #[schema(example = json!([0.0, 1.0, 2.0]))]
-    pub embedding: Vec<f32>,
+    pub embedding: Embedding,
     #[schema(example = "0")]
     pub index: usize,
 }
@@ -323,6 +348,9 @@ pub(crate) struct EmbedRequest {
     #[serde(default)]
     #[schema(default = "false", example = "false", nullable = true)]
     pub truncate: Option<bool>,
+    #[serde(default)]
+    #[schema(default = "right", example = "right")]
+    pub truncation_direction: TruncationDirection,
     #[serde(default = "default_normalize")]
     #[schema(default = "true", example = "true")]
     pub normalize: bool,
@@ -342,6 +370,9 @@ pub(crate) struct EmbedSparseRequest {
     #[serde(default)]
     #[schema(default = "false", example = "false", nullable = true)]
     pub truncate: Option<bool>,
+    #[serde(default)]
+    #[schema(default = "right", example = "right")]
+    pub truncation_direction: TruncationDirection,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -359,6 +390,9 @@ pub(crate) struct EmbedAllRequest {
     #[serde(default)]
     #[schema(default = "false", example = "false", nullable = true)]
     pub truncate: Option<bool>,
+    #[serde(default)]
+    #[schema(default = "right", example = "right")]
+    pub truncation_direction: TruncationDirection,
 }
 
 #[derive(Serialize, ToSchema)]

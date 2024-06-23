@@ -1,11 +1,11 @@
 /// HTTP Server logic
 use crate::http::types::{
     DecodeRequest, DecodeResponse, EmbedAllRequest, EmbedAllResponse, EmbedRequest, EmbedResponse,
-    EmbedSparseRequest, EmbedSparseResponse, Input, InputIds, InputType, OpenAICompatEmbedding,
-    OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage,
-    PredictInput, PredictRequest, PredictResponse, Prediction, Rank, RerankRequest, RerankResponse,
-    Sequence, SimpleToken, SparseValue, TokenizeInput, TokenizeRequest, TokenizeResponse,
-    VertexPrediction, VertexRequest, VertexResponse,
+    EmbedSparseRequest, EmbedSparseResponse, Embedding, EncodingFormat, Input, InputIds, InputType,
+    OpenAICompatEmbedding, OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse,
+    OpenAICompatUsage, PredictInput, PredictRequest, PredictResponse, Prediction, Rank,
+    RerankRequest, RerankResponse, Sequence, SimpleToken, SparseValue, TokenizeInput,
+    TokenizeRequest, TokenizeResponse, VertexPrediction, VertexRequest, VertexResponse,
 };
 use crate::{
     shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
@@ -19,6 +19,8 @@ use axum::http::{Method, StatusCode};
 use axum::routing::{get, post};
 use axum::{http, Json, Router};
 use axum_tracing_opentelemetry::middleware::OtelAxumLayer;
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use futures::future::join_all;
 use futures::FutureExt;
 use http::header::AUTHORIZATION;
@@ -30,6 +32,7 @@ use text_embeddings_core::infer::{
     AllEmbeddingsInferResponse, Infer, InferMetadata, PooledEmbeddingsInferResponse,
 };
 use text_embeddings_core::TextEmbeddingsError;
+use tokenizers::TruncationDirection;
 use tokio::sync::OwnedSemaphorePermit;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::instrument;
@@ -103,7 +106,6 @@ async fn predict(
     // Closure for predict
     let predict_inner = move |inputs: Sequence,
                               truncate: bool,
-                              raw_scores: bool,
                               infer: Infer,
                               info: Info,
                               permit: Option<OwnedSemaphorePermit>| async move {
@@ -113,7 +115,13 @@ async fn predict(
         };
 
         let response = infer
-            .predict(inputs, truncate, raw_scores, permit)
+            .predict(
+                inputs,
+                truncate,
+                req.truncation_direction,
+                req.raw_scores,
+                permit,
+            )
             .await
             .map_err(ErrorResponse::from)?;
 
@@ -159,15 +167,8 @@ async fn predict(
 
             let compute_chars = inputs.count_chars();
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
-            let (prompt_tokens, tokenization, queue, inference, predictions) = predict_inner(
-                inputs,
-                truncate,
-                req.raw_scores,
-                infer.0,
-                info.0,
-                Some(permit),
-            )
-            .await?;
+            let (prompt_tokens, tokenization, queue, inference, predictions) =
+                predict_inner(inputs, truncate, infer.0, info.0, Some(permit)).await?;
 
             metrics::increment_counter!("te_request_success", "method" => "single");
 
@@ -211,7 +212,6 @@ async fn predict(
                 futures.push(predict_inner(
                     input,
                     truncate,
-                    req.raw_scores,
                     local_infer.0,
                     local_info.0,
                     None,
@@ -321,15 +321,17 @@ async fn rerank(
     })?;
 
     // Closure for rerank
-    let rerank_inner = move |query: String,
-                             text: String,
-                             truncate: bool,
-                             raw_scores: bool,
-                             infer: Infer| async move {
+    let rerank_inner = move |query: String, text: String, truncate: bool, infer: Infer| async move {
         let permit = infer.acquire_permit().await;
 
         let response = infer
-            .predict((query, text), truncate, raw_scores, permit)
+            .predict(
+                (query, text),
+                truncate,
+                req.truncation_direction,
+                req.raw_scores,
+                permit,
+            )
             .await
             .map_err(ErrorResponse::from)?;
 
@@ -375,7 +377,6 @@ async fn rerank(
                 req.query.clone(),
                 text.clone(),
                 truncate,
-                req.raw_scores,
                 local_infer.0,
             ))
         }
@@ -484,7 +485,13 @@ async fn embed(
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
-                .embed_pooled(input, truncate, req.normalize, permit)
+                .embed_pooled(
+                    input,
+                    truncate,
+                    req.truncation_direction,
+                    req.normalize,
+                    permit,
+                )
                 .await
                 .map_err(ErrorResponse::from)?;
 
@@ -541,7 +548,13 @@ async fn embed(
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
                     local_infer
-                        .embed_pooled(input, truncate, req.normalize, permit)
+                        .embed_pooled(
+                            input,
+                            truncate,
+                            req.truncation_direction,
+                            req.normalize,
+                            permit,
+                        )
                         .await
                 })
             }
@@ -641,7 +654,7 @@ async fn embed_sparse(
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
-                .embed_sparse(input, truncate, permit)
+                .embed_sparse(input, truncate, req.truncation_direction, permit)
                 .await
                 .map_err(ErrorResponse::from)?;
 
@@ -697,7 +710,9 @@ async fn embed_sparse(
                 let local_infer = infer.clone();
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
-                    let response = local_infer.embed_sparse(input, truncate, permit).await?;
+                    let response = local_infer
+                        .embed_sparse(input, truncate, req.truncation_direction, permit)
+                        .await?;
                     Ok((sparsify(response.results), response.metadata))
                 })
             }
@@ -789,7 +804,7 @@ async fn embed_all(
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
-                .embed_all(input, truncate, permit)
+                .embed_all(input, truncate, req.truncation_direction, permit)
                 .await
                 .map_err(ErrorResponse::from)?;
 
@@ -845,7 +860,9 @@ async fn embed_all(
                 let local_infer = infer.clone();
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
-                    local_infer.embed_all(input, truncate, permit).await
+                    local_infer
+                        .embed_all(input, truncate, req.truncation_direction, permit)
+                        .await
                 })
             }
             let results = join_all(futures)
@@ -923,6 +940,21 @@ async fn openai_embed(
     Json(req): Json<OpenAICompatRequest>,
 ) -> Result<(HeaderMap, Json<OpenAICompatResponse>), (StatusCode, Json<OpenAICompatErrorResponse>)>
 {
+    let encode_embedding = |array: Vec<f32>| {
+        match req.encoding_format {
+            EncodingFormat::Float => Embedding::Float(array),
+            EncodingFormat::Base64 => {
+                // Unsafe is fine here since we do not violate memory ownership: bytes
+                // is only used in this scope and we return an owned string
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(array.as_ptr() as *const u8, array.len() * 4)
+                };
+
+                Embedding::Base64(BASE64_STANDARD.encode(bytes))
+            }
+        }
+    };
+
     let span = tracing::Span::current();
     let start_time = Instant::now();
 
@@ -936,16 +968,17 @@ async fn openai_embed(
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
-                .embed_pooled(input, truncate, true, permit)
+                .embed_pooled(input, truncate, TruncationDirection::Right, true, permit)
                 .await
                 .map_err(ErrorResponse::from)?;
 
             metrics::increment_counter!("te_request_success", "method" => "single");
 
+            let embedding = encode_embedding(response.results);
             (
                 vec![OpenAICompatEmbedding {
                     object: "embedding",
-                    embedding: response.results,
+                    embedding,
                     index: 0,
                 }],
                 ResponseMetadata::new(
@@ -997,7 +1030,7 @@ async fn openai_embed(
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
                     local_infer
-                        .embed_pooled(input, truncate, true, permit)
+                        .embed_pooled(input, truncate, TruncationDirection::Right, true, permit)
                         .await
                 })
             }
@@ -1018,9 +1051,10 @@ async fn openai_embed(
                 total_queue_time += r.metadata.queue.as_nanos() as u64;
                 total_inference_time += r.metadata.inference.as_nanos() as u64;
                 total_compute_tokens += r.metadata.prompt_tokens;
+                let embedding = encode_embedding(r.results);
                 embeddings.push(OpenAICompatEmbedding {
                     object: "embedding",
-                    embedding: r.results,
+                    embedding,
                     index: i,
                 });
             }
@@ -1451,7 +1485,6 @@ pub async fn run(
 
     // Create router
     let mut app = Router::new()
-        .layer(DefaultBodyLimit::max(payload_limit))
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", doc))
         // Base routes
         .route("/info", get(get_model_info))
@@ -1474,7 +1507,9 @@ pub async fn run(
         // AWS Sagemaker health route
         .route("/ping", get(health))
         // Prometheus metrics route
-        .route("/metrics", get(metrics));
+        .route("/metrics", get(metrics))
+        // Update payload limit
+        .layer(DefaultBodyLimit::max(payload_limit));
 
     #[cfg(feature = "google")]
     {

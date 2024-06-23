@@ -22,6 +22,7 @@ impl PythonBackend {
         model_type: ModelType,
         uds_path: String,
         otlp_endpoint: Option<String>,
+        otlp_service_name: String,
     ) -> Result<Self, BackendError> {
         match model_type {
             ModelType::Classifier => {
@@ -37,8 +38,13 @@ impl PythonBackend {
             }
         };
 
-        let backend_process =
-            management::BackendProcess::new(model_path, dtype, &uds_path, otlp_endpoint)?;
+        let backend_process = management::BackendProcess::new(
+            model_path,
+            dtype,
+            &uds_path,
+            otlp_endpoint,
+            otlp_service_name,
+        )?;
         let tokio_runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

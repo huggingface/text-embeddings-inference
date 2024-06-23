@@ -1,84 +1,19 @@
 use crate::alibi::build_alibi_tensor;
 use crate::layers::{get_cublas_lt_wrapper, HiddenAct, LayerNorm, Linear};
+use crate::models::jina::JinaEmbeddings;
 use crate::models::PositionEmbeddingType;
 use crate::models::{BertConfig, Model};
-use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
-use candle_nn::{Embedding, VarBuilder};
+use candle::{DType, Device, IndexOp, Result, Tensor, D};
+use candle_nn::VarBuilder;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
-#[derive(Debug)]
-pub struct JinaEmbeddings {
-    word_embeddings: Embedding,
-    token_type_embeddings: Embedding,
-    position_embeddings: Option<Embedding>,
-    layer_norm: LayerNorm,
-    span: tracing::Span,
-}
-
-impl JinaEmbeddings {
-    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
-        let position_embeddings =
-            if config.position_embedding_type == PositionEmbeddingType::Absolute {
-                Some(Embedding::new(
-                    vb.pp("position_embeddings").get(
-                        (config.max_position_embeddings, config.hidden_size),
-                        "weight",
-                    )?,
-                    config.hidden_size,
-                ))
-            } else {
-                None
-            };
-
-        Ok(Self {
-            word_embeddings: Embedding::new(
-                vb.pp("word_embeddings")
-                    .get((config.vocab_size, config.hidden_size), "weight")?,
-                config.hidden_size,
-            ),
-            token_type_embeddings: Embedding::new(
-                vb.pp("token_type_embeddings")
-                    .get((config.type_vocab_size, config.hidden_size), "weight")?,
-                config.hidden_size,
-            ),
-            position_embeddings,
-            layer_norm: LayerNorm::load(
-                vb.pp("LayerNorm"),
-                config.hidden_size,
-                config.layer_norm_eps as f32,
-            )?,
-            span: tracing::span!(tracing::Level::TRACE, "embeddings"),
-        })
-    }
-
-    pub fn forward(
-        &self,
-        input_ids: &Tensor,
-        token_type_ids: &Tensor,
-        position_ids: &Tensor,
-    ) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let input_embeddings = self.word_embeddings.forward(input_ids)?;
-        let token_type_embeddings = self.token_type_embeddings.forward(token_type_ids)?;
-
-        if let Some(position_embeddings) = &self.position_embeddings {
-            let position_embeddings = position_embeddings.forward(position_ids)?;
-            let embeddings = input_embeddings.add(&token_type_embeddings)?;
-            self.layer_norm
-                .forward(&embeddings, Some(&position_embeddings))
-        } else {
-            self.layer_norm
-                .forward(&input_embeddings, Some(&token_type_embeddings))
-        }
-    }
-}
-
-struct JinaAttention {
+struct JinaCodeAttention {
     qkv_linear: Linear,
 
     dense: Linear,
-    layer_norm: LayerNorm,
+    layer_norm_q: LayerNorm,
+    layer_norm_k: LayerNorm,
+    layer_norm_out: LayerNorm,
 
     num_attention_heads: usize,
     attention_head_size: usize,
@@ -87,7 +22,7 @@ struct JinaAttention {
     span: tracing::Span,
 }
 
-impl JinaAttention {
+impl JinaCodeAttention {
     pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let attention_head_size = config.hidden_size / config.num_attention_heads;
         let all_head_size = config.num_attention_heads * attention_head_size;
@@ -113,6 +48,17 @@ impl JinaAttention {
 
         let qkv_linear = Linear::new(qkv_weight, Some(qkv_bias), None);
 
+        let layer_norm_q = LayerNorm::load(
+            vb.pp("self").pp("layer_norm_q"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
+        )?;
+        let layer_norm_k = LayerNorm::load(
+            vb.pp("self").pp("layer_norm_k"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
+        )?;
+
         let dense_weight = vb
             .pp("output")
             .pp("dense")
@@ -121,7 +67,7 @@ impl JinaAttention {
 
         let dense = Linear::new(dense_weight, Some(dense_bias), None);
 
-        let layer_norm = LayerNorm::load(
+        let layer_norm_out = LayerNorm::load(
             vb.pp("output").pp("LayerNorm"),
             config.hidden_size,
             config.layer_norm_eps as f32,
@@ -132,7 +78,9 @@ impl JinaAttention {
         Ok(Self {
             qkv_linear,
             dense,
-            layer_norm,
+            layer_norm_q,
+            layer_norm_k,
+            layer_norm_out,
             num_attention_heads: config.num_attention_heads,
             attention_head_size,
             softmax_scale,
@@ -143,7 +91,6 @@ impl JinaAttention {
     fn forward(&self, hidden_states: &Tensor, attention_bias: Option<&Tensor>) -> Result<Tensor> {
         let _enter = self.span.enter();
         let device = hidden_states.device();
-
         let residual = hidden_states.clone();
 
         let qkv = self.qkv_linear.forward(hidden_states)?;
@@ -152,12 +99,34 @@ impl JinaAttention {
         new_qkv_shape.pop();
         new_qkv_shape.push(self.num_attention_heads * 3);
         new_qkv_shape.push(self.attention_head_size);
-        let qkv = qkv.reshape(new_qkv_shape.as_slice())?.transpose(1, 2)?;
 
-        let qkv = qkv.chunk(3, 1)?;
-        let query_layer = &qkv[0].contiguous()?;
-        let key_layer = &qkv[1].contiguous()?;
-        let value_layer = &qkv[2];
+        let qkv = qkv.reshape(new_qkv_shape.as_slice())?;
+
+        // Split heads
+        let qkv = qkv.chunk(3, 2)?;
+
+        // Flatten last dims again to go through the layer norm
+        let query_layer = &qkv[0].flatten_from(D::Minus2)?;
+        let key_layer = &qkv[1].flatten_from(D::Minus2)?;
+
+        // Layer norm on q and k
+        let query_layer = self.layer_norm_q.forward(query_layer, None)?;
+        let key_layer = self.layer_norm_k.forward(key_layer, None)?;
+
+        let mut new_qk_shape = query_layer.dims().to_vec();
+        new_qk_shape.pop();
+        new_qk_shape.push(self.num_attention_heads);
+        new_qk_shape.push(self.attention_head_size);
+
+        let query_layer = query_layer
+            .reshape(new_qk_shape.as_slice())?
+            .transpose(1, 2)?
+            .contiguous()?;
+        let key_layer = key_layer
+            .reshape(new_qk_shape.as_slice())?
+            .transpose(1, 2)?
+            .contiguous()?;
+        let value_layer = &qkv[2].transpose(1, 2)?.contiguous()?;
 
         #[allow(unused_variables)]
         let context_layer = if let (Device::Cuda(_), Some(cublaslt)) =
@@ -230,17 +199,20 @@ impl JinaAttention {
         let context_layer = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?;
 
         let hidden_states = self.dense.forward(&context_layer)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
+        let hidden_states = self
+            .layer_norm_out
+            .forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
 }
 
-struct JinaBertLayer {
-    attention: JinaAttention,
-    gated: Linear,
-    output: Linear,
-    layer_norm: LayerNorm,
+struct JinaCodeBertLayer {
+    attention: JinaCodeAttention,
+    up_gated_layer: Linear,
+    down_layer: Linear,
+    layer_norm_1: LayerNorm,
+    layer_norm_2: LayerNorm,
     act: HiddenAct,
 
     intermediate_size: usize,
@@ -248,34 +220,43 @@ struct JinaBertLayer {
     span: tracing::Span,
 }
 
-impl JinaBertLayer {
+impl JinaCodeBertLayer {
     pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
-        let attention = JinaAttention::load(vb.pp("attention"), config)?;
+        let attention = JinaCodeAttention::load(vb.pp("attention"), config)?;
 
-        let gated_weight = vb
+        let up_gated_weight = vb
             .pp("mlp")
-            .pp("gated_layers")
+            .pp("up_gated_layer")
             .get((config.intermediate_size * 2, config.hidden_size), "weight")?;
-        let gated = Linear::new(gated_weight, None, None);
+        let up_gated_layer = Linear::new(up_gated_weight, None, None);
 
-        let output_weight = vb
+        let down_weight = vb
             .pp("mlp")
-            .pp("wo")
+            .pp("down_layer")
             .get((config.hidden_size, config.intermediate_size), "weight")?;
-        let output_bias = vb.pp("mlp").pp("wo").get(config.hidden_size, "bias")?;
-        let output = Linear::new(output_weight, Some(output_bias), None);
+        let down_bias = vb
+            .pp("mlp")
+            .pp("down_layer")
+            .get(config.hidden_size, "bias")?;
+        let down_layer = Linear::new(down_weight, Some(down_bias), None);
 
-        let layer_norm = LayerNorm::load(
-            vb.pp("mlp").pp("layernorm"),
+        let layer_norm_1 = LayerNorm::load(
+            vb.pp("layer_norm_1"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
+        )?;
+        let layer_norm_2 = LayerNorm::load(
+            vb.pp("layer_norm_2"),
             config.hidden_size,
             config.layer_norm_eps as f32,
         )?;
 
         Ok(Self {
             attention,
-            gated,
-            output,
-            layer_norm,
+            up_gated_layer,
+            down_layer,
+            layer_norm_1,
+            layer_norm_2,
             act: config.hidden_act.clone(),
             intermediate_size: config.intermediate_size,
             span: tracing::span!(tracing::Level::TRACE, "layer"),
@@ -289,40 +270,48 @@ impl JinaBertLayer {
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let hidden_states = self.attention.forward(hidden_states, attention_bias)?;
+        // Pre-Norm
         let residual = hidden_states.clone();
 
-        let hidden_states = self.gated.forward(&hidden_states)?;
-        let gated = hidden_states.i((.., .., 0..self.intermediate_size))?;
+        // Self-Attention block
+        let hidden_states = self.attention.forward(hidden_states, attention_bias)?;
+
+        // Pre-MLP LayerNorm
+        let hidden_states = self.layer_norm_1.forward(&hidden_states, Some(&residual))?;
+
+        // MLP block
+        let residual = hidden_states.clone();
+        let hidden_states = self.up_gated_layer.forward(&hidden_states)?;
+        let non_gated = hidden_states.i((.., .., 0..self.intermediate_size))?;
+        let gated = hidden_states.i((.., .., self.intermediate_size..))?;
         let gated = match self.act {
             HiddenAct::Gelu => gated.gelu(),
             HiddenAct::Relu => gated.relu(),
             HiddenAct::Swiglu => gated.silu(),
         }?;
+        let hidden_states = (non_gated * gated)?;
+        let hidden_states = self.down_layer.forward(&hidden_states)?;
 
-        let non_gated = hidden_states.i((.., .., self.intermediate_size..))?;
-        let hidden_states = (gated * non_gated)?;
-
-        let hidden_states = self.output.forward(&hidden_states)?;
-        let hidden_states = self.layer_norm.forward(&hidden_states, Some(&residual))?;
+        // Post-MLP LayerNorm
+        let hidden_states = self.layer_norm_2.forward(&hidden_states, Some(&residual))?;
 
         Ok(hidden_states)
     }
 }
 
-struct JinaBertEncoder {
-    layers: Vec<JinaBertLayer>,
+struct JinaCodeBertEncoder {
+    layers: Vec<JinaCodeBertLayer>,
     span: tracing::Span,
 }
 
-impl JinaBertEncoder {
+impl JinaCodeBertEncoder {
     pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
         let layers = (0..config.num_hidden_layers)
-            .map(|index| JinaBertLayer::load(vb.pp(format!("layer.{index}")), config))
+            .map(|index| JinaCodeBertLayer::load(vb.pp(format!("layer.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
         let span = tracing::span!(tracing::Level::TRACE, "encoder");
 
-        Ok(JinaBertEncoder { layers, span })
+        Ok(JinaCodeBertEncoder { layers, span })
     }
 
     fn forward(&self, hidden_states: &Tensor, attention_bias: Option<&Tensor>) -> Result<Tensor> {
@@ -339,9 +328,9 @@ impl JinaBertEncoder {
     }
 }
 
-pub struct JinaBertModel {
+pub struct JinaCodeBertModel {
     embeddings: JinaEmbeddings,
-    encoder: JinaBertEncoder,
+    encoder: JinaCodeBertEncoder,
     pool: Pool,
     alibi: Option<Tensor>,
 
@@ -353,7 +342,7 @@ pub struct JinaBertModel {
     span: tracing::Span,
 }
 
-impl JinaBertModel {
+impl JinaCodeBertModel {
     pub fn load(vb: VarBuilder, config: &BertConfig, model_type: ModelType) -> Result<Self> {
         let alibi = match config.position_embedding_type {
             PositionEmbeddingType::Alibi => Some(build_alibi_tensor(
@@ -379,13 +368,13 @@ impl JinaBertModel {
 
         let (embeddings, encoder) = match (
             JinaEmbeddings::load(vb.pp("embeddings"), config),
-            JinaBertEncoder::load(vb.pp("encoder"), config),
+            JinaCodeBertEncoder::load(vb.pp("encoder"), config),
         ) {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
                 if let (Ok(embeddings), Ok(encoder)) = (
                     JinaEmbeddings::load(vb.pp("bert.embeddings"), config),
-                    JinaBertEncoder::load(vb.pp("bert.encoder"), config),
+                    JinaCodeBertEncoder::load(vb.pp("bert.encoder"), config),
                 ) {
                     (embeddings, encoder)
                 } else {
@@ -657,7 +646,7 @@ impl JinaBertModel {
     }
 }
 
-impl Model for JinaBertModel {
+impl Model for JinaCodeBertModel {
     fn is_padded(&self) -> bool {
         true
     }

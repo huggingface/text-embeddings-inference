@@ -77,6 +77,7 @@ Examples of supported models:
 | N/A       | NomicBert   | [nomic-ai/nomic-embed-text-v1](https://hf.co/nomic-ai/nomic-embed-text-v1)                       |
 | N/A       | NomicBert   | [nomic-ai/nomic-embed-text-v1.5](https://hf.co/nomic-ai/nomic-embed-text-v1.5)                   |
 | N/A       | JinaBERT    | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)             |
+| N/A       | JinaBERT    | [jinaai/jina-embeddings-v2-base-code](https://hf.co/jinaai/jina-embeddings-v2-base-code)         |
 
 You can explore the list of best performing text embeddings
 models [here](https://huggingface.co/spaces/mteb/leaderboard).
@@ -87,11 +88,11 @@ models [here](https://huggingface.co/spaces/mteb/leaderboard).
 
 Example of supported sequence classification models:
 
-| Task               | Model Type  | Model ID                                                                                    | Revision    |
-|--------------------|-------------|---------------------------------------------------------------------------------------------|-------------|
-| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-large](https://huggingface.co/BAAI/bge-reranker-large)                   | `refs/pr/4` |
-| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)                     | `refs/pr/5` |
-| Sentiment Analysis | RoBERTa     | [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions) |             |
+| Task               | Model Type  | Model ID                                                                                    |
+|--------------------|-------------|---------------------------------------------------------------------------------------------|
+| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-large](https://huggingface.co/BAAI/bge-reranker-large)                   |
+| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)                     |
+| Sentiment Analysis | RoBERTa     | [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions) |
 
 ### Docker
 
@@ -251,6 +252,12 @@ Options:
           The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC. e.g. `http://localhost:4317`
 
           [env: OTLP_ENDPOINT=]
+
+      --otlp-service-name <OTLP_SERVICE_NAME>
+          The service name for opentelemetry.
+
+          [env: OTLP_SERVICE_NAME=]
+          [default: text-embeddings-inference.server]
 
       --cors-allow-origin <CORS_ALLOW_ORIGIN>
           [env: CORS_ALLOW_ORIGIN=]
