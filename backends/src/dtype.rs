@@ -33,7 +33,6 @@ impl fmt::Display for DType {
             DType::Float32 => write!(f, "float32"),
             // #[cfg(feature = "candle")]
             // DType::Q6K => write!(f, "q6k"),
-            _ => unimplemented!(),
         }
     }
 }
