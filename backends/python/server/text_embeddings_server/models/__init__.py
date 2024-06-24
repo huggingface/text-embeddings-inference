@@ -15,11 +15,11 @@ __all__ = ["Model"]
 torch.set_grad_enabled(False)
 
 FLASH_ATTENTION = True
-# try:
-from text_embeddings_server.models.flash_bert import FlashBert
-# except ImportError as e:
-#     logger.warning(f"Could not import Flash Attention enabled models: {e}")
-#     FLASH_ATTENTION = False
+try:
+    from text_embeddings_server.models.flash_bert import FlashBert
+except ImportError as e:
+    logger.warning(f"Could not import Flash Attention enabled models: {e}")
+    FLASH_ATTENTION = False
 
 if FLASH_ATTENTION:
     __all__.append(FlashBert)
