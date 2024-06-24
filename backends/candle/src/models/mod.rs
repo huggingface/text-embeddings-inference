@@ -28,8 +28,8 @@ mod flash_distilbert;
 pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
 use candle::{Result, Tensor};
 pub use distilbert::{DistilBertConfig, DistilBertModel};
-pub use jina::{JinaBertModel, JinaConfig};
-pub use jina_code::{JinaCodeBertModel, JinaCodeConfig};
+pub use jina::JinaBertModel;
+pub use jina_code::JinaCodeBertModel;
 pub use nomic::{NomicBertModel, NomicConfig};
 use text_embeddings_backend_core::Batch;
 

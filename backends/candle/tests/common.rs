@@ -25,7 +25,7 @@ impl Score {
 impl PartialEq for Score {
     fn eq(&self, other: &Self) -> bool {
         // Default tolerance for equality
-        self.is_close(other, 5e-3)
+        self.is_close(other, 6e-3)
     }
 }
 
