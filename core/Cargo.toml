@@ -14,3 +14,4 @@ thiserror = "^1.0"
 tokenizers = { version = "^0.19.1", default-features = false, features = ["onig", "esaxx_fast"] }
 tracing = "^0.1"
 tokio = { version = "^1.25", features = ["rt", "rt-multi-thread", "parking_lot", "sync"] }
+libc = "0.2"

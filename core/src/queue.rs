@@ -46,7 +46,7 @@ impl Queue {
         max_concurrent_requests: usize,
     ) -> Self {
         // Create channels
-        let (queue_sender, queue_receiver) = mpsc::channel(1024);
+        let (queue_sender, queue_receiver) = mpsc::channel(max_concurrent_requests);
 
         // Launch background queue task
         std::thread::spawn(move || {

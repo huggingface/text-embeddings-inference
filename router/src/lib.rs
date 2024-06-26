@@ -289,7 +289,7 @@ pub async fn run(
             api_key,
             cors_allow_origin,
         )
-        .await?;
+        .await
     }
 
     #[cfg(feature = "grpc")]
@@ -297,10 +297,8 @@ pub async fn run(
         // cors_allow_origin and payload_limit are not used for gRPC servers
         let _ = cors_allow_origin;
         let _ = payload_limit;
-        grpc::server::run(infer, info, addr, prom_builder, api_key).await?;
+        grpc::server::run(infer, info, addr, prom_builder, api_key).await
     }
-
-    Ok(())
 }
 
 fn get_backend_model_type(

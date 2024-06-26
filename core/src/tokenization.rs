@@ -3,7 +3,7 @@ use crate::TextEmbeddingsError;
 use tokenizers::tokenizer::Tokenizer;
 pub use tokenizers::Encoding as RawEncoding;
 use tokenizers::{TruncationDirection, TruncationParams, TruncationStrategy};
-use tokio::sync::{oneshot};
+use tokio::sync::oneshot;
 use tracing::{instrument, Span};
 
 /// Validation

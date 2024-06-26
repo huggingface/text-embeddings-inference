@@ -30,14 +30,10 @@ impl Infer {
     ) -> Self {
         let notify_batching_task = Arc::new(Notify::new());
 
-        let (embed_sender, embed_receiver) = mpsc::channel(8);
+        // Bound channel to 1 to be able to prefetch one batch
+        let (embed_sender, embed_receiver) = mpsc::channel(1);
 
-        // Create two batching tasks to prefetch batches
-        tokio::spawn(batching_task(
-            queue.clone(),
-            notify_batching_task.clone(),
-            embed_sender.clone(),
-        ));
+        // Batching task
         tokio::spawn(batching_task(
             queue.clone(),
             notify_batching_task.clone(),
@@ -103,6 +99,7 @@ impl Infer {
                 TextEmbeddingsError::from(err)
             })
     }
+
     #[instrument(skip(self))]
     pub async fn acquire_permit(&self) -> OwnedSemaphorePermit {
         // Limit concurrent requests by acquiring a permit from the semaphore
@@ -495,30 +492,22 @@ impl Infer {
 }
 
 #[instrument(skip_all)]
-async fn batching_task(
-    queue: Queue,
-    notify: Arc<Notify>,
-    embed_sender: mpsc::Sender<(NextBatch, oneshot::Sender<()>)>,
-) {
+async fn batching_task(queue: Queue, notify: Arc<Notify>, embed_sender: mpsc::Sender<NextBatch>) {
     loop {
         notify.notified().await;
 
         while let Some(next_batch) = queue.next_batch().await {
-            let (callback_sender, callback_receiver) = oneshot::channel();
             embed_sender
-                .try_send((next_batch, callback_sender))
+                .send(next_batch)
+                .await
                 .expect("embed receiver was dropped. This is a bug.");
-            let _ = callback_receiver.await;
         }
     }
 }
 
 #[instrument(skip_all)]
-async fn backend_task(
-    backend: Backend,
-    mut embed_receiver: mpsc::Receiver<(NextBatch, oneshot::Sender<()>)>,
-) {
-    while let Some((batch, _callback)) = embed_receiver.recv().await {
+async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextBatch>) {
+    while let Some(batch) = embed_receiver.recv().await {
         match &backend.model_type {
             ModelType::Classifier => {
                 let results = backend.predict(batch.1).await;
