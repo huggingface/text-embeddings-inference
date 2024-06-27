@@ -63,6 +63,8 @@ pub enum Pool {
     /// This option is only available if the loaded model is a `ForMaskedLM` Transformer
     /// model.
     Splade,
+    /// Select the last token as embedding
+    LastToken,
 }
 
 impl fmt::Display for Pool {
@@ -71,6 +73,7 @@ impl fmt::Display for Pool {
             Pool::Cls => write!(f, "cls"),
             Pool::Mean => write!(f, "mean"),
             Pool::Splade => write!(f, "splade"),
+            Pool::LastToken => write!(f, "last_token"),
         }
     }
 }

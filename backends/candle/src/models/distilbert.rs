@@ -389,7 +389,12 @@ impl DistilBertModel {
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for DistilBert")
             }
-            ModelType::Embedding(pool) => pool,
+            ModelType::Embedding(pool) => {
+                if pool == Pool::LastToken {
+                    candle::bail!("`last_token` is not supported for DistilBert");
+                }
+                pool
+            }
         };
 
         let (embeddings, encoder) = match (
@@ -564,6 +569,8 @@ impl DistilBertModel {
             let pooled_embeddings = match self.pool {
                 // CLS pooling
                 Pool::Cls => outputs.i((.., 0))?,
+                // Last token pooling is not supported for this model
+                Pool::LastToken => unreachable!(),
                 // Mean pooling
                 Pool::Mean => {
                     if let Some(ref attention_mask) = attention_mask {

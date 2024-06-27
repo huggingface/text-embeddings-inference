@@ -8,6 +8,7 @@ mod bert;
 mod distilbert;
 mod jina;
 mod jina_code;
+mod mistral;
 mod nomic;
 
 #[cfg(feature = "cuda")]
@@ -25,11 +26,15 @@ mod flash_nomic;
 #[cfg(feature = "cuda")]
 mod flash_distilbert;
 
+#[cfg(feature = "cuda")]
+mod flash_mistral;
+
 pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
 use candle::{Result, Tensor};
 pub use distilbert::{DistilBertConfig, DistilBertModel};
 pub use jina::JinaBertModel;
 pub use jina_code::JinaCodeBertModel;
+pub use mistral::MistralConfig;
 pub use nomic::{NomicBertModel, NomicConfig};
 use text_embeddings_backend_core::Batch;
 
@@ -47,6 +52,9 @@ pub use flash_nomic::FlashNomicBertModel;
 
 #[cfg(feature = "cuda")]
 pub use flash_distilbert::FlashDistilBertModel;
+
+#[cfg(feature = "cuda")]
+pub use flash_mistral::FlashMistralModel;
 
 pub(crate) trait Model {
     fn is_padded(&self) -> bool;

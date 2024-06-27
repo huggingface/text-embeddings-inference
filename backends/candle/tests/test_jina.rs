@@ -1,8 +1,8 @@
 mod common;
 
-use crate::common::{sort_embeddings, SnapshotScores};
+use crate::common::{sort_embeddings, SnapshotEmbeddings};
 use anyhow::Result;
-use common::{batch, download_artifacts, load_tokenizer, relative_matcher};
+use common::{batch, cosine_matcher, download_artifacts, load_tokenizer};
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
@@ -27,10 +27,10 @@ fn test_jina_small() -> Result<()> {
         vec![],
     );
 
-    let matcher = relative_matcher();
+    let matcher = cosine_matcher();
 
     let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_batch)?);
-    let embeddings_batch = SnapshotScores::from(pooled_embeddings);
+    let embeddings_batch = SnapshotEmbeddings::from(pooled_embeddings);
     insta::assert_yaml_snapshot!("jina_batch", embeddings_batch, &matcher);
 
     let input_single = batch(
@@ -40,7 +40,7 @@ fn test_jina_small() -> Result<()> {
     );
 
     let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_single)?);
-    let embeddings_single = SnapshotScores::from(pooled_embeddings);
+    let embeddings_single = SnapshotEmbeddings::from(pooled_embeddings);
 
     insta::assert_yaml_snapshot!("jina_single", embeddings_single, &matcher);
     assert_eq!(embeddings_batch[0], embeddings_single[0]);

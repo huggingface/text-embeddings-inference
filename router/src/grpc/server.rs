@@ -904,6 +904,7 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
         match &self.info.model_type {
             ModelType::Classifier(_) => {
                 let counter = metrics::counter!("te_request_failure", "err" => "model_type");
+                counter.increment(1);
                 let message = "model is not a re-ranker model".to_string();
                 tracing::error!("{message}");
                 Err(Status::new(Code::FailedPrecondition, message))
@@ -911,6 +912,7 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
             ModelType::Reranker(_) => Ok(()),
             ModelType::Embedding(_) => {
                 let counter = metrics::counter!("te_request_failure", "err" => "model_type");
+                counter.increment(1);
                 let message = "model is not a classifier model".to_string();
                 tracing::error!("{message}");
                 Err(Status::new(Code::FailedPrecondition, message))
@@ -1080,6 +1082,7 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
         match &self.info.model_type {
             ModelType::Classifier(_) => {
                 let counter = metrics::counter!("te_request_failure", "err" => "model_type");
+                counter.increment(1);
                 let message = "model is not a re-ranker model".to_string();
                 tracing::error!("{message}");
                 Err(Status::new(Code::FailedPrecondition, message))
@@ -1087,6 +1090,7 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
             ModelType::Reranker(_) => Ok(()),
             ModelType::Embedding(_) => {
                 let counter = metrics::counter!("te_request_failure", "err" => "model_type");
+                counter.increment(1);
                 let message = "model is not a classifier model".to_string();
                 tracing::error!("{message}");
                 Err(Status::new(Code::FailedPrecondition, message))

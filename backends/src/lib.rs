@@ -1,5 +1,6 @@
 mod dtype;
 
+use std::cmp::{max, min};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -65,6 +66,62 @@ impl Backend {
             max_batch_size,
             model_type,
         })
+    }
+
+    #[instrument(skip(self))]
+    pub async fn warmup(
+        &self,
+        max_input_length: usize,
+        max_batch_tokens: usize,
+        max_batch_requests: Option<usize>,
+    ) -> Result<(), BackendError> {
+        let mut input_ids = Vec::with_capacity(max_batch_tokens);
+        let mut token_type_ids = Vec::with_capacity(max_batch_tokens);
+        let mut position_ids = Vec::with_capacity(max_batch_tokens);
+
+        let mut cumulative_seq_lengths = vec![0];
+        let mut pooled_indices = Vec::new();
+
+        let mut i = 0_u32;
+        let mut remaining = max_batch_tokens;
+        let mut cumulative_length = 0;
+        let mut max_length = 0;
+
+        while remaining > 0 {
+            let request_length = min(remaining, max_input_length);
+            cumulative_length += request_length;
+            max_length = max(max_length, request_length as u32);
+
+            input_ids.extend(vec![0; request_length]);
+            token_type_ids.extend(vec![0; request_length]);
+            position_ids.extend((0..request_length as u32).collect::<Vec<u32>>());
+
+            cumulative_seq_lengths.push(cumulative_length as u32);
+            pooled_indices.push(i);
+
+            i += 1;
+            remaining = remaining.saturating_sub(max_input_length);
+            if let Some(max_batch_requests) = &max_batch_requests {
+                if i as usize == *max_batch_requests {
+                    break;
+                }
+            }
+        }
+
+        let batch = Batch {
+            input_ids,
+            token_type_ids,
+            position_ids,
+            cumulative_seq_lengths,
+            max_length,
+            pooled_indices,
+            raw_indices: vec![],
+        };
+
+        match &self.model_type {
+            ModelType::Classifier => self.predict(batch).await.map(|_| ()),
+            ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+        }
     }
 
     #[instrument(skip(self))]

@@ -3981,6 +3981,7 @@ dependencies = [
  "async-channel",
  "hf-hub",
  "metrics",
+ "serde_json",
  "text-embeddings-backend",
  "thiserror",
  "tokenizers",
