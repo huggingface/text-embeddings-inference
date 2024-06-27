@@ -264,7 +264,8 @@ fn encode_input(
             "`inputs` must have less than {max_input_length} tokens. Given: {seq_len}"
         )));
     }
-    metrics::histogram!("te_request_input_length", seq_len as f64);
+    let histogram = metrics::histogram!("te_request_input_length");
+    histogram.record(seq_len as f64);
     Ok(ValidEncoding {
         input_ids: encoding.get_ids().to_vec(),
         token_type_ids: encoding.get_type_ids().to_vec(),

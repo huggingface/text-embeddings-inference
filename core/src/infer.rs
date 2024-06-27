@@ -55,7 +55,7 @@ impl Infer {
         }
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, inputs))]
     pub async fn tokenize<I: Into<EncodingInput> + std::fmt::Debug>(
         &self,
         inputs: I,
@@ -65,13 +65,14 @@ impl Infer {
             .tokenize(inputs.into(), add_special_tokens)
             .await
             .map_err(|err| {
-                metrics::increment_counter!("te_request_failure", "err" => "tokenization");
+                let counter = metrics::counter!("te_request_failure", "err" => "tokenization");
+                counter.increment(1);
                 tracing::error!("{err}");
                 err
             })
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, ids))]
     pub async fn decode(
         &self,
         ids: Vec<u32>,
@@ -81,7 +82,8 @@ impl Infer {
             .decode(ids, skip_special_tokens)
             .await
             .map_err(|err| {
-                metrics::increment_counter!("te_request_failure", "err" => "tokenization");
+                let counter = metrics::counter!("te_request_failure", "err" => "tokenization");
+                counter.increment(1);
                 tracing::error!("{err}");
                 err
             })
@@ -94,7 +96,8 @@ impl Infer {
             .limit_concurrent_requests
             .try_acquire_owned()
             .map_err(|err| {
-                metrics::increment_counter!("te_request_failure", "err" => "overloaded");
+                let counter = metrics::counter!("te_request_failure", "err" => "overloaded");
+                counter.increment(1);
                 tracing::error!("{err}");
                 TextEmbeddingsError::from(err)
             })
@@ -110,7 +113,7 @@ impl Infer {
             .expect("Semaphore has been closed. This is a bug.")
     }
 
-    #[instrument(skip(self, permit))]
+    #[instrument(skip(self, inputs, permit))]
     pub async fn embed_all<I: Into<EncodingInput> + std::fmt::Debug>(
         &self,
         inputs: I,
@@ -121,7 +124,8 @@ impl Infer {
         let start_time = Instant::now();
 
         if self.is_splade() {
-            metrics::increment_counter!("te_request_failure", "err" => "model_type");
+            let counter = metrics::counter!("te_request_failure", "err" => "model_type");
+            counter.increment(1);
             let message = "`embed_all` is not available for SPLADE models".to_string();
             tracing::error!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
@@ -148,25 +152,21 @@ impl Infer {
         let total_time = start_time.elapsed();
 
         // Metrics
-        metrics::increment_counter!("te_embed_success");
-        metrics::histogram!("te_embed_duration", total_time.as_secs_f64());
-        metrics::histogram!(
-            "te_embed_tokenization_duration",
-            response.metadata.tokenization.as_secs_f64()
-        );
-        metrics::histogram!(
-            "te_embed_queue_duration",
-            response.metadata.queue.as_secs_f64()
-        );
-        metrics::histogram!(
-            "te_embed_inference_duration",
-            response.metadata.inference.as_secs_f64()
-        );
+        let counter = metrics::counter!("te_embed_success");
+        counter.increment(1);
+        let histogram = metrics::histogram!("te_embed_duration");
+        histogram.record(total_time.as_secs_f64());
+        let histogram = metrics::histogram!("te_embed_tokenization_duration");
+        histogram.record(response.metadata.tokenization.as_secs_f64());
+        let histogram = metrics::histogram!("te_embed_queue_duration");
+        histogram.record(response.metadata.queue.as_secs_f64());
+        let histogram = metrics::histogram!("te_embed_inference_duration");
+        histogram.record(response.metadata.inference.as_secs_f64());
 
         Ok(response)
     }
 
-    #[instrument(skip(self, permit))]
+    #[instrument(skip(self, inputs, permit))]
     pub async fn embed_sparse<I: Into<EncodingInput> + std::fmt::Debug>(
         &self,
         inputs: I,
@@ -177,7 +177,8 @@ impl Infer {
         let start_time = Instant::now();
 
         if !self.is_splade() {
-            metrics::increment_counter!("te_request_failure", "err" => "model_type");
+            let counter = metrics::counter!("te_request_failure", "err" => "model_type");
+            counter.increment(1);
             let message = "Model is not an embedding model with SPLADE pooling".to_string();
             tracing::error!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
@@ -204,25 +205,21 @@ impl Infer {
         let total_time = start_time.elapsed();
 
         // Metrics
-        metrics::increment_counter!("te_embed_success");
-        metrics::histogram!("te_embed_duration", total_time.as_secs_f64());
-        metrics::histogram!(
-            "te_embed_tokenization_duration",
-            response.metadata.tokenization.as_secs_f64()
-        );
-        metrics::histogram!(
-            "te_embed_queue_duration",
-            response.metadata.queue.as_secs_f64()
-        );
-        metrics::histogram!(
-            "te_embed_inference_duration",
-            response.metadata.inference.as_secs_f64()
-        );
+        let counter = metrics::counter!("te_embed_success");
+        counter.increment(1);
+        let histogram = metrics::histogram!("te_embed_duration");
+        histogram.record(total_time.as_secs_f64());
+        let histogram = metrics::histogram!("te_embed_tokenization_duration");
+        histogram.record(response.metadata.tokenization.as_secs_f64());
+        let histogram = metrics::histogram!("te_embed_queue_duration");
+        histogram.record(response.metadata.queue.as_secs_f64());
+        let histogram = metrics::histogram!("te_embed_inference_duration");
+        histogram.record(response.metadata.inference.as_secs_f64());
 
         Ok(response)
     }
 
-    #[instrument(skip(self, permit))]
+    #[instrument(skip(self, inputs, permit))]
     pub async fn embed_pooled<I: Into<EncodingInput> + std::fmt::Debug>(
         &self,
         inputs: I,
@@ -234,7 +231,8 @@ impl Infer {
         let start_time = Instant::now();
 
         if self.is_splade() && normalize {
-            metrics::increment_counter!("te_request_failure", "err" => "model_type");
+            let counter = metrics::counter!("te_request_failure", "err" => "model_type");
+            counter.increment(1);
             let message = "`normalize` is not available for SPLADE models".to_string();
             tracing::error!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
@@ -278,20 +276,16 @@ impl Infer {
         let total_time = start_time.elapsed();
 
         // Metrics
-        metrics::increment_counter!("te_embed_success");
-        metrics::histogram!("te_embed_duration", total_time.as_secs_f64());
-        metrics::histogram!(
-            "te_embed_tokenization_duration",
-            response.metadata.tokenization.as_secs_f64()
-        );
-        metrics::histogram!(
-            "te_embed_queue_duration",
-            response.metadata.queue.as_secs_f64()
-        );
-        metrics::histogram!(
-            "te_embed_inference_duration",
-            response.metadata.inference.as_secs_f64()
-        );
+        let counter = metrics::counter!("te_embed_success");
+        counter.increment(1);
+        let histogram = metrics::histogram!("te_embed_duration");
+        histogram.record(total_time.as_secs_f64());
+        let histogram = metrics::histogram!("te_embed_tokenization_duration");
+        histogram.record(response.metadata.tokenization.as_secs_f64());
+        let histogram = metrics::histogram!("te_embed_queue_duration");
+        histogram.record(response.metadata.queue.as_secs_f64());
+        let histogram = metrics::histogram!("te_embed_inference_duration");
+        histogram.record(response.metadata.inference.as_secs_f64());
 
         Ok(response)
     }
@@ -306,7 +300,8 @@ impl Infer {
         _permit: OwnedSemaphorePermit,
     ) -> Result<InferResult, TextEmbeddingsError> {
         if self.is_classifier() {
-            metrics::increment_counter!("te_request_failure", "err" => "model_type");
+            let counter = metrics::counter!("te_request_failure", "err" => "model_type");
+            counter.increment(1);
             let message = "Model is not an embedding model".to_string();
             tracing::error!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
@@ -314,7 +309,8 @@ impl Infer {
             )));
         }
 
-        metrics::increment_counter!("te_embed_count");
+        let counter = metrics::counter!("te_embed_count");
+        counter.increment(1);
 
         // Tokenization
         let encoding = self
@@ -322,7 +318,8 @@ impl Infer {
             .encode(inputs.into(), truncate, truncation_direction)
             .await
             .map_err(|err| {
-                metrics::increment_counter!("te_request_failure", "err" => "tokenization");
+                let counter = metrics::counter!("te_request_failure", "err" => "tokenization");
+                counter.increment(1);
                 tracing::error!("{err}");
                 err
             })?;
@@ -350,7 +347,8 @@ impl Infer {
                 "Infer batching task dropped the sender without sending a response. This is a bug.",
             )
             .map_err(|err| {
-                metrics::increment_counter!("te_request_failure", "err" => "inference");
+                let counter = metrics::counter!("te_request_failure", "err" => "inference");
+                counter.increment(1);
                 tracing::error!("{err}");
                 err
             })?;
@@ -358,7 +356,7 @@ impl Infer {
         Ok(response)
     }
 
-    #[instrument(skip(self, _permit))]
+    #[instrument(skip(self, inputs, _permit))]
     pub async fn predict<I: Into<EncodingInput> + std::fmt::Debug>(
         &self,
         inputs: I,
@@ -368,7 +366,8 @@ impl Infer {
         _permit: OwnedSemaphorePermit,
     ) -> Result<ClassificationInferResponse, TextEmbeddingsError> {
         if !self.is_classifier() {
-            metrics::increment_counter!("te_request_failure", "err" => "model_type");
+            let counter = metrics::counter!("te_request_failure", "err" => "model_type");
+            counter.increment(1);
             let message = "Model is not a classifier model".to_string();
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
@@ -376,7 +375,8 @@ impl Infer {
         }
 
         let start_time = Instant::now();
-        metrics::increment_counter!("te_predict_count");
+        let counter = metrics::counter!("te_predict_count");
+        counter.increment(1);
 
         // Tokenization
         let encoding = self
@@ -384,7 +384,8 @@ impl Infer {
             .encode(inputs.into(), truncate, truncation_direction)
             .await
             .map_err(|err| {
-                metrics::increment_counter!("te_request_failure", "err" => "tokenization");
+                let counter = metrics::counter!("te_request_failure", "err" => "tokenization");
+                counter.increment(1);
                 tracing::error!("{err}");
                 err
             })?;
@@ -412,7 +413,8 @@ impl Infer {
                 "Infer batching task dropped the sender without sending a response. This is a bug.",
             )
             .map_err(|err| {
-                metrics::increment_counter!("te_request_failure", "err" => "inference");
+                let counter = metrics::counter!("te_request_failure", "err" => "inference");
+                counter.increment(1);
                 tracing::error!("{err}");
                 err
             })?;
@@ -449,20 +451,16 @@ impl Infer {
         let total_time = start_time.elapsed();
 
         // Metrics
-        metrics::increment_counter!("te_predict_success");
-        metrics::histogram!("te_predict_duration", total_time.as_secs_f64());
-        metrics::histogram!(
-            "te_predict_tokenization_duration",
-            response.metadata.tokenization.as_secs_f64()
-        );
-        metrics::histogram!(
-            "te_predict_queue_duration",
-            response.metadata.queue.as_secs_f64()
-        );
-        metrics::histogram!(
-            "te_predict_inference_duration",
-            response.metadata.inference.as_secs_f64()
-        );
+        let counter = metrics::counter!("te_predict_success");
+        counter.increment(1);
+        let histogram = metrics::histogram!("te_predict_duration");
+        histogram.record(total_time.as_secs_f64());
+        let histogram = metrics::histogram!("te_predict_tokenization_duration");
+        histogram.record(response.metadata.tokenization.as_secs_f64());
+        let histogram = metrics::histogram!("te_predict_queue_duration");
+        histogram.record(response.metadata.queue.as_secs_f64());
+        let histogram = metrics::histogram!("te_predict_inference_duration");
+        histogram.record(response.metadata.inference.as_secs_f64());
 
         Ok(response)
     }

@@ -6,9 +6,9 @@ authors.workspace = true
 homepage.workspace = true
 
 [dependencies]
-thiserror = "^1.0"
-clap = { version = "^4.1", features = ["derive"], optional = true }
-nohash-hasher = "^0.2"
+thiserror = { workspace = true }
+clap = { workspace = true, optional = true }
+nohash-hasher = { workspace = true }
 
 [features]
 clap = ["dep:clap"]
