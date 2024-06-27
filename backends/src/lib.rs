@@ -69,7 +69,12 @@ impl Backend {
     }
 
     #[instrument(skip(self))]
-    pub async fn warmup(&self, max_input_length: usize, max_batch_tokens: usize, max_batch_requests: Option<usize>) -> Result<(), BackendError> {
+    pub async fn warmup(
+        &self,
+        max_input_length: usize,
+        max_batch_tokens: usize,
+        max_batch_requests: Option<usize>,
+    ) -> Result<(), BackendError> {
         let mut input_ids = Vec::with_capacity(max_batch_tokens);
         let mut token_type_ids = Vec::with_capacity(max_batch_tokens);
         let mut position_ids = Vec::with_capacity(max_batch_tokens);
@@ -98,7 +103,7 @@ impl Backend {
             remaining = remaining.saturating_sub(max_input_length);
             if let Some(max_batch_requests) = &max_batch_requests {
                 if i as usize == *max_batch_requests {
-                    break
+                    break;
                 }
             }
         }
@@ -213,8 +218,8 @@ fn init_backend(
                         otlp_service_name,
                     )
                 })
-                    .join()
-                    .expect("Python Backend management thread failed")?,
+                .join()
+                .expect("Python Backend management thread failed")?,
             ));
         }
     }
