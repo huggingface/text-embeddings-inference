@@ -500,6 +500,7 @@ async fn embed(
                     input,
                     truncate,
                     req.truncation_direction,
+                    req.prompt_name,
                     req.normalize,
                     permit,
                 )
@@ -560,6 +561,7 @@ async fn embed(
                 compute_chars += input.count_chars();
 
                 let local_infer = infer.clone();
+                let prompt_name = req.prompt_name.clone();
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
                     local_infer
@@ -567,6 +569,7 @@ async fn embed(
                             input,
                             truncate,
                             req.truncation_direction,
+                            prompt_name,
                             req.normalize,
                             permit,
                         )
@@ -671,7 +674,13 @@ async fn embed_sparse(
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
-                .embed_sparse(input, truncate, req.truncation_direction, permit)
+                .embed_sparse(
+                    input,
+                    truncate,
+                    req.truncation_direction,
+                    req.prompt_name,
+                    permit,
+                )
                 .await
                 .map_err(ErrorResponse::from)?;
 
@@ -729,10 +738,17 @@ async fn embed_sparse(
                 compute_chars += input.count_chars();
 
                 let local_infer = infer.clone();
+                let prompt_name = req.prompt_name.clone();
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
                     let response = local_infer
-                        .embed_sparse(input, truncate, req.truncation_direction, permit)
+                        .embed_sparse(
+                            input,
+                            truncate,
+                            req.truncation_direction,
+                            prompt_name,
+                            permit,
+                        )
                         .await?;
                     Ok((sparsify(response.results), response.metadata))
                 })
@@ -827,7 +843,13 @@ async fn embed_all(
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
-                .embed_all(input, truncate, req.truncation_direction, permit)
+                .embed_all(
+                    input,
+                    truncate,
+                    req.truncation_direction,
+                    req.prompt_name,
+                    permit,
+                )
                 .await
                 .map_err(ErrorResponse::from)?;
 
@@ -885,10 +907,17 @@ async fn embed_all(
                 compute_chars += input.count_chars();
 
                 let local_infer = infer.clone();
+                let prompt_name = req.prompt_name.clone();
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
                     local_infer
-                        .embed_all(input, truncate, req.truncation_direction, permit)
+                        .embed_all(
+                            input,
+                            truncate,
+                            req.truncation_direction,
+                            prompt_name,
+                            permit,
+                        )
                         .await
                 })
             }
@@ -997,7 +1026,14 @@ async fn openai_embed(
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let response = infer
-                .embed_pooled(input, truncate, TruncationDirection::Right, true, permit)
+                .embed_pooled(
+                    input,
+                    truncate,
+                    TruncationDirection::Right,
+                    None,
+                    true,
+                    permit,
+                )
                 .await
                 .map_err(ErrorResponse::from)?;
 
@@ -1063,7 +1099,14 @@ async fn openai_embed(
                 futures.push(async move {
                     let permit = local_infer.acquire_permit().await;
                     local_infer
-                        .embed_pooled(input, truncate, TruncationDirection::Right, true, permit)
+                        .embed_pooled(
+                            input,
+                            truncate,
+                            TruncationDirection::Right,
+                            None,
+                            true,
+                            permit,
+                        )
                         .await
                 })
             }
@@ -1148,9 +1191,12 @@ async fn tokenize(
     info: Extension<Info>,
     Json(req): Json<TokenizeRequest>,
 ) -> Result<Json<TokenizeResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let tokenize_inner = move |input: String, add_special_tokens: bool, infer: Infer| async move {
+    let tokenize_inner = move |input: String,
+                               add_special_tokens: bool,
+                               prompt_name: Option<String>,
+                               infer: Infer| async move {
         let encoding = infer
-            .tokenize(input.clone(), add_special_tokens)
+            .tokenize(input.clone(), add_special_tokens, prompt_name)
             .await
             .map_err(ErrorResponse::from)?;
         let tokens: Vec<SimpleToken> = encoding
@@ -1187,7 +1233,7 @@ async fn tokenize(
 
     let tokens = match req.inputs {
         TokenizeInput::Single(input) => {
-            vec![tokenize_inner(input, req.add_special_tokens, infer.0).await?]
+            vec![tokenize_inner(input, req.add_special_tokens, req.prompt_name, infer.0).await?]
         }
         TokenizeInput::Batch(inputs) => {
             if inputs.is_empty() {
@@ -1223,6 +1269,7 @@ async fn tokenize(
                 futures.push(tokenize_inner(
                     input,
                     req.add_special_tokens,
+                    req.prompt_name.clone(),
                     infer.0.clone(),
                 ));
             }

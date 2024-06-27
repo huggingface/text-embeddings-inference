@@ -102,3 +102,10 @@ pub async fn download_st_config(api: &ApiRepo) -> Result<PathBuf, ApiError> {
 
     Err(err)
 }
+
+#[instrument(skip_all)]
+pub async fn download_new_st_config(api: &ApiRepo) -> Result<PathBuf, ApiError> {
+    tracing::info!("Downloading `config_sentence_transformers.json`");
+    let pool_config_path = api.get("config_sentence_transformers.json").await?;
+    Ok(pool_config_path)
+}

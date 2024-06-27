@@ -351,6 +351,8 @@ pub(crate) struct EmbedRequest {
     #[serde(default)]
     #[schema(default = "right", example = "right")]
     pub truncation_direction: TruncationDirection,
+    #[schema(default = "null", example = "null", nullable = true)]
+    pub prompt_name: Option<String>,
     #[serde(default = "default_normalize")]
     #[schema(default = "true", example = "true")]
     pub normalize: bool,
@@ -373,6 +375,8 @@ pub(crate) struct EmbedSparseRequest {
     #[serde(default)]
     #[schema(default = "right", example = "right")]
     pub truncation_direction: TruncationDirection,
+    #[schema(default = "null", example = "null", nullable = true)]
+    pub prompt_name: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -393,6 +397,8 @@ pub(crate) struct EmbedAllRequest {
     #[serde(default)]
     #[schema(default = "right", example = "right")]
     pub truncation_direction: TruncationDirection,
+    #[schema(default = "null", example = "null", nullable = true)]
+    pub prompt_name: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -420,6 +426,8 @@ pub(crate) struct TokenizeRequest {
     #[serde(default = "default_add_special_tokens")]
     #[schema(default = "true", example = "true")]
     pub add_special_tokens: bool,
+    #[schema(default = "null", example = "null", nullable = true)]
+    pub prompt_name: Option<String>,
 }
 
 fn default_add_special_tokens() -> bool {

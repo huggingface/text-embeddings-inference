@@ -79,6 +79,15 @@ struct Args {
     #[clap(long, env)]
     auto_truncate: bool,
 
+    /// The name of the prompt to use for encoding. Must be a key in the `Sentence Transformers`
+    /// configuration `prompts` dictionary.
+    /// For example if ``prompt_name`` is "query" and the ``prompts`` is {"query": "query: ", ...},
+    /// then the sentence "What is the capital of France?" will be encoded as
+    /// "query: What is the capital of France?" because the sentence
+    /// is appended to the prompt.
+    #[clap(long, env)]
+    default_prompt_name: Option<String>,
+
     /// Your HuggingFace hub token
     #[clap(long, env)]
     #[redact(partial)]
@@ -172,6 +181,7 @@ async fn main() -> Result<()> {
         args.max_batch_requests,
         args.max_client_batch_size,
         args.auto_truncate,
+        args.default_prompt_name,
         args.hf_api_token,
         Some(args.hostname),
         args.port,
