@@ -289,11 +289,12 @@ impl FlashDistilBertModel {
                     } else {
                         match self.pool {
                             Pool::Cls => outputs.i(0)?,
-                            Pool::LastToken => outputs
-                                .i(batch.cumulative_seq_lengths[1] as usize - 1)?
-                                .unsqueeze(0)?,
+                            Pool::LastToken => {
+                                outputs.i(batch.cumulative_seq_lengths[1] as usize - 1)?
+                            }
                             _ => unreachable!(),
                         }
+                        .unsqueeze(0)?
                     }
                 }
                 // Mean pooling

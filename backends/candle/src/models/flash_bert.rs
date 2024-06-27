@@ -421,15 +421,16 @@ impl FlashBertModel {
                         // Select tokens
                         Some(outputs.index_select(&indices, 0)?)
                     } else {
-                        match self.pool {
-                            Pool::Cls => Some(outputs.i(0)?),
-                            Pool::LastToken => Some(
-                                outputs
-                                    .i(batch.cumulative_seq_lengths[1] as usize - 1)?
-                                    .unsqueeze(0)?,
-                            ),
-                            _ => unreachable!(),
-                        }
+                        Some(
+                            match self.pool {
+                                Pool::Cls => outputs.i(0)?,
+                                Pool::LastToken => {
+                                    outputs.i(batch.cumulative_seq_lengths[1] as usize - 1)?
+                                }
+                                _ => unreachable!(),
+                            }
+                            .unsqueeze(0)?,
+                        )
                     }
                 }
                 // Mean pooling

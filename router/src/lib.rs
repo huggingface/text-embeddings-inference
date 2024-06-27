@@ -364,6 +364,7 @@ pub struct ModelConfig {
 pub struct PoolConfig {
     pooling_mode_cls_token: bool,
     pooling_mode_mean_tokens: bool,
+    #[serde(default)]
     pooling_mode_lasttoken: bool,
 }
 
