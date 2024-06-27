@@ -35,6 +35,7 @@ pub enum PositionEmbeddingType {
     #[default]
     Absolute,
     Alibi,
+    Rope,
 }
 
 #[derive(Debug)]

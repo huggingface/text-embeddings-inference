@@ -11,13 +11,13 @@ use crate::compute_cap::{
     compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
 };
 use crate::models::{
-    BertConfig, BertModel, DistilBertConfig, DistilBertModel, JinaBertModel, JinaCodeBertModel,
-    MistralConfig, Model, NomicBertModel, NomicConfig,
+    BertConfig, BertModel, DistilBertConfig, DistilBertModel, GTEConfig, JinaBertModel,
+    JinaCodeBertModel, MistralConfig, Model, NomicBertModel, NomicConfig,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
-    FlashBertModel, FlashDistilBertModel, FlashJinaBertModel, FlashJinaCodeBertModel,
-    FlashMistralModel, FlashNomicBertModel,
+    FlashBertModel, FlashDistilBertModel, FlashGTEModel, FlashJinaBertModel,
+    FlashJinaCodeBertModel, FlashMistralModel, FlashNomicBertModel,
 };
 use anyhow::Context;
 use candle::{DType, Device};
@@ -57,6 +57,8 @@ enum Config {
     #[serde(rename(deserialize = "nomic_bert"))]
     NomicBert(NomicConfig),
     Mistral(MistralConfig),
+    #[serde(rename = "new")]
+    Gte(GTEConfig),
 }
 
 pub struct CandleBackend {
@@ -215,6 +217,10 @@ impl CandleBackend {
                 "Mistral is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
             )),
+            (Config::Gte(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
+                "GTE is only supported on Cuda devices in fp16 with flash attention enabled"
+                    .to_string(),
+            )),
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
                 if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
@@ -332,6 +338,17 @@ impl CandleBackend {
                 Ok(Box::new(
                     FlashMistralModel::load(vb, &config, model_type).s()?,
                 ))
+            }
+            #[cfg(feature = "cuda")]
+            (Config::Gte(config), Device::Cuda(_)) => {
+                if dtype != DType::F16
+                    || !cfg!(feature = "flash-attn")
+                    || get_runtime_compute_cap().unwrap() < 80
+                {
+                    return Err(BackendError::Start("GTE is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
+                }
+                tracing::info!("Starting FlashGTE model on {:?}", device);
+                Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))
             }
         };
 
