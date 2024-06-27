@@ -3,14 +3,14 @@ use crate::TextEmbeddingsError;
 use tokenizers::tokenizer::Tokenizer;
 pub use tokenizers::Encoding as RawEncoding;
 use tokenizers::{TruncationDirection, TruncationParams, TruncationStrategy};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tracing::{instrument, Span};
 
 /// Validation
 #[derive(Debug, Clone)]
 pub struct Tokenization {
     /// Channel to communicate with the background tokenization task
-    sender: mpsc::UnboundedSender<TokenizerRequest>,
+    sender: async_channel::Sender<TokenizerRequest>,
 }
 
 impl Tokenization {
@@ -23,38 +23,22 @@ impl Tokenization {
         tracing::info!("Starting {workers} tokenization workers");
 
         // Create channel
-        let (sender, mut round_robin_receiver) = mpsc::unbounded_channel();
-        let mut senders = Vec::with_capacity(workers);
+        let (sender, receiver) = async_channel::bounded(workers * 4);
 
         // Create workers
         for _ in 0..workers {
             let tokenizer_clone = tokenizer.clone();
-            let (tokenizer_sender, tokenizer_receiver) = mpsc::unbounded_channel();
-            senders.push(tokenizer_sender);
-
+            let receiver_clone = receiver.clone();
             // Spawn worker
             std::thread::spawn(move || {
                 tokenizer_worker(
                     tokenizer_clone,
                     max_input_length,
                     position_offset,
-                    tokenizer_receiver,
+                    receiver_clone,
                 )
             });
         }
-
-        // Create tokenization round robin task
-        tokio::spawn(async move {
-            // Loop over requests
-            loop {
-                for sender in &senders {
-                    match round_robin_receiver.recv().await {
-                        None => return,
-                        Some(request) => sender.send(request).unwrap(),
-                    };
-                }
-            }
-        });
 
         Self { sender }
     }
@@ -85,6 +69,7 @@ impl Tokenization {
                 response_sender,
                 Span::current(),
             ))
+            .await
             .expect("Tokenization background task dropped the receiver. This is a bug.");
 
         // Await on response channel
@@ -116,6 +101,7 @@ impl Tokenization {
                 response_sender,
                 Span::current(),
             ))
+            .await
             .expect("Tokenization background task dropped the receiver. This is a bug.");
 
         // Await on response channel
@@ -147,6 +133,7 @@ impl Tokenization {
                 response_sender,
                 Span::current(),
             ))
+            .await
             .expect("Tokenization background task dropped the receiver. This is a bug.");
 
         // Await on response channel
@@ -160,10 +147,10 @@ fn tokenizer_worker(
     mut tokenizer: Tokenizer,
     max_input_length: usize,
     position_offset: usize,
-    mut receiver: mpsc::UnboundedReceiver<TokenizerRequest>,
+    receiver: async_channel::Receiver<TokenizerRequest>,
 ) {
     // Loop over requests
-    while let Some(request) = receiver.blocking_recv() {
+    while let Ok(request) = receiver.recv_blocking() {
         match request {
             TokenizerRequest::Encode(
                 inputs,
@@ -277,7 +264,8 @@ fn encode_input(
             "`inputs` must have less than {max_input_length} tokens. Given: {seq_len}"
         )));
     }
-    metrics::histogram!("te_request_input_length", seq_len as f64);
+    let histogram = metrics::histogram!("te_request_input_length");
+    histogram.record(seq_len as f64);
     Ok(ValidEncoding {
         input_ids: encoding.get_ids().to_vec(),
         token_type_ids: encoding.get_type_ids().to_vec(),

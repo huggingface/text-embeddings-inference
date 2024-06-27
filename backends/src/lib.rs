@@ -22,7 +22,7 @@ use text_embeddings_backend_python::PythonBackend;
 #[derive(Debug, Clone)]
 pub struct Backend {
     /// Channel to communicate with the background thread
-    backend_sender: mpsc::UnboundedSender<BackendCommand>,
+    backend_sender: mpsc::Sender<BackendCommand>,
     /// Health status
     health_receiver: watch::Receiver<bool>,
     _backend_thread: Arc<BackendThread>,
@@ -40,7 +40,7 @@ impl Backend {
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
     ) -> Result<Self, BackendError> {
-        let (backend_sender, backend_receiver) = mpsc::unbounded_channel();
+        let (backend_sender, backend_receiver) = mpsc::channel(8);
 
         let backend = init_backend(
             model_path,
@@ -76,6 +76,7 @@ impl Backend {
             let (sender, receiver) = oneshot::channel();
             self.backend_sender
                 .send(BackendCommand::Health(Span::current(), sender))
+                .await
                 .expect("No backend receiver. This is a bug.");
             receiver.await.expect(
                 "Backend blocking task dropped the sender without sending a response. This is a bug.",
@@ -110,7 +111,7 @@ impl Backend {
         let (sender, receiver) = oneshot::channel();
 
         self.backend_sender
-            .send(BackendCommand::Embed(batch, Span::current(), sender))
+            .try_send(BackendCommand::Embed(batch, Span::current(), sender))
             .expect("No backend receiver. This is a bug.");
         receiver.await.expect(
             "Backend blocking task dropped the sender without send a response. This is a bug.",
@@ -122,7 +123,7 @@ impl Backend {
         let (sender, receiver) = oneshot::channel();
 
         self.backend_sender
-            .send(BackendCommand::Predict(batch, Span::current(), sender))
+            .try_send(BackendCommand::Predict(batch, Span::current(), sender))
             .expect("No backend receiver. This is a bug.");
         receiver.await.expect(
             "Backend blocking task dropped the sender without send a response. This is a bug.",
@@ -174,7 +175,7 @@ struct BackendThread(Option<JoinHandle<()>>);
 impl BackendThread {
     fn new(
         backend: Box<dyn CoreBackend + Send>,
-        mut backend_receiver: mpsc::UnboundedReceiver<BackendCommand>,
+        mut backend_receiver: mpsc::Receiver<BackendCommand>,
         health_sender: watch::Sender<bool>,
     ) -> Self {
         let handle = std::thread::spawn(move || {

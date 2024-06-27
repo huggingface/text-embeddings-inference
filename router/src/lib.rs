@@ -289,7 +289,7 @@ pub async fn run(
             api_key,
             cors_allow_origin,
         )
-        .await?;
+        .await
     }
 
     #[cfg(feature = "grpc")]
@@ -297,10 +297,8 @@ pub async fn run(
         // cors_allow_origin and payload_limit are not used for gRPC servers
         let _ = cors_allow_origin;
         let _ = payload_limit;
-        grpc::server::run(infer, info, addr, prom_builder, api_key).await?;
+        grpc::server::run(infer, info, addr, prom_builder, api_key).await
     }
-
-    Ok(())
 }
 
 fn get_backend_model_type(
@@ -512,19 +510,14 @@ impl ResponseMetadata {
 
     fn record_metrics(&self) {
         // Metrics
-        metrics::histogram!(
-            "te_request_duration",
-            self.start_time.elapsed().as_secs_f64()
-        );
-        metrics::histogram!(
-            "te_request_tokenization_duration",
-            self.tokenization_time.as_secs_f64()
-        );
-        metrics::histogram!("te_request_queue_duration", self.queue_time.as_secs_f64());
-        metrics::histogram!(
-            "te_request_inference_duration",
-            self.inference_time.as_secs_f64()
-        );
+        let histogram = metrics::histogram!("te_request_duration");
+        histogram.record(self.start_time.elapsed().as_secs_f64());
+        let histogram = metrics::histogram!("te_request_tokenization_duration");
+        histogram.record(self.tokenization_time.as_secs_f64());
+        let histogram = metrics::histogram!("te_request_queue_duration");
+        histogram.record(self.queue_time.as_secs_f64());
+        let histogram = metrics::histogram!("te_request_inference_duration");
+        histogram.record(self.inference_time.as_secs_f64());
     }
 }
 

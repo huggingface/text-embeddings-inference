@@ -589,7 +589,8 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         &self,
         request: Request<EmbedRequest>,
     ) -> Result<Response<EmbedResponse>, Status> {
-        metrics::increment_counter!("te_request_count", "method" => "single");
+        let counter = metrics::counter!("te_request_count", "method" => "single");
+        counter.increment(1);
 
         let permit = self
             .infer
@@ -600,7 +601,8 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         let (response, metadata) = self.embed_pooled_inner(request, permit).await?;
         let headers = HeaderMap::from(metadata);
 
-        metrics::increment_counter!("te_request_success", "method" => "single");
+        let counter = metrics::counter!("te_request_count", "method" => "single");
+        counter.increment(1);
 
         Ok(Response::from_parts(
             MetadataMap::from_headers(headers),
@@ -629,7 +631,8 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         &self,
         request: Request<EmbedSparseRequest>,
     ) -> Result<Response<EmbedSparseResponse>, Status> {
-        metrics::increment_counter!("te_request_count", "method" => "single");
+        let counter = metrics::counter!("te_request_count", "method" => "single");
+        counter.increment(1);
 
         let permit = self
             .infer
@@ -640,7 +643,8 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         let (response, metadata) = self.embed_sparse_inner(request, permit).await?;
         let headers = HeaderMap::from(metadata);
 
-        metrics::increment_counter!("te_request_success", "method" => "single");
+        let counter = metrics::counter!("te_request_count", "method" => "single");
+        counter.increment(1);
 
         Ok(Response::from_parts(
             MetadataMap::from_headers(headers),
@@ -669,7 +673,8 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         &self,
         request: Request<EmbedAllRequest>,
     ) -> Result<Response<EmbedAllResponse>, Status> {
-        metrics::increment_counter!("te_request_count", "method" => "single");
+        let counter = metrics::counter!("te_request_count", "method" => "single");
+        counter.increment(1);
 
         let permit = self
             .infer
@@ -680,7 +685,8 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         let (response, metadata) = self.embed_all_inner(request, permit).await?;
         let headers = HeaderMap::from(metadata);
 
-        metrics::increment_counter!("te_request_success", "method" => "single");
+        let counter = metrics::counter!("te_request_count", "method" => "single");
+        counter.increment(1);
 
         Ok(Response::from_parts(
             MetadataMap::from_headers(headers),
@@ -713,7 +719,8 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
         &self,
         request: Request<PredictRequest>,
     ) -> Result<Response<PredictResponse>, Status> {
-        metrics::increment_counter!("te_request_count", "method" => "single");
+        let counter = metrics::counter!("te_request_count", "method" => "single");
+        counter.increment(1);
 
         let permit = self
             .infer
@@ -733,7 +740,8 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
             .await?;
         let headers = HeaderMap::from(metadata);
 
-        metrics::increment_counter!("te_request_success", "method" => "single");
+        let counter = metrics::counter!("te_request_count", "method" => "single");
+        counter.increment(1);
 
         Ok(Response::from_parts(
             MetadataMap::from_headers(headers),
@@ -746,7 +754,8 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
         &self,
         request: Request<PredictPairRequest>,
     ) -> Result<Response<PredictResponse>, Status> {
-        metrics::increment_counter!("te_request_count", "method" => "single");
+        let counter = metrics::counter!("te_request_count", "method" => "single");
+        counter.increment(1);
         let request = request.into_inner();
 
         let mut inputs = request.inputs;
@@ -782,7 +791,8 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
             .await?;
         let headers = HeaderMap::from(metadata);
 
-        metrics::increment_counter!("te_request_success", "method" => "single");
+        let counter = metrics::counter!("te_request_count", "method" => "single");
+        counter.increment(1);
 
         Ok(Response::from_parts(
             MetadataMap::from_headers(headers),
@@ -886,20 +896,21 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
                 error: message,
                 error_type: ErrorType::Validation,
             };
-            metrics::increment_counter!("te_request_failure", "err" => "validation");
+            let counter = metrics::counter!("te_request_failure", "err" => "validation");
+            counter.increment(1);
             Err(err)?;
         }
 
         match &self.info.model_type {
             ModelType::Classifier(_) => {
-                metrics::increment_counter!("te_request_failure", "err" => "model_type");
+                let counter = metrics::counter!("te_request_failure", "err" => "model_type");
                 let message = "model is not a re-ranker model".to_string();
                 tracing::error!("{message}");
                 Err(Status::new(Code::FailedPrecondition, message))
             }
             ModelType::Reranker(_) => Ok(()),
             ModelType::Embedding(_) => {
-                metrics::increment_counter!("te_request_failure", "err" => "model_type");
+                let counter = metrics::counter!("te_request_failure", "err" => "model_type");
                 let message = "model is not a classifier model".to_string();
                 tracing::error!("{message}");
                 Err(Status::new(Code::FailedPrecondition, message))
@@ -937,7 +948,8 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
             ))
         };
 
-        metrics::increment_counter!("te_request_count", "method" => "batch");
+        let counter = metrics::counter!("te_request_count", "method" => "batch");
+        counter.increment(1);
 
         let batch_size = request.texts.len();
         if batch_size > self.info.max_client_batch_size {
@@ -950,7 +962,8 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
                 error: message,
                 error_type: ErrorType::Validation,
             };
-            metrics::increment_counter!("te_request_failure", "err" => "batch_size");
+            let counter = metrics::counter!("te_request_failure", "err" => "batch_size");
+            counter.increment(1);
             Err(err)?;
         }
 
@@ -1015,7 +1028,8 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
 
         let batch_size = batch_size as u64;
 
-        metrics::increment_counter!("te_request_success", "method" => "batch");
+        let counter = metrics::counter!("te_request_success", "method" => "batch");
+        counter.increment(1);
 
         let response_metadata = ResponseMetadata::new(
             total_compute_chars,
@@ -1065,14 +1079,14 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
         // Check model type
         match &self.info.model_type {
             ModelType::Classifier(_) => {
-                metrics::increment_counter!("te_request_failure", "err" => "model_type");
+                let counter = metrics::counter!("te_request_failure", "err" => "model_type");
                 let message = "model is not a re-ranker model".to_string();
                 tracing::error!("{message}");
                 Err(Status::new(Code::FailedPrecondition, message))
             }
             ModelType::Reranker(_) => Ok(()),
             ModelType::Embedding(_) => {
-                metrics::increment_counter!("te_request_failure", "err" => "model_type");
+                let counter = metrics::counter!("te_request_failure", "err" => "model_type");
                 let message = "model is not a classifier model".to_string();
                 tracing::error!("{message}");
                 Err(Status::new(Code::FailedPrecondition, message))
@@ -1112,7 +1126,8 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
             ))
         };
 
-        metrics::increment_counter!("te_request_count", "method" => "batch");
+        let counter = metrics::counter!("te_request_count", "method" => "batch");
+        counter.increment(1);
 
         let mut request_stream = request.into_inner();
 
@@ -1261,7 +1276,8 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
                 error: message,
                 error_type: ErrorType::Backend,
             };
-            metrics::increment_counter!("te_request_failure", "err" => "missing_values");
+            let counter = metrics::counter!("te_request_failure", "err" => "missing_values");
+            counter.increment(1);
             Err(err)?;
         }
 
@@ -1271,7 +1287,8 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
 
         let batch_size = batch_size as u64;
 
-        metrics::increment_counter!("te_request_success", "method" => "batch");
+        let counter = metrics::counter!("te_request_success", "method" => "batch");
+        counter.increment(1);
 
         let response_metadata = ResponseMetadata::new(
             total_compute_chars,

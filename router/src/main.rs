@@ -1,12 +1,12 @@
 use anyhow::Result;
 use clap::Parser;
-use mimalloc::MiMalloc;
 use opentelemetry::global;
 use text_embeddings_backend::DType;
 use veil::Redact;
 
+#[cfg(not(target_os = "linux"))]
 #[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// App Configuration
 #[derive(Parser, Redact)]
@@ -146,6 +146,20 @@ async fn main() -> Result<()> {
     );
 
     tracing::info!("{args:?}");
+
+    // Hack to trim pages regularly
+    // see: https://www.algolia.com/blog/engineering/when-allocators-are-hoarding-your-precious-memory/
+    // and: https://github.com/huggingface/text-embeddings-inference/issues/156
+    #[cfg(target_os = "linux")]
+    tokio::spawn(async move {
+        use tokio::time::Duration;
+        loop {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            unsafe {
+                libc::malloc_trim(0);
+            }
+        }
+    });
 
     text_embeddings_router::run(
         args.model_id,

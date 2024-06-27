@@ -6,7 +6,7 @@ authors.workspace = true
 homepage.workspace = true
 
 [dependencies]
-anyhow = "^1.0"
+anyhow = { workspace = true }
 accelerate-src = { version = "0.3.2", optional = true }
 intel-mkl-src = { version = "0.8.1", optional = true  }
 candle = { version = "*", package = "candle-core", default-features = false }
@@ -17,21 +17,21 @@ candle-flash-attn-v1 = { git = "https://github.com/huggingface/candle-flash-attn
 candle-cublaslt = { git = "https://github.com/huggingface/candle-cublaslt", rev = "cf789b7dd6d4abb19b03b9556442f94f0588b4a0", optional = true }
 candle-layer-norm = { git = "https://github.com/huggingface/candle-layer-norm", rev = "94c2add7d94c2d63aebde77f7534614e04dbaea1", optional = true }
 candle-rotary = { git = "https://github.com/huggingface/candle-rotary", rev = "0a718a0856569a92f3112e64f10d07e4447822e8", optional = true }
-nohash-hasher = "^0.2"
+nohash-hasher = { workspace = true }
 text-embeddings-backend-core = { path = "../core" }
-tracing = "^0.1"
+tracing = { workspace = true }
 safetensors = "^0.4"
-thiserror = "^1.0"
-serde = { version = "^1.0", features = ["serde_derive"] }
-serde_json = "^1.0"
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 memmap2 = "^0.9"
 
 [dev-dependencies]
 insta = { git = "https://github.com/OlivierDehaene/insta", rev = "f4f98c0410b91fb5a28b10df98e4422955be9c2c", features = ["yaml"] }
 is_close = "0.1.3"
 hf-hub = "0.3.2"
-anyhow = "1.0.75"
-tokenizers = { version = "^0.19.1", default-features = false, features = ["onig", "esaxx_fast"] }
+anyhow = { workspace = true }
+tokenizers = { workspace = true }
 serial_test = "2.0.0"
 
 [build-dependencies]
