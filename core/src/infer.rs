@@ -494,11 +494,19 @@ async fn batching_task(queue: Queue, notify: Arc<Notify>, embed_sender: mpsc::Se
     loop {
         notify.notified().await;
 
-        while let Some(next_batch) = queue.next_batch().await {
-            embed_sender
-                .send(next_batch)
+        {
+            let mut permit = embed_sender
+                .reserve()
                 .await
                 .expect("embed receiver was dropped. This is a bug.");
+
+            while let Some(next_batch) = queue.next_batch().await {
+                permit.send(next_batch);
+                permit = embed_sender
+                    .reserve()
+                    .await
+                    .expect("embed receiver was dropped. This is a bug.");
+            }
         }
     }
 }

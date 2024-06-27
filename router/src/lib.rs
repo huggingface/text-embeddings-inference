@@ -26,7 +26,7 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use text_embeddings_backend::DType;
+use text_embeddings_backend::{DType, Pool};
 use text_embeddings_core::download::{
     download_artifacts, download_pool_config, download_st_config, ST_CONFIG_NAMES,
 };
@@ -336,13 +336,7 @@ fn get_backend_model_type(
             let config = fs::read_to_string(config_path).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.")?;
             let config: PoolConfig =
                 serde_json::from_str(&config).context("Failed to parse `1_Pooling/config.json`")?;
-            if config.pooling_mode_cls_token {
-                text_embeddings_backend::Pool::Cls
-            } else if config.pooling_mode_mean_tokens {
-                text_embeddings_backend::Pool::Mean
-            } else {
-                return Err(anyhow!("Pooling config {config:?} is not supported"));
-            }
+            Pool::try_from(config)?
         }
     };
     Ok(text_embeddings_backend::ModelType::Embedding(pool))
@@ -364,8 +358,24 @@ pub struct ModelConfig {
 pub struct PoolConfig {
     pooling_mode_cls_token: bool,
     pooling_mode_mean_tokens: bool,
-    pooling_mode_max_tokens: bool,
-    pooling_mode_mean_sqrt_len_tokens: bool,
+    pooling_mode_lasttoken: bool,
+}
+
+impl TryFrom<PoolConfig> for Pool {
+    type Error = anyhow::Error;
+
+    fn try_from(config: PoolConfig) -> std::result::Result<Self, Self::Error> {
+        if config.pooling_mode_cls_token {
+            return Ok(Pool::Cls);
+        }
+        if config.pooling_mode_mean_tokens {
+            return Ok(Pool::Mean);
+        }
+        if config.pooling_mode_lasttoken {
+            return Ok(Pool::LastToken);
+        }
+        Err(anyhow!("Pooling config {config:?} is not supported"))
+    }
 }
 
 #[derive(Debug, Deserialize)]
