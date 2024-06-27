@@ -200,7 +200,7 @@ impl GTELayer {
 
 pub struct FlashGTEModel {
     word_embeddings: Embedding,
-    token_type_embeddings: Embedding,
+    token_type_embeddings: Option<Embedding>,
     layers: Vec<GTELayer>,
     embeddings_norm: LayerNorm,
     cos_cache: Tensor,
@@ -246,11 +246,15 @@ impl FlashGTEModel {
             config.hidden_size,
         );
 
-        let token_type_embeddings = Embedding::new(
-            vb.pp("embeddings.token_type_embeddings")
-                .get((config.type_vocab_size, config.hidden_size), "weight")?,
-            config.hidden_size,
-        );
+        let token_type_embeddings = if config.type_vocab_size > 0 {
+            Some(Embedding::new(
+                vb.pp("embeddings.token_type_embeddings")
+                    .get((config.type_vocab_size, config.hidden_size), "weight")?,
+                config.hidden_size,
+            ))
+        } else {
+            None
+        };
 
         let layers = (0..config.num_hidden_layers)
             .map(|index| GTELayer::load(vb.pp(format!("encoder.layer.{index}")), config))
@@ -311,10 +315,15 @@ impl FlashGTEModel {
         )?;
 
         let word_embeddings = self.word_embeddings.forward(&input_ids)?;
-        let token_type_embeddings = self.token_type_embeddings.forward(&token_type_ids)?;
+        let token_type_embeddings = self
+            .token_type_embeddings
+            .as_ref()
+            .map(|emb| emb.forward(&token_type_ids))
+            .transpose()?;
+
         let mut hidden_states = self
             .embeddings_norm
-            .forward(&word_embeddings, Some(&token_type_embeddings))?;
+            .forward(&word_embeddings, token_type_embeddings.as_ref())?;
 
         let cos = self.cos_cache.index_select(&position_ids, 0)?;
         let sin = self.sin_cache.index_select(&position_ids, 0)?;
