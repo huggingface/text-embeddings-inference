@@ -87,6 +87,7 @@ impl TextEmbeddingsService {
                 request.inputs,
                 request.truncate,
                 truncation_direction,
+                request.prompt_name,
                 request.normalize,
                 permit,
             )
@@ -142,6 +143,7 @@ impl TextEmbeddingsService {
                 request.inputs,
                 request.truncate,
                 truncation_direction,
+                request.prompt_name,
                 permit,
             )
             .await
@@ -207,6 +209,7 @@ impl TextEmbeddingsService {
                 request.inputs,
                 request.truncate,
                 truncation_direction,
+                request.prompt_name,
                 permit,
             )
             .await
@@ -326,11 +329,17 @@ impl TextEmbeddingsService {
     #[instrument(skip_all)]
     async fn tokenize_inner(&self, request: EncodeRequest) -> Result<EncodeResponse, Status> {
         let inputs = request.inputs;
-        let encoding = self
+        let (encoded_inputs, encoding) = self
             .infer
-            .tokenize(inputs.clone(), request.add_special_tokens)
+            .tokenize(
+                inputs.clone(),
+                request.add_special_tokens,
+                request.prompt_name,
+            )
             .await
             .map_err(ErrorResponse::from)?;
+        let inputs = encoded_inputs.unwrap_or(inputs);
+
         let tokens: Vec<SimpleToken> = encoding
             .get_ids()
             .iter()

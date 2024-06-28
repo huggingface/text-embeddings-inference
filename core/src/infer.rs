@@ -61,7 +61,7 @@ impl Infer {
         inputs: I,
         add_special_tokens: bool,
         prompt_name: Option<String>,
-    ) -> Result<RawEncoding, TextEmbeddingsError> {
+    ) -> Result<(Option<String>, RawEncoding), TextEmbeddingsError> {
         self.tokenization
             .tokenize(inputs.into(), add_special_tokens, prompt_name)
             .await

@@ -1195,10 +1195,12 @@ async fn tokenize(
                                add_special_tokens: bool,
                                prompt_name: Option<String>,
                                infer: Infer| async move {
-        let encoding = infer
+        let (encoded_input, encoding) = infer
             .tokenize(input.clone(), add_special_tokens, prompt_name)
             .await
             .map_err(ErrorResponse::from)?;
+        let input = encoded_input.unwrap_or(input);
+
         let tokens: Vec<SimpleToken> = encoding
             .get_ids()
             .iter()

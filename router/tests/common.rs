@@ -58,6 +58,8 @@ pub async fn start_server(model_id: String, revision: Option<String>, dtype: DTy
             false,
             None,
             None,
+            None,
+            None,
             8090,
             None,
             None,

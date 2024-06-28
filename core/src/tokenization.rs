@@ -20,7 +20,7 @@ impl Tokenization {
         tokenizer: Tokenizer,
         max_input_length: usize,
         position_offset: usize,
-        default_prompt_name: Option<String>,
+        default_prompt: Option<String>,
         prompts: Option<HashMap<String, String>>,
     ) -> Self {
         tracing::info!("Starting {workers} tokenization workers");
@@ -32,7 +32,7 @@ impl Tokenization {
         for _ in 0..workers {
             let tokenizer_clone = tokenizer.clone();
             let receiver_clone = receiver.clone();
-            let default_prompt_name_clone = default_prompt_name.clone();
+            let default_prompt_clone = default_prompt.clone();
             let prompts_clone = prompts.clone();
             // Spawn worker
             std::thread::spawn(move || {
@@ -40,7 +40,7 @@ impl Tokenization {
                     tokenizer_clone,
                     max_input_length,
                     position_offset,
-                    default_prompt_name_clone,
+                    default_prompt_clone,
                     prompts_clone,
                     receiver_clone,
                 )
@@ -92,7 +92,7 @@ impl Tokenization {
         inputs: EncodingInput,
         add_special_tokens: bool,
         prompt_name: Option<String>,
-    ) -> Result<RawEncoding, TextEmbeddingsError> {
+    ) -> Result<(Option<String>, RawEncoding), TextEmbeddingsError> {
         // Check if inputs is empty
         if inputs.is_empty() {
             return Err(TextEmbeddingsError::Validation(
@@ -158,7 +158,7 @@ fn tokenizer_worker(
     mut tokenizer: Tokenizer,
     max_input_length: usize,
     position_offset: usize,
-    default_prompt_name: Option<String>,
+    default_prompt: Option<String>,
     prompts: Option<HashMap<String, String>>,
     receiver: async_channel::Receiver<TokenizerRequest>,
 ) {
@@ -174,9 +174,12 @@ fn tokenizer_worker(
                 parent_span,
             ) => {
                 parent_span.in_scope(|| {
-                    let prompt_name = prompt_name.or(default_prompt_name.clone());
-
                     if !response_tx.is_closed() {
+                        let default_prompt_clone = match prompt_name {
+                            None => default_prompt.clone(),
+                            Some(_) => None,
+                        };
+
                         // It's possible that the user dropped its request resulting in a send error.
                         // We just discard the error
                         let _ = response_tx.send(encode_input(
@@ -185,6 +188,7 @@ fn tokenizer_worker(
                             truncation_direction,
                             max_input_length,
                             position_offset,
+                            default_prompt_clone,
                             prompt_name,
                             prompts.as_ref(),
                             &mut tokenizer,
@@ -199,16 +203,20 @@ fn tokenizer_worker(
                 response_tx,
                 parent_span,
             ) => {
-                let prompt_name = prompt_name.or(default_prompt_name.clone());
-
                 parent_span.in_scope(|| {
                     if !response_tx.is_closed() {
+                        let default_prompt_clone = match prompt_name {
+                            None => default_prompt.clone(),
+                            Some(_) => None,
+                        };
+
                         // It's possible that the user dropped its request resulting in a send error.
                         // We just discard the error
                         let _ = response_tx.send(tokenize_input(
                             inputs,
                             add_special_tokens,
                             None,
+                            default_prompt_clone,
                             prompt_name,
                             prompts.as_ref(),
                             &mut tokenizer,
@@ -240,14 +248,11 @@ fn decode_ids(
         .decode(&ids, skip_special_tokens)?)
 }
 
-fn tokenize_input(
-    inputs: EncodingInput,
-    add_special_tokens: bool,
-    truncate_params: Option<TruncationParams>,
+fn prepare_pre_prompt(
+    default_prompt: Option<String>,
     prompt_name: Option<String>,
     prompts: Option<&HashMap<String, String>>,
-    tokenizer: &mut Tokenizer,
-) -> Result<RawEncoding, TextEmbeddingsError> {
+) -> Result<Option<String>, TextEmbeddingsError> {
     let pre_prompt = if let Some(prompt_name) = prompt_name.as_ref() {
         match prompts {
             None => {
@@ -259,8 +264,21 @@ fn tokenize_input(
             Some(prompts) => prompts.get(prompt_name).cloned(),
         }
     } else {
-        None
+        default_prompt
     };
+    Ok(pre_prompt)
+}
+
+fn tokenize_input(
+    inputs: EncodingInput,
+    add_special_tokens: bool,
+    truncate_params: Option<TruncationParams>,
+    default_prompt: Option<String>,
+    prompt_name: Option<String>,
+    prompts: Option<&HashMap<String, String>>,
+    tokenizer: &mut Tokenizer,
+) -> Result<(Option<String>, RawEncoding), TextEmbeddingsError> {
+    let pre_prompt = prepare_pre_prompt(default_prompt, prompt_name, prompts)?;
 
     let encoding = match inputs {
         // encode input
@@ -272,9 +290,11 @@ fn tokenize_input(
                 s
             };
 
-            tokenizer
+            let encoding = tokenizer
                 .with_truncation(truncate_params)?
-                .encode::<String>(s, add_special_tokens)?
+                .encode::<&str>(&s, add_special_tokens)?;
+
+            (Some(s), encoding)
         }
         EncodingInput::Dual(s1, s2) => {
             if pre_prompt.is_some() {
@@ -283,9 +303,12 @@ fn tokenize_input(
                 ));
             }
 
-            tokenizer
-                .with_truncation(truncate_params)?
-                .encode::<(String, String)>((s1, s2), add_special_tokens)?
+            (
+                None,
+                tokenizer
+                    .with_truncation(truncate_params)?
+                    .encode::<(String, String)>((s1, s2), add_special_tokens)?,
+            )
         }
         // input is encoded -> convert to tokenizers Encoding
         EncodingInput::Ids(ids) => {
@@ -293,15 +316,19 @@ fn tokenize_input(
                 let text = tokenizer.decode(&ids, true)?;
                 pre_prompt.push_str(&text);
 
-                tokenizer
+                let encoding = tokenizer
                     .with_truncation(truncate_params)?
-                    .encode::<String>(pre_prompt, false)?
+                    .encode::<&str>(&pre_prompt, true)?;
+
+                (Some(pre_prompt), encoding)
             } else {
                 let text = tokenizer.decode(&ids, false)?;
 
-                tokenizer
+                let encoding = tokenizer
                     .with_truncation(truncate_params)?
-                    .encode::<String>(text, false)?
+                    .encode::<&str>(&text, false)?;
+
+                (Some(text), encoding)
             }
         }
     };
@@ -316,6 +343,7 @@ fn encode_input(
     truncation_direction: TruncationDirection,
     max_input_length: usize,
     position_offset: usize,
+    default_prompt: Option<String>,
     prompt_name: Option<String>,
     prompts: Option<&HashMap<String, String>>,
     tokenizer: &mut Tokenizer,
@@ -328,10 +356,11 @@ fn encode_input(
         stride: 0,
     });
 
-    let encoding = tokenize_input(
+    let (_, encoding) = tokenize_input(
         inputs,
         true,
         truncate_params,
+        default_prompt,
         prompt_name,
         prompts,
         tokenizer,
@@ -402,7 +431,7 @@ enum TokenizerRequest {
         EncodingInput,
         bool,
         Option<String>,
-        oneshot::Sender<Result<RawEncoding, TextEmbeddingsError>>,
+        oneshot::Sender<Result<(Option<String>, RawEncoding), TextEmbeddingsError>>,
         Span,
     ),
     Decode(

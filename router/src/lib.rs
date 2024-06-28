@@ -53,6 +53,7 @@ pub async fn run(
     max_batch_requests: Option<usize>,
     max_client_batch_size: usize,
     auto_truncate: bool,
+    default_prompt: Option<String>,
     default_prompt_name: Option<String>,
     hf_api_token: Option<String>,
     hostname: Option<String>,
@@ -184,8 +185,8 @@ pub async fn run(
                 .context("Failed to parse `config_sentence_transformers.json`")?,
         );
     }
-    let prompts = new_st_config.map(|c| c.prompts);
-    if let Some(default_prompt_name) = default_prompt_name.as_ref() {
+    let prompts = new_st_config.and_then(|c| c.prompts);
+    let default_prompt = if let Some(default_prompt_name) = default_prompt_name.as_ref() {
         match &prompts {
             None => {
                 anyhow::bail!(format!("`default-prompt-name` is set to `{default_prompt_name}` but no prompts were found in the Sentence Transformers configuration"));
@@ -193,9 +194,11 @@ pub async fn run(
             Some(prompts) if !prompts.contains_key(default_prompt_name) => {
                 anyhow::bail!(format!("`default-prompt-name` is set to `{default_prompt_name}` but it was not found in the Sentence Transformers prompts. Available prompts: {:?}", prompts.keys()));
             }
-            _ => (),
+            Some(prompts) => prompts.get(default_prompt_name).cloned(),
         }
-    }
+    } else {
+        default_prompt
+    };
 
     // Tokenization logic
     let tokenization = Tokenization::new(
@@ -203,7 +206,7 @@ pub async fn run(
         tokenizer,
         max_input_length,
         position_offset,
-        default_prompt_name,
+        default_prompt,
         prompts,
     );
 
@@ -420,7 +423,7 @@ pub struct STConfig {
 
 #[derive(Debug, Deserialize)]
 pub struct NewSTConfig {
-    pub prompts: HashMap<String, String>,
+    pub prompts: Option<HashMap<String, String>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
