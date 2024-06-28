@@ -27,11 +27,16 @@ mod flash_nomic;
 mod flash_distilbert;
 
 #[cfg(feature = "cuda")]
+mod flash_gte;
+#[cfg(feature = "cuda")]
 mod flash_mistral;
+mod gte;
 
 pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
 use candle::{Result, Tensor};
 pub use distilbert::{DistilBertConfig, DistilBertModel};
+#[allow(unused_imports)]
+pub use gte::{GTEConfig, NTKScaling, RopeScaling};
 pub use jina::JinaBertModel;
 pub use jina_code::JinaCodeBertModel;
 pub use mistral::MistralConfig;
@@ -55,6 +60,9 @@ pub use flash_distilbert::FlashDistilBertModel;
 
 #[cfg(feature = "cuda")]
 pub use flash_mistral::FlashMistralModel;
+
+#[cfg(feature = "cuda")]
+pub use flash_gte::FlashGTEModel;
 
 pub(crate) trait Model {
     fn is_padded(&self) -> bool;

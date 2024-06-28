@@ -295,6 +295,7 @@ impl FlashJinaCodeBertModel {
                 )
             }
             PositionEmbeddingType::Absolute => None,
+            _ => candle::bail!("not supported"),
         };
 
         match vb.device() {

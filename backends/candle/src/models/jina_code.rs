@@ -352,6 +352,7 @@ impl JinaCodeBertModel {
                 vb.dtype(),
             )?),
             PositionEmbeddingType::Absolute => None,
+            _ => candle::bail!("not supported"),
         };
 
         let pool = match model_type {
