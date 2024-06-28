@@ -79,6 +79,7 @@ message EmbedRequest {
     bool truncate = 2;
     bool normalize = 3;
     TruncationDirection truncation_direction = 4;
+    optional string prompt_name = 5;
 }
 
 message EmbedResponse {
@@ -90,6 +91,7 @@ message EmbedSparseRequest {
     string inputs = 1;
     bool truncate = 2;
     TruncationDirection truncation_direction = 3;
+    optional string prompt_name = 4;
 }
 
 message SparseValue {
@@ -106,6 +108,7 @@ message EmbedAllRequest {
     string inputs = 1;
     bool truncate = 2;
     TruncationDirection truncation_direction = 3;
+    optional string prompt_name = 4;
 }
 
 message TokenEmbedding {
@@ -175,6 +178,7 @@ message RerankResponse {
 message EncodeRequest {
     string inputs = 1;
     bool add_special_tokens = 2;
+    optional string prompt_name = 3;
 }
 
 message SimpleToken {

@@ -28,7 +28,8 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{DType, Pool};
 use text_embeddings_core::download::{
-    download_artifacts, download_pool_config, download_st_config, ST_CONFIG_NAMES,
+    download_artifacts, download_new_st_config, download_pool_config, download_st_config,
+    ST_CONFIG_NAMES,
 };
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
@@ -52,6 +53,8 @@ pub async fn run(
     max_batch_requests: Option<usize>,
     max_client_batch_size: usize,
     auto_truncate: bool,
+    default_prompt: Option<String>,
+    default_prompt_name: Option<String>,
     hf_api_token: Option<String>,
     hostname: Option<String>,
     port: u16,
@@ -91,6 +94,8 @@ pub async fn run(
 
         // Download sentence transformers config
         let _ = download_st_config(&api_repo).await;
+        // Download new sentence transformers config
+        let _ = download_new_st_config(&api_repo).await;
 
         // Download model from the Hub
         download_artifacts(&api_repo)
@@ -171,12 +176,38 @@ pub async fn run(
 
     let tokenization_workers = tokenization_workers.unwrap_or_else(num_cpus::get_physical);
 
+    // Try to load new ST Config
+    let mut new_st_config: Option<NewSTConfig> = None;
+    let config_path = model_root.join("config_sentence_transformers.json");
+    if let Ok(config) = fs::read_to_string(config_path) {
+        new_st_config = Some(
+            serde_json::from_str(&config)
+                .context("Failed to parse `config_sentence_transformers.json`")?,
+        );
+    }
+    let prompts = new_st_config.and_then(|c| c.prompts);
+    let default_prompt = if let Some(default_prompt_name) = default_prompt_name.as_ref() {
+        match &prompts {
+            None => {
+                anyhow::bail!(format!("`default-prompt-name` is set to `{default_prompt_name}` but no prompts were found in the Sentence Transformers configuration"));
+            }
+            Some(prompts) if !prompts.contains_key(default_prompt_name) => {
+                anyhow::bail!(format!("`default-prompt-name` is set to `{default_prompt_name}` but it was not found in the Sentence Transformers prompts. Available prompts: {:?}", prompts.keys()));
+            }
+            Some(prompts) => prompts.get(default_prompt_name).cloned(),
+        }
+    } else {
+        default_prompt
+    };
+
     // Tokenization logic
     let tokenization = Tokenization::new(
         tokenization_workers,
         tokenizer,
         max_input_length,
         position_offset,
+        default_prompt,
+        prompts,
     );
 
     // Get dtype
@@ -207,11 +238,13 @@ pub async fn run(
         .await
         .context("Model backend is not healthy")?;
 
-    tracing::info!("Warming up model");
-    backend
-        .warmup(max_input_length, max_batch_tokens, max_batch_requests)
-        .await
-        .context("Model backend is not healthy")?;
+    if !backend.padded_model {
+        tracing::info!("Warming up model");
+        backend
+            .warmup(max_input_length, max_batch_tokens, max_batch_requests)
+            .await
+            .context("Model backend is not healthy")?;
+    }
 
     let max_batch_requests = backend
         .max_batch_size
@@ -388,6 +421,11 @@ impl TryFrom<PoolConfig> for Pool {
 #[derive(Debug, Deserialize)]
 pub struct STConfig {
     pub max_seq_length: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewSTConfig {
+    pub prompts: Option<HashMap<String, String>>,
 }
 
 #[derive(Clone, Debug, Serialize)]

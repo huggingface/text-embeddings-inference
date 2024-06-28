@@ -79,6 +79,33 @@ struct Args {
     #[clap(long, env)]
     auto_truncate: bool,
 
+    /// The name of the prompt that should be used by default for encoding. If not set, no prompt
+    /// will be applied.
+    ///
+    /// Must be a key in the `Sentence Transformers` configuration `prompts` dictionary.
+    ///
+    /// For example if ``default_prompt_name`` is "query" and the ``prompts`` is {"query": "query: ", ...},
+    /// then the sentence "What is the capital of France?" will be encoded as
+    /// "query: What is the capital of France?" because the prompt text will be prepended before
+    /// any text to encode.
+    ///
+    /// The argument '--default-prompt-name <DEFAULT_PROMPT_NAME>' cannot be used with
+    /// '--default-prompt <DEFAULT_PROMPT>`
+    #[clap(long, env, conflicts_with = "default_prompt")]
+    default_prompt_name: Option<String>,
+
+    /// The prompt that should be used by default for encoding. If not set, no prompt
+    /// will be applied.
+    ///
+    /// For example if ``default_prompt`` is "query: " then the sentence "What is the capital of
+    /// France?" will be encoded as "query: What is the capital of France?" because the prompt
+    /// text will be prepended before any text to encode.
+    ///
+    /// The argument '--default-prompt <DEFAULT_PROMPT>' cannot be used with
+    /// '--default-prompt-name <DEFAULT_PROMPT_NAME>`
+    #[clap(long, env, conflicts_with = "default_prompt_name")]
+    default_prompt: Option<String>,
+
     /// Your HuggingFace hub token
     #[clap(long, env)]
     #[redact(partial)]
@@ -172,6 +199,8 @@ async fn main() -> Result<()> {
         args.max_batch_requests,
         args.max_client_batch_size,
         args.auto_truncate,
+        args.default_prompt,
+        args.default_prompt_name,
         args.hf_api_token,
         Some(args.hostname),
         args.port,

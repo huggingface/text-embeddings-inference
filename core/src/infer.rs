@@ -60,9 +60,10 @@ impl Infer {
         &self,
         inputs: I,
         add_special_tokens: bool,
-    ) -> Result<RawEncoding, TextEmbeddingsError> {
+        prompt_name: Option<String>,
+    ) -> Result<(Option<String>, RawEncoding), TextEmbeddingsError> {
         self.tokenization
-            .tokenize(inputs.into(), add_special_tokens)
+            .tokenize(inputs.into(), add_special_tokens, prompt_name)
             .await
             .map_err(|err| {
                 let counter = metrics::counter!("te_request_failure", "err" => "tokenization");
@@ -119,6 +120,7 @@ impl Infer {
         inputs: I,
         truncate: bool,
         truncation_direction: TruncationDirection,
+        prompt_name: Option<String>,
         permit: OwnedSemaphorePermit,
     ) -> Result<AllEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
@@ -138,6 +140,7 @@ impl Infer {
                 inputs,
                 truncate,
                 truncation_direction,
+                prompt_name,
                 false,
                 &start_time,
                 permit,
@@ -172,6 +175,7 @@ impl Infer {
         inputs: I,
         truncate: bool,
         truncation_direction: TruncationDirection,
+        prompt_name: Option<String>,
         permit: OwnedSemaphorePermit,
     ) -> Result<PooledEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
@@ -191,6 +195,7 @@ impl Infer {
                 inputs,
                 truncate,
                 truncation_direction,
+                prompt_name,
                 true,
                 &start_time,
                 permit,
@@ -225,6 +230,7 @@ impl Infer {
         inputs: I,
         truncate: bool,
         truncation_direction: TruncationDirection,
+        prompt_name: Option<String>,
         normalize: bool,
         permit: OwnedSemaphorePermit,
     ) -> Result<PooledEmbeddingsInferResponse, TextEmbeddingsError> {
@@ -245,6 +251,7 @@ impl Infer {
                 inputs,
                 truncate,
                 truncation_direction,
+                prompt_name,
                 true,
                 &start_time,
                 permit,
@@ -290,11 +297,13 @@ impl Infer {
         Ok(response)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn embed<I: Into<EncodingInput> + std::fmt::Debug>(
         &self,
         inputs: I,
         truncate: bool,
         truncation_direction: TruncationDirection,
+        prompt_name: Option<String>,
         pooling: bool,
         start_time: &Instant,
         _permit: OwnedSemaphorePermit,
@@ -315,7 +324,7 @@ impl Infer {
         // Tokenization
         let encoding = self
             .tokenization
-            .encode(inputs.into(), truncate, truncation_direction)
+            .encode(inputs.into(), truncate, truncation_direction, prompt_name)
             .await
             .map_err(|err| {
                 let counter = metrics::counter!("te_request_failure", "err" => "tokenization");
@@ -381,7 +390,7 @@ impl Infer {
         // Tokenization
         let encoding = self
             .tokenization
-            .encode(inputs.into(), truncate, truncation_direction)
+            .encode(inputs.into(), truncate, truncation_direction, None)
             .await
             .map_err(|err| {
                 let counter = metrics::counter!("te_request_failure", "err" => "tokenization");
