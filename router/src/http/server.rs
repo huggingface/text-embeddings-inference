@@ -5,7 +5,8 @@ use crate::http::types::{
     OpenAICompatEmbedding, OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse,
     OpenAICompatUsage, PredictInput, PredictRequest, PredictResponse, Prediction, Rank,
     RerankRequest, RerankResponse, Sequence, SimpleToken, SparseValue, TokenizeInput,
-    TokenizeRequest, TokenizeResponse, VertexPrediction, VertexRequest, VertexResponse,
+    TokenizeRequest, TokenizeResponse, TruncationDirection, VertexPrediction, VertexRequest,
+    VertexResponse,
 };
 use crate::{
     shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
@@ -32,7 +33,6 @@ use text_embeddings_core::infer::{
     AllEmbeddingsInferResponse, Infer, InferMetadata, PooledEmbeddingsInferResponse,
 };
 use text_embeddings_core::TextEmbeddingsError;
-use tokenizers::TruncationDirection;
 use tokio::sync::OwnedSemaphorePermit;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::instrument;
@@ -118,7 +118,7 @@ async fn predict(
             .predict(
                 inputs,
                 truncate,
-                req.truncation_direction,
+                req.truncation_direction.into(),
                 req.raw_scores,
                 permit,
             )
@@ -335,7 +335,7 @@ async fn rerank(
             .predict(
                 (query, text),
                 truncate,
-                req.truncation_direction,
+                req.truncation_direction.into(),
                 req.raw_scores,
                 permit,
             )
@@ -499,7 +499,7 @@ async fn embed(
                 .embed_pooled(
                     input,
                     truncate,
-                    req.truncation_direction,
+                    req.truncation_direction.into(),
                     req.prompt_name,
                     req.normalize,
                     permit,
@@ -568,7 +568,7 @@ async fn embed(
                         .embed_pooled(
                             input,
                             truncate,
-                            req.truncation_direction,
+                            req.truncation_direction.into(),
                             prompt_name,
                             req.normalize,
                             permit,
@@ -677,7 +677,7 @@ async fn embed_sparse(
                 .embed_sparse(
                     input,
                     truncate,
-                    req.truncation_direction,
+                    req.truncation_direction.into(),
                     req.prompt_name,
                     permit,
                 )
@@ -745,7 +745,7 @@ async fn embed_sparse(
                         .embed_sparse(
                             input,
                             truncate,
-                            req.truncation_direction,
+                            req.truncation_direction.into(),
                             prompt_name,
                             permit,
                         )
@@ -846,7 +846,7 @@ async fn embed_all(
                 .embed_all(
                     input,
                     truncate,
-                    req.truncation_direction,
+                    req.truncation_direction.into(),
                     req.prompt_name,
                     permit,
                 )
@@ -914,7 +914,7 @@ async fn embed_all(
                         .embed_all(
                             input,
                             truncate,
-                            req.truncation_direction,
+                            req.truncation_direction.into(),
                             prompt_name,
                             permit,
                         )
@@ -1029,7 +1029,7 @@ async fn openai_embed(
                 .embed_pooled(
                     input,
                     truncate,
-                    TruncationDirection::Right,
+                    tokenizers::TruncationDirection::Right,
                     None,
                     true,
                     permit,
@@ -1102,7 +1102,7 @@ async fn openai_embed(
                         .embed_pooled(
                             input,
                             truncate,
-                            TruncationDirection::Right,
+                            tokenizers::TruncationDirection::Right,
                             None,
                             true,
                             permit,
@@ -1483,6 +1483,8 @@ pub async fn run(
     Info,
     ModelType,
     ClassifierModel,
+    Embedding,
+    EncodingFormat,
     EmbeddingModel,
     PredictRequest,
     Prediction,
@@ -1506,6 +1508,7 @@ pub async fn run(
     TokenizeInput,
     TokenizeRequest,
     TokenizeResponse,
+    TruncationDirection,
     SimpleToken,
     InputType,
     InputIds,
