@@ -63,36 +63,37 @@ Ember, GTE and E5. TEI implements many features such as:
 
 #### Text Embeddings
 
-You can use any JinaBERT model with Alibi or absolute positions or any BERT, CamemBERT, RoBERTa, or XLM-RoBERTa model
-with absolute positions in `text-embeddings-inference`.
+Text Embeddings Inference currently supports Nomic, BERT, CamemBERT, XLM-RoBERTa models with absolute positions, JinaBERT
+model with Alibi positions and Mistral, Alibabe GTE models with Rope positions.
 
-**Support for other model types will be added in the future.**
+Below are some examples of the currently supported models:
 
-Examples of supported models:
+| MTEB Rank | Model Size     | Model Type  | Model ID                                                                                         |
+|-----------|----------------|-------------|--------------------------------------------------------------------------------------------------|
+| 1         | 7B (Very Slow) | Mistral     | [Salesforce/SFR-Embedding-2_R](https://hf.co/Salesforce/SFR-Embedding-2_R)                       |
+| 15        | 0.4B           | Alibaba GTE | [Alibaba-NLP/gte-large-en-v1.5](Alibaba-NLP/gte-large-en-v1.5)                                   |
+| 20        | 0.3B           | Bert        | [WhereIsAI/UAE-Large-V1](https://hf.co/WhereIsAI/UAE-Large-V1)                                   |
+| 24        | 0.5B           | XLM-RoBERTa | [intfloat/multilingual-e5-large-instruct](https://hf.co/intfloat/multilingual-e5-large-instruct) |
+| N/A       | 0.1B           | NomicBert   | [nomic-ai/nomic-embed-text-v1](https://hf.co/nomic-ai/nomic-embed-text-v1)                       |
+| N/A       | 0.1B           | NomicBert   | [nomic-ai/nomic-embed-text-v1.5](https://hf.co/nomic-ai/nomic-embed-text-v1.5)                   |
+| N/A       | 0.1B           | JinaBERT    | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)             |
+| N/A       | 0.1B           | JinaBERT    | [jinaai/jina-embeddings-v2-base-code](https://hf.co/jinaai/jina-embeddings-v2-base-code)         |
 
-| MTEB Rank | Model Type  | Model ID                                                                                         |
-|-----------|-------------|--------------------------------------------------------------------------------------------------|
-| 6         | Bert        | [WhereIsAI/UAE-Large-V1](https://hf.co/WhereIsAI/UAE-Large-V1)                                   |
-| 10        | XLM-RoBERTa | [intfloat/multilingual-e5-large-instruct](https://hf.co/intfloat/multilingual-e5-large-instruct) |
-| N/A       | NomicBert   | [nomic-ai/nomic-embed-text-v1](https://hf.co/nomic-ai/nomic-embed-text-v1)                       |
-| N/A       | NomicBert   | [nomic-ai/nomic-embed-text-v1.5](https://hf.co/nomic-ai/nomic-embed-text-v1.5)                   |
-| N/A       | JinaBERT    | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)             |
-| N/A       | JinaBERT    | [jinaai/jina-embeddings-v2-base-code](https://hf.co/jinaai/jina-embeddings-v2-base-code)         |
 
-You can explore the list of best performing text embeddings
-models [here](https://huggingface.co/spaces/mteb/leaderboard).
+To explore the list of best performing text embeddings models, visit the
+[Massive Text Embedding Benchmark (MTEB) Leaderboard](https://huggingface.co/spaces/mteb/leaderboard).
 
 #### Sequence Classification and Re-Ranking
 
-`text-embeddings-inference` v0.4.0 added support for Bert, CamemBERT, RoBERTa and XLM-RoBERTa Sequence Classification models.
+Text Embeddings Inference currently supports CamemBERT, and XLM-RoBERTa Sequence Classification models with absolute positions.
 
-Example of supported sequence classification models:
+Below are some examples of the currently supported models:
 
-| Task               | Model Type  | Model ID                                                                                    |
-|--------------------|-------------|---------------------------------------------------------------------------------------------|
-| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-large](https://huggingface.co/BAAI/bge-reranker-large)                   |
-| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)                     |
-| Sentiment Analysis | RoBERTa     | [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions) |
+| Task               | Model Type  | Model ID                                                                                    | Revision    |
+|--------------------|-------------|---------------------------------------------------------------------------------------------|-------------|
+| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-large](https://huggingface.co/BAAI/bge-reranker-large)                   | `refs/pr/4` |
+| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)                     | `refs/pr/5` |
+| Sentiment Analysis | RoBERTa     | [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions) |             |
 
 ### Docker
 
@@ -101,7 +102,7 @@ model=BAAI/bge-large-en-v1.5
 revision=refs/pr/5
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2 --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.3 --model-id $model --revision $revision
 ```
 
 And then you can make requests like
@@ -163,9 +164,11 @@ Options:
           [env: POOLING=]
 
           Possible values:
-          - cls:    Select the CLS token as embedding
-          - mean:   Apply Mean pooling to the model embeddings
-          - splade: Apply SPLADE (Sparse Lexical and Expansion) to the model embeddings. This option is only available if the loaded model is a `ForMaskedLM` Transformer model
+          - cls:        Select the CLS token as embedding
+          - mean:       Apply Mean pooling to the model embeddings
+          - splade:     Apply SPLADE (Sparse Lexical and Expansion) to the model embeddings. This option is only
+          available if the loaded model is a `ForMaskedLM` Transformer model
+          - last-token: Select the last token as embedding
 
       --max-concurrent-requests <MAX_CONCURRENT_REQUESTS>
           The maximum amount of concurrent requests for this particular deployment.
@@ -199,6 +202,37 @@ Options:
           [env: MAX_CLIENT_BATCH_SIZE=]
           [default: 32]
 
+      --auto-truncate
+          Automatically truncate inputs that are longer than the maximum supported size
+
+          Unused for gRPC servers
+
+          [env: AUTO_TRUNCATE=]
+
+      --default-prompt-name <DEFAULT_PROMPT_NAME>
+          The name of the prompt that should be used by default for encoding. If not set, no prompt will be applied.
+
+          Must be a key in the `Sentence Transformers` configuration `prompts` dictionary.
+
+          For example if ``default_prompt_name`` is "query" and the ``prompts`` is {"query": "query: ", ...}, then the
+          sentence "What is the capital of France?" will be encoded as "query: What is the capital of France?" because
+          the prompt text will be prepended before any text to encode.
+
+          The argument '--default-prompt-name <DEFAULT_PROMPT_NAME>' cannot be used with '--default-prompt <DEFAULT_PROMPT>`
+
+          [env: DEFAULT_PROMPT_NAME=]
+
+      --default-prompt <DEFAULT_PROMPT>
+          The prompt that should be used by default for encoding. If not set, no prompt will be applied.
+
+          For example if ``default_prompt`` is "query: " then the sentence "What is the capital of France?" will be
+          encoded as "query: What is the capital of France?" because the prompt text will be prepended before any text
+          to encode.
+
+          The argument '--default-prompt <DEFAULT_PROMPT>' cannot be used with '--default-prompt-name <DEFAULT_PROMPT_NAME>`
+
+          [env: DEFAULT_PROMPT=]
+
       --hf-api-token <HF_API_TOKEN>
           Your HuggingFace hub token
 
@@ -224,9 +258,10 @@ Options:
           [default: /tmp/text-embeddings-inference-server]
 
       --huggingface-hub-cache <HUGGINGFACE_HUB_CACHE>
-          The location of the huggingface hub cache. Used to override the location if you want to provide a mounted disk for instance
+          The location of the huggingface hub cache. Used to override the location if you want to provide a mounted disk
+          for instance
 
-          [env: HUGGINGFACE_HUB_CACHE=/data]
+          [env: HUGGINGFACE_HUB_CACHE=]
 
       --payload-limit <PAYLOAD_LIMIT>
           Payload size limit in bytes
@@ -239,7 +274,8 @@ Options:
       --api-key <API_KEY>
           Set an api key for request authorization.
 
-          By default the server responds to every request. With an api key set, the requests must have the Authorization header set with the api key as Bearer token.
+          By default the server responds to every request. With an api key set, the requests must have the Authorization
+          header set with the api key as Bearer token.
 
           [env: API_KEY=]
 
@@ -254,12 +290,14 @@ Options:
           [env: OTLP_ENDPOINT=]
 
       --otlp-service-name <OTLP_SERVICE_NAME>
-          The service name for opentelemetry.
+          The service name for opentelemetry. e.g. `text-embeddings-inference.server`
 
           [env: OTLP_SERVICE_NAME=]
           [default: text-embeddings-inference.server]
 
       --cors-allow-origin <CORS_ALLOW_ORIGIN>
+          Unused for gRPC servers
+
           [env: CORS_ALLOW_ORIGIN=]
 ```
 
@@ -269,13 +307,13 @@ Text Embeddings Inference ships with multiple Docker images that you can use to 
 
 | Architecture                        | Image                                                                   |
 |-------------------------------------|-------------------------------------------------------------------------|
-| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-1.2                   |
+| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-1.3                   |
 | Volta                               | NOT SUPPORTED                                                           |
-| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-1.2 (experimental) |
-| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:1.2                       |
-| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-1.2                    |
-| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-1.2                    |
-| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-1.2 (experimental) |
+| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-1.3 (experimental) |
+| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:1.3                       |
+| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-1.3                    |
+| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-1.3                    |
+| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-1.3 (experimental) |
 
 **Warning**: Flash Attention is turned off by default for the Turing image as it suffers from precision issues.
 You can turn Flash Attention v1 ON by using the `USE_FLASH_ATTENTION=True` environment variable.
@@ -304,7 +342,7 @@ model=<your private model>
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 token=<your cli READ token>
 
-docker run --gpus all -e HF_API_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2 --model-id $model
+docker run --gpus all -e HF_API_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.3 --model-id $model
 ```
 
 ### Using Re-rankers models
@@ -322,7 +360,7 @@ model=BAAI/bge-reranker-large
 revision=refs/pr/4
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2 --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.3 --model-id $model --revision $revision
 ```
 
 And then you can rank the similarity between a query and a list of texts with:
@@ -342,7 +380,7 @@ You can also use classic Sequence Classification models like `SamLowe/roberta-ba
 model=SamLowe/roberta-base-go_emotions
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2 --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.3 --model-id $model
 ```
 
 Once you have deployed the model you can use the `predict` endpoint to get the emotions most associated with an input:
@@ -362,7 +400,7 @@ You can choose to activate SPLADE pooling for Bert and Distilbert MaskedLM archi
 model=naver/efficient-splade-VI-BT-large-query
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2 --model-id $model --pooling splade
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.3 --model-id $model --pooling splade
 ```
 
 Once you have deployed the model you can use the `/embed_sparse` endpoint to get the sparse embedding:
@@ -382,7 +420,8 @@ by setting the address to an OTLP collector with the `--otlp-endpoint` argument.
 ### gRPC
 
 `text-embeddings-inference` offers a gRPC API as an alternative to the default HTTP API for high performance
-deployments. The API protobuf definition can be found [here](https://github.com/huggingface/text-embeddings-inference/blob/main/proto/tei.proto).
+deployments. The API protobuf definition can be
+found [here](https://github.com/huggingface/text-embeddings-inference/blob/main/proto/tei.proto).
 
 You can use the gRPC API by adding the `-grpc` tag to any TEI Docker image. For example:
 
@@ -391,7 +430,7 @@ model=BAAI/bge-large-en-v1.5
 revision=refs/pr/5
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2-grpc --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.3-grpc --model-id $model --revision $revision
 ```
 
 ```shell
@@ -438,7 +477,8 @@ sudo apt-get install libssl-dev gcc -y
 
 GPUs with Cuda compute capabilities < 7.5 are not supported (V100, Titan V, GTX 1000 series, ...).
 
-Make sure you have Cuda and the nvidia drivers installed. NVIDIA drivers on your device need to be compatible with CUDA version 12.2 or higher.
+Make sure you have Cuda and the nvidia drivers installed. NVIDIA drivers on your device need to be compatible with CUDA
+version 12.2 or higher.
 You also need to add the nvidia binaries to your path:
 
 ```shell
@@ -499,12 +539,18 @@ docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_
 ```
 
 ### Apple M1/M2 arm64 architectures
+
 #### DISCLAIMER
-As explained here [MPS-Ready, ARM64 Docker Image](https://github.com/pytorch/pytorch/issues/81224), Metal / MPS is not supported via Docker. As such inference will be CPU bound and most likely pretty slow when using this docker image on an M1/M2 ARM CPU.
+
+As explained here [MPS-Ready, ARM64 Docker Image](https://github.com/pytorch/pytorch/issues/81224), Metal / MPS is not
+supported via Docker. As such inference will be CPU bound and most likely pretty slow when using this docker image on an
+M1/M2 ARM CPU.
+
 ```
 docker build . -f Dockerfile-arm64 --platform=linux/arm64
 ```
 
 ## Examples
+
 - [Set up an Inference Endpoint with TEI](https://huggingface.co/learn/cookbook/automatic_embedding_tei_inference_endpoints)
 - [RAG containers with TEI](https://github.com/plaggy/rag-containers)
