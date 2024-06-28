@@ -288,14 +288,14 @@ at: [https://huggingface.github.io/text-embeddings-inference](https://huggingfac
 
 ### Using a private or gated model
 
-You have the option to utilize the `HUGGING_FACE_HUB_TOKEN` environment variable for configuring the token employed by
+You have the option to utilize the `HF_API_TOKEN` environment variable for configuring the token employed by
 `text-embeddings-inference`. This allows you to gain access to protected resources.
 
 For example:
 
 1. Go to https://huggingface.co/settings/tokens
 2. Copy your cli READ token
-3. Export `HUGGING_FACE_HUB_TOKEN=<your cli READ token>`
+3. Export `HF_API_TOKEN=<your cli READ token>`
 
 or with Docker:
 
@@ -304,7 +304,7 @@ model=<your private model>
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 token=<your cli READ token>
 
-docker run --gpus all -e HUGGING_FACE_HUB_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2 --model-id $model
+docker run --gpus all -e HF_API_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2 --model-id $model
 ```
 
 ### Using Re-rankers models
