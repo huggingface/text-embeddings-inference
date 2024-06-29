@@ -42,7 +42,7 @@ class DefaultModel(Model):
 
         output = self.model(**kwargs)
         embedding = output[0][:, 0]
-        cpu_results = embedding.view(-1).tolist()
+        cpu_results = embedding.reshape(-1).tolist()
 
         return [
             Embedding(

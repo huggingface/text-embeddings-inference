@@ -1,18 +1,14 @@
 mod logging;
 mod management;
 
-use backend_grpc_client::Client;
 use nohash_hasher::BuildNoHashHasher;
 use std::collections::HashMap;
 use text_embeddings_backend_core::{
     Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool, Predictions,
 };
-use tokio::runtime::Runtime;
 
 pub struct PythonBackend {
-    _backend_process: management::BackendProcess,
-    tokio_runtime: Runtime,
-    backend_client: Client,
+    backend_process: management::BackendProcess,
 }
 
 impl PythonBackend {
@@ -38,39 +34,16 @@ impl PythonBackend {
             }
         };
 
-        let backend_process = management::BackendProcess::new(
-            model_path,
-            dtype,
-            &uds_path,
-            otlp_endpoint,
-            otlp_service_name,
-        )?;
-        let tokio_runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|err| BackendError::Start(format!("Could not start Tokio runtime: {err}")))?;
+        let backend_process =
+            management::BackendProcess::new(model_path, dtype, uds_path, otlp_endpoint, otlp_service_name)?;
 
-        let backend_client = tokio_runtime
-            .block_on(Client::connect_uds(uds_path))
-            .map_err(|err| {
-                BackendError::Start(format!("Could not connect to backend process: {err}"))
-            })?;
-
-        Ok(Self {
-            _backend_process: backend_process,
-            tokio_runtime,
-            backend_client,
-        })
+        Ok(Self { backend_process })
     }
 }
 
 impl Backend for PythonBackend {
     fn health(&self) -> Result<(), BackendError> {
-        if self
-            .tokio_runtime
-            .block_on(self.backend_client.clone().health())
-            .is_err()
-        {
+        if self.backend_process.client.health().is_err() {
             return Err(BackendError::Unhealthy);
         }
         Ok(())
@@ -89,14 +62,15 @@ impl Backend for PythonBackend {
         let batch_size = batch.len();
 
         let results = self
-            .tokio_runtime
-            .block_on(self.backend_client.clone().embed(
+            .backend_process
+            .client
+            .embed(
                 batch.input_ids,
                 batch.token_type_ids,
                 batch.position_ids,
                 batch.cumulative_seq_lengths,
                 batch.max_length,
-            ))
+            )
             .map_err(|err| BackendError::Inference(err.to_string()))?;
         let pooled_embeddings: Vec<Vec<f32>> = results.into_iter().map(|r| r.values).collect();
 
