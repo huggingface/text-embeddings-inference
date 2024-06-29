@@ -10,7 +10,7 @@ use text_embeddings_backend::DType;
 #[cfg(feature = "http")]
 async fn test_embeddings() -> Result<()> {
     start_server(
-        "sentence-transformers/all-MiniLM-L6-v2".to_string(),
+        "sentence-transformers/all-MiniLM-L6-v2".to_owned(),
         None,
         DType::Float32,
     )

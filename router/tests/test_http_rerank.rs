@@ -18,8 +18,8 @@ pub struct SnapshotRank {
 #[cfg(feature = "http")]
 async fn test_rerank() -> Result<()> {
     start_server(
-        "BAAI/bge-reranker-base".to_string(),
-        Some("refs/pr/5".to_string()),
+        "BAAI/bge-reranker-base".to_owned(),
+        Some("refs/pr/5".to_owned()),
         DType::Float32,
     )
     .await?;

@@ -17,7 +17,7 @@ pub struct SnapshotPrediction {
 #[cfg(feature = "http")]
 async fn test_predict() -> Result<()> {
     start_server(
-        "SamLowe/roberta-base-go_emotions".to_string(),
+        "SamLowe/roberta-base-go_emotions".to_owned(),
         None,
         DType::Float32,
     )
