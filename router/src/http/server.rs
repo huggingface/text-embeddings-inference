@@ -67,7 +67,7 @@ async fn health(infer: Extension<Infer>) -> Result<(), (StatusCode, Json<ErrorRe
     match infer.health().await {
         true => Ok(()),
         false => Err(ErrorResponse {
-            error: "unhealthy".to_string(),
+            error: "unhealthy".to_owned(),
             error_type: ErrorType::Unhealthy,
         })?,
     }
@@ -136,7 +136,7 @@ async fn predict(
             // Check that s is not NaN or the partial_cmp below will panic
             if s.is_nan() {
                 return Err(ErrorResponse {
-                    error: "score is NaN".to_string(),
+                    error: "score is NaN".to_owned(),
                     error_type: ErrorType::Backend,
                 });
             }
@@ -300,7 +300,7 @@ async fn rerank(
     let start_time = Instant::now();
 
     if req.texts.is_empty() {
-        let message = "`texts` cannot be empty".to_string();
+        let message = "`texts` cannot be empty".to_owned();
         tracing::error!("{message}");
         let err = ErrorResponse {
             error: message,
@@ -316,7 +316,7 @@ async fn rerank(
         ModelType::Classifier(_) | ModelType::Embedding(_) => {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
             counter.increment(1);
-            let message = "model is not a re-ranker model".to_string();
+            let message = "model is not a re-ranker model".to_owned();
             Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
             )))
@@ -415,7 +415,7 @@ async fn rerank(
             // Check that s is not NaN or the partial_cmp below will panic
             if score.is_nan() {
                 Err(ErrorResponse {
-                    error: "score is NaN".to_string(),
+                    error: "score is NaN".to_owned(),
                     error_type: ErrorType::Backend,
                 })?;
             }
@@ -527,7 +527,7 @@ async fn embed(
             counter.increment(1);
 
             if inputs.is_empty() {
-                let message = "`inputs` cannot be empty".to_string();
+                let message = "`inputs` cannot be empty".to_owned();
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
@@ -704,7 +704,7 @@ async fn embed_sparse(
             counter.increment(1);
 
             if inputs.is_empty() {
-                let message = "`inputs` cannot be empty".to_string();
+                let message = "`inputs` cannot be empty".to_owned();
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
@@ -873,7 +873,7 @@ async fn embed_all(
             counter.increment(1);
 
             if inputs.is_empty() {
-                let message = "`inputs` cannot be empty".to_string();
+                let message = "`inputs` cannot be empty".to_owned();
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
@@ -1062,7 +1062,7 @@ async fn openai_embed(
             counter.increment(1);
 
             if inputs.is_empty() {
-                let message = "`inputs` cannot be empty".to_string();
+                let message = "`inputs` cannot be empty".to_owned();
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
@@ -1239,7 +1239,7 @@ async fn tokenize(
         }
         TokenizeInput::Batch(inputs) => {
             if inputs.is_empty() {
-                let message = "`inputs` cannot be empty".to_string();
+                let message = "`inputs` cannot be empty".to_owned();
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
@@ -1315,7 +1315,7 @@ async fn decode(
         InputIds::Single(ids) => vec![decode_inner(ids, req.skip_special_tokens, infer.0).await?],
         InputIds::Batch(ids) => {
             if ids.is_empty() {
-                let message = "`ids` cannot be empty".to_string();
+                let message = "`ids` cannot be empty".to_owned();
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
@@ -1655,7 +1655,7 @@ pub async fn run(
         .layer(cors_layer);
 
     if let Some(api_key) = api_key {
-        let mut prefix = "Bearer ".to_string();
+        let mut prefix = "Bearer ".to_owned();
         prefix.push_str(&api_key);
 
         // Leak to allow FnMut

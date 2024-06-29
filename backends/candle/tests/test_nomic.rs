@@ -13,7 +13,7 @@ fn test_nomic_small() -> Result<()> {
 
     let backend = CandleBackend::new(
         model_root,
-        "float32".to_string(),
+        "float32".to_owned(),
         ModelType::Embedding(Pool::Mean),
     )?;
 

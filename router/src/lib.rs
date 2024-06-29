@@ -83,7 +83,7 @@ pub async fn run(
         let api_repo = api.repo(Repo::with_revision(
             model_id.clone(),
             RepoType::Model,
-            revision.clone().unwrap_or("main".to_string()),
+            revision.clone().unwrap_or("main".to_owned()),
         ));
 
         // Optionally download the pooling config.
@@ -228,7 +228,7 @@ pub async fn run(
         model_root,
         dtype.clone(),
         backend_model_type,
-        uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_string()),
+        uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_owned()),
         otlp_endpoint.clone(),
         otlp_service_name.clone(),
     )
@@ -298,7 +298,7 @@ pub async fn run(
         port
     };
 
-    let addr = match hostname.unwrap_or("0.0.0.0".to_string()).parse() {
+    let addr = match hostname.unwrap_or("0.0.0.0".to_owned()).parse() {
         Ok(ip) => SocketAddr::new(ip, port),
         Err(_) => {
             tracing::warn!("Invalid hostname, defaulting to 0.0.0.0");

@@ -110,7 +110,7 @@ impl BackendProcess {
                     )));
                 }
                 return Err(BackendError::Start(
-                    "Python backend failed to start".to_string(),
+                    "Python backend failed to start".to_owned(),
                 ));
             }
 

@@ -21,7 +21,7 @@ pub enum ClientError {
 
 impl From<Status> for ClientError {
     fn from(err: Status) -> Self {
-        let err = Self::Inference(err.message().to_string());
+        let err = Self::Inference(err.message().to_owned());
         tracing::error!("{err}");
         err
     }

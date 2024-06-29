@@ -66,7 +66,7 @@ impl<'de> Deserialize<'de> for PredictInput {
             where
                 E: de::Error,
             {
-                Ok(PredictInput::Single(Sequence::Single(v.to_string())))
+                Ok(PredictInput::Single(Sequence::Single(v.to_owned())))
             }
 
             fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>

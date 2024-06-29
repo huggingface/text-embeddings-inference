@@ -210,7 +210,7 @@ fn init_backend(
             return Ok(Box::new(
                 std::thread::spawn(move || {
                     PythonBackend::new(
-                        model_path.to_str().unwrap().to_string(),
+                        model_path.to_str().unwrap().to_owned(),
                         dtype.to_string(),
                         model_type,
                         uds_path,

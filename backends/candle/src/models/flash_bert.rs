@@ -267,8 +267,8 @@ impl FlashBertModel {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
                 if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp("bert.embeddings".to_string()), config),
-                    BertEncoder::load(vb.pp("bert.encoder".to_string()), config),
+                    BertEmbeddings::load(vb.pp("bert.embeddings".to_owned()), config),
+                    BertEncoder::load(vb.pp("bert.encoder".to_owned()), config),
                 ) {
                     (embeddings, encoder)
                 } else {
@@ -334,18 +334,18 @@ impl FlashBertModel {
             (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
             (Err(err), _) | (_, Err(err)) => {
                 if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp("roberta.embeddings".to_string()), config),
-                    BertEncoder::load(vb.pp("roberta.encoder".to_string()), config),
+                    BertEmbeddings::load(vb.pp("roberta.embeddings".to_owned()), config),
+                    BertEncoder::load(vb.pp("roberta.encoder".to_owned()), config),
                 ) {
                     (embeddings, encoder)
                 } else if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp("xlm-roberta.embeddings".to_string()), config),
-                    BertEncoder::load(vb.pp("xlm-roberta.encoder".to_string()), config),
+                    BertEmbeddings::load(vb.pp("xlm-roberta.embeddings".to_owned()), config),
+                    BertEncoder::load(vb.pp("xlm-roberta.encoder".to_owned()), config),
                 ) {
                     (embeddings, encoder)
                 } else if let (Ok(embeddings), Ok(encoder)) = (
-                    BertEmbeddings::load(vb.pp("camembert.embeddings".to_string()), config),
-                    BertEncoder::load(vb.pp("camembert.encoder".to_string()), config),
+                    BertEmbeddings::load(vb.pp("camembert.embeddings".to_owned()), config),
+                    BertEncoder::load(vb.pp("camembert.encoder".to_owned()), config),
                 ) {
                     (embeddings, encoder)
                 } else {

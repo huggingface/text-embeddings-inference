@@ -24,7 +24,7 @@ impl Client {
 
     /// Returns a client connected to the given unix socket
     pub async fn connect_uds(path: String) -> Result<Self> {
-        let channel = Channel::from_shared("http://[::]:50051".to_string())
+        let channel = Channel::from_shared("http://[::]:50051".to_owned())
             .unwrap()
             .connect_with_connector(tower::service_fn(move |_: Uri| {
                 tokio::net::UnixStream::connect(path.clone())

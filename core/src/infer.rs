@@ -128,7 +128,7 @@ impl Infer {
         if self.is_splade() {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
             counter.increment(1);
-            let message = "`embed_all` is not available for SPLADE models".to_string();
+            let message = "`embed_all` is not available for SPLADE models".to_owned();
             tracing::error!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
@@ -183,7 +183,7 @@ impl Infer {
         if !self.is_splade() {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
             counter.increment(1);
-            let message = "Model is not an embedding model with SPLADE pooling".to_string();
+            let message = "Model is not an embedding model with SPLADE pooling".to_owned();
             tracing::error!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
@@ -239,7 +239,7 @@ impl Infer {
         if self.is_splade() && normalize {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
             counter.increment(1);
-            let message = "`normalize` is not available for SPLADE models".to_string();
+            let message = "`normalize` is not available for SPLADE models".to_owned();
             tracing::error!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
@@ -311,7 +311,7 @@ impl Infer {
         if self.is_classifier() {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
             counter.increment(1);
-            let message = "Model is not an embedding model".to_string();
+            let message = "Model is not an embedding model".to_owned();
             tracing::error!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
@@ -377,7 +377,7 @@ impl Infer {
         if !self.is_classifier() {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
             counter.increment(1);
-            let message = "Model is not a classifier model".to_string();
+            let message = "Model is not a classifier model".to_owned();
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
             )));

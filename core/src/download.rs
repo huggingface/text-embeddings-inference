@@ -72,7 +72,7 @@ async fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     let mut safetensors_filenames = std::collections::HashSet::new();
     for value in weight_map.values() {
         if let Some(file) = value.as_str() {
-            safetensors_filenames.insert(file.to_string());
+            safetensors_filenames.insert(file.to_owned());
         }
     }
 

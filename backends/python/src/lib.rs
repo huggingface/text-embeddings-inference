@@ -27,7 +27,7 @@ impl PythonBackend {
         match model_type {
             ModelType::Classifier => {
                 return Err(BackendError::Start(
-                    "`classifier` model type is not supported".to_string(),
+                    "`classifier` model type is not supported".to_owned(),
                 ))
             }
             ModelType::Embedding(pool) => {
@@ -83,7 +83,7 @@ impl Backend for PythonBackend {
     fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError> {
         if !batch.raw_indices.is_empty() {
             return Err(BackendError::Inference(
-                "raw embeddings are not supported for the Python backend.".to_string(),
+                "raw embeddings are not supported for the Python backend.".to_owned(),
             ));
         }
         let batch_size = batch.len();
@@ -111,7 +111,7 @@ impl Backend for PythonBackend {
 
     fn predict(&self, _batch: Batch) -> Result<Predictions, BackendError> {
         Err(BackendError::Inference(
-            "`predict` is not implemented".to_string(),
+            "`predict` is not implemented".to_owned(),
         ))
     }
 }

@@ -16,7 +16,7 @@ fn test_flash_jina_code_base() -> Result<()> {
 
     let backend = CandleBackend::new(
         model_root,
-        "float16".to_string(),
+        "float16".to_owned(),
         ModelType::Embedding(Pool::Mean),
     )?;
 

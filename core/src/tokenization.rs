@@ -61,7 +61,7 @@ impl Tokenization {
         // Check if inputs is empty
         if inputs.is_empty() {
             return Err(TextEmbeddingsError::Validation(
-                "`inputs` cannot be empty".to_string(),
+                "`inputs` cannot be empty".to_owned(),
             ));
         }
 
@@ -96,7 +96,7 @@ impl Tokenization {
         // Check if inputs is empty
         if inputs.is_empty() {
             return Err(TextEmbeddingsError::Validation(
-                "`inputs` cannot be empty".to_string(),
+                "`inputs` cannot be empty".to_owned(),
             ));
         }
 
@@ -129,7 +129,7 @@ impl Tokenization {
         // Check if inputs is empty
         if ids.is_empty() {
             return Err(TextEmbeddingsError::Validation(
-                "`input_ids` cannot be empty".to_string(),
+                "`input_ids` cannot be empty".to_owned(),
             ));
         }
 
@@ -299,7 +299,7 @@ fn tokenize_input(
         EncodingInput::Dual(s1, s2) => {
             if pre_prompt.is_some() {
                 return Err(TextEmbeddingsError::Validation(
-                    "`prompt_name` cannot be set with dual inputs".to_string(),
+                    "`prompt_name` cannot be set with dual inputs".to_owned(),
                 ));
             }
 

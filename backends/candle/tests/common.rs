@@ -112,12 +112,12 @@ pub fn download_artifacts(
     let api = builder.build().unwrap();
     let api_repo = if let Some(revision) = revision {
         api.repo(Repo::with_revision(
-            model_id.to_string(),
+            model_id.to_owned(),
             RepoType::Model,
-            revision.to_string(),
+            revision.to_owned(),
         ))
     } else {
-        api.repo(Repo::new(model_id.to_string(), RepoType::Model))
+        api.repo(Repo::new(model_id.to_owned(), RepoType::Model))
     };
 
     api_repo.get("config.json")?;
@@ -161,7 +161,7 @@ fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     let mut safetensors_filenames = std::collections::HashSet::new();
     for value in weight_map.values() {
         if let Some(file) = value.as_str() {
-            safetensors_filenames.insert(file.to_string());
+            safetensors_filenames.insert(file.to_owned());
         }
     }
 

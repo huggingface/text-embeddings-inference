@@ -109,7 +109,7 @@ impl CandleBackend {
             let mut safetensors_files = std::collections::HashSet::new();
             for value in weight_map.values() {
                 if let Some(file) = value.as_str() {
-                    safetensors_files.insert(file.to_string());
+                    safetensors_files.insert(file.to_owned());
                 }
             }
 
@@ -176,7 +176,7 @@ impl CandleBackend {
         let model: Result<Box<dyn Model + Send>, BackendError> = match (config, &device) {
             #[cfg(not(feature = "cuda"))]
             (_, Device::Cuda(_)) => Err(BackendError::Start(
-                "`cuda` feature is not enabled".to_string(),
+                "`cuda` feature is not enabled".to_owned(),
             )),
             (Config::Bert(config), Device::Cpu | Device::Metal(_)) => match config {
                 BertConfigWrapper::JinaBert(config) => {
@@ -215,11 +215,11 @@ impl CandleBackend {
             }
             (Config::Mistral(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
                 "Mistral is only supported on Cuda devices in fp16 with flash attention enabled"
-                    .to_string(),
+                    .to_owned(),
             )),
             (Config::Gte(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
                 "GTE is only supported on Cuda devices in fp16 with flash attention enabled"
-                    .to_string(),
+                    .to_owned(),
             )),
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
@@ -227,7 +227,7 @@ impl CandleBackend {
                     && dtype == DType::F16
                     // Allow disabling because of flash attention v1 precision problems
                     // See: https://github.com/huggingface/text-embeddings-inference/issues/37
-                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
+                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_owned()).to_lowercase() == "true"
                 {
                     match config {
                         BertConfigWrapper::JinaBert(config) => {
@@ -275,7 +275,7 @@ impl CandleBackend {
                     && dtype == DType::F16
                     // Allow disabling because of flash attention v1 precision problems
                     // See: https://github.com/huggingface/text-embeddings-inference/issues/37
-                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
+                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_owned()).to_lowercase() == "true"
                 {
                     tracing::info!("Starting FlashBert model on {:?}", device);
                     Ok(Box::new(
@@ -293,7 +293,7 @@ impl CandleBackend {
                 if cfg!(feature = "flash-attn")
                     && dtype == DType::F16
                     && &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
+                        .unwrap_or("True".to_owned())
                         .to_lowercase()
                         == "true"
                 {
@@ -313,7 +313,7 @@ impl CandleBackend {
                 if cfg!(feature = "flash-attn")
                     && dtype == DType::F16
                     && &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
+                        .unwrap_or("True".to_owned())
                         .to_lowercase()
                         == "true"
                 {
@@ -332,7 +332,7 @@ impl CandleBackend {
                     || !cfg!(feature = "flash-attn")
                     || get_runtime_compute_cap().unwrap() < 80
                 {
-                    return Err(BackendError::Start("Mistral is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
+                    return Err(BackendError::Start("Mistral is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_owned()));
                 }
                 tracing::info!("Starting FlashMistral model on {:?}", device);
                 Ok(Box::new(
@@ -345,7 +345,7 @@ impl CandleBackend {
                     || !cfg!(feature = "flash-attn")
                     || get_runtime_compute_cap().unwrap() < 80
                 {
-                    return Err(BackendError::Start("GTE is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
+                    return Err(BackendError::Start("GTE is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_owned()));
                 }
                 tracing::info!("Starting FlashGTE model on {:?}", device);
                 Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))
