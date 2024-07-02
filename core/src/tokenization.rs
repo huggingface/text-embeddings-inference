@@ -284,13 +284,11 @@ fn tokenize_input(
 ) -> Result<(Option<String>, RawEncoding), TextEmbeddingsError> {
     let pre_prompt = prepare_pre_prompt(default_prompt, prompt_name, prompts)?;
 
-    if inputs.count_chars() > max_input_length * MAX_CHAR_MULTIPLIER {
+    let input_chars = inputs.count_chars();
+    let limit = max_input_length * MAX_CHAR_MULTIPLIER;
+    if input_chars > limit {
         return Err(TextEmbeddingsError::Validation(format!(
-            "`inputs` cannot be larger than max_input_length * {}, in this case {} * {} = {}",
-            MAX_CHAR_MULTIPLIER,
-            max_input_length,
-            MAX_CHAR_MULTIPLIER,
-            max_input_length * MAX_CHAR_MULTIPLIER
+            "`inputs` must have less than {limit} characters. Given: {input_chars}"
         )));
     }
 
