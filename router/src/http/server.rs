@@ -1233,7 +1233,6 @@ async fn tokenize(
         Ok::<Vec<SimpleToken>, ErrorResponse>(tokens)
     };
 
-    
     let tokens = match req.inputs {
         TokenizeInput::Single(input) => {
             vec![tokenize_inner(input, req.add_special_tokens, req.prompt_name, infer.0).await?]
