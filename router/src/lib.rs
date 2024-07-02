@@ -35,7 +35,9 @@ use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
 use text_embeddings_core::tokenization::Tokenization;
 use text_embeddings_core::TextEmbeddingsError;
-use tokenizers::Tokenizer;
+use tokenizers::processors::sequence::Sequence;
+use tokenizers::processors::template::TemplateProcessing;
+use tokenizers::{PostProcessorWrapper, Tokenizer};
 use tracing::Span;
 
 pub use logging::init_logging;
@@ -144,6 +146,28 @@ pub async fn run(
         "tokenizer.json not found. text-embeddings-inference only supports fast tokenizers",
     );
     tokenizer.with_padding(None);
+    // Qwen2 updates the post processor manually instead of into the tokenizer.json...
+    // https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct/blob/main/tokenization_qwen.py#L246
+    if config.model_type == "qwen2" {
+        let template = TemplateProcessing::builder()
+            .try_single("$A:0 <|endoftext|>:0")
+            .unwrap()
+            .try_pair("$A:0 <|endoftext|>:0 $B:1 <|endoftext|>:1")
+            .unwrap()
+            .special_tokens(vec![("<|endoftext|>", 151643)])
+            .build()
+            .unwrap();
+        match tokenizer.get_post_processor() {
+            None => tokenizer.with_post_processor(template),
+            Some(post_processor) => {
+                let post_processor = Sequence::new(vec![
+                    post_processor.clone(),
+                    PostProcessorWrapper::Template(template),
+                ]);
+                tokenizer.with_post_processor(post_processor)
+            }
+        };
+    }
 
     // Position IDs offset. Used for Roberta and camembert.
     let position_offset = if &config.model_type == "xlm-roberta"

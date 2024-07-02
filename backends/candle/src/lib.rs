@@ -12,12 +12,12 @@ use crate::compute_cap::{
 };
 use crate::models::{
     BertConfig, BertModel, DistilBertConfig, DistilBertModel, GTEConfig, JinaBertModel,
-    JinaCodeBertModel, MistralConfig, Model, NomicBertModel, NomicConfig,
+    JinaCodeBertModel, MistralConfig, Model, NomicBertModel, NomicConfig, Qwen2Config,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
     FlashBertModel, FlashDistilBertModel, FlashGTEModel, FlashJinaBertModel,
-    FlashJinaCodeBertModel, FlashMistralModel, FlashNomicBertModel,
+    FlashJinaCodeBertModel, FlashMistralModel, FlashNomicBertModel, FlashQwen2Model,
 };
 use anyhow::Context;
 use candle::{DType, Device};
@@ -59,6 +59,7 @@ enum Config {
     Mistral(MistralConfig),
     #[serde(rename = "new")]
     Gte(GTEConfig),
+    Qwen2(Qwen2Config),
 }
 
 pub struct CandleBackend {
@@ -221,6 +222,10 @@ impl CandleBackend {
                 "GTE is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
             )),
+            (Config::Qwen2(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
+                "Qwen2 is only supported on Cuda devices in fp16 with flash attention enabled"
+                    .to_string(),
+            )),
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
                 if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
@@ -342,13 +347,24 @@ impl CandleBackend {
             #[cfg(feature = "cuda")]
             (Config::Gte(config), Device::Cuda(_)) => {
                 if dtype != DType::F16
-                    || !cfg!(feature = "flash-attn")
-                    || get_runtime_compute_cap().unwrap() < 80
+                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
                 {
-                    return Err(BackendError::Start("GTE is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
+                    return Err(BackendError::Start("GTE is only supported on Cuda devices in fp16 with flash attention enabled".to_string()));
                 }
                 tracing::info!("Starting FlashGTE model on {:?}", device);
                 Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))
+            }
+            #[cfg(feature = "cuda")]
+            (Config::Qwen2(config), Device::Cuda(_)) => {
+                if dtype != DType::F16
+                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                {
+                    return Err(BackendError::Start("Qwen2 is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
+                }
+                tracing::info!("Starting FlashQwen2 model on {:?}", device);
+                Ok(Box::new(
+                    FlashQwen2Model::load(vb, &config, model_type).s()?,
+                ))
             }
         };
 
