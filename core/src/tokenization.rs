@@ -272,6 +272,7 @@ fn prepare_pre_prompt(
     Ok(pre_prompt)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn tokenize_input(
     inputs: EncodingInput,
     add_special_tokens: bool,
