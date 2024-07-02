@@ -107,7 +107,11 @@ pub fn download_artifacts(
     model_id: &'static str,
     revision: Option<&'static str>,
 ) -> Result<PathBuf> {
-    let builder = ApiBuilder::new().with_progress(false);
+    let mut builder = ApiBuilder::new().with_progress(false);
+
+    if let Some(cache_dir) = std::env::var_os("HUGGINGFACE_HUB_CACHE") {
+        builder = builder.with_cache_dir(cache_dir.into());
+    }
 
     let api = builder.build().unwrap();
     let api_repo = if let Some(revision) = revision {

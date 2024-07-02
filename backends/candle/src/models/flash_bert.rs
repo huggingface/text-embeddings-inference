@@ -400,7 +400,10 @@ impl FlashBertModel {
                         // Get token indices form cu_seqlens
                         let mut indices = match self.pool {
                             Pool::Cls => cu_seqlens.narrow(0, 0, batch_size)?,
-                            Pool::LastToken => cu_seqlens.narrow(0, 1, batch_size)?,
+                            Pool::LastToken => {
+                                let end = cu_seqlens.narrow(0, 1, batch_size)?;
+                                (&end - &end.ones_like()?)?
+                            }
                             _ => unreachable!(),
                         };
 

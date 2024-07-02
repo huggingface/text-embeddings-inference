@@ -317,8 +317,6 @@ impl FlashQwen2Model {
         let cos = self.cos_cache.index_select(&position_ids, 0)?;
         let sin = self.sin_cache.index_select(&position_ids, 0)?;
 
-        tracing::info!("{input_ids}");
-
         let mut residual = None;
         for layer in &self.layers {
             let (h, r) = layer.forward(
@@ -346,7 +344,10 @@ impl FlashQwen2Model {
                         // Get token indices form cu_seqlens
                         let mut indices = match self.pool {
                             Pool::Cls => cu_seqlens.narrow(0, 0, batch_size)?,
-                            Pool::LastToken => cu_seqlens.narrow(0, 1, batch_size)?,
+                            Pool::LastToken => {
+                                let end = cu_seqlens.narrow(0, 1, batch_size)?;
+                                (&end - &end.ones_like()?)?
+                            }
                             _ => unreachable!(),
                         };
 
