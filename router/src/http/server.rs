@@ -39,6 +39,8 @@ use tracing::instrument;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
+static MAX_CHAR_MULTIPLIER: usize = 250;
+
 ///Text Embeddings Inference endpoint info
 #[utoipa::path(
 get,
@@ -1233,13 +1235,39 @@ async fn tokenize(
         Ok::<Vec<SimpleToken>, ErrorResponse>(tokens)
     };
 
+    
     let tokens = match req.inputs {
         TokenizeInput::Single(input) => {
+
+            if input.chars().count() > info.max_input_length * MAX_CHAR_MULTIPLIER {
+                let message = format!("`inputs` cannot be larger than max_input_length * {}, in this case {} * {} = {}", MAX_CHAR_MULTIPLIER, info.max_input_length, MAX_CHAR_MULTIPLIER, info.max_input_length * MAX_CHAR_MULTIPLIER);
+                tracing::error!("{message}");
+                let err = ErrorResponse {
+                    error: message,
+                    error_type: ErrorType::Validation,
+                };
+                let counter = metrics::counter!("te_request_failure", "err" => "validation");
+                counter.increment(1);
+                Err(err)?;
+            }
+
             vec![tokenize_inner(input, req.add_special_tokens, req.prompt_name, infer.0).await?]
         }
         TokenizeInput::Batch(inputs) => {
             if inputs.is_empty() {
                 let message = "`inputs` cannot be empty".to_string();
+                tracing::error!("{message}");
+                let err = ErrorResponse {
+                    error: message,
+                    error_type: ErrorType::Validation,
+                };
+                let counter = metrics::counter!("te_request_failure", "err" => "validation");
+                counter.increment(1);
+                Err(err)?;
+            }
+            
+            if inputs.iter().any(|s| s.chars().count() > info.max_input_length * MAX_CHAR_MULTIPLIER) {
+                let message = format!("`inputs` cannot be larger than max_input_length * {}, in this case {} * {} = {}", MAX_CHAR_MULTIPLIER, info.max_input_length, MAX_CHAR_MULTIPLIER, info.max_input_length * MAX_CHAR_MULTIPLIER);
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
