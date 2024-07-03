@@ -7,6 +7,8 @@ use tokenizers::{TruncationDirection, TruncationParams, TruncationStrategy};
 use tokio::sync::oneshot;
 use tracing::{instrument, Span};
 
+static MAX_CHAR_MULTIPLIER: usize = 250;
+
 /// Validation
 #[derive(Debug, Clone)]
 pub struct Tokenization {
@@ -215,6 +217,7 @@ fn tokenizer_worker(
                         let _ = response_tx.send(tokenize_input(
                             inputs,
                             add_special_tokens,
+                            max_input_length,
                             None,
                             default_prompt_clone,
                             prompt_name,
@@ -269,9 +272,11 @@ fn prepare_pre_prompt(
     Ok(pre_prompt)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn tokenize_input(
     inputs: EncodingInput,
     add_special_tokens: bool,
+    max_input_length: usize,
     truncate_params: Option<TruncationParams>,
     default_prompt: Option<String>,
     prompt_name: Option<String>,
@@ -279,6 +284,14 @@ fn tokenize_input(
     tokenizer: &mut Tokenizer,
 ) -> Result<(Option<String>, RawEncoding), TextEmbeddingsError> {
     let pre_prompt = prepare_pre_prompt(default_prompt, prompt_name, prompts)?;
+
+    let input_chars = inputs.count_chars();
+    let limit = max_input_length * MAX_CHAR_MULTIPLIER;
+    if input_chars > limit {
+        return Err(TextEmbeddingsError::Validation(format!(
+            "`inputs` must have less than {limit} characters. Given: {input_chars}"
+        )));
+    }
 
     let encoding = match inputs {
         // encode input
@@ -359,6 +372,7 @@ fn encode_input(
     let (_, encoding) = tokenize_input(
         inputs,
         true,
+        max_input_length,
         truncate_params,
         default_prompt,
         prompt_name,
@@ -402,6 +416,14 @@ impl EncodingInput {
             EncodingInput::Single(s) => s.is_empty(),
             EncodingInput::Dual(s1, s2) => s1.is_empty() && s2.is_empty(),
             EncodingInput::Ids(v) => v.is_empty(),
+        }
+    }
+
+    fn count_chars(&self) -> usize {
+        match self {
+            EncodingInput::Single(s) => s.chars().count(),
+            EncodingInput::Dual(s1, s2) => s1.chars().count() + s2.chars().count(),
+            EncodingInput::Ids(v) => v.len(),
         }
     }
 }
