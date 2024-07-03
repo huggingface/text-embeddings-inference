@@ -7,6 +7,7 @@ use serde::Deserialize;
 pub enum HiddenAct {
     Gelu,
     Relu,
+    #[serde(alias = "silu")]
     Swiglu,
 }
 

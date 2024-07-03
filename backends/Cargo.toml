@@ -6,12 +6,12 @@ authors.workspace = true
 homepage.workspace = true
 
 [dependencies]
-clap = { version = "4.1.4", features = ["derive"], optional = true }
+clap = { workspace = true, optional = true }
 text-embeddings-backend-core = { path = "core" }
 text-embeddings-backend-python = { path = "python", optional = true }
 text-embeddings-backend-candle = { path = "candle", optional = true }
-tokio = { version = "^1.25", features = ["sync"] }
-tracing = "^0.1"
+tokio = { workspace = true }
+tracing = { workspace = true }
 
 [features]
 clap = ["dep:clap", "text-embeddings-backend-core/clap"]

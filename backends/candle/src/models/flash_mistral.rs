@@ -1,16 +1,18 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{LayerNorm, Linear};
-use crate::models::nomic::{NomicBertEmbeddings, NomicBertGatedMLP};
-use crate::models::{Model, NomicConfig};
-use candle::{DType, Device, IndexOp, Result, Tensor, D};
-use candle_nn::VarBuilder;
+use crate::layers::{HiddenAct, Linear, RMSNorm};
+use crate::models::{MistralConfig, Model};
+use candle::{DType, Device, IndexOp, Result, Tensor};
+use candle_nn::{Embedding, Module, VarBuilder};
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
-struct NomicAttention {
+struct MistralAttention {
     qkv_linear: Linear,
-    out_proj: Linear,
+    o_proj: Linear,
+
+    window_size_left: Option<usize>,
 
     num_attention_heads: usize,
+    num_key_value_heads: usize,
     attention_head_size: usize,
 
     softmax_scale: f32,
@@ -18,29 +20,41 @@ struct NomicAttention {
     span: tracing::Span,
 }
 
-impl NomicAttention {
-    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
-        let num_attention_heads = config.n_head;
-        let attention_head_size = config.n_embd / config.n_head;
-        let hidden_size = config.n_embd;
+impl MistralAttention {
+    pub fn load(vb: VarBuilder, config: &MistralConfig) -> Result<Self> {
+        let window_size_left = config.sliding_window;
+        let num_attention_heads = config.num_attention_heads;
+        let attention_head_size = config.hidden_size / config.num_attention_heads;
+        let num_key_value_heads = config.num_key_value_heads;
+        let hidden_size = config.hidden_size;
 
-        let qkv_weight = vb.pp("Wqkv").get(
-            (3 * num_attention_heads * attention_head_size, hidden_size),
+        let query_weight = vb.pp("q_proj").get((hidden_size, hidden_size), "weight")?;
+
+        let key_weight = vb.pp("k_proj").get(
+            (num_key_value_heads * attention_head_size, hidden_size),
             "weight",
         )?;
+
+        let value_weight = vb.pp("v_proj").get(
+            (num_key_value_heads * attention_head_size, hidden_size),
+            "weight",
+        )?;
+
+        let qkv_weight = Tensor::cat(&[&query_weight, &key_weight, &value_weight], 0)?;
         let qkv_linear = Linear::new(qkv_weight, None, None);
 
-        let out_proj_weight = vb
-            .pp("out_proj")
-            .get((hidden_size, hidden_size), "weight")?;
-        let out_proj = Linear::new(out_proj_weight, None, None);
+        let o_proj_weight = vb.pp("o_proj").get((hidden_size, hidden_size), "weight")?;
+
+        let o_proj = Linear::new(o_proj_weight, None, None);
 
         let softmax_scale = (1. / (attention_head_size as f64).sqrt()) as f32;
 
         Ok(Self {
             qkv_linear,
-            out_proj,
+            o_proj,
+            window_size_left,
             num_attention_heads,
+            num_key_value_heads,
             attention_head_size,
             softmax_scale,
             span: tracing::span!(tracing::Level::TRACE, "attention"),
@@ -62,57 +76,127 @@ impl NomicAttention {
         // Reshape to [tokens, heads, head_size]
         let mut new_qkv_shape = qkv.dims().to_vec();
         new_qkv_shape.pop();
-        new_qkv_shape.push(self.num_attention_heads * 3);
+        new_qkv_shape.push(self.num_attention_heads + 2 * self.num_key_value_heads);
         new_qkv_shape.push(self.attention_head_size);
 
-        let qkv = qkv.reshape(new_qkv_shape.as_slice())?;
-        let qkv = qkv.chunk(3, 1)?;
+        let qkv = qkv.reshape(new_qkv_shape)?;
 
-        candle_rotary::apply_rotary_inplace(&qkv[0], &qkv[1], &cos, &sin, true)?;
+        // Split qkv tensor
+        let q = qkv.narrow(1, 0, self.num_attention_heads)?;
+        let k = qkv.narrow(1, self.num_attention_heads, self.num_key_value_heads)?;
+        let v = qkv.narrow(
+            1,
+            self.num_attention_heads + self.num_key_value_heads,
+            self.num_key_value_heads,
+        )?;
+
+        candle_rotary::apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
 
         let attention = flash_attn_varlen(
-            &qkv[0],
-            &qkv[1],
-            &qkv[2],
+            &q,
+            &k,
+            &v,
             None,
             cu_seqlens,
             cu_seqlens,
             max_s,
             max_s,
             self.softmax_scale,
-            false,
-            None,
+            true,
+            self.window_size_left,
         )?;
-        let attention = attention.flatten_from(D::Minus2)?;
+        let attention = attention.flatten_from(candle::D::Minus2)?;
 
-        self.out_proj.forward(&attention)
+        self.o_proj.forward(&attention)
     }
 }
 
-struct NomicBertBlock {
-    attention: NomicAttention,
-    mlp: NomicBertGatedMLP,
-    post_attention_layer_norm: LayerNorm,
-    output_layer_norm: LayerNorm,
+struct MistralMLP {
+    gate_up_proj: Linear,
+    down_proj: Linear,
+
+    act: HiddenAct,
+    intermediate_size: usize,
 
     span: tracing::Span,
 }
 
-impl NomicBertBlock {
-    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
-        let attention = NomicAttention::load(vb.pp("attn"), config)?;
-        let mlp = NomicBertGatedMLP::load(vb.pp("mlp"), config)?;
+impl MistralMLP {
+    pub fn load(vb: VarBuilder, config: &MistralConfig) -> Result<Self> {
+        let intermediate_size = config.intermediate_size;
 
-        let post_attention_layer_norm =
-            LayerNorm::load(vb.pp("norm1"), config.n_embd, config.layer_norm_epsilon)?;
-        let output_layer_norm =
-            LayerNorm::load(vb.pp("norm2"), config.n_embd, config.layer_norm_epsilon)?;
+        let gate_proj_weight = vb
+            .pp("gate_proj")
+            .get((intermediate_size, config.hidden_size), "weight")?;
+
+        let up_proj_weight = vb
+            .pp("up_proj")
+            .get((intermediate_size, config.hidden_size), "weight")?;
+
+        let gate_up_proj_weight = Tensor::cat(&[&gate_proj_weight, &up_proj_weight], 0)?;
+        let gate_up_proj = Linear::new(gate_up_proj_weight, None, None);
+
+        let down_proj_weight = vb
+            .pp("down_proj")
+            .get((config.hidden_size, intermediate_size), "weight")?;
+        let down_proj = Linear::new(down_proj_weight, None, None);
+
+        Ok(Self {
+            gate_up_proj,
+            down_proj,
+            intermediate_size,
+            act: config.hidden_act.clone(),
+            span: tracing::span!(tracing::Level::TRACE, "mlp"),
+        })
+    }
+
+    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let gate_up_states = self.gate_up_proj.forward(hidden_states)?;
+        let gate_states = gate_up_states.narrow(1, 0, self.intermediate_size)?;
+        let up_states = gate_up_states.narrow(1, self.intermediate_size, self.intermediate_size)?;
+
+        let gate_states = match self.act {
+            HiddenAct::Gelu => gate_states.gelu(),
+            HiddenAct::Relu => gate_states.relu(),
+            HiddenAct::Swiglu => gate_states.silu(),
+        }?;
+        let r = self.down_proj.forward(&(gate_states * up_states)?);
+        r
+    }
+}
+
+struct MistralLayer {
+    attention: MistralAttention,
+    mlp: MistralMLP,
+    input_layer_norm: RMSNorm,
+    post_attention_layer_norm: RMSNorm,
+
+    span: tracing::Span,
+}
+
+impl MistralLayer {
+    pub fn load(vb: VarBuilder, config: &MistralConfig) -> Result<Self> {
+        let attention = MistralAttention::load(vb.pp("self_attn"), config)?;
+        let mlp = MistralMLP::load(vb.pp("mlp"), config)?;
+
+        let input_layer_norm = RMSNorm::load(
+            vb.pp("input_layernorm"),
+            config.hidden_size,
+            config.rms_norm_eps,
+        )?;
+        let post_attention_layer_norm = RMSNorm::load(
+            vb.pp("post_attention_layernorm"),
+            config.hidden_size,
+            config.rms_norm_eps,
+        )?;
 
         Ok(Self {
             attention,
             mlp,
+            input_layer_norm,
             post_attention_layer_norm,
-            output_layer_norm,
             span: tracing::span!(tracing::Level::TRACE, "layer"),
         })
     }
@@ -120,133 +204,84 @@ impl NomicBertBlock {
     pub fn forward(
         &self,
         hidden_states: &Tensor,
+        residual: Option<&Tensor>,
         cu_seqlens: &Tensor,
         cos: &Tensor,
         sin: &Tensor,
         max_s: usize,
-    ) -> Result<Tensor> {
+    ) -> Result<(Tensor, Tensor)> {
         let _enter = self.span.enter();
 
-        let attn_output = self
-            .attention
-            .forward(&hidden_states, cu_seqlens, cos, sin, max_s)?;
-        let hidden_states = self
+        let (normed_hidden_states, res) = self.input_layer_norm.forward(hidden_states, residual)?;
+        let attn_output =
+            self.attention
+                .forward(&normed_hidden_states, cu_seqlens, cos, sin, max_s)?;
+        let (normed_attn_res_output, attn_res) = self
             .post_attention_layer_norm
-            .forward(&hidden_states, Some(&attn_output))?;
+            .forward(&attn_output, Some(&res))?;
+        let mlp_output = self.mlp.forward(&normed_attn_res_output)?;
 
-        let mlp_out = self.mlp.forward(&hidden_states)?;
-
-        self.output_layer_norm
-            .forward(&hidden_states, Some(&mlp_out))
+        Ok((mlp_output, attn_res))
     }
 }
 
-struct NomicBertEncoder {
-    layers: Vec<NomicBertBlock>,
-    span: tracing::Span,
-}
-
-impl NomicBertEncoder {
-    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
-        let layers = (0..config.n_layer)
-            .map(|index| NomicBertBlock::load(vb.pp(format!("layers.{index}")), config))
-            .collect::<Result<Vec<_>>>()?;
-
-        let span = tracing::span!(tracing::Level::TRACE, "encoder");
-        Ok(NomicBertEncoder { layers, span })
-    }
-
-    fn forward(
-        &self,
-        hidden_states: &Tensor,
-        cu_seqlens: &Tensor,
-        cos: &Tensor,
-        sin: &Tensor,
-        max_s: usize,
-    ) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let mut hidden_states = hidden_states.clone();
-
-        // Use a loop rather than a fold as it's easier to modify when adding debug/...
-        for layer in self.layers.iter() {
-            hidden_states = layer.forward(&hidden_states, cu_seqlens, cos, sin, max_s)?
-        }
-
-        Ok(hidden_states)
-    }
-}
-
-pub struct FlashNomicBertModel {
-    embeddings: NomicBertEmbeddings,
-    encoder: NomicBertEncoder,
+pub struct FlashMistralModel {
+    embeddings: Embedding,
+    layers: Vec<MistralLayer>,
+    norm: RMSNorm,
+    cos_cache: Tensor,
+    sin_cache: Tensor,
     pool: Pool,
     pub device: Device,
 
-    max_trained_positions: u32,
-    rotary_cache: (Tensor, Tensor),
-    scaled_rotary_cache: Option<(Tensor, Tensor)>,
-
     span: tracing::Span,
 }
 
-impl FlashNomicBertModel {
-    pub fn load(vb: VarBuilder, config: &NomicConfig, model_type: ModelType) -> Result<Self> {
-        if !config.valid() {
-            candle::bail!("config is not supported")
-        }
-
+impl FlashMistralModel {
+    pub fn load(vb: VarBuilder, config: &MistralConfig, model_type: ModelType) -> Result<Self> {
         match vb.device() {
             Device::Cuda(_) => {}
-            _ => candle::bail!("FlashNomicBertModel requires Cuda"),
+            _ => candle::bail!("FlashMistral requires Cuda"),
         }
 
         if vb.dtype() != DType::F16 {
-            candle::bail!("FlashNomicBertModel requires DType::F16")
+            candle::bail!("FlashMistral requires DType::F16")
         }
 
         let pool = match model_type {
             ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for Nomic")
+                candle::bail!("`classifier` model type is not supported for Mistral")
             }
-            ModelType::Embedding(pool) => {
-                if pool == Pool::Splade {
-                    candle::bail!("`splade` is not supported for Nomic")
-                }
-                pool
-            }
+            ModelType::Embedding(pool) => pool,
         };
 
-        let embeddings = NomicBertEmbeddings::load(vb.clone(), config)?;
-        let encoder = NomicBertEncoder::load(vb.pp("encoder"), config)?;
+        let embeddings = Embedding::new(
+            vb.pp("embed_tokens")
+                .get((config.vocab_size, config.hidden_size), "weight")?,
+            config.hidden_size,
+        );
 
-        let rotary_dim = encoder.layers[0].attention.attention_head_size;
-        let inv_freqs = candle_rotary::inv_freqs(rotary_dim, config.rotary_emb_base, vb.device())?;
-        let rotary_cache = candle_rotary::cos_sin(config.n_positions, &inv_freqs, vb.dtype())?;
+        let layers = (0..config.num_hidden_layers)
+            .map(|index| MistralLayer::load(vb.pp(format!("layers.{index}")), config))
+            .collect::<Result<Vec<_>>>()?;
 
-        let scaled_rotary_cache = if let Some(scaling_factor) = config.rotary_scaling_factor {
-            let new_base = (config.rotary_emb_base
-                * ((scaling_factor * config.n_positions as f32
-                    / config.max_trained_positions as f32)
-                    - (scaling_factor - 1.0)))
-                .powi((rotary_dim as f32 / (rotary_dim as f32 - 2.0)) as i32);
-            let inv_freqs = candle_rotary::inv_freqs(rotary_dim, new_base, vb.device())?;
-            Some(candle_rotary::cos_sin(
-                config.n_positions,
-                &inv_freqs,
-                vb.dtype(),
-            )?)
-        } else {
-            None
-        };
+        let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
+
+        let inv_freqs = candle_rotary::inv_freqs(
+            layers[0].attention.attention_head_size,
+            config.rope_theta,
+            vb.device(),
+        )?;
+        let (cos_cache, sin_cache) =
+            candle_rotary::cos_sin(config.max_position_embeddings, &inv_freqs, vb.dtype())?;
 
         Ok(Self {
             embeddings,
-            encoder,
+            layers,
+            norm,
+            cos_cache,
+            sin_cache,
             pool,
-            max_trained_positions: config.max_trained_positions as u32,
-            rotary_cache,
-            scaled_rotary_cache,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
@@ -255,12 +290,11 @@ impl FlashNomicBertModel {
     pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         let _enter = self.span.enter();
 
-        let batch_size = batch.len();
+        let batch_size = batch.cumulative_seq_lengths.len() - 1;
         let shape = batch.input_ids.len();
 
         // Create Cuda tensors
         let input_ids = Tensor::from_vec(batch.input_ids, shape, &self.device)?;
-        let type_ids = Tensor::from_vec(batch.token_type_ids, shape, &self.device)?;
         let position_ids = Tensor::from_vec(batch.position_ids, shape, &self.device)?;
         let cu_seqlens = Tensor::from_vec(
             batch.cumulative_seq_lengths.clone(),
@@ -268,37 +302,26 @@ impl FlashNomicBertModel {
             &self.device,
         )?;
 
-        let (cos, sin) = if self.scaled_rotary_cache.is_some()
-            && batch.max_length > self.max_trained_positions
-        {
-            let cos = self
-                .scaled_rotary_cache
-                .as_ref()
-                .unwrap()
-                .0
-                .index_select(&position_ids, 0)?;
-            let sin = self
-                .scaled_rotary_cache
-                .as_ref()
-                .unwrap()
-                .1
-                .index_select(&position_ids, 0)?;
-            (cos, sin)
-        } else {
-            let cos = self.rotary_cache.0.index_select(&position_ids, 0)?;
-            let sin = self.rotary_cache.1.index_select(&position_ids, 0)?;
-            (cos, sin)
-        };
+        let mut hidden_states = self.embeddings.forward(&input_ids)?;
 
-        let embedding_output = self.embeddings.forward(&input_ids, &type_ids)?;
+        let cos = self.cos_cache.index_select(&position_ids, 0)?;
+        let sin = self.sin_cache.index_select(&position_ids, 0)?;
 
-        let outputs = self.encoder.forward(
-            &embedding_output,
-            &cu_seqlens,
-            &cos,
-            &sin,
-            batch.max_length as usize,
-        )?;
+        let mut residual = None;
+        for layer in &self.layers {
+            let (h, r) = layer.forward(
+                &hidden_states,
+                residual.as_ref(),
+                &cu_seqlens,
+                &cos,
+                &sin,
+                batch.max_length as usize,
+            )?;
+            hidden_states = h;
+            residual = Some(r);
+        }
+
+        let (outputs, _) = self.norm.forward(&hidden_states, residual.as_ref())?;
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();
@@ -412,7 +435,7 @@ impl FlashNomicBertModel {
     }
 }
 
-impl Model for FlashNomicBertModel {
+impl Model for FlashMistralModel {
     fn is_padded(&self) -> bool {
         false
     }

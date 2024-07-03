@@ -24,10 +24,10 @@ Once you have confirmed that you have access to the model:
 - Navigate to your account's [Profile | Settings | Access Tokens page](https://huggingface.co/settings/tokens).
 - Generate and copy a read token.
 
-If you're the CLI, set the `HUGGING_FACE_HUB_TOKEN` environment variable. For example:
+If you're the CLI, set the `HF_API_TOKEN` environment variable. For example:
 
 ```shell
-export HUGGING_FACE_HUB_TOKEN=<YOUR READ TOKEN>
+export HF_API_TOKEN=<YOUR READ TOKEN>
 ```
 
 Alternatively, you can provide the token when deploying the model with Docker:
@@ -37,5 +37,5 @@ model=<your private model>
 volume=$PWD/data
 token=<your cli Hugging Face Hub token>
 
-docker run --gpus all -e HUGGING_FACE_HUB_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2 --model-id $model
+docker run --gpus all -e HF_API_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.4 --model-id $model
 ```

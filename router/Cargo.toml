@@ -15,38 +15,38 @@ name = "text-embeddings-router"
 path = "src/main.rs"
 
 [dependencies]
-anyhow = "1.0.71"
+anyhow = { workspace = true }
 text-embeddings-backend = { path = "../backends", features = ["clap"] }
 text-embeddings-core = { path = "../core" }
-clap = { version = "4.1.4", features = ["derive", "env"] }
+clap = { workspace = true }
 futures = "^0.3"
-init-tracing-opentelemetry = { version = "0.14.1", features = ["opentelemetry-otlp"] }
-hf-hub = { version = "0.3.0", features = ["tokio"] }
+init-tracing-opentelemetry = { version = "0.18.1", features = ["opentelemetry-otlp"] }
+hf-hub = { workspace = true }
 http = "1.0.0"
 num_cpus = "1.16.0"
-metrics = "0.21.0"
-metrics-exporter-prometheus = { version = "0.12.1", features = [] }
-opentelemetry = { version = "0.20.0", features = ["rt-tokio"] }
-opentelemetry-otlp = "0.13.0"
-reqwest = { version = "0.11.14", features = [] }
-serde = "1.0.152"
-serde_json = "1.0.93"
-thiserror = "1.0.38"
-tokenizers = { version = "0.19.1", default-features=false, features=["onig", "esaxx_fast"] }
-tokio = { version = "1.25.0", features = ["rt", "rt-multi-thread", "parking_lot", "signal", "sync"] }
-tracing = "0.1.37"
-tracing-opentelemetry = "0.21.0"
+metrics = { workspace = true }
+metrics-exporter-prometheus = { version = "0.15.1", features = [] }
+opentelemetry = "0.23.0"
+opentelemetry_sdk = { version = "0.23.0", features = ["rt-tokio"] }
+opentelemetry-otlp = "0.16.0"
+reqwest = { version = "0.12.5", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokenizers = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-opentelemetry = "0.24.0"
 tracing-subscriber = { version = "0.3.16", features = ["json", "env-filter"] }
 veil = "0.1.6"
-mimalloc = { version = "*", default-features = false }
 
 # HTTP dependencies
 axum = { version = "0.7.4", features = ["json"], optional = true }
-axum-tracing-opentelemetry = { version = "0.17.0", optional = true }
-base64 = { version = "0.21.4", optional = true }
+axum-tracing-opentelemetry = { version = "0.18.1", optional = true }
+base64 = { version = "0.22.1", optional = true }
 tower-http = { version = "0.5.1", features = ["cors"], optional = true }
 utoipa = { version = "4.2", features = ["axum_extras"], optional = true }
-utoipa-swagger-ui = { version = "6.0", features = ["axum"], optional = true }
+utoipa-swagger-ui = { version = "7.1", features = ["axum"], optional = true }
 
 # gRPC dependencies
 async-stream = { version = "0.3.5", optional = true }
@@ -56,14 +56,21 @@ tonic-health = { version = "0.11.0", optional = true }
 tonic-reflection = { version = "0.11.0", optional = true }
 tokio-stream = { version = "0.1.14", optional = true }
 
+# Malloc trim hack for linux
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2.149"
+# else use mimalloc
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+mimalloc = { version = "*", features = ["no_thp"] }
+
 [dev-dependencies]
 insta = { git = "https://github.com/OlivierDehaene/insta", rev = "f4f98c0410b91fb5a28b10df98e4422955be9c2c", features = ["yaml"] }
 is_close = "0.1.3"
-reqwest = { version = "0.11.22", features = ["json"] }
+reqwest = { version = "0.12.5", features = ["json"] }
 
 [build-dependencies]
 vergen = { version = "8.0.0", features = ["build", "git", "gitcl"] }
-tonic-build = { version = "0.10.2", optional = true }
+tonic-build = { version = "0.11.0", optional = true }
 
 [features]
 default = ["candle", "http"]

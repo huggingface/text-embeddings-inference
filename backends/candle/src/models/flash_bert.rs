@@ -5,7 +5,7 @@ use crate::models::bert::{
     PositionEmbeddingType, RobertaClassificationHead,
 };
 use crate::models::Model;
-use candle::{DType, Device, Result, Tensor};
+use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::VarBuilder;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
@@ -103,6 +103,7 @@ impl BertAttention {
             max_s,
             self.softmax_scale,
             false,
+            None,
         )?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
@@ -393,27 +394,47 @@ impl FlashBertModel {
 
         let pooled_embeddings = if has_pooling_requests {
             match self.pool {
-                // CLS pooling
-                Pool::Cls => {
-                    // Get the indices of the cls tokens from cu_seqlens
-                    let mut cls_indices = cu_seqlens.narrow(0, 0, batch_size)?;
+                // CLS and LastToken pooling
+                Pool::Cls | Pool::LastToken => {
+                    if batch_size > 1 {
+                        // Get token indices form cu_seqlens
+                        let mut indices = match self.pool {
+                            Pool::Cls => cu_seqlens.narrow(0, 0, batch_size)?,
+                            Pool::LastToken => {
+                                let end = cu_seqlens.narrow(0, 1, batch_size)?;
+                                (&end - &end.ones_like()?)?
+                            }
+                            _ => unreachable!(),
+                        };
 
-                    // If raw_indices is empty, we don't need to do anything with
-                    // the pooled_indices
-                    if has_raw_requests {
-                        // We need the pooled indices to select the correct cls indices
-                        let pooled_indices = Tensor::from_vec(
-                            batch.pooled_indices.clone(),
-                            batch.pooled_indices.len(),
-                            &self.device,
-                        )?;
+                        // If raw_indices is empty, we don't need to do anything with
+                        // the pooled_indices
+                        if has_raw_requests {
+                            // We need the pooled indices to select the correct cls indices
+                            let pooled_indices = Tensor::from_vec(
+                                batch.pooled_indices.clone(),
+                                batch.pooled_indices.len(),
+                                &self.device,
+                            )?;
 
-                        // Only select indices that requires pooling
-                        cls_indices = cls_indices.index_select(&pooled_indices, 0)?
+                            // Only select indices that requires pooling
+                            indices = indices.index_select(&pooled_indices, 0)?
+                        }
+
+                        // Select tokens
+                        Some(outputs.index_select(&indices, 0)?)
+                    } else {
+                        Some(
+                            match self.pool {
+                                Pool::Cls => outputs.i(0)?,
+                                Pool::LastToken => {
+                                    outputs.i(batch.cumulative_seq_lengths[1] as usize - 1)?
+                                }
+                                _ => unreachable!(),
+                            }
+                            .unsqueeze(0)?,
+                        )
                     }
-
-                    // Select cls tokens
-                    Some(outputs.index_select(&cls_indices, 0)?)
                 }
                 // Mean pooling
                 Pool::Mean => {

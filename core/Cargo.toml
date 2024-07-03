@@ -6,10 +6,12 @@ authors.workspace = true
 homepage.workspace = true
 
 [dependencies]
-hf-hub = { version = "^0.3.0", features = ["tokio"], default-features = false }
-metrics = "^0.21"
+async-channel = "^2.3"
+hf-hub = { workspace = true }
+metrics = { workspace = true }
+serde_json = { workspace = true }
 text-embeddings-backend = { path = "../backends" }
-thiserror = "^1.0"
-tokenizers = { version = "^0.19.1", default-features = false, features = ["onig", "esaxx_fast"] }
-tracing = "^0.1"
-tokio = { version = "^1.25", features = ["rt", "rt-multi-thread", "parking_lot", "sync"] }
+thiserror = { workspace = true }
+tokenizers = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }

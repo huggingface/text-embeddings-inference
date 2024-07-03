@@ -352,15 +352,19 @@ impl JinaCodeBertModel {
                 vb.dtype(),
             )?),
             PositionEmbeddingType::Absolute => None,
+            _ => candle::bail!("not supported"),
         };
 
         let pool = match model_type {
             ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for Jina")
+                candle::bail!("`classifier` model type is not supported for JinaCode")
             }
             ModelType::Embedding(pool) => {
                 if pool == Pool::Splade {
-                    candle::bail!("`splade` is not supported for Jina")
+                    candle::bail!("`splade` is not supported for JinaCode")
+                }
+                if pool == Pool::LastToken {
+                    candle::bail!("`last_token` is not supported for JinaCode");
                 }
                 pool
             }
@@ -583,6 +587,8 @@ impl JinaCodeBertModel {
             let pooled_embeddings = match self.pool {
                 // CLS pooling
                 Pool::Cls => outputs.i((.., 0))?,
+                // Last token pooling is not supported for this model
+                Pool::LastToken => unreachable!(),
                 // Mean pooling
                 Pool::Mean => {
                     if let Some(ref attention_mask) = attention_mask {

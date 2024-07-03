@@ -2,7 +2,7 @@ import {check} from 'k6';
 import grpc from 'k6/experimental/grpc';
 import {Trend} from 'k6/metrics';
 
-const host = __ENV.HOST || '127.0.0.1:8080';
+const host = __ENV.HOST || '127.0.0.1:3000';
 
 const totalTime = new Trend('total_time', true);
 const tokenizationTIme = new Trend('tokenization_time', true);
@@ -25,7 +25,7 @@ export const options = {
         // },
         load_test: {
             executor: 'constant-arrival-rate',
-            duration: '30s',
+            duration: '5m',
             preAllocatedVUs: 5000,
             rate: 1000,
             timeUnit: '1s',

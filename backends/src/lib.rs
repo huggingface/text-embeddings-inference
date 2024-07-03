@@ -1,5 +1,6 @@
 mod dtype;
 
+use std::cmp::{max, min};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -22,7 +23,7 @@ use text_embeddings_backend_python::PythonBackend;
 #[derive(Debug, Clone)]
 pub struct Backend {
     /// Channel to communicate with the background thread
-    backend_sender: mpsc::UnboundedSender<BackendCommand>,
+    backend_sender: mpsc::Sender<BackendCommand>,
     /// Health status
     health_receiver: watch::Receiver<bool>,
     _backend_thread: Arc<BackendThread>,
@@ -40,7 +41,7 @@ impl Backend {
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
     ) -> Result<Self, BackendError> {
-        let (backend_sender, backend_receiver) = mpsc::unbounded_channel();
+        let (backend_sender, backend_receiver) = mpsc::channel(8);
 
         let backend = init_backend(
             model_path,
@@ -68,6 +69,62 @@ impl Backend {
     }
 
     #[instrument(skip(self))]
+    pub async fn warmup(
+        &self,
+        max_input_length: usize,
+        max_batch_tokens: usize,
+        max_batch_requests: Option<usize>,
+    ) -> Result<(), BackendError> {
+        let mut input_ids = Vec::with_capacity(max_batch_tokens);
+        let mut token_type_ids = Vec::with_capacity(max_batch_tokens);
+        let mut position_ids = Vec::with_capacity(max_batch_tokens);
+
+        let mut cumulative_seq_lengths = vec![0];
+        let mut pooled_indices = Vec::new();
+
+        let mut i = 0_u32;
+        let mut remaining = max_batch_tokens;
+        let mut cumulative_length = 0;
+        let mut max_length = 0;
+
+        while remaining > 0 {
+            let request_length = min(remaining, max_input_length);
+            cumulative_length += request_length;
+            max_length = max(max_length, request_length as u32);
+
+            input_ids.extend(vec![0; request_length]);
+            token_type_ids.extend(vec![0; request_length]);
+            position_ids.extend((0..request_length as u32).collect::<Vec<u32>>());
+
+            cumulative_seq_lengths.push(cumulative_length as u32);
+            pooled_indices.push(i);
+
+            i += 1;
+            remaining = remaining.saturating_sub(max_input_length);
+            if let Some(max_batch_requests) = &max_batch_requests {
+                if i as usize == *max_batch_requests {
+                    break;
+                }
+            }
+        }
+
+        let batch = Batch {
+            input_ids,
+            token_type_ids,
+            position_ids,
+            cumulative_seq_lengths,
+            max_length,
+            pooled_indices,
+            raw_indices: vec![],
+        };
+
+        match &self.model_type {
+            ModelType::Classifier => self.predict(batch).await.map(|_| ()),
+            ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+        }
+    }
+
+    #[instrument(skip(self))]
     pub async fn health(&self) -> Result<(), BackendError> {
         if *self.health_receiver.borrow() {
             // The backend is healthy. Only do a basic health check by calling the
@@ -76,6 +133,7 @@ impl Backend {
             let (sender, receiver) = oneshot::channel();
             self.backend_sender
                 .send(BackendCommand::Health(Span::current(), sender))
+                .await
                 .expect("No backend receiver. This is a bug.");
             receiver.await.expect(
                 "Backend blocking task dropped the sender without sending a response. This is a bug.",
@@ -110,7 +168,7 @@ impl Backend {
         let (sender, receiver) = oneshot::channel();
 
         self.backend_sender
-            .send(BackendCommand::Embed(batch, Span::current(), sender))
+            .try_send(BackendCommand::Embed(batch, Span::current(), sender))
             .expect("No backend receiver. This is a bug.");
         receiver.await.expect(
             "Backend blocking task dropped the sender without send a response. This is a bug.",
@@ -122,7 +180,7 @@ impl Backend {
         let (sender, receiver) = oneshot::channel();
 
         self.backend_sender
-            .send(BackendCommand::Predict(batch, Span::current(), sender))
+            .try_send(BackendCommand::Predict(batch, Span::current(), sender))
             .expect("No backend receiver. This is a bug.");
         receiver.await.expect(
             "Backend blocking task dropped the sender without send a response. This is a bug.",
@@ -174,7 +232,7 @@ struct BackendThread(Option<JoinHandle<()>>);
 impl BackendThread {
     fn new(
         backend: Box<dyn CoreBackend + Send>,
-        mut backend_receiver: mpsc::UnboundedReceiver<BackendCommand>,
+        mut backend_receiver: mpsc::Receiver<BackendCommand>,
         health_sender: watch::Sender<bool>,
     ) -> Self {
         let handle = std::thread::spawn(move || {

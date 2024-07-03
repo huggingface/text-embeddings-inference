@@ -8,6 +8,7 @@ mod bert;
 mod distilbert;
 mod jina;
 mod jina_code;
+mod mistral;
 mod nomic;
 
 #[cfg(feature = "cuda")]
@@ -25,12 +26,26 @@ mod flash_nomic;
 #[cfg(feature = "cuda")]
 mod flash_distilbert;
 
+#[cfg(feature = "cuda")]
+mod flash_gte;
+#[cfg(feature = "cuda")]
+mod flash_mistral;
+
+#[cfg(feature = "cuda")]
+mod flash_qwen2;
+mod gte;
+mod qwen2;
+
 pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
 use candle::{Result, Tensor};
 pub use distilbert::{DistilBertConfig, DistilBertModel};
+#[allow(unused_imports)]
+pub use gte::{GTEConfig, NTKScaling, RopeScaling};
 pub use jina::JinaBertModel;
 pub use jina_code::JinaCodeBertModel;
+pub use mistral::MistralConfig;
 pub use nomic::{NomicBertModel, NomicConfig};
+pub use qwen2::Qwen2Config;
 use text_embeddings_backend_core::Batch;
 
 #[cfg(feature = "cuda")]
@@ -47,6 +62,15 @@ pub use flash_nomic::FlashNomicBertModel;
 
 #[cfg(feature = "cuda")]
 pub use flash_distilbert::FlashDistilBertModel;
+
+#[cfg(feature = "cuda")]
+pub use flash_mistral::FlashMistralModel;
+
+#[cfg(feature = "cuda")]
+pub use flash_gte::FlashGTEModel;
+
+#[cfg(feature = "cuda")]
+pub use flash_qwen2::FlashQwen2Model;
 
 pub(crate) trait Model {
     fn is_padded(&self) -> bool;

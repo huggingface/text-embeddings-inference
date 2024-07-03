@@ -405,6 +405,9 @@ impl NomicBertModel {
                 if pool == Pool::Splade {
                     candle::bail!("`splade` is not supported for Nomic")
                 }
+                if pool == Pool::LastToken {
+                    candle::bail!("`last_token` is not supported for Nomic");
+                }
                 pool
             }
         };
@@ -610,6 +613,8 @@ impl NomicBertModel {
             let pooled_embeddings = match self.pool {
                 // CLS pooling
                 Pool::Cls => outputs.i((.., 0))?,
+                // Last token pooling is not supported for this model
+                Pool::LastToken => unreachable!(),
                 // Mean pooling
                 Pool::Mean => {
                     if let Some(ref attention_mask) = attention_mask {
