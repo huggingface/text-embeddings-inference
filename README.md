@@ -33,6 +33,7 @@ length of 512 tokens:
     - [Docker Images](#docker-images)
     - [API Documentation](#api-documentation)
     - [Using a private or gated model](#using-a-private-or-gated-model)
+    - [Air gapped deployment](#air-gapped-deployment)
     - [Using Re-rankers models](#using-re-rankers-models)
     - [Using Sequence Classification models](#using-sequence-classification-models)
     - [Using SPLADE pooling](#using-splade-pooling)
@@ -100,11 +101,10 @@ Below are some examples of the currently supported models:
 ### Docker
 
 ```shell
-model=BAAI/bge-large-en-v1.5
-revision=refs/pr/5
+model=Alibaba-NLP/gte-base-en-v1.5
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.4 --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.4 --model-id $model
 ```
 
 And then you can make requests like
@@ -347,6 +347,29 @@ token=<your cli READ token>
 docker run --gpus all -e HF_API_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.4 --model-id $model
 ```
 
+### Air gapped deployment
+
+To deploy Text Embeddings Inference in an air-gapped environment, first download the weights and then mount them inside
+the container using a volume.
+
+For example:
+
+```shell
+# (Optional) create a `models` directory
+mkdir models
+cd models
+
+# Make sure you have git-lfs installed (https://git-lfs.com)
+git lfs install
+git clone https://huggingface.co/Alibaba-NLP/gte-base-en-v1.5
+
+# Set the models directory as the volume path
+volume=$PWD
+
+# Mount the models directory inside the container with a volume and set the model ID
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.4 --model-id /data/gte-base-en-v1.5
+```
+
 ### Using Re-rankers models
 
 `text-embeddings-inference` v0.4.0 added support for CamemBERT, RoBERTa and XLM-RoBERTa Sequence Classification models.
@@ -428,11 +451,10 @@ found [here](https://github.com/huggingface/text-embeddings-inference/blob/main/
 You can use the gRPC API by adding the `-grpc` tag to any TEI Docker image. For example:
 
 ```shell
-model=BAAI/bge-large-en-v1.5
-revision=refs/pr/5
+model=Alibaba-NLP/gte-base-en-v1.5
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.4-grpc --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.4-grpc --model-id $model
 ```
 
 ```shell
@@ -463,10 +485,9 @@ cargo install --path router -F metal
 You can now launch Text Embeddings Inference on CPU with:
 
 ```shell
-model=BAAI/bge-large-en-v1.5
-revision=refs/pr/5
+model=Alibaba-NLP/gte-base-en-v1.5
 
-text-embeddings-router --model-id $model --revision $revision --port 8080
+text-embeddings-router --model-id $model --port 8080
 ```
 
 **Note:** on some machines, you may also need the OpenSSL libraries and gcc. On Linux machines, run:
@@ -502,10 +523,9 @@ cargo install --path router -F candle-cuda -F http --no-default-features
 You can now launch Text Embeddings Inference on GPU with:
 
 ```shell
-model=BAAI/bge-large-en-v1.5
-revision=refs/pr/5
+model=Alibaba-NLP/gte-base-en-v1.5
 
-text-embeddings-router --model-id $model --revision $revision --port 8080
+text-embeddings-router --model-id $model --port 8080
 ```
 
 ## Docker build

@@ -121,3 +121,26 @@ curl 127.0.0.1:8080/predict \
     -d '{"inputs":[["I like you."], ["I hate pineapples"]]}' \
     -H 'Content-Type: application/json'
 ```
+
+## Air gapped deployment
+
+To deploy Text Embeddings Inference in an air-gapped environment, first download the weights and then mount them inside
+the container using a volume.
+
+For example:
+
+```shell
+# (Optional) create a `models` directory
+mkdir models
+cd models
+
+# Make sure you have git-lfs installed (https://git-lfs.com)
+git lfs install
+git clone https://huggingface.co/Alibaba-NLP/gte-base-en-v1.5
+
+# Set the models directory as the volume path
+volume=$PWD
+
+# Mount the models directory inside the container with a volume and set the model ID
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.4 --model-id /data/gte-base-en-v1.5
+```
