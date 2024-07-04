@@ -31,15 +31,13 @@ Finally, deploy your model. Let's say you want to use `BAAI/bge-large-en-v1.5`. 
 
 ```shell
 model=BAAI/bge-large-en-v1.5
-revision=refs/pr/5
 volume=$PWD/data
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.4 --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.4 --model-id $model
 ```
 
 <Tip>
 
-Here we pass a `revision=refs/pr/5` because the `safetensors` variant of this model is currently in a pull request.
 We also recommend sharing a volume with the Docker container (`volume=$PWD/data`) to avoid downloading weights every run.
 
 </Tip>
@@ -66,10 +64,9 @@ Let's say you want to use `BAAI/bge-reranker-large`:
 
 ```shell
 model=BAAI/bge-reranker-large
-revision=refs/pr/4
 volume=$PWD/data
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.4 --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.4 --model-id $model
 ```
 
 Once you have deployed a model, you can use the `rerank` endpoint to rank the similarity between a query and a list

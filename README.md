@@ -92,16 +92,16 @@ Text Embeddings Inference currently supports CamemBERT, and XLM-RoBERTa Sequence
 
 Below are some examples of the currently supported models:
 
-| Task               | Model Type  | Model ID                                                                                    | Revision    |
-|--------------------|-------------|---------------------------------------------------------------------------------------------|-------------|
-| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-large](https://huggingface.co/BAAI/bge-reranker-large)                   | `refs/pr/4` |
-| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)                     | `refs/pr/5` |
-| Sentiment Analysis | RoBERTa     | [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions) |             |
+| Task               | Model Type  | Model ID                                                                                    |
+|--------------------|-------------|---------------------------------------------------------------------------------------------|
+| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-large](https://huggingface.co/BAAI/bge-reranker-large)                   |
+| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)                     |
+| Sentiment Analysis | RoBERTa     | [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions) |
 
 ### Docker
 
 ```shell
-model=Alibaba-NLP/gte-base-en-v1.5
+model=BAAI/bge-large-en-v1.5
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
 docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.4 --model-id $model
@@ -382,10 +382,9 @@ downstream performance.
 
 ```shell
 model=BAAI/bge-reranker-large
-revision=refs/pr/4
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.4 --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.4 --model-id $model
 ```
 
 And then you can rank the similarity between a query and a list of texts with:
@@ -451,7 +450,7 @@ found [here](https://github.com/huggingface/text-embeddings-inference/blob/main/
 You can use the gRPC API by adding the `-grpc` tag to any TEI Docker image. For example:
 
 ```shell
-model=Alibaba-NLP/gte-base-en-v1.5
+model=BAAI/bge-large-en-v1.5
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
 docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.4-grpc --model-id $model
@@ -485,7 +484,7 @@ cargo install --path router -F metal
 You can now launch Text Embeddings Inference on CPU with:
 
 ```shell
-model=Alibaba-NLP/gte-base-en-v1.5
+model=BAAI/bge-large-en-v1.5
 
 text-embeddings-router --model-id $model --port 8080
 ```
@@ -523,7 +522,7 @@ cargo install --path router -F candle-cuda -F http --no-default-features
 You can now launch Text Embeddings Inference on GPU with:
 
 ```shell
-model=Alibaba-NLP/gte-base-en-v1.5
+model=BAAI/bge-large-en-v1.5
 
 text-embeddings-router --model-id $model --port 8080
 ```
