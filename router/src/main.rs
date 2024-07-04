@@ -14,10 +14,10 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 struct Args {
     /// The name of the model to load.
     /// Can be a MODEL_ID as listed on <https://hf.co/models> like
-    /// `thenlper/gte-base`.
+    /// `Alibaba-NLP/gte-base-en-v1.5`.
     /// Or it can be a local directory containing the necessary files
     /// as saved by `save_pretrained(...)` methods of transformers
-    #[clap(default_value = "thenlper/gte-base", long, env)]
+    #[clap(default_value = "Alibaba-NLP/gte-base-en-v1.5", long, env)]
     #[redact(partial)]
     model_id: String,
 
