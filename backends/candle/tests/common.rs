@@ -89,20 +89,6 @@ impl From<Vec<Vec<f32>>> for SnapshotEmbeddings {
     }
 }
 
-pub fn sort_embeddings(embeddings: Embeddings) -> (Vec<Vec<f32>>, Vec<Vec<f32>>) {
-    let mut pooled_embeddings = Vec::new();
-    let mut raw_embeddings = Vec::new();
-
-    for (_, embedding) in embeddings {
-        match embedding {
-            Embedding::Pooled(e) => pooled_embeddings.push(e),
-            Embedding::All(e) => raw_embeddings.extend(e),
-        }
-    }
-
-    (pooled_embeddings, raw_embeddings)
-}
-
 pub fn download_artifacts(
     model_id: &'static str,
     revision: Option<&'static str>,
@@ -231,35 +217,4 @@ pub fn load_tokenizer(model_root: &Path) -> Result<Tokenizer> {
 
     tokenizer.with_padding(None);
     Ok(tokenizer)
-}
-
-pub fn batch(encodings: Vec<Encoding>, pooled_indices: Vec<u32>, raw_indices: Vec<u32>) -> Batch {
-    let mut input_ids = Vec::new();
-    let mut token_type_ids = Vec::new();
-    let mut position_ids = Vec::new();
-    let mut cumulative_seq_lengths = Vec::with_capacity(encodings.len() + 1);
-    cumulative_seq_lengths.push(0);
-
-    let mut max_length = 0;
-    let mut cumulative_length = 0;
-
-    for encoding in encodings.iter() {
-        let encoding_length = encoding.len() as u32;
-        input_ids.extend(encoding.get_ids().to_vec());
-        token_type_ids.extend(encoding.get_type_ids().to_vec());
-        position_ids.extend(0..encoding_length);
-        cumulative_length += encoding_length;
-        cumulative_seq_lengths.push(cumulative_length);
-        max_length = max(max_length, encoding_length);
-    }
-
-    Batch {
-        input_ids,
-        token_type_ids,
-        position_ids,
-        cumulative_seq_lengths,
-        max_length,
-        pooled_indices,
-        raw_indices,
-    }
 }

@@ -1,9 +1,9 @@
 mod common;
 
-use crate::common::{sort_embeddings, SnapshotEmbeddings};
+use crate::common::SnapshotEmbeddings;
 use anyhow::Result;
-use common::{batch, cosine_matcher, download_artifacts, load_tokenizer};
-use text_embeddings_backend_candle::CandleBackend;
+use common::{cosine_matcher, download_artifacts, load_tokenizer};
+use text_embeddings_backend_candle::{batch, sort_embeddings, CandleBackend};
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
 #[test]
