@@ -1,0 +1,17 @@
+[package]
+name = "text-embeddings-backend-ort"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+nohash-hasher = { workspace = true }
+ndarray = "0.15.6"
+ort = { version = "2.0.0-rc.2", default-features = false, features = ["download-binaries", "half", "onednn", "ndarray"] }
+text-embeddings-backend-core = { path = "../core" }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

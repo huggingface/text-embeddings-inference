@@ -17,12 +17,7 @@ pub struct SnapshotRank {
 #[tokio::test]
 #[cfg(feature = "http")]
 async fn test_rerank() -> Result<()> {
-    start_server(
-        "BAAI/bge-reranker-base".to_string(),
-        Some("refs/pr/5".to_string()),
-        DType::Float32,
-    )
-    .await?;
+    start_server("BAAI/bge-reranker-base".to_string(), None, DType::Float32).await?;
 
     let request = json!({
         "query": "test",

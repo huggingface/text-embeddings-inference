@@ -72,9 +72,9 @@ Below are some examples of the currently supported models:
 | MTEB Rank | Model Size          | Model Type  | Model ID                                                                                         |
 |-----------|---------------------|-------------|--------------------------------------------------------------------------------------------------|
 | 1         | 7B (Very Expensive) | Mistral     | [Salesforce/SFR-Embedding-2_R](https://hf.co/Salesforce/SFR-Embedding-2_R)                       |
-| 2         | 7B (Very Expensive) | Qwen2       | [Alibaba-NLP/gte-Qwen2-7B-instruct](https://hf.co/Alibaba-NLP/gte-Qwen2-7B-instruct)                       |
-| 9         | 1.5B (Expensive)    | Qwen2       | [Alibaba-NLP/gte-Qwen2-1.5B-instruct](https://hf.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct)                       |
-| 15        | 0.4B                | Alibaba GTE | [Alibaba-NLP/gte-large-en-v1.5](Alibaba-NLP/gte-large-en-v1.5)                                   |
+| 2         | 7B (Very Expensive) | Qwen2       | [Alibaba-NLP/gte-Qwen2-7B-instruct](https://hf.co/Alibaba-NLP/gte-Qwen2-7B-instruct)             |
+| 9         | 1.5B (Expensive)    | Qwen2       | [Alibaba-NLP/gte-Qwen2-1.5B-instruct](https://hf.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct)         |
+| 15        | 0.4B                | Alibaba GTE | [Alibaba-NLP/gte-large-en-v1.5](https://hf.co/Alibaba-NLP/gte-large-en-v1.5)                     |
 | 20        | 0.3B                | Bert        | [WhereIsAI/UAE-Large-V1](https://hf.co/WhereIsAI/UAE-Large-V1)                                   |
 | 24        | 0.5B                | XLM-RoBERTa | [intfloat/multilingual-e5-large-instruct](https://hf.co/intfloat/multilingual-e5-large-instruct) |
 | N/A       | 0.1B                | NomicBert   | [nomic-ai/nomic-embed-text-v1](https://hf.co/nomic-ai/nomic-embed-text-v1)                       |
@@ -568,7 +568,7 @@ supported via Docker. As such inference will be CPU bound and most likely pretty
 M1/M2 ARM CPU.
 
 ```
-docker build . -f Dockerfile-arm64 --platform=linux/arm64
+docker build . -f Dockerfile --platform=linux/arm64
 ```
 
 ## Examples

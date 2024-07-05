@@ -28,22 +28,9 @@ ARG ACTIONS_CACHE_URL
 ARG ACTIONS_RUNTIME_TOKEN
 ARG SCCACHE_GHA_ENABLED
 
-RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
-| gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null && \
-  echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | \
-  tee /etc/apt/sources.list.d/oneAPI.list
-
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    intel-oneapi-mkl-devel=2024.0.0-49656 \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN echo "int mkl_serv_intel_cpu_true() {return 1;}" > fakeintel.c && \
-    gcc -shared -fPIC -o libfakeintel.so fakeintel.c
-
 COPY --from=planner /usr/src/recipe.json recipe.json
 
-RUN cargo chef cook --release --features candle --features mkl-dynamic --no-default-features --recipe-path recipe.json && sccache -s
+RUN cargo chef cook --release --features ort --no-default-features --recipe-path recipe.json && sccache -s
 
 COPY backends backends
 COPY core core
@@ -53,7 +40,7 @@ COPY Cargo.lock ./
 
 FROM builder as http-builder
 
-RUN cargo build --release --bin text-embeddings-router -F candle -F mkl-dynamic -F http --no-default-features && sccache -s
+RUN cargo build --release --bin text-embeddings-router -F ort -F http --no-default-features && sccache -s
 
 FROM builder as grpc-builder
 
@@ -65,35 +52,18 @@ RUN PROTOC_ZIP=protoc-21.12-linux-x86_64.zip && \
 
 COPY proto proto
 
-RUN cargo build --release --bin text-embeddings-router -F grpc -F candle -F mkl-dynamic --no-default-features && sccache -s
+RUN cargo build --release --bin text-embeddings-router -F grpc -F ort --no-default-features && sccache -s
 
 FROM debian:bookworm-slim as base
 
 ENV HUGGINGFACE_HUB_CACHE=/data \
-    PORT=80 \
-    MKL_ENABLE_INSTRUCTIONS=AVX512_E4 \
-    RAYON_NUM_THREADS=8 \
-    LD_PRELOAD=/usr/local/libfakeintel.so \
-    LD_LIBRARY_PATH=/usr/local/lib
+    PORT=80
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    libomp-dev \
     ca-certificates \
     libssl-dev \
-    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy a lot of the Intel shared objects because of the mkl_serv_intel_cpu_true patch...
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_intel_lp64.so.2 /usr/local/lib/libmkl_intel_lp64.so.2
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_intel_thread.so.2 /usr/local/lib/libmkl_intel_thread.so.2
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_core.so.2 /usr/local/lib/libmkl_core.so.2
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_vml_def.so.2 /usr/local/lib/libmkl_vml_def.so.2
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_def.so.2 /usr/local/lib/libmkl_def.so.2
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_vml_avx2.so.2 /usr/local/lib/libmkl_vml_avx2.so.2
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_vml_avx512.so.2 /usr/local/lib/libmkl_vml_avx512.so.2
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_avx2.so.2 /usr/local/lib/libmkl_avx2.so.2
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_avx512.so.2 /usr/local/lib/libmkl_avx512.so.2
-COPY --from=builder /usr/src/libfakeintel.so /usr/local/libfakeintel.so
 
 FROM base as grpc
 
