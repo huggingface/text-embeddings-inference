@@ -166,7 +166,14 @@ impl Backend for OrtBackend {
         // Run model
         let outputs = self.session.run(inputs).e()?;
         // Get last_hidden_state ndarray
-        let outputs = outputs["last_hidden_state"]
+
+        let outputs = outputs
+            .get("last_hidden_state")
+            .or(outputs.get("token_embeddings"))
+            .ok_or(BackendError::Inference(format!(
+                "Unknown output keys: {:?}",
+                self.session.outputs
+            )))?
             .try_extract_tensor::<f32>()
             .e()?
             .to_owned();
