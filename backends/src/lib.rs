@@ -1,5 +1,6 @@
 mod dtype;
 
+use hf_hub::api::tokio::{ApiError, ApiRepo};
 use std::cmp::{max, min};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,6 +17,9 @@ pub use text_embeddings_backend_core::{
 
 #[cfg(feature = "candle")]
 use text_embeddings_backend_candle::CandleBackend;
+
+#[cfg(feature = "ort")]
+use text_embeddings_backend_ort::OrtBackend;
 
 #[cfg(feature = "python")]
 use text_embeddings_backend_python::PythonBackend;
@@ -222,6 +226,13 @@ fn init_backend(
                 .expect("Python Backend management thread failed")?,
             ));
         }
+    } else if cfg!(feature = "ort") {
+        #[cfg(feature = "ort")]
+        return Ok(Box::new(OrtBackend::new(
+            model_path,
+            dtype.to_string(),
+            model_type,
+        )?));
     }
     Err(BackendError::NoBackend)
 }
@@ -285,4 +296,71 @@ enum BackendCommand {
         #[allow(clippy::type_complexity)]
         oneshot::Sender<Result<(Predictions, Duration), BackendError>>,
     ),
+}
+
+pub async fn download_weights(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
+    let model_files = if cfg!(feature = "python") || cfg!(feature = "candle") {
+        match download_safetensors(api).await {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::warn!("safetensors weights not found. Using `pytorch_model.bin` instead. Model loading will be significantly slower.");
+                tracing::info!("Downloading `pytorch_model.bin`");
+                let p = api.get("pytorch_model.bin").await?;
+                vec![p]
+            }
+        }
+    } else if cfg!(feature = "ort") {
+        tracing::info!("Downloading `model.onnx`");
+        match api.get("model.onnx").await {
+            Ok(p) => vec![p],
+            Err(err) => {
+                tracing::warn!("Could not download `model.onnx`: {err}");
+                tracing::info!("Downloading `onnx/model.onnx`");
+                let p = api.get("onnx/model.onnx").await?;
+                vec![p.parent().unwrap().to_path_buf()]
+            }
+        }
+    } else {
+        unreachable!()
+    };
+    Ok(model_files)
+}
+
+async fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
+    // Single file
+    tracing::info!("Downloading `model.safetensors`");
+    match api.get("model.safetensors").await {
+        Ok(p) => return Ok(vec![p]),
+        Err(err) => tracing::warn!("Could not download `model.safetensors`: {}", err),
+    };
+
+    // Sharded weights
+    // Download and parse index file
+    tracing::info!("Downloading `model.safetensors.index.json`");
+    let index_file = api.get("model.safetensors.index.json").await?;
+    let index_file_string: String =
+        std::fs::read_to_string(index_file).expect("model.safetensors.index.json is corrupted");
+    let json: serde_json::Value = serde_json::from_str(&index_file_string)
+        .expect("model.safetensors.index.json is corrupted");
+
+    let weight_map = match json.get("weight_map") {
+        Some(serde_json::Value::Object(map)) => map,
+        _ => panic!("model.safetensors.index.json is corrupted"),
+    };
+
+    let mut safetensors_filenames = std::collections::HashSet::new();
+    for value in weight_map.values() {
+        if let Some(file) = value.as_str() {
+            safetensors_filenames.insert(file.to_string());
+        }
+    }
+
+    // Download weight files
+    let mut safetensors_files = Vec::new();
+    for n in safetensors_filenames {
+        tracing::info!("Downloading `{}`", n);
+        safetensors_files.push(api.get(&n).await?);
+    }
+
+    Ok(safetensors_files)
 }

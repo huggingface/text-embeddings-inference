@@ -235,16 +235,7 @@ pub async fn run(
     );
 
     // Get dtype
-    let dtype = dtype.unwrap_or({
-        #[cfg(any(feature = "accelerate", feature = "mkl", feature = "mkl-dynamic"))]
-        {
-            DType::Float32
-        }
-        #[cfg(not(any(feature = "accelerate", feature = "mkl", feature = "mkl-dynamic")))]
-        {
-            DType::Float16
-        }
-    });
+    let dtype = dtype.unwrap_or_default();
 
     // Create backend
     tracing::info!("Starting model backend");
