@@ -565,6 +565,93 @@
         }
       }
     },
+    "/similarity": {
+      "post": {
+        "tags": [
+          "Text Embeddings Inference"
+        ],
+        "summary": "Get Sentence Similarity. Returns a 424 status code if the model is not an embedding model.",
+        "operationId": "similarity",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SimilarityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Sentence Similarity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimilarityResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Embedding Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Inference failed",
+                  "error_type": "backend"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Model is overloaded",
+                  "error_type": "overloaded"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/tokenize": {
       "post": {
         "tags": [
@@ -1440,6 +1527,91 @@
         "items": {
           "$ref": "#/components/schemas/Rank"
         }
+      },
+      "SimilarityInput": {
+        "type": "object",
+        "required": [
+          "source_sentence",
+          "sentences"
+        ],
+        "properties": {
+          "sentences": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "A list of strings which will be compared against the source_sentence.",
+            "example": [
+              "What is Machine Learning?"
+            ]
+          },
+          "source_sentence": {
+            "type": "string",
+            "description": "The string that you wish to compare the other strings with. This can be a phrase, sentence,\nor longer passage, depending on the model being used.",
+            "example": "What is Deep Learning?"
+          }
+        }
+      },
+      "SimilarityParameters": {
+        "type": "object",
+        "required": [
+          "truncation_direction"
+        ],
+        "properties": {
+          "prompt_name": {
+            "type": "string",
+            "description": "The name of the prompt that should be used by for encoding. If not set, no prompt\nwill be applied.\n\nMust be a key in the `Sentence Transformers` configuration `prompts` dictionary.\n\nFor example if ``prompt_name`` is \"query\" and the ``prompts`` is {\"query\": \"query: \", ...},\nthen the sentence \"What is the capital of France?\" will be encoded as\n\"query: What is the capital of France?\" because the prompt text will be prepended before\nany text to encode.",
+            "default": "null",
+            "example": "null",
+            "nullable": true
+          },
+          "truncate": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false",
+            "nullable": true
+          },
+          "truncation_direction": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TruncationDirection"
+              }
+            ],
+            "default": "right"
+          }
+        }
+      },
+      "SimilarityRequest": {
+        "type": "object",
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "inputs": {
+            "$ref": "#/components/schemas/SimilarityInput"
+          },
+          "parameters": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SimilarityParameters"
+              }
+            ],
+            "default": "null",
+            "nullable": true
+          }
+        }
+      },
+      "SimilarityResponse": {
+        "type": "array",
+        "items": {
+          "type": "number",
+          "format": "float"
+        },
+        "example": [
+          0.0,
+          1.0,
+          0.5
+        ]
       },
       "SimpleToken": {
         "type": "object",

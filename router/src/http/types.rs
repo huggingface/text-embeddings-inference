@@ -361,6 +361,48 @@ pub(crate) struct OpenAICompatResponse {
 }
 
 #[derive(Deserialize, ToSchema)]
+pub(crate) struct SimilarityInput {
+    /// The string that you wish to compare the other strings with. This can be a phrase, sentence,
+    /// or longer passage, depending on the model being used.
+    #[schema(example = "What is Deep Learning?")]
+    pub source_sentence: String,
+    /// A list of strings which will be compared against the source_sentence.
+    #[schema(example = json!(["What is Machine Learning?"]))]
+    pub sentences: Vec<String>,
+}
+
+#[derive(Deserialize, ToSchema, Default)]
+pub(crate) struct SimilarityParameters {
+    #[schema(default = "false", example = "false", nullable = true)]
+    pub truncate: Option<bool>,
+    #[schema(default = "right", example = "right")]
+    pub truncation_direction: TruncationDirection,
+    /// The name of the prompt that should be used by for encoding. If not set, no prompt
+    /// will be applied.
+    ///
+    /// Must be a key in the `Sentence Transformers` configuration `prompts` dictionary.
+    ///
+    /// For example if ``prompt_name`` is "query" and the ``prompts`` is {"query": "query: ", ...},
+    /// then the sentence "What is the capital of France?" will be encoded as
+    /// "query: What is the capital of France?" because the prompt text will be prepended before
+    /// any text to encode.
+    #[schema(default = "null", example = "null", nullable = true)]
+    pub prompt_name: Option<String>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct SimilarityRequest {
+    pub inputs: SimilarityInput,
+    /// Additional inference parameters for Sentence Similarity
+    #[schema(default = "null", example = "null", nullable = true)]
+    pub parameters: Option<SimilarityParameters>,
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(example = json!([0.0, 1.0, 0.5]))]
+pub(crate) struct SimilarityResponse(pub Vec<f32>);
+
+#[derive(Deserialize, ToSchema)]
 pub(crate) struct EmbedRequest {
     pub inputs: Input,
     #[serde(default)]

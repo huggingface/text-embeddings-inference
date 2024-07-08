@@ -4,7 +4,8 @@ use crate::http::types::{
     EmbedSparseRequest, EmbedSparseResponse, Embedding, EncodingFormat, Input, InputIds, InputType,
     OpenAICompatEmbedding, OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse,
     OpenAICompatUsage, PredictInput, PredictRequest, PredictResponse, Prediction, Rank,
-    RerankRequest, RerankResponse, Sequence, SimpleToken, SparseValue, TokenizeInput,
+    RerankRequest, RerankResponse, Sequence, SimilarityInput, SimilarityParameters,
+    SimilarityRequest, SimilarityResponse, SimpleToken, SparseValue, TokenizeInput,
     TokenizeRequest, TokenizeResponse, TruncationDirection, VertexPrediction, VertexRequest,
     VertexResponse,
 };
@@ -26,6 +27,7 @@ use futures::future::join_all;
 use futures::FutureExt;
 use http::header::AUTHORIZATION;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use simsimd::SpatialSimilarity;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::BackendError;
@@ -453,6 +455,88 @@ async fn rerank(
     tracing::info!("Success");
 
     Ok((headers, Json(response)))
+}
+
+/// Get Sentence Similarity. Returns a 424 status code if the model is not an embedding model.
+#[utoipa::path(
+post,
+tag = "Text Embeddings Inference",
+path = "/similarity",
+request_body = SimilarityRequest,
+responses(
+(status = 200, description = "Sentence Similarity", body = SimilarityResponse),
+(status = 424, description = "Embedding Error", body = ErrorResponse,
+example = json ! ({"error": "Inference failed", "error_type": "backend"})),
+(status = 429, description = "Model is overloaded", body = ErrorResponse,
+example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
+(status = 422, description = "Tokenization error", body = ErrorResponse,
+example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 413, description = "Batch size error", body = ErrorResponse,
+example = json ! ({"error": "Batch size error", "error_type": "validation"})),
+)
+)]
+#[instrument(
+    skip_all,
+    fields(total_time, tokenization_time, queue_time, inference_time,)
+)]
+async fn similarity(
+    infer: Extension<Infer>,
+    info: Extension<Info>,
+    Json(req): Json<SimilarityRequest>,
+) -> Result<(HeaderMap, Json<SimilarityResponse>), (StatusCode, Json<ErrorResponse>)> {
+    if req.inputs.sentences.is_empty() {
+        let message = "`inputs.sentences` cannot be empty".to_string();
+        tracing::error!("{message}");
+        let err = ErrorResponse {
+            error: message,
+            error_type: ErrorType::Validation,
+        };
+        let counter = metrics::counter!("te_request_failure", "err" => "validation");
+        counter.increment(1);
+        Err(err)?;
+    }
+    // +1 because of the source sentence
+    let batch_size = req.inputs.sentences.len() + 1;
+    if batch_size > info.max_client_batch_size {
+        let message = format!(
+            "batch size {batch_size} > maximum allowed batch size {}",
+            info.max_client_batch_size
+        );
+        tracing::error!("{message}");
+        let err = ErrorResponse {
+            error: message,
+            error_type: ErrorType::Validation,
+        };
+        let counter = metrics::counter!("te_request_failure", "err" => "batch_size");
+        counter.increment(1);
+        Err(err)?;
+    }
+
+    // Convert request to embed request
+    let mut inputs = Vec::with_capacity(req.inputs.sentences.len() + 1);
+    inputs.push(InputType::String(req.inputs.source_sentence));
+    for s in req.inputs.sentences {
+        inputs.push(InputType::String(s));
+    }
+    let parameters = req.parameters.unwrap_or_default();
+    let embed_req = EmbedRequest {
+        inputs: Input::Batch(inputs),
+        truncate: parameters.truncate,
+        truncation_direction: parameters.truncation_direction,
+        prompt_name: parameters.prompt_name,
+        normalize: false,
+    };
+
+    // Get embeddings
+    let (header_map, embed_response) = embed(infer, info, Json(embed_req)).await?;
+    let embeddings = embed_response.0 .0;
+
+    // Compute cosine
+    let distances = (1..batch_size)
+        .map(|i| 1.0 - f32::cosine(&embeddings[0], &embeddings[i]).unwrap() as f32)
+        .collect();
+
+    Ok((header_map, Json(SimilarityResponse(distances))))
 }
 
 /// Get Embeddings. Returns a 424 status code if the model is not an embedding model.
@@ -1472,6 +1556,7 @@ pub async fn run(
     embed_all,
     embed_sparse,
     openai_embed,
+    similarity,
     tokenize,
     decode,
     metrics,
@@ -1509,6 +1594,10 @@ pub async fn run(
     TokenizeRequest,
     TokenizeResponse,
     TruncationDirection,
+    SimilarityInput,
+    SimilarityParameters,
+    SimilarityRequest,
+    SimilarityResponse,
     SimpleToken,
     InputType,
     InputIds,
@@ -1587,6 +1676,7 @@ pub async fn run(
         .route("/embed_sparse", post(embed_sparse))
         .route("/predict", post(predict))
         .route("/rerank", post(rerank))
+        .route("/similarity", post(similarity))
         .route("/tokenize", post(tokenize))
         .route("/decode", post(decode))
         // OpenAI compat route
@@ -1634,7 +1724,11 @@ pub async fn run(
                     .route("/invocations", post(rerank))
             }
             ModelType::Embedding(model) => {
-                if model.pooling == "splade" {
+                if std::env::var("TASK").ok() == Some("sentence-similarity".to_string()) {
+                    app.route("/", post(similarity))
+                        // AWS Sagemaker route
+                        .route("/invocations", post(similarity))
+                } else if model.pooling == "splade" {
                     app.route("/", post(embed_sparse))
                         // AWS Sagemaker route
                         .route("/invocations", post(embed_sparse))
