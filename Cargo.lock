@@ -3807,6 +3807,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fa42c91313f1d05da9b26f267f931cf178d4aba455b4c4622dd7355eb80c6640"
 
 [[package]]
+name = "simsimd"
+version = "4.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "efc843bc8f12d9c8e6b734a0fe8918fc497b42f6ae0f347dbfdad5b5138ab9b4"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "sketches-ddsketch"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4121,6 +4130,7 @@ dependencies = [
  "reqwest 0.12.5",
  "serde",
  "serde_json",
+ "simsimd",
  "text-embeddings-backend",
  "text-embeddings-core",
  "thiserror",
