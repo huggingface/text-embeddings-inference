@@ -209,10 +209,12 @@ impl Backend for OrtBackend {
                 Pool::Mean => {
                     if masking {
                         let mut attention_mask = attention_mask;
+                        let mut input_lengths = input_lengths;
 
                         if let Some(indices) = indices {
                             // Select values in the batch
                             attention_mask = attention_mask.select(Axis(0), &indices);
+                            input_lengths = input_lengths.select(Axis(0), &indices);
                         };
 
                         // Cast and reshape
@@ -220,7 +222,9 @@ impl Backend for OrtBackend {
 
                         // Mask padded values
                         outputs = outputs.mul(attention_mask);
-                        outputs.sum_axis(Axis(1)).div(input_lengths)
+                        outputs
+                            .sum_axis(Axis(1))
+                            .div(input_lengths.insert_axis(Axis(1)))
                     } else {
                         outputs.mean_axis(Axis(1)).unwrap()
                     }
