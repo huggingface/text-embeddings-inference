@@ -33,10 +33,10 @@ thiserror = "1.0"
 
 [patch.crates-io]
 cudarc = { git = "https://github.com/coreylowman/cudarc", rev = "c388e724af93a3e8fbe484f5ded2d8b3c1badd8e" }
-candle = { git = "https://github.com/OlivierDehaene/candle", rev = "33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3", package = "candle-core" }
-candle-nn = { git = "https://github.com/OlivierDehaene/candle", rev = "33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3", package = "candle-nn" }
-candle-transformers = { git = "https://github.com/OlivierDehaene/candle", rev = "33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3", package = "candle-transformers" }
-candle-flash-attn = { git = "https://github.com/OlivierDehaene/candle", rev = "33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3", package = "candle-flash-attn" }
+candle = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-core" }
+candle-nn = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-nn" }
+candle-transformers = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-transformers" }
+candle-flash-attn = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-flash-attn" }
 
 [profile.release]
 debug = 0
