@@ -499,7 +499,7 @@ checksum = "514de17de45fdb8dc022b1a7975556c53c86f9f0aa5f534b98977b171857c2c9"
 [[package]]
 name = "candle-core"
 version = "0.5.0"
-source = "git+https://github.com/OlivierDehaene/candle?rev=33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3#33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3"
+source = "git+https://github.com/OlivierDehaene/candle?rev=7e02ad856104799b73a946ac1e153f0de77feaaf#7e02ad856104799b73a946ac1e153f0de77feaaf"
 dependencies = [
  "accelerate-src",
  "byteorder",
@@ -536,7 +536,7 @@ dependencies = [
 [[package]]
 name = "candle-flash-attn"
 version = "0.5.0"
-source = "git+https://github.com/OlivierDehaene/candle?rev=33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3#33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3"
+source = "git+https://github.com/OlivierDehaene/candle?rev=7e02ad856104799b73a946ac1e153f0de77feaaf#7e02ad856104799b73a946ac1e153f0de77feaaf"
 dependencies = [
  "anyhow",
  "bindgen_cuda",
@@ -559,7 +559,7 @@ dependencies = [
 [[package]]
 name = "candle-kernels"
 version = "0.5.0"
-source = "git+https://github.com/OlivierDehaene/candle?rev=33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3#33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3"
+source = "git+https://github.com/OlivierDehaene/candle?rev=7e02ad856104799b73a946ac1e153f0de77feaaf#7e02ad856104799b73a946ac1e153f0de77feaaf"
 dependencies = [
  "bindgen_cuda",
 ]
@@ -579,7 +579,7 @@ dependencies = [
 [[package]]
 name = "candle-metal-kernels"
 version = "0.5.0"
-source = "git+https://github.com/OlivierDehaene/candle?rev=33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3#33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3"
+source = "git+https://github.com/OlivierDehaene/candle?rev=7e02ad856104799b73a946ac1e153f0de77feaaf#7e02ad856104799b73a946ac1e153f0de77feaaf"
 dependencies = [
  "metal",
  "once_cell",
@@ -590,7 +590,7 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.5.0"
-source = "git+https://github.com/OlivierDehaene/candle?rev=33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3#33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3"
+source = "git+https://github.com/OlivierDehaene/candle?rev=7e02ad856104799b73a946ac1e153f0de77feaaf#7e02ad856104799b73a946ac1e153f0de77feaaf"
 dependencies = [
  "accelerate-src",
  "candle-core",
@@ -619,7 +619,7 @@ dependencies = [
 [[package]]
 name = "candle-transformers"
 version = "0.5.0"
-source = "git+https://github.com/OlivierDehaene/candle?rev=33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3#33b7ecf9ed82bb7c20f1a94555218fabfbaa2fe3"
+source = "git+https://github.com/OlivierDehaene/candle?rev=7e02ad856104799b73a946ac1e153f0de77feaaf#7e02ad856104799b73a946ac1e153f0de77feaaf"
 dependencies = [
  "byteorder",
  "candle-core",
