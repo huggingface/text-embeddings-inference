@@ -63,3 +63,18 @@ pub async fn download_new_st_config(api: &ApiRepo) -> Result<PathBuf, ApiError> 
     let pool_config_path = api.get("config_sentence_transformers.json").await?;
     Ok(pool_config_path)
 }
+
+#[instrument(skip_all)]
+pub async fn download_stopwords(api: &ApiRepo) -> Result<PathBuf, ApiError> {
+    tracing::info!("Downloading `stopwords.txt`");
+    let pool_config_path = api.get("stopwords.txt").await?;
+    Ok(pool_config_path)
+}
+
+#[instrument(skip_all)]
+pub async fn download_special_tokens_maps(api: &ApiRepo) -> Result<PathBuf, ApiError> {
+    tracing::info!("Downloading `special_tokens_map.json`");
+    let pool_config_path = api.get("special_tokens_map.json").await?;
+    Ok(pool_config_path)
+}
+

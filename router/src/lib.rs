@@ -26,10 +26,10 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use text_embeddings_backend::{DType, Pool};
+use text_embeddings_backend::{Bm42Params, DType, ModelParams, Pool};
 use text_embeddings_core::download::{
-    download_artifacts, download_new_st_config, download_pool_config, download_st_config,
-    ST_CONFIG_NAMES,
+    download_artifacts, download_new_st_config, download_pool_config, download_special_tokens_maps,
+    download_st_config, download_stopwords, ST_CONFIG_NAMES,
 };
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
@@ -99,6 +99,12 @@ pub async fn run(
         // Download new sentence transformers config
         let _ = download_new_st_config(&api_repo).await;
 
+        // Download special_tokesn_map.json
+        let _ = download_special_tokens_maps(&api_repo).await;
+
+        // Download stopwords.txt
+        let _ = download_stopwords(&api_repo).await;
+        //
         // Download model from the Hub
         download_artifacts(&api_repo)
             .await
@@ -112,7 +118,7 @@ pub async fn run(
         serde_json::from_str(&config).context("Failed to parse `config.json`")?;
 
     // Set model type from config
-    let backend_model_type = get_backend_model_type(&config, &model_root, pooling)?;
+    let backend_model_type = get_backend_model_type(&config, &model_root, pooling.clone())?;
 
     // Info model type
     let model_type = match &backend_model_type {
@@ -224,6 +230,47 @@ pub async fn run(
         default_prompt
     };
 
+    let model_params: ModelParams = if Some(Pool::BM42) == pooling.clone() {
+        let mut special_tokens = vec![];
+
+        let special_tokens_map_path = model_root.join("special_tokens_map.json");
+        if let Ok(special_tokens_txt) = fs::read_to_string(special_tokens_map_path) {
+            let special_tokens_map = serde_json::from_str(&special_tokens_txt)
+                .context("Failed to parse `special_tokens_map.json`")?;
+
+            if let serde_json::Value::Object(root_object) = special_tokens_map {
+                for (_, value) in root_object.iter() {
+                    if value.is_string() {
+                        let token = value.as_str().unwrap();
+
+                        special_tokens.push(token.to_string());
+                    } else if value.is_object() {
+                        let token = value["content"].as_str().unwrap();
+
+                        special_tokens.push(token.to_string());
+                    }
+                }
+            }
+        }
+
+        let stop_words_path = model_root.join("stopwords.txt");
+        let stopwords = fs::read_to_string(stop_words_path).context("Failed to parse `stopwords.txt`")?.lines().map(|s| s.to_string()).collect();
+
+        let invert_vocab: HashMap<u32, String> = tokenizer
+            .get_vocab(true)
+            .into_iter()
+            .map(|(key, value)| (value, key))
+            .collect();
+
+        ModelParams::Bm42(Bm42Params {
+            invert_vocab,
+            special_tokens,
+            stopwords,
+        })
+    } else {
+        ModelParams::None
+    };
+
     // Tokenization logic
     let tokenization = Tokenization::new(
         tokenization_workers,
@@ -246,6 +293,7 @@ pub async fn run(
         uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_string()),
         otlp_endpoint.clone(),
         otlp_service_name.clone(),
+        model_params,
     )
     .context("Could not create backend")?;
     backend

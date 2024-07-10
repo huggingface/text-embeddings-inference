@@ -1502,7 +1502,7 @@ async fn vertex_compatibility(
                 futures.push(predict_future(local_infer, local_info, instance).boxed());
             }
             ModelType::Embedding(_) => {
-                if infer.is_splade() {
+                if infer.is_sparse() {
                     let instance = serde_json::from_value::<EmbedSparseRequest>(instance)
                         .map_err(ErrorResponse::from)?;
                     futures.push(embed_sparse_future(local_infer, local_info, instance).boxed());
