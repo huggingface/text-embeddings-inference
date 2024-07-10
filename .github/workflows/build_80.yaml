@@ -95,8 +95,8 @@
              DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
            tags: ${{ steps.meta-80.outputs.tags }}
            labels: ${{ steps.meta-80.outputs.labels }}
-           cache-from: type=registry,ref=registry-push.github-runners.huggingface.tech/api-inference/text-embeddings-inference:cache-80,mode=max
-           cache-to: type=registry,ref=registry-push.github-runners.huggingface.tech/api-inference/text-embeddings-inference:cache-80,mode=max
+           cache-from: type=s3,region=us-east-1,bucket=ci-docker-buildx-cache,name=text-embeddings-inference-cache-80,access_key_id=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_ACCESS_KEY_ID }},secret_access_key=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_SECRET_ACCESS_KEY }},mode=max
+           cache-to: type=s3,region=us-east-1,bucket=ci-docker-buildx-cache,name=text-embeddings-inference-cache-80,access_key_id=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_ACCESS_KEY_ID }},secret_access_key=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_SECRET_ACCESS_KEY }},mode=max
 
        - name: Extract metadata (tags, labels) for Docker
          id: meta-80-grpc
@@ -131,4 +131,4 @@
              DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
            tags: ${{ steps.meta-80-grpc.outputs.tags }}
            labels: ${{ steps.meta-80-grpc.outputs.labels }}
-           cache-from: type=registry,ref=registry-push.github-runners.huggingface.tech/api-inference/text-embeddings-inference:cache-80,mode=max
+           cache-from: type=s3,region=us-east-1,bucket=ci-docker-buildx-cache,name=text-embeddings-inference-cache-80,access_key_id=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_ACCESS_KEY_ID }},secret_access_key=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_SECRET_ACCESS_KEY }},mode=max
