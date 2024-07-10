@@ -38,11 +38,11 @@ COPY router router
 COPY Cargo.toml ./
 COPY Cargo.lock ./
 
-FROM builder as http-builder
+FROM builder AS http-builder
 
 RUN cargo build --release --bin text-embeddings-router -F ort -F http --no-default-features && sccache -s
 
-FROM builder as grpc-builder
+FROM builder AS grpc-builder
 
 RUN PROTOC_ZIP=protoc-21.12-linux-x86_64.zip && \
     curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v21.12/$PROTOC_ZIP && \
@@ -54,7 +54,7 @@ COPY proto proto
 
 RUN cargo build --release --bin text-embeddings-router -F grpc -F ort --no-default-features && sccache -s
 
-FROM debian:bookworm-slim as base
+FROM debian:bookworm-slim AS base
 
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80
@@ -65,7 +65,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     && rm -rf /var/lib/apt/lists/*
 
 
-FROM base as grpc
+FROM base AS grpc
 
 COPY --from=grpc-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
 
@@ -77,7 +77,7 @@ FROM base AS http
 COPY --from=http-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
 
 # Amazon SageMaker compatible image
-FROM http as sagemaker
+FROM http AS sagemaker
 COPY --chmod=775 sagemaker-entrypoint.sh entrypoint.sh
 
 ENTRYPOINT ["./entrypoint.sh"]

@@ -110,7 +110,7 @@ RUN if [ $VERTEX = "true" ]; \
 
 RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-90
 
-FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04 as base
+FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04 AS base
 
 ARG DEFAULT_USE_FLASH_ATTENTION=True
 
