@@ -63,9 +63,26 @@ pub enum Pool {
     /// This option is only available if the loaded model is a `ForMaskedLM` Transformer
     /// model.
     Splade,
+    /// Apply BM42 to the model embeddings.
+    /// This option is only availale if the loaded model is Qdrant/all_miniLM_L6_v2_with_attentions 
+    BM42,
     /// Select the last token as embedding
     LastToken,
 }
+
+#[derive(Debug, Clone)]
+pub struct Bm42Params {
+    pub invert_vocab: std::collections::HashMap<u32, String>,
+    pub stopwords: Vec<String>,
+    pub special_tokens: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ModelParams {
+    Bm42(Bm42Params),
+    None
+}
+
 
 impl fmt::Display for Pool {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -73,6 +90,7 @@ impl fmt::Display for Pool {
             Pool::Cls => write!(f, "cls"),
             Pool::Mean => write!(f, "mean"),
             Pool::Splade => write!(f, "splade"),
+            Pool::BM42  => write!(f, "bm42"),
             Pool::LastToken => write!(f, "last_token"),
         }
     }

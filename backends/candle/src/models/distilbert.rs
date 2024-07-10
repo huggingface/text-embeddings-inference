@@ -587,6 +587,7 @@ impl DistilBertModel {
 
                     (outputs.sum(1)?.broadcast_div(&input_lengths))?
                 }
+                Pool::BM42 => unreachable!(),
                 Pool::Splade => {
                     // Unwrap is safe here
                     let splade_head = self.splade.as_ref().unwrap();

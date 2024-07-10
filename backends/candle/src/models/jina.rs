@@ -616,6 +616,7 @@ impl JinaBertModel {
 
                     (outputs.sum(1)?.broadcast_div(&input_lengths))?
                 }
+                Pool::BM42 => unreachable!(),
                 Pool::Splade => unreachable!(),
             };
             Some(pooled_embeddings)

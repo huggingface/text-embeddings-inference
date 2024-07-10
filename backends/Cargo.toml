@@ -17,6 +17,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [features]
+default = ["ort"]
 clap = ["dep:clap", "text-embeddings-backend-core/clap"]
 python = ["dep:text-embeddings-backend-python"]
 ort = ["dep:text-embeddings-backend-ort"]

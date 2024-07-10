@@ -12,12 +12,14 @@ use tracing::{instrument, Span};
 
 pub use crate::dtype::DType;
 pub use text_embeddings_backend_core::{
-    BackendError, Batch, Embedding, Embeddings, ModelType, Pool,
+    BackendError, Batch, Embedding, Embeddings, ModelType, Pool, ModelParams, Bm42Params,
 };
 
 #[cfg(feature = "candle")]
 use text_embeddings_backend_candle::CandleBackend;
 
+#[cfg(feature = "ort")]
+use text_embeddings_backend_ort::bm42::Bm42Backend;
 #[cfg(feature = "ort")]
 use text_embeddings_backend_ort::OrtBackend;
 
@@ -44,6 +46,7 @@ impl Backend {
         uds_path: String,
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
+        model_params: ModelParams
     ) -> Result<Self, BackendError> {
         let (backend_sender, backend_receiver) = mpsc::channel(8);
 
@@ -54,6 +57,7 @@ impl Backend {
             uds_path,
             otlp_endpoint,
             otlp_service_name,
+            model_params
         )?;
         let padded_model = backend.is_padded();
         let max_batch_size = backend.max_batch_size();
@@ -200,6 +204,7 @@ fn init_backend(
     uds_path: String,
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
+    model_params: ModelParams,
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     if cfg!(feature = "candle") {
         #[cfg(feature = "candle")]
@@ -227,12 +232,21 @@ fn init_backend(
             ));
         }
     } else if cfg!(feature = "ort") {
-        #[cfg(feature = "ort")]
-        return Ok(Box::new(OrtBackend::new(
-            model_path,
-            dtype.to_string(),
-            model_type,
-        )?));
+            #[cfg(feature = "ort")]
+            if let ModelParams::Bm42(params) = model_params {
+                return Ok(Box::new(Bm42Backend::new(
+                    model_path,
+                    dtype.to_string(),
+                    model_type,
+                    params
+                )?));
+            } else {
+                return Ok(Box::new(OrtBackend::new(
+                    model_path,
+                    dtype.to_string(),
+                    model_type,
+                )?));
+            }
     }
     Err(BackendError::NoBackend)
 }
@@ -364,3 +378,4 @@ async fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
 
     Ok(safetensors_files)
 }
+
