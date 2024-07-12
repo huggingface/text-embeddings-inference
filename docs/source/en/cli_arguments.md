@@ -110,7 +110,7 @@ Options:
       --default-prompt-name <DEFAULT_PROMPT_NAME>
           The name of the prompt that should be used by default for encoding. If not set, no prompt will be applied.
 
-          Must be a key in the `Sentence Transformers` configuration `prompts` dictionary.
+          Must be a key in the `sentence-transformers` configuration `prompts` dictionary.
 
           For example if ``default_prompt_name`` is "query" and the ``prompts`` is {"query": "query: ", ...}, then the
           sentence "What is the capital of France?" will be encoded as "query: What is the capital of France?" because
