@@ -310,19 +310,16 @@ pub async fn download_weights(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
             }
         }
     } else if cfg!(feature = "ort") {
-        tracing::info!("Downloading `model.onnx`");
-        match api.get("model.onnx").await {
-            Ok(p) => vec![p],
+        match download_onnx(api).await {
+            Ok(p) => p,
             Err(err) => {
-                tracing::warn!("Could not download `model.onnx`: {err}");
-                tracing::info!("Downloading `onnx/model.onnx`");
-                let p = api.get("onnx/model.onnx").await?;
-                vec![p.parent().unwrap().to_path_buf()]
+                panic!("failed to download `model.onnx` or `model.onnx_data`. Check the onnx file exists in the repository. {err}");
             }
         }
     } else {
         unreachable!()
     };
+
     Ok(model_files)
 }
 
@@ -363,4 +360,35 @@ async fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     }
 
     Ok(safetensors_files)
+}
+
+async fn download_onnx(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
+    let mut model_files: Vec<PathBuf> = Vec::new();
+
+    tracing::info!("Downloading `model.onnx`");
+    match api.get("model.onnx").await {
+        Ok(p) => model_files.push(p),
+        Err(err) => {
+            tracing::warn!("Could not download `model.onnx`: {err}");
+            tracing::info!("Downloading `onnx/model.onnx`");
+            let p = api.get("onnx/model.onnx").await?;
+            model_files.push(p.parent().unwrap().to_path_buf())
+        }
+    };
+
+    tracing::info!("Downloading `model.onnx_data`");
+    match api.get("model.onnx_data").await {
+        Ok(p) => model_files.push(p),
+        Err(err) => {
+            tracing::warn!("Could not download `model.onnx_data`: {err}");
+            tracing::info!("Downloading `onnx/model.onnx_data`");
+
+            match api.get("onnx/model.onnx_data").await {
+                Ok(p) => model_files.push(p.parent().unwrap().to_path_buf()),
+                Err(err) => tracing::warn!("Could not download `onnx/model.onnx_data`: {err}"),
+            }
+        }
+    }
+
+    Ok(model_files)
 }
