@@ -55,5 +55,8 @@ def get_model(model_path: Path, dtype: Optional[str]):
             return FlashBert(model_path, device, dtype)
         else:
             return DefaultModel(model_path, device, dtype)
+    elif config.model_type == "xlm-roberta":
+        config: XLMRobertaConfig
+        return DefaultModel(model_path, device, dtype)
 
     raise NotImplementedError
