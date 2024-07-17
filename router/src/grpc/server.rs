@@ -1430,7 +1430,7 @@ impl grpc::similarity_server::Similarity for TextEmbeddingsService {
 
         let mut futures = Vec::with_capacity(batch_size);
 
-        let mut total_compute_chars = request.source_sentence.chars().count();
+        let mut total_compute_chars = 0;
         let truncation_direction = convert_truncation_direction(request.truncation_direction);
 
         {
