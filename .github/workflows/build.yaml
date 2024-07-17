@@ -81,7 +81,7 @@ jobs:
         with:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
-          registry: ${{ secrets.REGISTRY_URL }}
+          registry: registry.internal.huggingface.tech
 
       - name: Login to GitHub Container Registry
         if: github.event_name != 'pull_request'
@@ -96,7 +96,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ secrets.REGISTRY_URL }}/api-inference/text-embeddings-inference
+            registry.internal.huggingface.tech/api-inference/text-embeddings-inference
             ghcr.io/huggingface/text-embeddings-inference
           flavor: |
             latest=false
@@ -132,7 +132,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ secrets.REGISTRY_URL }}/api-inference/text-embeddings-inference
+            registry.internal.huggingface.tech/api-inference/text-embeddings-inference
             ghcr.io/huggingface/text-embeddings-inference
           flavor: |
             latest=false
