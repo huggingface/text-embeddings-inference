@@ -59,4 +59,4 @@ def get_model(model_path: Path, dtype: Optional[str]):
         try:
             return DefaultModel(model_path, device, dtype)
         except:
-            raise RuntimeError(f"Unknown model_type {config.model_type}")
+            raise RuntimeError(f"Unsupported model_type {config.model_type}")
