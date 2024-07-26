@@ -5,9 +5,11 @@ from pathlib import Path
 from typing import Optional
 from transformers import AutoConfig
 from transformers.models.bert import BertConfig
+from transformers.models.auto.modeling_auto import MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES
 
 from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.default_model import DefaultModel
+from text_embeddings_server.models.classification_model import ClassificationModel
 
 __all__ = ["Model"]
 
@@ -54,6 +56,15 @@ def get_model(model_path: Path, dtype: Optional[str]):
         ):
             return FlashBert(model_path, device, dtype)
         else:
-            return DefaultModel(model_path, device, dtype)
-
-    raise NotImplementedError
+            if config.architectures[0] in MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES.values():
+                return ClassificationModel(model_path, device, dtype)
+            else:
+                return DefaultModel(model_path, device, dtype)
+    else:
+        try:
+            if config.architectures[0] in MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES.values():
+                return ClassificationModel(model_path, device, dtype)
+            else:
+                return DefaultModel(model_path, device, dtype)
+        except:
+            raise RuntimeError(f"Unsupported model_type {config.model_type}")
