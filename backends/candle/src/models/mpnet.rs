@@ -1,6 +1,6 @@
 use crate::layers::{get_cublas_lt_wrapper, HiddenAct, LayerNorm, Linear};
 use crate::models::Model;
-use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
+use candle::{DType, Device, IndexOp, Module, Result, Shape, Tensor, D};
 use candle_nn::{Embedding, VarBuilder};
 use serde::Deserialize;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
@@ -60,8 +60,9 @@ impl MPNetEmbeddings {
         let input_embeddings = self.word_embeddings.forward(input_ids)?;
         let position_embeddings = self.position_embeddings.forward(position_ids)?;
 
-        let embeddings = input_embeddings.add(&position_embeddings)?;
-        let embeddings = self.layer_norm.forward(&embeddings, None)?;
+        let embeddings = self
+            .layer_norm
+            .forward(&input_embeddings, Some(&position_embeddings))?;
 
         Ok(embeddings)
     }
@@ -129,7 +130,12 @@ impl MPNetAttention {
         })
     }
 
-    pub fn forward(&self, hidden_states: &Tensor, attention_bias: &Tensor) -> Result<Tensor> {
+    pub fn forward(
+        &self,
+        hidden_states: &Tensor,
+        attention_mask: &Tensor,
+        attention_bias: &Tensor,
+    ) -> Result<Tensor> {
         let _enter = self.span.enter();
         let device = hidden_states.device();
 
@@ -147,7 +153,7 @@ impl MPNetAttention {
         let qkv = qkv.chunk(3, 1)?;
         let query_layer = &qkv[0].contiguous()?;
         let key_layer = &qkv[1].contiguous()?;
-        let value_layer = &qkv[2];
+        let value_layer = &qkv[2].contiguous()?;
 
         #[allow(unused_variables)]
         let context_layer = if let (Device::Cuda(_), Some(cublaslt)) =
@@ -203,9 +209,10 @@ impl MPNetAttention {
             let attention_scores = (attention_scores * self.softmax_scale)?;
 
             let attention_scores = attention_scores.add(attention_bias)?;
+            let attention_scores = attention_scores.add(attention_mask)?;
 
             let attention_probs = candle_nn::ops::softmax_last_dim(&attention_scores)?;
-            attention_probs.matmul(&value_layer.contiguous()?)
+            attention_probs.matmul(value_layer)
         }?;
 
         let context_layer = context_layer.transpose(1, 2)?.contiguous()?;
@@ -269,10 +276,17 @@ impl MPNetLayer {
         })
     }
 
-    pub fn forward(&self, hidden_states: &Tensor, attention_bias: &Tensor) -> Result<Tensor> {
+    pub fn forward(
+        &self,
+        hidden_states: &Tensor,
+        attention_mask: &Tensor,
+        attention_bias: &Tensor,
+    ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let hidden_states = self.attention.forward(hidden_states, attention_bias)?;
+        let hidden_states =
+            self.attention
+                .forward(hidden_states, attention_mask, attention_bias)?;
 
         let residual = hidden_states.clone();
 
@@ -300,13 +314,18 @@ impl MPNetEncoder {
         Ok(MPNetEncoder { layers, span })
     }
 
-    fn forward(&self, hidden_states: &Tensor, attention_bias: &Tensor) -> Result<Tensor> {
+    fn forward(
+        &self,
+        hidden_states: &Tensor,
+        attention_mask: &Tensor,
+        attention_bias: &Tensor,
+    ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
         let mut hidden_states = hidden_states.clone();
 
         for layer in self.layers.iter() {
-            hidden_states = layer.forward(&hidden_states, attention_bias)?;
+            hidden_states = layer.forward(&hidden_states, attention_mask, attention_bias)?;
         }
 
         Ok(hidden_states)
@@ -461,6 +480,30 @@ impl MPNetModel {
         })
     }
 
+    fn get_extended_attention_mask(
+        &self,
+        attention_mask: Option<&Tensor>,
+        input_shape: &Shape,
+    ) -> Result<Tensor> {
+        let extended_attention_mask = if let Some(attention_mask) = attention_mask {
+            let attention_mask = attention_mask.squeeze(2)?;
+            attention_mask.unsqueeze(1)?.unsqueeze(1)?
+        } else {
+            let attention_mask = Tensor::ones(input_shape, DType::F32, &self.device)?;
+            attention_mask.unsqueeze(1)?.unsqueeze(1)?
+        }
+        .to_dtype(self.dtype)?;
+
+        let min_value = match extended_attention_mask.dtype() {
+            DType::F32 => f32::MIN as f64,
+            _ => -65504.0_f64, // f16 minumum value
+        };
+
+        let extended_attention_mask = ((1.0 - extended_attention_mask)? * min_value)?;
+
+        Ok(extended_attention_mask)
+    }
+
     pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         let _enter = self.span.enter();
 
@@ -537,7 +580,6 @@ impl MPNetModel {
             )
         };
 
-        // Create CPU tensors
         let input_ids = Tensor::from_vec(input_ids, shape, &self.device)?;
         let position_ids = Tensor::from_vec(position_ids, shape, &self.device)?;
         let mut input_lengths =
@@ -547,7 +589,14 @@ impl MPNetModel {
 
         let attention_bias = self.attention_bias.forward(&embedding_output)?;
 
-        let outputs = self.encoder.forward(&embedding_output, &attention_bias)?;
+        let extended_attention_mask =
+            self.get_extended_attention_mask(attention_mask.as_ref(), input_ids.shape())?;
+        let extended_attention_mask =
+            extended_attention_mask.broadcast_as(attention_bias.shape())?;
+
+        let outputs =
+            self.encoder
+                .forward(&embedding_output, &extended_attention_mask, &attention_bias)?;
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();
