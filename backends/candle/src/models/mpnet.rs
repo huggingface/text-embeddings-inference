@@ -492,7 +492,9 @@ impl MPNetModel {
         } else {
             Tensor::ones(input_shape, DType::F32, &self.device)?
         }
-        .unsqueeze(1)?.unsqueeze(1)?.to_dtype(self.dtype)?;
+        .unsqueeze(1)?
+        .unsqueeze(1)?
+        .to_dtype(self.dtype)?;
 
         let min_value = match self.dtype {
             DType::F32 => f32::MIN as f64,
@@ -552,20 +554,14 @@ impl MPNetModel {
 
             let attention_mask = match masking {
                 true => {
-                    // We only need the mask if we use mean pooling
-                    // For CLS pooling, the bias is enough
-                    if self.pool == Pool::Mean {
-                        let attention_mask = Tensor::from_vec(
-                            attention_mask,
-                            (batch_size, max_length, 1),
-                            &self.device,
-                        )?
-                        .to_dtype(self.dtype)?;
+                    let attention_mask = Tensor::from_vec(
+                        attention_mask,
+                        (batch_size, max_length, 1),
+                        &self.device,
+                    )?
+                    .to_dtype(self.dtype)?;
 
-                        Some(attention_mask)
-                    } else {
-                        None
-                    }
+                    Some(attention_mask)
                 }
                 false => None,
             };
