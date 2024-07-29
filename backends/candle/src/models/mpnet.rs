@@ -167,13 +167,15 @@ impl MPNetAttention {
                 let query_layer = query_layer.flatten(0, 1)?;
                 let value_layer = value_layer.flatten(0, 1)?;
                 let attention_bias = attention_bias.map(|mask| mask.flatten(0, 1)).transpose()?;
+                let attention_mask = attention_mask.map(|mask| mask.flatten(0, 1)).transpose()?;
+                let bias = (attention_bias + attention_mask)?;
 
                 // Batch matrix multiplication
                 // Fuse softmax scale and attention_bias add
                 let attention_scores = cublaslt.batch_matmul(
                     &key_layer,
                     &query_layer,
-                    attention_bias.as_ref(),
+                    bias.as_ref(),
                     Some(self.softmax_scale as f32),
                     1.0,
                     None,
@@ -486,15 +488,13 @@ impl MPNetModel {
         input_shape: &Shape,
     ) -> Result<Tensor> {
         let extended_attention_mask = if let Some(attention_mask) = attention_mask {
-            let attention_mask = attention_mask.squeeze(2)?;
-            attention_mask.unsqueeze(1)?.unsqueeze(1)?
+            attention_mask.squeeze(2)?
         } else {
-            let attention_mask = Tensor::ones(input_shape, DType::F32, &self.device)?;
-            attention_mask.unsqueeze(1)?.unsqueeze(1)?
+            Tensor::ones(input_shape, DType::F32, &self.device)?
         }
-        .to_dtype(self.dtype)?;
+        .unsqueeze(1)?.unsqueeze(1)?.to_dtype(self.dtype)?;
 
-        let min_value = match extended_attention_mask.dtype() {
+        let min_value = match self.dtype {
             DType::F32 => f32::MIN as f64,
             _ => -65504.0_f64, // f16 minumum value
         };
@@ -572,9 +572,15 @@ impl MPNetModel {
 
             (input_ids, position_ids, input_lengths, attention_mask)
         } else {
+            // `position_id` starts from `padding_idx` + 1. So, we need to add 2 to the every position ids.
+            let mut position_ids = batch.position_ids;
+            for position_id in position_ids.iter_mut() {
+                *position_id += 2;
+            }
+
             (
                 batch.input_ids,
-                batch.position_ids,
+                position_ids,
                 vec![batch.max_length as f32],
                 None,
             )
