@@ -65,7 +65,7 @@ Ember, GTE and E5. TEI implements many features such as:
 #### Text Embeddings
 
 Text Embeddings Inference currently supports Nomic, BERT, CamemBERT, XLM-RoBERTa models with absolute positions, JinaBERT
-model with Alibi positions and Mistral, Alibaba GTE and Qwen2 models with Rope positions.
+model with Alibi positions and Mistral, Alibaba GTE, Qwen2 models with Rope positions, and MPNet.
 
 Below are some examples of the currently supported models:
 
@@ -81,7 +81,7 @@ Below are some examples of the currently supported models:
 | N/A       | 0.1B                | NomicBert   | [nomic-ai/nomic-embed-text-v1.5](https://hf.co/nomic-ai/nomic-embed-text-v1.5)                   |
 | N/A       | 0.1B                | JinaBERT    | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)             |
 | N/A       | 0.1B                | JinaBERT    | [jinaai/jina-embeddings-v2-base-code](https://hf.co/jinaai/jina-embeddings-v2-base-code)         |
-
+| N/A       | 0.1B                | MPNet       | [sentence-transformers/all-mpnet-base-v2](https://hf.co/sentence-transformers/all-mpnet-base-v2)            |
 
 To explore the list of best performing text embeddings models, visit the
 [Massive Text Embedding Benchmark (MTEB) Leaderboard](https://huggingface.co/spaces/mteb/leaderboard).
