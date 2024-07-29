@@ -61,9 +61,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
         with:
           install: true
-          buildkitd-config-inline: |
-            [registry."docker.io"]
-              mirrors = ["registry-us-east-1.prod.aws.ci.huggingface.tech"]
+          buildkitd-config: /tmp/buildkitd.toml
 
       - name: Configure sccache
         uses: actions/github-script@v6
