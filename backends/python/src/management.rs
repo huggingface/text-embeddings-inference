@@ -22,6 +22,7 @@ impl BackendProcess {
         uds_path: &str,
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
+        pooling_mode: String,
     ) -> Result<Self, BackendError> {
         // Get UDS path
         let uds = Path::new(uds_path);
@@ -51,6 +52,9 @@ impl BackendProcess {
 
         python_server_args.push("--otlp-service-name".to_owned());
         python_server_args.push(otlp_service_name);
+
+        python_server_args.push("--pooling-mode".to_owned());
+        python_server_args.push(pooling_mode);
 
         // Copy current process env
         let envs: Vec<(OsString, OsString)> = env::vars_os().collect();

@@ -37,6 +37,7 @@ def serve(
     model_path: Path,
     dtype: Optional[str],
     uds_path: Path,
+    pooling_mode: Optional[str],
 ):
     async def serve_inner(
         model_path: Path,
@@ -45,7 +46,7 @@ def serve(
         unix_socket = f"unix://{uds_path}"
 
         try:
-            model = get_model(model_path, dtype)
+            model = get_model(model_path, dtype, pooling_mode)
         except Exception:
             logger.exception("Error when initializing model")
             raise

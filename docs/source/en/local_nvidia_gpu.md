@@ -14,9 +14,9 @@ rendered properly in your Markdown viewer.
 
 -->
 
-# Using TEI locally with GPU
+# Using TEI locally with Nvidia GPU
 
-You can install `text-embeddings-inference` locally to run it on your own machine with a GPU.
+You can install `text-embeddings-inference` locally to run it on your own machine with an Nvidia GPU.
 To make sure that your hardware is supported, check out the [Supported models and hardware](supported_models) page.
 
 ## Step 1: CUDA and NVIDIA drivers

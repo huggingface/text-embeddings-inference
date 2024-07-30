@@ -11,8 +11,10 @@
     title: Using TEI locally with CPU
   - local: local_metal
     title: Using TEI locally with Metal
-  - local: local_gpu
-    title: Using TEI locally with GPU
+  - local: local_nvidia_gpu
+    title: Using TEI locally with Nvidia GPU
+  - local: local_amd_gpu
+    title: Using TEI locally with AMD GPU
   - local: private_models
     title: Serving private and gated models
 #  - local: tei_cli

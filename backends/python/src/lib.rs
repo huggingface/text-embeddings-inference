@@ -24,6 +24,8 @@ impl PythonBackend {
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
     ) -> Result<Self, BackendError> {
+        let model_type_clone = model_type.clone();
+
         match model_type {
             ModelType::Classifier => {
                 return Err(BackendError::Start(
@@ -31,12 +33,18 @@ impl PythonBackend {
                 ))
             }
             ModelType::Embedding(pool) => {
-                if pool != Pool::Cls {
-                    return Err(BackendError::Start(format!("{pool:?} is not supported")));
+                if pool != Pool::Cls && pool != Pool::Mean {
+                    return Err(BackendError::Start(format!("{pool:?} is not supported in the TEI Python backend. Please open an issue.")));
                 }
                 pool
             }
         };
+
+        let pool_string = match &model_type_clone {
+            ModelType::Classifier => &Pool::Cls,
+            ModelType::Embedding(pool) => pool,
+        }
+        .to_string();
 
         let backend_process = management::BackendProcess::new(
             model_path,
@@ -44,6 +52,7 @@ impl PythonBackend {
             &uds_path,
             otlp_endpoint,
             otlp_service_name,
+            pool_string,
         )?;
         let tokio_runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
