@@ -52,7 +52,8 @@ impl Default for DType {
             feature = "accelerate",
             feature = "mkl",
             feature = "mkl-dynamic",
-            feature = "ort"
+            feature = "ort",
+            feature = "python"
         )))]
         {
             DType::Float16
