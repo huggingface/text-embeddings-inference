@@ -8,7 +8,7 @@ from transformers.models.bert import BertConfig
 
 from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.default_model import DefaultModel
-
+from text_embeddings_server.utils.device import get_device, use_ipex
 __all__ = ["Model"]
 
 # Disable gradients
@@ -35,13 +35,7 @@ def get_model(model_path: Path, dtype: Optional[str]):
     else:
         raise RuntimeError(f"Unknown dtype {dtype}")
 
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        if dtype != torch.float32:
-            raise ValueError("CPU device only supports float32 dtype")
-        device = torch.device("cpu")
-
+    device = get_device()
     config = AutoConfig.from_pretrained(model_path)
 
     if config.model_type == "bert":
@@ -53,7 +47,16 @@ def get_model(model_path: Path, dtype: Optional[str]):
             and FLASH_ATTENTION
         ):
             return FlashBert(model_path, device, dtype)
+        elif (
+              device.type == "cpu"
+              and use_ipex()
+        ):
+            logger.info("Use the flashBert for CPU")
+            return FlashBert(model_path, device, dtype)
         else:
             return DefaultModel(model_path, device, dtype)
-
-    raise NotImplementedError
+    else:
+        try:
+            return DefaultModel(model_path, device, dtype)
+        except:
+            raise RuntimeError(f"Unsupported model_type {config.model_type}")

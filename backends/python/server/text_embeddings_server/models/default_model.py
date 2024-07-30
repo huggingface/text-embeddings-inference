@@ -5,10 +5,10 @@ from pathlib import Path
 from typing import Type, List
 from transformers import AutoModel
 from opentelemetry import trace
+from loguru import logger
 
 from text_embeddings_server.models import Model
 from text_embeddings_server.models.types import PaddedBatch, Embedding
-
 tracer = trace.get_tracer(__name__)
 
 
@@ -39,10 +39,9 @@ class DefaultModel(Model):
             kwargs["token_type_ids"] = batch.token_type_ids
         if self.has_position_ids:
             kwargs["position_ids"] = batch.position_ids
-
         output = self.model(**kwargs)
         embedding = output[0][:, 0]
-        cpu_results = embedding.view(-1).tolist()
+        cpu_results = embedding.reshape(-1).tolist()
 
         return [
             Embedding(
