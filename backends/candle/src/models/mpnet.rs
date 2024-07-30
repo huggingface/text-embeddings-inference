@@ -300,40 +300,6 @@ impl MPNetLayer {
     }
 }
 
-struct MPNetEncoder {
-    layers: Vec<MPNetLayer>,
-    span: tracing::Span,
-}
-
-impl MPNetEncoder {
-    pub fn load(vb: VarBuilder, config: &MPNetConfig) -> Result<Self> {
-        let layers = (0..config.num_hidden_layers)
-            .map(|index| MPNetLayer::load(vb.pp(format!("layer.{index}")), config))
-            .collect::<Result<Vec<_>>>()?;
-
-        let span = tracing::span!(tracing::Level::TRACE, "encoder");
-
-        Ok(MPNetEncoder { layers, span })
-    }
-
-    fn forward(
-        &self,
-        hidden_states: &Tensor,
-        attention_mask: &Tensor,
-        attention_bias: &Tensor,
-    ) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let mut hidden_states = hidden_states.clone();
-
-        for layer in self.layers.iter() {
-            hidden_states = layer.forward(&hidden_states, attention_mask, attention_bias)?;
-        }
-
-        Ok(hidden_states)
-    }
-}
-
 struct MPNetAttentionBias {
     relative_attention_bias: Embedding,
 
@@ -423,9 +389,48 @@ impl MPNetAttentionBias {
     }
 }
 
+struct MPNetEncoder {
+    layers: Vec<MPNetLayer>,
+    attention_bias: MPNetAttentionBias,
+    span: tracing::Span,
+}
+
+impl MPNetEncoder {
+    pub fn load(vb: VarBuilder, config: &MPNetConfig) -> Result<Self> {
+        let layers = (0..config.num_hidden_layers)
+            .map(|index| MPNetLayer::load(vb.pp(format!("layer.{index}")), config))
+            .collect::<Result<Vec<_>>>()?;
+
+        let attention_bias = MPNetAttentionBias::load(vb, config)?;
+
+        let span = tracing::span!(tracing::Level::TRACE, "encoder");
+
+        Ok(MPNetEncoder {
+            layers,
+            attention_bias,
+            span,
+        })
+    }
+
+    fn forward(&self, hidden_states: &Tensor, attention_mask: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let mut hidden_states = hidden_states.clone();
+
+        let attention_bias = self.attention_bias.forward(&hidden_states)?;
+
+        let attention_mask = attention_mask.broadcast_as(attention_bias.shape())?;
+
+        for layer in self.layers.iter() {
+            hidden_states = layer.forward(&hidden_states, &attention_mask, &attention_bias)?;
+        }
+
+        Ok(hidden_states)
+    }
+}
+
 pub struct MPNetModel {
     embeddings: MPNetEmbeddings,
-    attention_bias: MPNetAttentionBias,
     encoder: MPNetEncoder,
     pool: Pool,
 
@@ -450,21 +455,17 @@ impl MPNetModel {
             }
         };
 
-        let (embeddings, attention_bias, encoder) = match (
+        let (embeddings, encoder) = match (
             MPNetEmbeddings::load(vb.pp("embeddings"), config),
-            MPNetAttentionBias::load(vb.pp("encoder"), config),
             MPNetEncoder::load(vb.pp("encoder"), config),
         ) {
-            (Ok(embeddings), Ok(attention_bias), Ok(encoder)) => {
-                (embeddings, attention_bias, encoder)
-            }
-            (Err(err), _, _) | (_, Err(err), _) | (_, _, Err(err)) => {
-                if let (Ok(embeddings), Ok(attention_bias), Ok(encoder)) = (
+            (Ok(embeddings), Ok(encoder)) => (embeddings, encoder),
+            (Err(err), _) | (_, Err(err)) => {
+                if let (Ok(embeddings), Ok(encoder)) = (
                     MPNetEmbeddings::load(vb.pp("mpnet.embeddings".to_string()), config),
-                    MPNetAttentionBias::load(vb.pp("mpnet.encoder".to_string()), config),
                     MPNetEncoder::load(vb.pp("mpnet.encoder".to_string()), config),
                 ) {
-                    (embeddings, attention_bias, encoder)
+                    (embeddings, encoder)
                 } else {
                     return Err(err);
                 }
@@ -474,7 +475,6 @@ impl MPNetModel {
         Ok(Self {
             embeddings,
             encoder,
-            attention_bias,
             pool,
             device: vb.device().clone(),
             dtype: vb.dtype(),
@@ -589,16 +589,12 @@ impl MPNetModel {
 
         let embedding_output = self.embeddings.forward(&input_ids, &position_ids)?;
 
-        let attention_bias = self.attention_bias.forward(&embedding_output)?;
-
         let extended_attention_mask =
             self.get_extended_attention_mask(attention_mask.as_ref(), input_ids.shape())?;
-        let extended_attention_mask =
-            extended_attention_mask.broadcast_as(attention_bias.shape())?;
 
-        let outputs =
-            self.encoder
-                .forward(&embedding_output, &extended_attention_mask, &attention_bias)?;
+        let outputs = self
+            .encoder
+            .forward(&embedding_output, &extended_attention_mask)?;
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();
