@@ -35,6 +35,7 @@ pub enum PositionEmbeddingType {
     #[default]
     Absolute,
     Alibi,
+    Rope,
 }
 
 #[derive(Debug)]
@@ -638,6 +639,10 @@ impl BertModel {
                 (pool, Some(classifier), None)
             }
             ModelType::Embedding(pool) => {
+                if pool == Pool::LastToken {
+                    candle::bail!("`last_token` is not supported for Bert");
+                }
+
                 let splade = if pool == Pool::Splade {
                     Some(BertSpladeHead::load_roberta(vb.clone(), config)?)
                 } else {
@@ -799,7 +804,7 @@ impl BertModel {
         let input_ids = Tensor::from_vec(input_ids, shape, &self.device)?;
         let type_ids = Tensor::from_vec(type_ids, shape, &self.device)?;
         let position_ids = Tensor::from_vec(position_ids, shape, &self.device)?;
-        let input_lengths =
+        let mut input_lengths =
             Tensor::from_vec(input_lengths, (batch_size, 1), &self.device)?.to_dtype(self.dtype)?;
 
         let embedding_output = self
@@ -832,6 +837,8 @@ impl BertModel {
             let pooled_embeddings = match self.pool {
                 // CLS pooling
                 Pool::Cls => outputs.i((.., 0))?,
+                // Last token pooling is not supported for this model
+                Pool::LastToken => unreachable!(),
                 // Mean pooling
                 Pool::Mean => {
                     if let Some(ref attention_mask) = attention_mask {
@@ -840,6 +847,7 @@ impl BertModel {
                         if let Some(pooled_indices) = pooled_indices {
                             // Select values in the batch
                             attention_mask = attention_mask.index_select(&pooled_indices, 0)?;
+                            input_lengths = input_lengths.index_select(&pooled_indices, 0)?;
                         };
 
                         // Mask padded values

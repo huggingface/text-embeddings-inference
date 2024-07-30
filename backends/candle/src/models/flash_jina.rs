@@ -105,6 +105,7 @@ impl JinaAttention {
             max_s,
             self.softmax_scale,
             false,
+            None,
         )?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
@@ -241,6 +242,7 @@ impl FlashJinaBertModel {
                 )
             }
             PositionEmbeddingType::Absolute => None,
+            _ => candle::bail!("not supported"),
         };
 
         match vb.device() {
@@ -319,11 +321,18 @@ impl FlashJinaBertModel {
 
         let pooled_embeddings = if has_pooling_requests {
             match self.pool {
-                // CLS pooling
-                Pool::Cls => {
+                // CLS and LastToken pooling
+                Pool::Cls | Pool::LastToken => {
                     if batch_size > 1 {
-                        // Get the indices of the cls tokens from cu_seqlens
-                        let mut cls_indices = cu_seqlens.narrow(0, 0, batch_size)?;
+                        // Get token indices form cu_seqlens
+                        let mut indices = match self.pool {
+                            Pool::Cls => cu_seqlens.narrow(0, 0, batch_size)?,
+                            Pool::LastToken => {
+                                let end = cu_seqlens.narrow(0, 1, batch_size)?;
+                                (&end - &end.ones_like()?)?
+                            }
+                            _ => unreachable!(),
+                        };
 
                         // If raw_indices is empty, we don't need to do anything with
                         // the pooled_indices
@@ -336,13 +345,22 @@ impl FlashJinaBertModel {
                             )?;
 
                             // Only select indices that requires pooling
-                            cls_indices = cls_indices.index_select(&pooled_indices, 0)?
+                            indices = indices.index_select(&pooled_indices, 0)?
                         }
 
-                        // Select cls tokens
-                        Some(outputs.index_select(&cls_indices, 0)?)
+                        // Select tokens
+                        Some(outputs.index_select(&indices, 0)?)
                     } else {
-                        Some(outputs.i(0)?)
+                        Some(
+                            match self.pool {
+                                Pool::Cls => outputs.i(0)?,
+                                Pool::LastToken => {
+                                    outputs.i(batch.cumulative_seq_lengths[1] as usize - 1)?
+                                }
+                                _ => unreachable!(),
+                            }
+                            .unsqueeze(0)?,
+                        )
                     }
                 }
                 // Mean pooling

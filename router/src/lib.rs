@@ -26,15 +26,18 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use text_embeddings_backend::DType;
+use text_embeddings_backend::{DType, Pool};
 use text_embeddings_core::download::{
-    download_artifacts, download_pool_config, download_st_config, ST_CONFIG_NAMES,
+    download_artifacts, download_new_st_config, download_pool_config, download_st_config,
+    ST_CONFIG_NAMES,
 };
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
 use text_embeddings_core::tokenization::Tokenization;
 use text_embeddings_core::TextEmbeddingsError;
-use tokenizers::Tokenizer;
+use tokenizers::processors::sequence::Sequence;
+use tokenizers::processors::template::TemplateProcessing;
+use tokenizers::{PostProcessorWrapper, Tokenizer};
 use tracing::Span;
 
 pub use logging::init_logging;
@@ -52,6 +55,8 @@ pub async fn run(
     max_batch_requests: Option<usize>,
     max_client_batch_size: usize,
     auto_truncate: bool,
+    default_prompt: Option<String>,
+    default_prompt_name: Option<String>,
     hf_api_token: Option<String>,
     hostname: Option<String>,
     port: u16,
@@ -91,6 +96,8 @@ pub async fn run(
 
         // Download sentence transformers config
         let _ = download_st_config(&api_repo).await;
+        // Download new sentence transformers config
+        let _ = download_new_st_config(&api_repo).await;
 
         // Download model from the Hub
         download_artifacts(&api_repo)
@@ -139,6 +146,28 @@ pub async fn run(
         "tokenizer.json not found. text-embeddings-inference only supports fast tokenizers",
     );
     tokenizer.with_padding(None);
+    // Qwen2 updates the post processor manually instead of into the tokenizer.json...
+    // https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct/blob/main/tokenization_qwen.py#L246
+    if config.model_type == "qwen2" {
+        let template = TemplateProcessing::builder()
+            .try_single("$A:0 <|endoftext|>:0")
+            .unwrap()
+            .try_pair("$A:0 <|endoftext|>:0 $B:1 <|endoftext|>:1")
+            .unwrap()
+            .special_tokens(vec![("<|endoftext|>", 151643)])
+            .build()
+            .unwrap();
+        match tokenizer.get_post_processor() {
+            None => tokenizer.with_post_processor(template),
+            Some(post_processor) => {
+                let post_processor = Sequence::new(vec![
+                    post_processor.clone(),
+                    PostProcessorWrapper::Template(template),
+                ]);
+                tokenizer.with_post_processor(post_processor)
+            }
+        };
+    }
 
     // Position IDs offset. Used for Roberta and camembert.
     let position_offset = if &config.model_type == "xlm-roberta"
@@ -171,25 +200,42 @@ pub async fn run(
 
     let tokenization_workers = tokenization_workers.unwrap_or_else(num_cpus::get_physical);
 
+    // Try to load new ST Config
+    let mut new_st_config: Option<NewSTConfig> = None;
+    let config_path = model_root.join("config_sentence_transformers.json");
+    if let Ok(config) = fs::read_to_string(config_path) {
+        new_st_config = Some(
+            serde_json::from_str(&config)
+                .context("Failed to parse `config_sentence_transformers.json`")?,
+        );
+    }
+    let prompts = new_st_config.and_then(|c| c.prompts);
+    let default_prompt = if let Some(default_prompt_name) = default_prompt_name.as_ref() {
+        match &prompts {
+            None => {
+                anyhow::bail!(format!("`default-prompt-name` is set to `{default_prompt_name}` but no prompts were found in the Sentence Transformers configuration"));
+            }
+            Some(prompts) if !prompts.contains_key(default_prompt_name) => {
+                anyhow::bail!(format!("`default-prompt-name` is set to `{default_prompt_name}` but it was not found in the Sentence Transformers prompts. Available prompts: {:?}", prompts.keys()));
+            }
+            Some(prompts) => prompts.get(default_prompt_name).cloned(),
+        }
+    } else {
+        default_prompt
+    };
+
     // Tokenization logic
     let tokenization = Tokenization::new(
         tokenization_workers,
         tokenizer,
         max_input_length,
         position_offset,
+        default_prompt,
+        prompts,
     );
 
     // Get dtype
-    let dtype = dtype.unwrap_or({
-        #[cfg(any(feature = "accelerate", feature = "mkl", feature = "mkl-dynamic"))]
-        {
-            DType::Float32
-        }
-        #[cfg(not(any(feature = "accelerate", feature = "mkl", feature = "mkl-dynamic")))]
-        {
-            DType::Float16
-        }
-    });
+    let dtype = dtype.unwrap_or_default();
 
     // Create backend
     tracing::info!("Starting model backend");
@@ -206,6 +252,14 @@ pub async fn run(
         .health()
         .await
         .context("Model backend is not healthy")?;
+
+    if !backend.padded_model {
+        tracing::info!("Warming up model");
+        backend
+            .warmup(max_input_length, max_batch_tokens, max_batch_requests)
+            .await
+            .context("Model backend is not healthy")?;
+    }
 
     let max_batch_requests = backend
         .max_batch_size
@@ -289,7 +343,7 @@ pub async fn run(
             api_key,
             cors_allow_origin,
         )
-        .await?;
+        .await
     }
 
     #[cfg(feature = "grpc")]
@@ -297,10 +351,8 @@ pub async fn run(
         // cors_allow_origin and payload_limit are not used for gRPC servers
         let _ = cors_allow_origin;
         let _ = payload_limit;
-        grpc::server::run(infer, info, addr, prom_builder, api_key).await?;
+        grpc::server::run(infer, info, addr, prom_builder, api_key).await
     }
-
-    Ok(())
 }
 
 fn get_backend_model_type(
@@ -338,13 +390,7 @@ fn get_backend_model_type(
             let config = fs::read_to_string(config_path).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.")?;
             let config: PoolConfig =
                 serde_json::from_str(&config).context("Failed to parse `1_Pooling/config.json`")?;
-            if config.pooling_mode_cls_token {
-                text_embeddings_backend::Pool::Cls
-            } else if config.pooling_mode_mean_tokens {
-                text_embeddings_backend::Pool::Mean
-            } else {
-                return Err(anyhow!("Pooling config {config:?} is not supported"));
-            }
+            Pool::try_from(config)?
         }
     };
     Ok(text_embeddings_backend::ModelType::Embedding(pool))
@@ -366,13 +412,35 @@ pub struct ModelConfig {
 pub struct PoolConfig {
     pooling_mode_cls_token: bool,
     pooling_mode_mean_tokens: bool,
-    pooling_mode_max_tokens: bool,
-    pooling_mode_mean_sqrt_len_tokens: bool,
+    #[serde(default)]
+    pooling_mode_lasttoken: bool,
+}
+
+impl TryFrom<PoolConfig> for Pool {
+    type Error = anyhow::Error;
+
+    fn try_from(config: PoolConfig) -> std::result::Result<Self, Self::Error> {
+        if config.pooling_mode_cls_token {
+            return Ok(Pool::Cls);
+        }
+        if config.pooling_mode_mean_tokens {
+            return Ok(Pool::Mean);
+        }
+        if config.pooling_mode_lasttoken {
+            return Ok(Pool::LastToken);
+        }
+        Err(anyhow!("Pooling config {config:?} is not supported"))
+    }
 }
 
 #[derive(Debug, Deserialize)]
 pub struct STConfig {
     pub max_seq_length: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewSTConfig {
+    pub prompts: Option<HashMap<String, String>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -512,19 +580,14 @@ impl ResponseMetadata {
 
     fn record_metrics(&self) {
         // Metrics
-        metrics::histogram!(
-            "te_request_duration",
-            self.start_time.elapsed().as_secs_f64()
-        );
-        metrics::histogram!(
-            "te_request_tokenization_duration",
-            self.tokenization_time.as_secs_f64()
-        );
-        metrics::histogram!("te_request_queue_duration", self.queue_time.as_secs_f64());
-        metrics::histogram!(
-            "te_request_inference_duration",
-            self.inference_time.as_secs_f64()
-        );
+        let histogram = metrics::histogram!("te_request_duration");
+        histogram.record(self.start_time.elapsed().as_secs_f64());
+        let histogram = metrics::histogram!("te_request_tokenization_duration");
+        histogram.record(self.tokenization_time.as_secs_f64());
+        let histogram = metrics::histogram!("te_request_queue_duration");
+        histogram.record(self.queue_time.as_secs_f64());
+        let histogram = metrics::histogram!("te_request_inference_duration");
+        histogram.record(self.inference_time.as_secs_f64());
     }
 }
 

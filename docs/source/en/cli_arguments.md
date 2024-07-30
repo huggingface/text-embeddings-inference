@@ -62,9 +62,11 @@ Options:
           [env: POOLING=]
 
           Possible values:
-          - cls:    Select the CLS token as embedding
-          - mean:   Apply Mean pooling to the model embeddings
-          - splade: Apply SPLADE (Sparse Lexical and Expansion) to the model embeddings. This option is only available if the loaded model is a `ForMaskedLM` Transformer model
+          - cls:        Select the CLS token as embedding
+          - mean:       Apply Mean pooling to the model embeddings
+          - splade:     Apply SPLADE (Sparse Lexical and Expansion) to the model embeddings. This option is only
+          available if the loaded model is a `ForMaskedLM` Transformer model
+          - last-token: Select the last token as embedding
 
       --max-concurrent-requests <MAX_CONCURRENT_REQUESTS>
           The maximum amount of concurrent requests for this particular deployment.
@@ -98,6 +100,37 @@ Options:
           [env: MAX_CLIENT_BATCH_SIZE=]
           [default: 32]
 
+      --auto-truncate
+          Automatically truncate inputs that are longer than the maximum supported size
+
+          Unused for gRPC servers
+
+          [env: AUTO_TRUNCATE=]
+
+      --default-prompt-name <DEFAULT_PROMPT_NAME>
+          The name of the prompt that should be used by default for encoding. If not set, no prompt will be applied.
+
+          Must be a key in the `sentence-transformers` configuration `prompts` dictionary.
+
+          For example if ``default_prompt_name`` is "query" and the ``prompts`` is {"query": "query: ", ...}, then the
+          sentence "What is the capital of France?" will be encoded as "query: What is the capital of France?" because
+          the prompt text will be prepended before any text to encode.
+
+          The argument '--default-prompt-name <DEFAULT_PROMPT_NAME>' cannot be used with '--default-prompt <DEFAULT_PROMPT>`
+
+          [env: DEFAULT_PROMPT_NAME=]
+
+      --default-prompt <DEFAULT_PROMPT>
+          The prompt that should be used by default for encoding. If not set, no prompt will be applied.
+
+          For example if ``default_prompt`` is "query: " then the sentence "What is the capital of France?" will be
+          encoded as "query: What is the capital of France?" because the prompt text will be prepended before any text
+          to encode.
+
+          The argument '--default-prompt <DEFAULT_PROMPT>' cannot be used with '--default-prompt-name <DEFAULT_PROMPT_NAME>`
+
+          [env: DEFAULT_PROMPT=]
+
       --hf-api-token <HF_API_TOKEN>
           Your HuggingFace hub token
 
@@ -126,7 +159,7 @@ Options:
           The location of the huggingface hub cache. Used to override the location if you want to provide a mounted disk
           for instance
 
-          [env: HUGGINGFACE_HUB_CACHE=/data]
+          [env: HUGGINGFACE_HUB_CACHE=]
 
       --payload-limit <PAYLOAD_LIMIT>
           Payload size limit in bytes
@@ -139,7 +172,8 @@ Options:
       --api-key <API_KEY>
           Set an api key for request authorization.
 
-          By default the server responds to every request. With an api key set, the requests must have the Authorization header set with the api key as Bearer token.
+          By default the server responds to every request. With an api key set, the requests must have the Authorization
+          header set with the api key as Bearer token.
 
           [env: API_KEY=]
 
@@ -154,11 +188,13 @@ Options:
           [env: OTLP_ENDPOINT=]
 
       --otlp-service-name <OTLP_SERVICE_NAME>
-          The service name for opentelemetry.
+          The service name for opentelemetry. e.g. `text-embeddings-inference.server`
 
           [env: OTLP_SERVICE_NAME=]
           [default: text-embeddings-inference.server]
 
       --cors-allow-origin <CORS_ALLOW_ORIGIN>
+          Unused for gRPC servers
+
           [env: CORS_ALLOW_ORIGIN=]
 ```

@@ -16,12 +16,13 @@ pub struct SnapshotPrediction {
 #[tokio::test]
 #[cfg(feature = "http")]
 async fn test_predict() -> Result<()> {
-    start_server(
-        "SamLowe/roberta-base-go_emotions".to_string(),
-        None,
-        DType::Float32,
-    )
-    .await?;
+    let model_id = if cfg!(feature = "ort") {
+        "SamLowe/roberta-base-go_emotions-onnx"
+    } else {
+        "SamLowe/roberta-base-go_emotions"
+    };
+
+    start_server(model_id.to_string(), None, DType::Float32).await?;
 
     let request = json!({
         "inputs": "test"

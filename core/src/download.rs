@@ -1,5 +1,6 @@
 use hf_hub::api::tokio::{ApiError, ApiRepo};
 use std::path::PathBuf;
+use text_embeddings_backend::download_weights;
 use tracing::instrument;
 
 // Old classes used other config names than 'sentence_bert_config.json'
@@ -19,20 +20,14 @@ pub async fn download_artifacts(api: &ApiRepo) -> Result<PathBuf, ApiError> {
 
     tracing::info!("Starting download");
 
+    tracing::info!("Downloading `config.json`");
     api.get("config.json").await?;
+
+    tracing::info!("Downloading `tokenizer.json`");
     api.get("tokenizer.json").await?;
 
-    let model_root = match api.get("model.safetensors").await {
-        Ok(p) => p,
-        Err(_) => {
-            let p = api.get("pytorch_model.bin").await?;
-            tracing::warn!("`model.safetensors` not found. Using `pytorch_model.bin` instead. Model loading will be significantly slower.");
-            p
-        }
-    }
-        .parent()
-        .unwrap()
-        .to_path_buf();
+    let model_files = download_weights(api).await?;
+    let model_root = model_files[0].parent().unwrap().to_path_buf();
 
     tracing::info!("Model artifacts downloaded in {:?}", start.elapsed());
     Ok(model_root)
@@ -40,6 +35,7 @@ pub async fn download_artifacts(api: &ApiRepo) -> Result<PathBuf, ApiError> {
 
 #[instrument(skip_all)]
 pub async fn download_pool_config(api: &ApiRepo) -> Result<PathBuf, ApiError> {
+    tracing::info!("Downloading `1_Pooling/config.json`");
     let pool_config_path = api.get("1_Pooling/config.json").await?;
     Ok(pool_config_path)
 }
@@ -59,4 +55,11 @@ pub async fn download_st_config(api: &ApiRepo) -> Result<PathBuf, ApiError> {
     }
 
     Err(err)
+}
+
+#[instrument(skip_all)]
+pub async fn download_new_st_config(api: &ApiRepo) -> Result<PathBuf, ApiError> {
+    tracing::info!("Downloading `config_sentence_transformers.json`");
+    let pool_config_path = api.get("config_sentence_transformers.json").await?;
+    Ok(pool_config_path)
 }

@@ -6,16 +6,20 @@ authors.workspace = true
 homepage.workspace = true
 
 [dependencies]
-clap = { version = "4.1.4", features = ["derive"], optional = true }
+clap = { workspace = true, optional = true }
+hf-hub = { workspace = true }
+serde_json = { workspace = true }
 text-embeddings-backend-core = { path = "core" }
 text-embeddings-backend-python = { path = "python", optional = true }
 text-embeddings-backend-candle = { path = "candle", optional = true }
-tokio = { version = "^1.25", features = ["sync"] }
-tracing = "^0.1"
+text-embeddings-backend-ort = { path = "ort", optional = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
 
 [features]
 clap = ["dep:clap", "text-embeddings-backend-core/clap"]
 python = ["dep:text-embeddings-backend-python"]
+ort = ["dep:text-embeddings-backend-ort"]
 candle = ["dep:text-embeddings-backend-candle"]
 cuda = ["text-embeddings-backend-candle?/cuda"]
 metal = ["text-embeddings-backend-candle?/metal"]

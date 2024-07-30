@@ -35,7 +35,7 @@ pub struct Metadata {
 #[derive(Debug, Clone)]
 pub struct Queue {
     /// Channel to communicate with the background queue task
-    queue_sender: mpsc::UnboundedSender<QueueCommand>,
+    queue_sender: mpsc::Sender<QueueCommand>,
 }
 
 impl Queue {
@@ -46,7 +46,7 @@ impl Queue {
         max_concurrent_requests: usize,
     ) -> Self {
         // Create channels
-        let (queue_sender, queue_receiver) = mpsc::unbounded_channel();
+        let (queue_sender, queue_receiver) = mpsc::channel(max_concurrent_requests);
 
         // Launch background queue task
         std::thread::spawn(move || {
@@ -68,8 +68,8 @@ impl Queue {
         // Send append command to the background task managing the state
         // Unwrap is safe here
         self.queue_sender
-            .send(QueueCommand::Append(Box::new(entry), Span::current()))
-            .expect("Queue background task dropped the receiver. This is a bug.");
+            .try_send(QueueCommand::Append(Box::new(entry), Span::current()))
+            .expect("Queue background task dropped the receiver or the receiver is too behind. This is a bug.");
     }
 
     /// Get the next batch from the queue
@@ -80,11 +80,11 @@ impl Queue {
         // Send next batch command to the background task managing the state
         // Unwrap is safe here
         self.queue_sender
-            .send(QueueCommand::NextBatch {
+            .try_send(QueueCommand::NextBatch {
                 response_sender,
                 span: Span::current(),
             })
-            .expect("Queue background task dropped the receiver. This is a bug.");
+            .expect("Queue background task dropped the receiver or the receiver is too behind. This is a bug.");
         // Await on response channel
         // Unwrap is safe here
         response_receiver.await.expect(
@@ -99,7 +99,7 @@ fn queue_blocking_task(
     max_batch_tokens: usize,
     max_batch_requests: Option<usize>,
     max_concurrent_requests: usize,
-    mut queue_receiver: mpsc::UnboundedReceiver<QueueCommand>,
+    mut queue_receiver: mpsc::Receiver<QueueCommand>,
 ) {
     let capacity = max_batch_requests.unwrap_or(max_concurrent_requests);
 
@@ -110,7 +110,8 @@ fn queue_blocking_task(
             QueueCommand::Append(entry, span) => {
                 let _span = span.entered();
                 entries.push_back(*entry);
-                metrics::increment_gauge!("te_queue_size", 1.0);
+                let gauge = metrics::gauge!("te_queue_size");
+                gauge.increment(1.0);
             }
             QueueCommand::NextBatch {
                 response_sender,
@@ -137,7 +138,8 @@ fn queue_blocking_task(
                     // Filter entries where the response receiver was dropped (== entries where the request
                     // was dropped by the client)
                     if entry.metadata.response_tx.is_closed() {
-                        metrics::increment_counter!("te_request_failure", "err" => "dropped");
+                        let counter = metrics::counter!("te_request_failure", "err" => "dropped");
+                        counter.increment(1);
                         continue;
                     }
 
@@ -197,9 +199,12 @@ fn queue_blocking_task(
 
                 let _ = response_sender.send(next_batch);
 
-                metrics::histogram!("te_batch_next_size", batch_size as f64);
-                metrics::histogram!("te_batch_next_tokens", current_tokens as f64);
-                metrics::gauge!("te_queue_size", entries.len() as f64);
+                let histogram = metrics::histogram!("te_batch_next_size");
+                histogram.record(batch_size as f64);
+                let histogram = metrics::histogram!("te_batch_next_tokens");
+                histogram.record(current_tokens as f64);
+                let gauge = metrics::gauge!("te_queue_size");
+                gauge.set(entries.len() as f64)
             }
         }
     }

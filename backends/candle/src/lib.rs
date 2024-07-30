@@ -11,13 +11,13 @@ use crate::compute_cap::{
     compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
 };
 use crate::models::{
-    BertConfig, BertModel, DistilBertConfig, DistilBertModel, JinaBertModel, JinaCodeBertModel,
-    Model, NomicBertModel, NomicConfig,
+    BertConfig, BertModel, DistilBertConfig, DistilBertModel, GTEConfig, JinaBertModel,
+    JinaCodeBertModel, MistralConfig, Model, NomicBertModel, NomicConfig, Qwen2Config,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
-    FlashBertModel, FlashDistilBertModel, FlashJinaBertModel, FlashJinaCodeBertModel,
-    FlashNomicBertModel,
+    FlashBertModel, FlashDistilBertModel, FlashGTEModel, FlashJinaBertModel,
+    FlashJinaCodeBertModel, FlashMistralModel, FlashNomicBertModel, FlashQwen2Model,
 };
 use anyhow::Context;
 use candle::{DType, Device};
@@ -56,6 +56,10 @@ enum Config {
     DistilBert(DistilBertConfig),
     #[serde(rename(deserialize = "nomic_bert"))]
     NomicBert(NomicConfig),
+    Mistral(MistralConfig),
+    #[serde(rename = "new")]
+    Gte(GTEConfig),
+    Qwen2(Qwen2Config),
 }
 
 pub struct CandleBackend {
@@ -69,6 +73,54 @@ impl CandleBackend {
         dtype: String,
         model_type: ModelType,
     ) -> Result<Self, BackendError> {
+        // Default files
+        let default_safetensors = model_path.join("model.safetensors");
+        let default_pytorch = model_path.join("pytorch_model.bin");
+
+        // Single Files
+        let model_files = if default_safetensors.exists() {
+            vec![default_safetensors]
+        } else if default_pytorch.exists() {
+            vec![default_pytorch]
+        }
+        // Sharded weights
+        else {
+            // Get index file
+            let index_file = model_path.join("model.safetensors.index.json");
+
+            // Parse file
+            let index_file_string: String = std::fs::read_to_string(&index_file)
+                .map_err(|err| BackendError::Start(err.to_string()))?;
+            let json: serde_json::Value = serde_json::from_str(&index_file_string)
+                .map_err(|err| BackendError::Start(err.to_string()))?;
+
+            let weight_map = match json.get("weight_map") {
+                None => {
+                    return Err(BackendError::Start(format!(
+                        "no weight map in {index_file:?}"
+                    )));
+                }
+                Some(serde_json::Value::Object(map)) => map,
+                Some(_) => {
+                    return Err(BackendError::Start(format!(
+                        "weight map in {index_file:?} is not a map"
+                    )));
+                }
+            };
+            let mut safetensors_files = std::collections::HashSet::new();
+            for value in weight_map.values() {
+                if let Some(file) = value.as_str() {
+                    safetensors_files.insert(file.to_string());
+                }
+            }
+
+            // Collect paths
+            safetensors_files
+                .iter()
+                .map(|n| model_path.join(n))
+                .collect()
+        };
+
         // Load config
         let config: String = std::fs::read_to_string(model_path.join("config.json"))
             .context("Unable to read config file")
@@ -115,17 +167,10 @@ impl CandleBackend {
             )))
         }?;
 
-        let safetensors_path = model_path.join("model.safetensors");
-        let vb = if safetensors_path.exists() {
-            unsafe {
-                VarBuilder::from_mmaped_safetensors(
-                    &[model_path.join("model.safetensors")],
-                    dtype,
-                    &device,
-                )
-            }
+        let vb = if model_files.len() == 1 && model_files[0].extension().unwrap() == "bin" {
+            VarBuilder::from_pth(&model_files[0], dtype, &device)
         } else {
-            VarBuilder::from_pth(model_path.join("pytorch_model.bin"), dtype, &device)
+            unsafe { VarBuilder::from_mmaped_safetensors(&model_files, dtype, &device) }
         }
         .s()?;
 
@@ -136,7 +181,7 @@ impl CandleBackend {
             )),
             (Config::Bert(config), Device::Cpu | Device::Metal(_)) => match config {
                 BertConfigWrapper::JinaBert(config) => {
-                    tracing::info!("Starting JinaBertModel model on {:?}", device);
+                    tracing::info!("Starting JinaBert model on {:?}", device);
                     Ok(Box::new(JinaBertModel::load(vb, &config, model_type).s()?))
                 }
                 BertConfigWrapper::JinaCodeBert(config) => {
@@ -160,15 +205,27 @@ impl CandleBackend {
                 ))
             }
             (Config::DistilBert(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting DistilBertModel model on {:?}", device);
+                tracing::info!("Starting DistilBert model on {:?}", device);
                 Ok(Box::new(
                     DistilBertModel::load(vb, &config, model_type).s()?,
                 ))
             }
             (Config::NomicBert(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting NomicBertModel model on {:?}", device);
+                tracing::info!("Starting NomicBert model on {:?}", device);
                 Ok(Box::new(NomicBertModel::load(vb, &config, model_type).s()?))
             }
+            (Config::Mistral(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
+                "Mistral is only supported on Cuda devices in fp16 with flash attention enabled"
+                    .to_string(),
+            )),
+            (Config::Gte(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
+                "GTE is only supported on Cuda devices in fp16 with flash attention enabled"
+                    .to_string(),
+            )),
+            (Config::Qwen2(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
+                "Qwen2 is only supported on Cuda devices in fp16 with flash attention enabled"
+                    .to_string(),
+            )),
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
                 if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
@@ -198,7 +255,7 @@ impl CandleBackend {
                 } else {
                     match config {
                         BertConfigWrapper::JinaBert(config) => {
-                            tracing::info!("Starting JinaBertModel model on {:?}", device);
+                            tracing::info!("Starting JinaBert model on {:?}", device);
                             Ok(Box::new(JinaBertModel::load(vb, &config, model_type).s()?))
                         }
                         BertConfigWrapper::JinaCodeBert(config) => {
@@ -245,7 +302,7 @@ impl CandleBackend {
                         .to_lowercase()
                         == "true"
                 {
-                    tracing::info!("Starting FlashDistilBertModel model on {:?}", device);
+                    tracing::info!("Starting FlashDistilBert model on {:?}", device);
                     Ok(Box::new(
                         FlashDistilBertModel::load(vb, &config, model_type).s()?,
                     ))
@@ -265,14 +322,49 @@ impl CandleBackend {
                         .to_lowercase()
                         == "true"
                 {
-                    tracing::info!("Starting FlashNomicBertModel model on {:?}", device);
+                    tracing::info!("Starting FlashNomicBert model on {:?}", device);
                     Ok(Box::new(
                         FlashNomicBertModel::load(vb, &config, model_type).s()?,
                     ))
                 } else {
-                    tracing::info!("Starting NomicBertModel model on {:?}", device);
+                    tracing::info!("Starting NomicBert model on {:?}", device);
                     Ok(Box::new(NomicBertModel::load(vb, &config, model_type).s()?))
                 }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::Mistral(config), Device::Cuda(_)) => {
+                if dtype != DType::F16
+                    || !cfg!(feature = "flash-attn")
+                    || get_runtime_compute_cap().unwrap() < 80
+                {
+                    return Err(BackendError::Start("Mistral is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
+                }
+                tracing::info!("Starting FlashMistral model on {:?}", device);
+                Ok(Box::new(
+                    FlashMistralModel::load(vb, &config, model_type).s()?,
+                ))
+            }
+            #[cfg(feature = "cuda")]
+            (Config::Gte(config), Device::Cuda(_)) => {
+                if dtype != DType::F16
+                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                {
+                    return Err(BackendError::Start("GTE is only supported on Cuda devices in fp16 with flash attention enabled".to_string()));
+                }
+                tracing::info!("Starting FlashGTE model on {:?}", device);
+                Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))
+            }
+            #[cfg(feature = "cuda")]
+            (Config::Qwen2(config), Device::Cuda(_)) => {
+                if dtype != DType::F16
+                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                {
+                    return Err(BackendError::Start("Qwen2 is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
+                }
+                tracing::info!("Starting FlashQwen2 model on {:?}", device);
+                Ok(Box::new(
+                    FlashQwen2Model::load(vb, &config, model_type).s()?,
+                ))
             }
         };
 

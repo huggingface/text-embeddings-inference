@@ -1,8 +1,8 @@
-use opentelemetry::sdk::propagation::TraceContextPropagator;
-use opentelemetry::sdk::trace::Sampler;
-use opentelemetry::sdk::{trace, Resource};
 use opentelemetry::{global, KeyValue};
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
+use opentelemetry_sdk::trace::Sampler;
+use opentelemetry_sdk::{trace, Resource};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
@@ -48,7 +48,7 @@ pub fn init_logging(
                     )]))
                     .with_sampler(Sampler::AlwaysOn),
             )
-            .install_batch(opentelemetry::runtime::Tokio);
+            .install_batch(opentelemetry_sdk::runtime::Tokio);
 
         if let Ok(tracer) = tracer {
             layers.push(tracing_opentelemetry::layer().with_tracer(tracer).boxed());

@@ -31,15 +31,13 @@ Finally, deploy your model. Let's say you want to use `BAAI/bge-large-en-v1.5`. 
 
 ```shell
 model=BAAI/bge-large-en-v1.5
-revision=refs/pr/5
 volume=$PWD/data
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2 --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.5 --model-id $model
 ```
 
 <Tip>
 
-Here we pass a `revision=refs/pr/5` because the `safetensors` variant of this model is currently in a pull request.
 We also recommend sharing a volume with the Docker container (`volume=$PWD/data`) to avoid downloading weights every run.
 
 </Tip>
@@ -66,10 +64,9 @@ Let's say you want to use `BAAI/bge-reranker-large`:
 
 ```shell
 model=BAAI/bge-reranker-large
-revision=refs/pr/4
 volume=$PWD/data
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2 --model-id $model --revision $revision
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.5 --model-id $model
 ```
 
 Once you have deployed a model, you can use the `rerank` endpoint to rank the similarity between a query and a list
@@ -90,7 +87,7 @@ You can also use classic Sequence Classification models like `SamLowe/roberta-ba
 model=SamLowe/roberta-base-go_emotions
 volume=$PWD/data
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.2 --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.5 --model-id $model
 ```
 
 Once you have deployed the model you can use the `predict` endpoint to get the emotions most associated with an input:
@@ -120,4 +117,27 @@ curl 127.0.0.1:8080/predict \
     -X POST \
     -d '{"inputs":[["I like you."], ["I hate pineapples"]]}' \
     -H 'Content-Type: application/json'
+```
+
+## Air gapped deployment
+
+To deploy Text Embeddings Inference in an air-gapped environment, first download the weights and then mount them inside
+the container using a volume.
+
+For example:
+
+```shell
+# (Optional) create a `models` directory
+mkdir models
+cd models
+
+# Make sure you have git-lfs installed (https://git-lfs.com)
+git lfs install
+git clone https://huggingface.co/Alibaba-NLP/gte-base-en-v1.5
+
+# Set the models directory as the volume path
+volume=$PWD
+
+# Mount the models directory inside the container with a volume and set the model ID
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.5 --model-id /data/gte-base-en-v1.5
 ```
