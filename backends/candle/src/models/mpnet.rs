@@ -156,66 +156,63 @@ impl MPNetAttention {
         let value_layer = &qkv[2].contiguous()?;
 
         #[allow(unused_variables)]
-        let context_layer = if let (Device::Cuda(_), Some(cublaslt)) =
-            (device, get_cublas_lt_wrapper())
-        {
-            #[cfg(feature = "cuda")]
-            {
-                // cuBLASLt batch matmul implementation requires inputs to be dims3
-                let (batch_size, _, seq_len, _) = key_layer.shape().dims4()?;
-                let key_layer = key_layer.flatten(0, 1)?;
-                let query_layer = query_layer.flatten(0, 1)?;
-                let value_layer = value_layer.flatten(0, 1)?;
-                let attention_bias = attention_bias.map(|mask| mask.flatten(0, 1)).transpose()?;
-                let attention_mask = attention_mask.map(|mask| mask.flatten(0, 1)).transpose()?;
-                let bias = (attention_bias + attention_mask)?;
+        let context_layer =
+            if let (Device::Cuda(_), Some(cublaslt)) = (device, get_cublas_lt_wrapper()) {
+                #[cfg(feature = "cuda")]
+                {
+                    // cuBLASLt batch matmul implementation requires inputs to be dims3
+                    let (batch_size, _, seq_len, _) = key_layer.shape().dims4()?;
+                    let key_layer = key_layer.flatten(0, 1)?;
+                    let query_layer = query_layer.flatten(0, 1)?;
+                    let value_layer = value_layer.flatten(0, 1)?;
+                    let bias = (attention_bias + attention_mask)?.flatten(0, 1)?;
 
-                // Batch matrix multiplication
-                // Fuse softmax scale and attention_bias add
-                let attention_scores = cublaslt.batch_matmul(
-                    &key_layer,
-                    &query_layer,
-                    bias.as_ref(),
-                    Some(self.softmax_scale as f32),
-                    1.0,
-                    None,
-                    None,
-                )?;
+                    // Batch matrix multiplication
+                    // Fuse softmax scale and attention_bias add
+                    let attention_scores = cublaslt.batch_matmul(
+                        &key_layer,
+                        &query_layer,
+                        bias.as_ref(),
+                        Some(self.softmax_scale as f32),
+                        Some(1.0),
+                        None,
+                        None,
+                    )?;
+                    let attention_probs = candle_nn::ops::softmax_last_dim(&attention_scores)?;
+
+                    let context_layer = cublaslt.batch_matmul(
+                        &value_layer.t()?.contiguous()?,
+                        &attention_probs,
+                        // We save one allocation
+                        Some(&query_layer),
+                        None,
+                        None,
+                        None,
+                        None,
+                    )?;
+
+                    // Reshape to dims4
+                    context_layer.reshape((
+                        batch_size,
+                        self.num_attention_heads,
+                        seq_len,
+                        self.attention_head_size,
+                    ))
+                }
+                #[cfg(not(feature = "cuda"))]
+                {
+                    candle::bail!("`cuda` feature is not enabled")
+                }
+            } else {
+                let attention_scores = query_layer.matmul(&key_layer.t()?)?;
+                let attention_scores = (attention_scores * self.softmax_scale)?;
+
+                let attention_scores = attention_scores.add(attention_bias)?;
+                let attention_scores = attention_scores.add(attention_mask)?;
+
                 let attention_probs = candle_nn::ops::softmax_last_dim(&attention_scores)?;
-
-                let context_layer = cublaslt.batch_matmul(
-                    &value_layer.t()?.contiguous()?,
-                    &attention_probs,
-                    // We save one allocation
-                    Some(&query_layer),
-                    None,
-                    None,
-                    None,
-                    None,
-                )?;
-
-                // Reshape to dims4
-                context_layer.reshape((
-                    batch_size,
-                    self.num_attention_heads,
-                    seq_len,
-                    self.attention_head_size,
-                ))
-            }
-            #[cfg(not(feature = "cuda"))]
-            {
-                candle::bail!("`cuda` feature is not enabled")
-            }
-        } else {
-            let attention_scores = query_layer.matmul(&key_layer.t()?)?;
-            let attention_scores = (attention_scores * self.softmax_scale)?;
-
-            let attention_scores = attention_scores.add(attention_bias)?;
-            let attention_scores = attention_scores.add(attention_mask)?;
-
-            let attention_probs = candle_nn::ops::softmax_last_dim(&attention_scores)?;
-            attention_probs.matmul(value_layer)
-        }?;
+                attention_probs.matmul(value_layer)
+            }?;
 
         let context_layer = context_layer.transpose(1, 2)?.contiguous()?;
         let context_layer = context_layer.flatten_from(D::Minus2)?;
@@ -337,20 +334,20 @@ impl MPNetAttentionBias {
     ) -> Result<Tensor> {
         let device = relative_position.device();
 
+        let num_buckets = (self.relative_attention_num_buckets / 2) as f64;
+        let max_exact = num_buckets / 2.0;
+        let max_distance_log = (max_distance as f64 / max_exact).ln();
+        let scale = (num_buckets - max_exact) / max_distance_log;
+
         let mut ret = Tensor::zeros_like(relative_position)?;
         let n = relative_position.to_dtype(DType::F32)?.neg()?;
-
-        let num_buckets = (self.relative_attention_num_buckets / 2) as f64;
 
         ret = ret.add(&(&n.lt(0.0)? * num_buckets)?.to_dtype(DType::I64)?)?;
         let n = n.abs()?;
 
-        let max_exact = num_buckets / 2.0;
         let is_small = n.lt(max_exact)?;
 
         let log_val = (n.clone() / max_exact)?.log()?;
-        let max_distance_log = (max_distance as f64 / max_exact).ln();
-        let scale = (num_buckets - max_exact) / max_distance_log;
         let val_if_large = (max_exact + (log_val * scale)?)?;
 
         let val_if_large = val_if_large
