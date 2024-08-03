@@ -172,7 +172,7 @@ impl MPNetAttention {
                     let attention_scores = cublaslt.batch_matmul(
                         &key_layer,
                         &query_layer,
-                        bias.as_ref(),
+                        Some(bias.as_ref()),
                         Some(self.softmax_scale as f32),
                         Some(1.0),
                         None,
