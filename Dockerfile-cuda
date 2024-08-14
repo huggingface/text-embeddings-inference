@@ -77,6 +77,7 @@ COPY Cargo.lock ./
 
 FROM builder AS http-builder
 
+ARG CUDA_COMPUTE_CAP
 RUN if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
     then \
         cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F static-linking -F http --no-default-features && sccache -s; \
@@ -85,6 +86,7 @@ RUN if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
     fi;
 
 FROM builder AS grpc-builder
+ARG CUDA_COMPUTE_CAP
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     unzip \
