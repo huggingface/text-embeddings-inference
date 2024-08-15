@@ -1,6 +1,6 @@
+ARG PLATFORM=cpu
 FROM lukemathwalker/cargo-chef:latest-rust-1.75-bookworm AS chef
 WORKDIR /usr/src
-
 ENV SCCACHE=0.5.4
 ENV RUSTC_WRAPPER=/usr/local/bin/sccache
 
@@ -54,8 +54,7 @@ COPY proto proto
 
 RUN cargo build --release --bin text-embeddings-router -F grpc -F python --no-default-features && sccache -s
 
-FROM intel/intel-optimized-pytorch:2.3.0-pip-base as base
-
+FROM intel/intel-optimized-pytorch:2.4.0-pip-base AS cpu
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80
 
@@ -72,26 +71,79 @@ COPY backends backends
 COPY backends/python/server/text_embeddings_server/models/__init__.py backends/python/server/text_embeddings_server/models/__init__.py
 COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
 COPY backends/python/server/requirements-intel.txt backends/python/server/requirements.txt
+
+RUN python -m pip install torch==2.4.0 torchvision torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cpu
+
 RUN cd backends/python/server && \
     make install
 
-RUN python -m pip install torch==2.4.0 torchvision torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/test/cpu
-RUN python -m pip uninstall -y intel-extension-for-pytorch
-RUN git clone https://github.com/intel/intel-extension-for-pytorch.git &&\
-    cd intel-extension-for-pytorch &&\
-    git reset --hard 620a9bfd9db42813931a857e78fa3f5d298be200 &&\
-    git submodule sync &&\
-    git submodule update --init --recursive &&\
-    python setup.py install
+FROM vault.habana.ai/gaudi-docker/1.16.1/ubuntu22.04/habanalabs/pytorch-installer-2.2.2:latest AS hpu
+ENV HUGGINGFACE_HUB_CACHE=/data \
+    PORT=80
 
-FROM base as grpc
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        cmake \
+        ninja-build \
+        python3-dev &&\
+        rm -rf /var/lib/apt/lists/*
+
+WORKDIR /usr/src
+COPY backends backends
+COPY backends/python/server/text_embeddings_server/models/__init__.py backends/python/server/text_embeddings_server/models/__init__.py
+COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
+COPY backends/python/server/requirements-hpu.txt backends/python/server/requirements.txt
+
+RUN cd backends/python/server && \
+    make install
+
+FROM intel/intel-extension-for-pytorch:2.1.40-xpu AS xpu
+
+ENV HUGGINGFACE_HUB_CACHE=/data \
+    PORT=80
+RUN wget http://nz2.archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2_amd64.deb && \
+    dpkg -i ./libssl1.1_1.1.1f-1ubuntu2_amd64.deb
+
+RUN wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | gpg --dearmor | tee /usr/share/keyrings/intel-graphics.gpg > /dev/null
+
+RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+| gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null && echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | tee /etc/apt/sources.list.d/oneAPI.list
+
+RUN apt-get update && apt install -y intel-basekit xpu-smi cmake python3-dev ninja-build pciutils
+WORKDIR /usr/src
+RUN pip install PyYAML
+RUN wget https://intel-extension-for-pytorch.s3.amazonaws.com/ipex_dev/xpu/torch-2.1.0.post1%2Bcxx11.abi-cp310-cp310-linux_x86_64.whl && pip install torch-2.1.0.post1+cxx11.abi-cp310-cp310-linux_x86_64.whl
+RUN pip install https://github.com/intel/intel-xpu-backend-for-triton/releases/download/v2.1.0/triton-2.1.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+RUN git clone https://github.com/intel/intel-extension-for-pytorch && cd intel-extension-for-pytorch && git checkout -b distributed origin/dev/distributed
+
+ENV CCL_ROOT=/opt/intel/oneapi/ccl/latest
+ENV I_MPI_ROOT=/opt/intel/oneapi/mpi/latest
+ENV FI_PROVIDER_PATH=/opt/intel/oneapi/mpi/latest/opt/mpi/libfabric/lib/prov:/usr/lib/x86_64-linux-gnu/libfabric
+ENV LIBRARY_PATH=/opt/intel/oneapi/mpi/latest/lib:/opt/intel/oneapi/ccl/latest/lib/:/opt/intel/oneapi/mkl/latest/lib/:/opt/intel/oneapi/compiler/latest/lib
+ENV LD_LIBRARY_PATH=/opt/intel/oneapi/ccl/latest/lib/:/opt/intel/oneapi/mpi/latest/opt/mpi/libfabric/lib:/opt/intel/oneapi/mpi/latest/lib:/opt/intel/oneapi/mkl/latest/lib:/opt/intel/oneapi/compiler/latest/opt/compiler/lib:/opt/intel/oneapi/compiler/latest/lib:/opt/intel/oneapi/lib:/opt/intel/oneapi/lib/intel64:
+ENV PATH=/opt/intel/oneapi/mpi/latest/opt/mpi/libfabric/bin:/opt/intel/oneapi/mpi/latest/bin:/opt/intel/oneapi/mpi/latest/opt/mpi/libfabric/bin:/opt/intel/oneapi/mkl/latest/bin/:/opt/intel/oneapi/compiler/latest/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV CCL_ZE_IPC_EXCHANGE=sockets
+ENV CMAKE_PREFIX_PATH=/opt/intel/oneapi/mkl/latest/lib/cmake:/opt/intel/oneapi/compiler/latest
+ENV CPATH=/opt/intel/oneapi/mpi/latest/include:/opt/intel/oneapi/ccl/latest/include:/opt/intel/oneapi/mkl/latest/include
+
+RUN pip uninstall -y intel-extension-for-pytorch && cd intel-extension-for-pytorch && git submodule update --init --recursive && USE_AOT_DEVLIST='pvc' BUILD_SEPARATE_OPS=OFF BUILD_WITH_CPU=OFF USE_XETLA=ON python setup.py install && rm -rf /usr/src/intel-extension-for-pytorch
+
+COPY backends backends
+COPY backends/python/server/text_embeddings_server/models/__init__.py backends/python/server/text_embeddings_server/models/__init__.py
+COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
+COPY backends/python/server/requirements-intel.txt backends/python/server/requirements.txt
+RUN cd backends/python/server && \
+    make install
+
+FROM ${PLATFORM} AS grpc
 
 COPY --from=grpc-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
 
 ENTRYPOINT ["text-embeddings-router"]
 CMD ["--json-output"]
 
-FROM base
+FROM ${PLATFORM}
 
 COPY --from=http-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
 
