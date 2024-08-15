@@ -1,3 +1,4 @@
+from pyrsistent import s
 import torch
 
 from loguru import logger
@@ -25,38 +26,36 @@ if FLASH_ATTENTION:
     __all__.append(FlashBert)
 
 
-def get_model(model_path: Path, dtype: Optional[str]):
+def get_model(model_path: Path, dtype: Optional[str]) :
     if dtype == "float32":
-        dtype = torch.float32
+        datatype = torch.float32
     elif dtype == "float16":
-        dtype = torch.float16
+        datatype = torch.float16
     elif dtype == "bfloat16":
-        dtype = torch.bfloat16
+        datatype = torch.bfloat16
     else:
         raise RuntimeError(f"Unknown dtype {dtype}")
 
     device = get_device()
     config = AutoConfig.from_pretrained(model_path)
-
     if config.model_type == "bert":
         config: BertConfig
         if (
             device.type == "cuda"
             and config.position_embedding_type == "absolute"
-            and dtype in [torch.float16, torch.bfloat16]
+            and datatype in [torch.float16, torch.bfloat16]
             and FLASH_ATTENTION
         ):
-            return FlashBert(model_path, device, dtype)
-        elif (
-              device.type == "cpu"
-              and use_ipex()
-        ):
-            logger.info("Use the flashBert for CPU")
-            return FlashBert(model_path, device, dtype)
-        else:
-            return DefaultModel(model_path, device, dtype)
+            return FlashBert(model_path, device, datatype) # type: ignore
+        if use_ipex() and device.type in ["cpu", "xpu"]:
+            return FlashBert(model_path, device, datatype) # type: ignore
+        if device.type == "hpu":
+            from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+            from optimum.habana.transformers.modeling_utils import adapt_transformers_to_gaudi
+            adapt_transformers_to_gaudi()
+            model_handle = DefaultModel(model_path, device, datatype)
+            model_handle.model = wrap_in_hpu_graph(model_handle.model, disable_tensor_cache=True)
+            return model_handle
+        return DefaultModel(model_path, device, datatype)
     else:
-        try:
-            return DefaultModel(model_path, device, dtype)
-        except:
-            raise RuntimeError(f"Unsupported model_type {config.model_type}")
+        return DefaultModel(model_path, device, datatype)
