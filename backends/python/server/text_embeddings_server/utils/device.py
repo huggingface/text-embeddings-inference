@@ -32,16 +32,7 @@ def _is_hpu() -> bool:
     try:
         subprocess.run(["hl-smi"], capture_output=True, check=True)
     except (FileNotFoundError, PermissionError, subprocess.CalledProcessError):
-        if not os.path.exists('/dev/accel/accel0') and not os.path.exists(
-                '/dev/accel/accel_controlD0'):
-            # last resort...
-            try:
-                output = subprocess.check_output(
-                    'lsmod | grep habanalabs | wc -l', shell=True)
-                is_hpu_available = int(output) > 0
-            except (ValueError, FileNotFoundError, PermissionError,
-                    subprocess.CalledProcessError):
-                is_hpu_available = False
+        is_hpu_available = False
     return is_hpu_available
 
 def use_ipex() -> bool:

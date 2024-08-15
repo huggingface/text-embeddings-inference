@@ -12,7 +12,7 @@ from opentelemetry import trace
 from text_embeddings_server.models import Model
 from text_embeddings_server.models.types import FlashBatch, Embedding
 from text_embeddings_server.utils.flash_attn import attention
-
+from text_embeddings_server.utils.device import use_ipex
 tracer = trace.get_tracer(__name__)
 
 
@@ -25,6 +25,8 @@ class FastLayerNorm:
 
     def forward(self, hidden_states, residual=None):
         # Flash attention imports
+        normed_hidden_states = None
+        res = None
         if self.device.type == "cuda":
             import dropout_layer_norm
             normed_hidden_states, res, *rest = dropout_layer_norm.dropout_add_ln_fwd(
@@ -46,7 +48,7 @@ class FastLayerNorm:
             )
             if res is None:
                 res = hidden_states
-        else:
+        elif use_ipex():
             import intel_extension_for_pytorch as ipex
             normed_hidden_states = ipex.llm.functional.add_layer_norm(
                 residual,

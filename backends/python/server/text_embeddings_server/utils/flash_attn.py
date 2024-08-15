@@ -58,7 +58,10 @@ def attention(q, k, v, out, cu_seqlens, max_s, softmax_scale, is_causal=False):
     if HAS_FLASH_ATTN_V2:
         if use_ipex():
             import intel_extension_for_pytorch as ipex
-            return ipex.llm.functional.varlen_attention(q, k, v, out, cu_seqlens, cu_seqlens, max_s, max_s, 0, softmax_scale, zero_tensors=False, is_causal=False, return_softmax=False, gen_=None)
+            return ipex.llm.functional.varlen_attention(q, k, v, out, cu_seqlens, cu_seqlens,
+                                                        max_s, max_s, 0, softmax_scale,
+                                                        zero_tensors=False, is_causal=False,
+                                                        return_softmax=False, gen_=None)
         else:
             return flash_attn_2_cuda.varlen_fwd(
                 q,
