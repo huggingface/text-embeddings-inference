@@ -1,4 +1,4 @@
-ARG PLATFORM=ipex
+ARG PLATFORM=cpu
 FROM lukemathwalker/cargo-chef:latest-rust-1.75-bookworm AS chef
 WORKDIR /usr/src
 ENV SCCACHE=0.5.4
@@ -54,7 +54,7 @@ COPY proto proto
 
 RUN cargo build --release --bin text-embeddings-router -F grpc -F python --no-default-features && sccache -s
 
-FROM intel/intel-optimized-pytorch:2.4.0-pip-base AS ipex
+FROM intel/intel-optimized-pytorch:2.4.0-pip-base AS cpu
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80
 
