@@ -48,6 +48,7 @@ def get_device() :
         if hasattr(torch, "hpu") and torch.hpu.is_available(): # type: ignore
             device = torch.device("hpu")
     elif use_ipex():
+        import intel_extension_for_pytorch as ipex
         if hasattr(torch, "xpu") and torch.xpu.is_available():
             device = torch.device("xpu")
 
