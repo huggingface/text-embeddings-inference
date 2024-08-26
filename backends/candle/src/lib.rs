@@ -229,10 +229,15 @@ impl CandleBackend {
                 "Qwen2 is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
             )),
-            (Config::MPNet(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting MPNet model on {:?}", device);
-                Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
-            }
+            (Config::MPNet(config), Device::Cpu | Device::Metal(_)) => match device {
+                Device::Cpu => {
+                    tracing::info!("Starting MPNet model on {:?}", device);
+                    Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
+                }
+                _ => Err(BackendError::Start(
+                    "MPNet is only supported on CPU devices in fp32".to_string(),
+                )),
+            },
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
                 if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
