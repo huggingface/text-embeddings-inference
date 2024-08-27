@@ -13,6 +13,8 @@
     title: Using TEI locally with Metal
   - local: local_gpu
     title: Using TEI locally with GPU
+  - local: local_gaudi
+    title: Using TEI locally with Intel Gaudi 
   - local: private_models
     title: Serving private and gated models
 #  - local: tei_cli
