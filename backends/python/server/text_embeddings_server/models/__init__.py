@@ -48,13 +48,16 @@ def get_model(model_path: Path, dtype: Optional[str]) :
             and FLASH_ATTENTION
         ):
             return FlashBert(model_path, device, datatype) # type: ignore
-        if use_ipex() and device.type in ["cpu", "xpu"]:
-            import intel_extension_for_pytorch as ipex
+        if use_ipex() or device.type == "hpu":
             return FlashBert(model_path, device, datatype) # type: ignore
-        if device.type == "hpu":
-            import habana_frameworks.torch.core as htcore
-            return FlashBert(model_path, device, datatype)
 
         return DefaultModel(model_path, device, datatype)
     else:
+        if device.type == "hpu":
+            from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+            from optimum.habana.transformers.modeling_utils import adapt_transformers_to_gaudi
+            adapt_transformers_to_gaudi()
+            model_handle = DefaultModel(model_path, device, datatype)
+            model_handle.model = wrap_in_hpu_graph(model_handle.model)
+            return model_handle
         return DefaultModel(model_path, device, datatype)
