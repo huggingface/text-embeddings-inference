@@ -1,20 +1,35 @@
 import torch
-
 from pathlib import Path
 from torch import nn
+import torch.nn.functional as F
 from typing import Type, List
 from safetensors import safe_open
 from transformers.activations import ACT2FN
 from transformers.models.bert import BertConfig
 from opentelemetry import trace
-
-
 from text_embeddings_server.models import Model
 from text_embeddings_server.models.types import FlashBatch, Embedding
 from text_embeddings_server.utils.flash_attn import attention
 from text_embeddings_server.utils.device import use_ipex
+
 tracer = trace.get_tracer(__name__)
 
+def hpu_add_layer_norm(
+    add: torch.Tensor,
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    bias: torch.Tensor,
+    epsilon: float,
+    add_back: bool
+):
+    if add is not None:
+        added_tensor = torch.add(add, x, alpha=1.0)
+        output = F.layer_norm(added_tensor, [x.size(-1)], weight, bias, epsilon)
+        if add_back:
+            add.add_(x)
+        return output
+    else:
+        return F.layer_norm(x, [x.size(-1)], weight=weight, bias=bias, eps=epsilon)
 
 class FastLayerNorm:
     def __init__(self, prefix, handle, device, dtype, config: BertConfig):
@@ -22,6 +37,7 @@ class FastLayerNorm:
         self.bias = handle.get_tensor(f"{prefix}.bias").to(dtype).to(device)
         self.variance_epsilon = config.layer_norm_eps
         self.device = device
+        self.use_ipex = use_ipex()
 
     def forward(self, hidden_states, residual=None):
         # Flash attention imports
@@ -48,7 +64,7 @@ class FastLayerNorm:
             )
             if res is None:
                 res = hidden_states
-        elif use_ipex():
+        elif self.use_ipex:
             import intel_extension_for_pytorch as ipex
             normed_hidden_states = ipex.llm.functional.add_layer_norm(
                 residual,
@@ -60,7 +76,16 @@ class FastLayerNorm:
              )
 
             res = residual if residual is not None else hidden_states
-
+        elif self.device.type == "hpu":
+            normed_hidden_states = hpu_add_layer_norm(
+                residual,
+                hidden_states,
+                self.weight,
+                self.bias,
+                self.variance_epsilon,
+                residual is not None
+            )
+            res = residual if residual is not None else hidden_states
         return normed_hidden_states, res
 
 
@@ -242,7 +267,9 @@ class FlashBert(Model):
         config = BertConfig.from_pretrained(model_path)
         with safe_open(model_path / "model.safetensors", framework="pt") as f:
             model = FlashBertModel(f, device, dtype, config)
-
+        if device.type == "hpu":
+            from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+            model = wrap_in_hpu_graph(model, disable_tensor_cache=False)
         self.hidden_size = config.hidden_size
 
         super(FlashBert, self).__init__(model=model, dtype=dtype, device=device)

@@ -27,11 +27,11 @@ def _is_ipex_available():
         return False
     return True
 
-def _is_hpu() -> bool:
+def is_hpu() -> bool:
     is_hpu_available = True
     try:
         subprocess.run(["hl-smi"], capture_output=True, check=True)
-    except (FileNotFoundError, PermissionError, subprocess.CalledProcessError):
+    except:
         is_hpu_available = False
     return is_hpu_available
 
@@ -43,7 +43,7 @@ def get_device() :
     device = torch.device("cpu")
     if torch.cuda.is_available():
         device = torch.device("cuda")
-    elif _is_hpu():
+    elif is_hpu():
         import habana_frameworks.torch.core as htcore
         if hasattr(torch, "hpu") and torch.hpu.is_available(): # type: ignore
             device = torch.device("hpu")

@@ -37,6 +37,7 @@ def get_model(model_path: Path, dtype: Optional[str]) :
         raise RuntimeError(f"Unknown dtype {dtype}")
 
     device = get_device()
+    logger.info(f"backend device: {device}")
     config = AutoConfig.from_pretrained(model_path)
     if config.model_type == "bert":
         config: BertConfig
@@ -48,14 +49,12 @@ def get_model(model_path: Path, dtype: Optional[str]) :
         ):
             return FlashBert(model_path, device, datatype) # type: ignore
         if use_ipex() and device.type in ["cpu", "xpu"]:
+            import intel_extension_for_pytorch as ipex
             return FlashBert(model_path, device, datatype) # type: ignore
         if device.type == "hpu":
-            from habana_frameworks.torch.hpu import wrap_in_hpu_graph
-            from optimum.habana.transformers.modeling_utils import adapt_transformers_to_gaudi
-            adapt_transformers_to_gaudi()
-            model_handle = DefaultModel(model_path, device, datatype)
-            model_handle.model = wrap_in_hpu_graph(model_handle.model, disable_tensor_cache=True)
-            return model_handle
+            import habana_frameworks.torch.core as htcore
+            return FlashBert(model_path, device, datatype)
+
         return DefaultModel(model_path, device, datatype)
     else:
         return DefaultModel(model_path, device, datatype)
