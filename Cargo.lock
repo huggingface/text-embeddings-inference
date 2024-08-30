@@ -4010,6 +4010,7 @@ version = "1.5.0"
 dependencies = [
  "clap",
  "hf-hub",
+ "rand",
  "serde_json",
  "text-embeddings-backend-candle",
  "text-embeddings-backend-core",
