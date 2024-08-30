@@ -57,8 +57,20 @@ else:
         HAS_FLASH_ATTN = True
 
 
-def hpu_attn(q, k, v, out, seqlen_q, seqlen_k, max_seqlen_q, max_seqlen_k, softmax_scale, is_causal=False):
+def hpu_attn(
+    q,
+    k,
+    v,
+    out,
+    seqlen_q,
+    seqlen_k,
+    max_seqlen_q,
+    max_seqlen_k,
+    softmax_scale,
+    is_causal=False,
+):
     from habana_frameworks.torch.hpex.kernels import FusedSDPA
+
     total_q, num_head, head_size = q.size()
     total_k, num_head_k, _ = k.size()
     batch_size = seqlen_q.size(0) - 1
@@ -110,7 +122,9 @@ def hpu_attn(q, k, v, out, seqlen_q, seqlen_k, max_seqlen_q, max_seqlen_k, softm
     if is_causal:
         attn_mask = None
 
-    out_ = FusedSDPA.apply(pad_q, pad_k, pad_v, attn_mask, 0.0, is_causal, softmax_scale)
+    out_ = FusedSDPA.apply(
+        pad_q, pad_k, pad_v, attn_mask, 0.0, is_causal, softmax_scale
+    )
     out_ = out_.permute(0, 2, 1, 3)
     out.copy_(out_[q_mask])
     return out
@@ -120,13 +134,36 @@ def attention(q, k, v, out, cu_seqlens, max_s, softmax_scale, is_causal=False):
     if HAS_FLASH_ATTN_V2:
         if use_ipex:
             import intel_extension_for_pytorch as ipex
-            return ipex.llm.functional.varlen_attention(q, k, v, out, cu_seqlens, cu_seqlens,
-                                                        max_s, max_s, 0, softmax_scale,
-                                                        zero_tensors=False, is_causal=False,
-                                                        return_softmax=False, gen_=None)
+
+            return ipex.llm.functional.varlen_attention(
+                q,
+                k,
+                v,
+                out,
+                cu_seqlens,
+                cu_seqlens,
+                max_s,
+                max_s,
+                0,
+                softmax_scale,
+                zero_tensors=False,
+                is_causal=False,
+                return_softmax=False,
+                gen_=None,
+            )
         elif is_hpu:
-            return hpu_attn(q, k, v, out, cu_seqlens, cu_seqlens,
-                            max_s, max_s, softmax_scale, is_causal=False)
+            return hpu_attn(
+                q,
+                k,
+                v,
+                out,
+                cu_seqlens,
+                cu_seqlens,
+                max_s,
+                max_s,
+                softmax_scale,
+                is_causal=False,
+            )
 
         else:
             return flash_attn_2_cuda.varlen_fwd(

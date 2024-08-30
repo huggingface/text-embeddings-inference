@@ -14,13 +14,14 @@ from text_embeddings_server.utils.device import use_ipex
 
 tracer = trace.get_tracer(__name__)
 
+
 def hpu_add_layer_norm(
     add: torch.Tensor,
     x: torch.Tensor,
     weight: torch.Tensor,
     bias: torch.Tensor,
     epsilon: float,
-    add_back: bool
+    add_back: bool,
 ):
     if add is not None:
         added_tensor = torch.add(add, x, alpha=1.0)
@@ -30,6 +31,7 @@ def hpu_add_layer_norm(
         return output
     else:
         return F.layer_norm(x, [x.size(-1)], weight=weight, bias=bias, eps=epsilon)
+
 
 class FastLayerNorm:
     def __init__(self, prefix, handle, device, dtype, config: BertConfig):
@@ -45,6 +47,7 @@ class FastLayerNorm:
         res = None
         if self.device.type == "cuda":
             import dropout_layer_norm
+
             normed_hidden_states, res, *rest = dropout_layer_norm.dropout_add_ln_fwd(
                 hidden_states,
                 residual,
@@ -66,14 +69,15 @@ class FastLayerNorm:
                 res = hidden_states
         elif self.use_ipex:
             import intel_extension_for_pytorch as ipex
+
             normed_hidden_states = ipex.llm.functional.add_layer_norm(
                 residual,
                 hidden_states,
                 self.weight,
                 self.bias,
                 self.variance_epsilon,
-                residual is not None
-             )
+                residual is not None,
+            )
 
             res = residual if residual is not None else hidden_states
         elif self.device.type == "hpu":
@@ -83,7 +87,7 @@ class FastLayerNorm:
                 self.weight,
                 self.bias,
                 self.variance_epsilon,
-                residual is not None
+                residual is not None,
             )
             res = residual if residual is not None else hidden_states
         return normed_hidden_states, res
@@ -269,6 +273,7 @@ class FlashBert(Model):
             model = FlashBertModel(f, device, dtype, config)
         if device.type == "hpu":
             from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+
             model = wrap_in_hpu_graph(model, disable_tensor_cache=False)
         self.hidden_size = config.hidden_size
 

@@ -16,7 +16,6 @@ pub enum DType {
     Float32,
     #[cfg(feature = "python")]
     Bfloat16,
-
 }
 
 impl fmt::Display for DType {

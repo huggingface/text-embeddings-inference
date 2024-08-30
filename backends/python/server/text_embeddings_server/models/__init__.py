@@ -10,6 +10,7 @@ from transformers.models.bert import BertConfig
 from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.default_model import DefaultModel
 from text_embeddings_server.utils.device import get_device, use_ipex
+
 __all__ = ["Model"]
 
 # Disable gradients
@@ -26,7 +27,7 @@ if FLASH_ATTENTION:
     __all__.append(FlashBert)
 
 
-def get_model(model_path: Path, dtype: Optional[str]) :
+def get_model(model_path: Path, dtype: Optional[str]):
     if dtype == "float32":
         datatype = torch.float32
     elif dtype == "float16":
@@ -47,15 +48,18 @@ def get_model(model_path: Path, dtype: Optional[str]) :
             and datatype in [torch.float16, torch.bfloat16]
             and FLASH_ATTENTION
         ):
-            return FlashBert(model_path, device, datatype) # type: ignore
+            return FlashBert(model_path, device, datatype)  # type: ignore
         if use_ipex() or device.type == "hpu":
-            return FlashBert(model_path, device, datatype) # type: ignore
+            return FlashBert(model_path, device, datatype)  # type: ignore
 
         return DefaultModel(model_path, device, datatype)
     else:
         if device.type == "hpu":
             from habana_frameworks.torch.hpu import wrap_in_hpu_graph
-            from optimum.habana.transformers.modeling_utils import adapt_transformers_to_gaudi
+            from optimum.habana.transformers.modeling_utils import (
+                adapt_transformers_to_gaudi,
+            )
+
             adapt_transformers_to_gaudi()
             model_handle = DefaultModel(model_path, device, datatype)
             model_handle.model = wrap_in_hpu_graph(model_handle.model)
