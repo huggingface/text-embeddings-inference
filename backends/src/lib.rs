@@ -41,7 +41,7 @@ fn powers_of_two(max_value: usize) -> Vec<usize> {
 
 fn is_hpu() -> bool {
     match Command::new("hl-smi")
-        .args(&["-Q", "name", "-f", "csv"])
+        .args(["-Q", "name", "-f", "csv"])
         .output()
     {
         Ok(output) => output.status.success(),
@@ -113,7 +113,7 @@ impl Backend {
         let max_warmup_length: usize = read_env_var("MAX_WARMUP_SEQUENCE_LENGTH", 1024);
 
         let max_batch_size = match max_bs {
-            Some(value) => value as usize,
+            Some(value) => value,
             None => read_env_var("MAX_WARMUP_BATCH_SIZE", 8),
         };
 
@@ -136,7 +136,7 @@ impl Backend {
 
         max_input_length = std::cmp::min(max_input_length, max_warmup_length);
         let mut seq_lengths: Vec<usize> = (seq_bucket_size..max_input_length + 1)
-            .step_by(seq_bucket_size as usize)
+            .step_by(seq_bucket_size)
             .collect();
         if let Some(&last) = seq_lengths.last() {
             if last < max_input_length {
