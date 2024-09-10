@@ -1,6 +1,7 @@
 import os
 from loguru import logger
-from importlib import metadata, util
+import importlib.metadata
+import importlib.util
 from packaging import version
 import torch
 import subprocess
@@ -14,13 +15,13 @@ def _is_ipex_available():
             + str(version.parse(full_version).minor)
         )
 
-    _torch_version = metadata.version("torch")
-    if util.find_spec("intel_extension_for_pytorch") is None:
+    _torch_version = importlib.metadata.version("torch")
+    if importlib.util.find_spec("intel_extension_for_pytorch") is None:
         return False
     _ipex_version = "N/A"
     try:
-        _ipex_version = metadata.version("intel_extension_for_pytorch")
-    except metadata.PackageNotFoundError:
+        _ipex_version = importlib.metadata.version("intel_extension_for_pytorch")
+    except importlib.metadata.PackageNotFoundError:
         return False
     torch_major_and_minor = get_major_and_minor_from_version(_torch_version)
     ipex_major_and_minor = get_major_and_minor_from_version(_ipex_version)
