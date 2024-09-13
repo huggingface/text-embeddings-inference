@@ -1693,6 +1693,8 @@ pub async fn run(
         .route("/ping", get(health))
         // Prometheus metrics route
         .route("/metrics", get(metrics))
+        // Heap profiling route
+        .route("/heap", get(handle_get_heap));
         // Update payload limit
         .layer(DefaultBodyLimit::max(payload_limit));
 
@@ -1769,7 +1771,6 @@ pub async fn run(
         };
 
         app = app.layer(axum::middleware::from_fn(auth));
-        app = app.route("/debug/pprof/heap", axum::routing::get(handle_get_heap));
     }
 
     // Run server
