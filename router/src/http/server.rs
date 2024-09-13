@@ -1694,7 +1694,7 @@ pub async fn run(
         // Prometheus metrics route
         .route("/metrics", get(metrics))
         // Heap profiling route
-        .route("/heap", get(handle_get_heap));
+        .route("/heap", get(handle_get_heap))
         // Update payload limit
         .layer(DefaultBodyLimit::max(payload_limit));
 
