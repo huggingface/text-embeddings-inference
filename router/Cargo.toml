@@ -48,6 +48,11 @@ base64 = { version = "0.22.1", optional = true }
 tower-http = { version = "0.5.1", features = ["cors"], optional = true }
 utoipa = { version = "4.2", features = ["axum_extras"], optional = true }
 utoipa-swagger-ui = { version = "7.1", features = ["axum"], optional = true }
+tikv-jemallocator = { version = "0.5.4", features = [
+	"profiling",
+	"unprefixed_malloc_on_supported_platforms",
+] }
+jemalloc_pprof = "0.4.2"
 
 # gRPC dependencies
 async-stream = { version = "0.3.5", optional = true }

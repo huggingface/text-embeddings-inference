@@ -4,9 +4,17 @@ use opentelemetry::global;
 use text_embeddings_backend::DType;
 use veil::Redact;
 
-#[cfg(not(target_os = "linux"))]
+// #[cfg(not(target_os = "linux"))]
+// #[global_allocator]
+// static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(not(target_env = "msvc"))]
 #[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[allow(non_upper_case_globals)]
+#[export_name = "malloc_conf"]
+pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
 
 /// App Configuration
 #[derive(Parser, Redact)]

@@ -1,4 +1,5 @@
 /// HTTP Server logic
+use crate::http::debugging::handle_get_heap;
 use crate::http::types::{
     DecodeRequest, DecodeResponse, EmbedAllRequest, EmbedAllResponse, EmbedRequest, EmbedResponse,
     EmbedSparseRequest, EmbedSparseResponse, Embedding, EncodingFormat, Input, InputIds, InputType,
@@ -1768,6 +1769,7 @@ pub async fn run(
         };
 
         app = app.layer(axum::middleware::from_fn(auth));
+        app = app.route("/debug/pprof/heap", axum::routing::get(handle_get_heap));
     }
 
     // Run server
