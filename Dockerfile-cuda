@@ -64,9 +64,9 @@ COPY --from=planner /usr/src/recipe.json recipe.json
 
 RUN if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
     then \
-        cargo chef cook --release --features candle-cuda-turing --features static-linking --no-default-features --recipe-path recipe.json && sccache -s; \
+        cargo chef cook --profile release-debug --features candle-cuda-turing --features static-linking --no-default-features --recipe-path recipe.json && sccache -s; \
     else \
-        cargo chef cook --release --features candle-cuda --features static-linking --no-default-features --recipe-path recipe.json && sccache -s; \
+        cargo chef cook --profile release-debug --features candle-cuda --features static-linking --no-default-features --recipe-path recipe.json && sccache -s; \
     fi;
 
 COPY backends backends
@@ -79,9 +79,9 @@ FROM builder AS http-builder
 
 RUN if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
     then \
-        cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F static-linking -F http --no-default-features && sccache -s; \
+        cargo build --profile release-debug --bin text-embeddings-router -F candle-cuda-turing -F static-linking -F http --no-default-features && sccache -s; \
     else \
-        cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F http --no-default-features && sccache -s; \
+        cargo build --profile release-debug --bin text-embeddings-router -F candle-cuda -F static-linking -F http --no-default-features && sccache -s; \
     fi;
 
 FROM builder AS grpc-builder
@@ -100,9 +100,9 @@ COPY proto proto
 
 RUN if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
     then \
-        cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F static-linking -F grpc --no-default-features && sccache -s; \
+        cargo build --profile release-debug --bin text-embeddings-router -F candle-cuda-turing -F static-linking -F grpc --no-default-features && sccache -s; \
     else \
-        cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F grpc --no-default-features && sccache -s; \
+        cargo build --profile release-debug --bin text-embeddings-router -F candle-cuda -F static-linking -F grpc --no-default-features && sccache -s; \
     fi;
 
 FROM nvidia/cuda:12.2.0-base-ubuntu22.04 AS base
@@ -115,14 +115,14 @@ ENV HUGGINGFACE_HUB_CACHE=/data \
 
 FROM base AS grpc
 
-COPY --from=grpc-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
+COPY --from=grpc-builder /usr/src/target/release-debug/text-embeddings-router /usr/local/bin/text-embeddings-router
 
 ENTRYPOINT ["text-embeddings-router"]
 CMD ["--json-output"]
 
 FROM base
 
-COPY --from=http-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
+COPY --from=http-builder /usr/src/target/release-debug/text-embeddings-router /usr/local/bin/text-embeddings-router
 
 ENTRYPOINT ["text-embeddings-router"]
 CMD ["--json-output"]
