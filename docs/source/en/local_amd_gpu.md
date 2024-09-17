@@ -18,16 +18,17 @@ rendered properly in your Markdown viewer.
 
 Text-Embeddings-Inference supports the [AMD GPUs officially supporting ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/reference/system-requirements.html), including AMD Instinct MI210, MI250, MI300 and some of the AMD Radeon series GPUs.
 
-To leverage AMD GPUs, Text-Embeddings-Inference relies on its Python backend, and not on the [candle](https://github.com/huggingface/candle) backend that is used for CPU, Nvidia GPUs and Metal. The support in the python backend is more limited (Bert embeddings) but easily extendible. We welcome contributions to extend the supported models.
+To leverage AMD GPUs, Text-Embeddings-Inference relies on its Python backend, and not on the [candle](https://github.com/huggingface/candle) backend that is used for CPU, Nvidia GPUs and Metal. The support in the python backend is more limited (Bert embeddings) but easily extensible. We welcome contributions to extend the supported models.
 
 ## Usage through docker
 
 Using docker is the recommended approach.
 
 ```bash
+DOCKER_TAG=rocm-xxx # Specify the tag of the docker image to use
 docker run --rm -it --cap-add=SYS_PTRACE --security-opt seccomp=unconfined --net host \
     --device=/dev/kfd --device=/dev/dri --group-add video --ipc=host --shm-size 32g \
-    ghcr.io/huggingface/text-embeddings-inference:rocm-1.2.4 \
+    ghcr.io/huggingface/text-embeddings-inference:$DOCKER_TAG \
     --model-id sentence-transformers/all-MiniLM-L6-v2
 ```
 
