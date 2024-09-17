@@ -53,6 +53,8 @@ impl OrtBackend {
         // Start onnx session
         let session = Session::builder()
             .s()?
+            .with_intra_threads(num_cpus::get())
+            .s()?
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .s()?
             .commit_from_file(onnx_path)

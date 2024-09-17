@@ -198,7 +198,7 @@ pub async fn run(
     };
     tracing::info!("Maximum number of tokens per request: {max_input_length}");
 
-    let tokenization_workers = tokenization_workers.unwrap_or_else(num_cpus::get_physical);
+    let tokenization_workers = tokenization_workers.unwrap_or_else(num_cpus::get);
 
     // Try to load new ST Config
     let mut new_st_config: Option<NewSTConfig> = None;
