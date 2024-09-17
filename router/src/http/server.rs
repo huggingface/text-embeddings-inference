@@ -1634,9 +1634,12 @@ pub async fn run(
         }
     });
 
-    let prom_handle = prom_builder
-        .install_recorder()
-        .context("failed to install metrics recorder")?;
+    // See: https://github.com/metrics-rs/metrics/issues/467#issuecomment-2022755151
+    let (recorder, _) = prom_builder
+        .build()
+        .context("failed to build prometheus recorder")?;
+    let prom_handle = recorder.handle();
+    metrics::set_global_recorder(recorder).context("Failed to set global recorder")?;
 
     // CORS layer
     let allow_origin = allow_origin.unwrap_or(AllowOrigin::any());
