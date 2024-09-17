@@ -38,7 +38,6 @@ pub struct Queue {
     queue_sender: mpsc::Sender<QueueCommand>,
 }
 
-/// This is a comment
 impl Queue {
     pub fn new(
         padded_model: bool,
