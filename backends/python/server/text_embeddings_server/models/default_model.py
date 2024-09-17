@@ -43,7 +43,14 @@ class DefaultModel(Model):
             kwargs["position_ids"] = batch.position_ids
 
         output = self.model(**kwargs)
-        embedding = output[0][:, 0]
+
+        if self.pooling_mode == "cls":
+            embedding = output[0][:, 0]
+        elif self.pooling_mode == "mean":
+            embedding = output[0].mean(dim=1)
+        else:
+            raise NotImplementedError(f"Pooling {self.pooling_mode} is not implemented in the python backend")
+
         cpu_results = embedding.view(-1).tolist()
 
         return [
