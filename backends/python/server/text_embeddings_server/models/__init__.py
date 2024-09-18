@@ -5,9 +5,11 @@ from pathlib import Path
 from typing import Optional
 from transformers import AutoConfig
 from transformers.models.bert import BertConfig
+from transformers.models.auto.modeling_auto import MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES
 
 from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.default_model import DefaultModel
+from text_embeddings_server.models.classification_model import ClassificationModel
 
 __all__ = ["Model"]
 
@@ -27,18 +29,18 @@ if FLASH_ATTENTION:
 
 def get_model(model_path: Path, dtype: Optional[str]):
     if dtype == "float32":
-        dtype = torch.float32
+        datatype = torch.float32
     elif dtype == "float16":
-        dtype = torch.float16
+        datatype = torch.float16
     elif dtype == "bfloat16":
-        dtype = torch.bfloat16
+        datatype = torch.bfloat16
     else:
         raise RuntimeError(f"Unknown dtype {dtype}")
 
     if torch.cuda.is_available():
         device = torch.device("cuda")
     else:
-        if dtype != torch.float32:
+        if datatype != torch.float32:
             raise ValueError("CPU device only supports float32 dtype")
         device = torch.device("cpu")
 
@@ -49,11 +51,20 @@ def get_model(model_path: Path, dtype: Optional[str]):
         if (
             device.type == "cuda"
             and config.position_embedding_type == "absolute"
-            and dtype in [torch.float16, torch.bfloat16]
+            and datatype in [torch.float16, torch.bfloat16]
             and FLASH_ATTENTION
         ):
-            return FlashBert(model_path, device, dtype)
+            return FlashBert(model_path, device, datatype)
         else:
-            return DefaultModel(model_path, device, dtype)
-
-    raise NotImplementedError
+            if config.architectures[0] in MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES.values():
+                return ClassificationModel(model_path, device, datatype)
+            else:
+                return DefaultModel(model_path, device, datatype)
+    else:
+        try:
+            if config.architectures[0] in MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES.values():
+                return ClassificationModel(model_path, device, datatype)
+            else:
+                return DefaultModel(model_path, device, datatype)
+        except:
+            raise RuntimeError(f"Unsupported model_type {config.model_type}")
