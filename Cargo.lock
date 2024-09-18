@@ -4077,6 +4077,7 @@ dependencies = [
  "anyhow",
  "ndarray",
  "nohash-hasher",
+ "num_cpus",
  "ort",
  "serde",
  "serde_json",
