@@ -516,6 +516,7 @@ pub enum ErrorType {
     Overloaded,
     Validation,
     Tokenizer,
+    Empty,
 }
 
 #[derive(Serialize)]
