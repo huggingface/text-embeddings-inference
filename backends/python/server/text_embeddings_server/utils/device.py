@@ -1,6 +1,7 @@
 import os
-from loguru import logger  # type: ignore
-import importlib
+from loguru import logger
+import importlib.metadata
+import importlib.util
 from packaging import version
 import torch
 import subprocess
@@ -14,13 +15,13 @@ def _is_ipex_available():
             + str(version.parse(full_version).minor)
         )
 
-    _torch_version = importlib.metadata.version("torch")  # type: ignore
-    if importlib.util.find_spec("intel_extension_for_pytorch") is None:  # type: ignore
+    _torch_version = importlib.metadata.version("torch")
+    if importlib.util.find_spec("intel_extension_for_pytorch") is None:
         return False
     _ipex_version = "N/A"
     try:
-        _ipex_version = importlib.metadata.version("intel_extension_for_pytorch")  # type: ignore
-    except importlib.metadata.PackageNotFoundError:  # type: ignore
+        _ipex_version = importlib.metadata.version("intel_extension_for_pytorch")
+    except importlib.metadata.PackageNotFoundError:
         return False
     torch_major_and_minor = get_major_and_minor_from_version(_torch_version)
     ipex_major_and_minor = get_major_and_minor_from_version(_ipex_version)
@@ -37,7 +38,7 @@ def is_hpu() -> bool:
     is_hpu_available = True
     try:
         subprocess.run(["hl-smi"], capture_output=True, check=True)
-    except:
+    except subprocess.CalledProcessError:
         is_hpu_available = False
     return is_hpu_available
 
