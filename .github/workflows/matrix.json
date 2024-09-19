@@ -6,6 +6,7 @@
     "sccache": true,
     "cudaComputeCap": 75,
     "extraBuildArgs": "DEFAULT_USE_FLASH_ATTENTION=False",
+    "grpc": true,
     "dockerfile": "Dockerfile-cuda"
   },
   {
@@ -14,6 +15,7 @@
     "runOn": "always",
     "sccache": true,
     "cudaComputeCap": 80,
+    "grpc": true,
     "dockerfile": "Dockerfile-cuda"
   },
   {
@@ -22,6 +24,7 @@
     "runOn": "main",
     "sccache": true,
     "cudaComputeCap": 86,
+    "grpc": true,
     "dockerfile": "Dockerfile-cuda"
   },
   {
@@ -30,6 +33,7 @@
     "runOn": "main",
     "sccache": true,
     "cudaComputeCap": 89,
+    "grpc": true,
     "dockerfile": "Dockerfile-cuda"
   },
   {
@@ -38,6 +42,7 @@
     "runOn": "main",
     "sccache": true,
     "cudaComputeCap": 90,
+    "grpc": true,
     "dockerfile": "Dockerfile-cuda"
   },
   {
@@ -45,6 +50,7 @@
     "imageNamePrefix": "cuda-",
     "runOn": "main",
     "sccache": false,
+    "grpc": false,
     "dockerfile": "Dockerfile-cuda-all"
   },
   {
@@ -52,6 +58,7 @@
     "imageNamePrefix": "cpu-",
     "runOn": "main",
     "sccache": true,
+    "grpc": true,
     "dockerfile": "Dockerfile"
   }
 ]

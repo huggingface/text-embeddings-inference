@@ -127,6 +127,7 @@ jobs:
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta-grpc
+        if: ${{ matrix.grpc }}
         uses: docker/metadata-action@v5
         with:
           images: |
@@ -142,6 +143,7 @@ jobs:
 
       - name: Build and push Docker image
         id: build-and-push-grpc
+        if: ${{ matrix.grpc }}
         uses: docker/build-push-action@v6
         with:
           context: .

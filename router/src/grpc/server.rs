@@ -1534,6 +1534,7 @@ impl From<ErrorResponse> for Status {
             ErrorType::Overloaded => Code::ResourceExhausted,
             ErrorType::Validation => Code::InvalidArgument,
             ErrorType::Tokenizer => Code::FailedPrecondition,
+            ErrorType::Empty => Code::InvalidArgument,
         };
 
         Status::new(code, value.error)
