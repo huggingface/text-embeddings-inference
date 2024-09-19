@@ -7,14 +7,31 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 
+/// Configures logging using environment variables and options.
+#[derive(Debug)]
+struct LoggingConfig {
+    /// Optional endpoint for OpenTelemetry collector.
+    otlp_endpoint: Option<String>,
+    /// Service name for OpenTelemetry.
+    service_name: String,
+    /// Whether to output logs in JSON format.
+    json_output: bool,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            otlp_endpoint: None,
+            service_name: "my-service".to_string(),
+            json_output: false,
+        }
+    }
+}
+
 /// Init logging using env variables LOG_LEVEL and LOG_FORMAT:
 ///     - otlp_endpoint is an optional URL to an Open Telemetry collector
 ///     - LOG_LEVEL may be TRACE, DEBUG, INFO, WARN or ERROR (default to INFO)
-pub fn init_logging(
-    otlp_endpoint: Option<&String>,
-    otlp_service_name: String,
-    json_output: bool,
-) -> bool {
+pub fn init_logging(config: &LoggingConfig) -> bool {
     let mut layers = Vec::new();
 
     // STDOUT/STDERR layer
@@ -22,7 +39,7 @@ pub fn init_logging(
         .with_file(true)
         .with_line_number(true);
 
-    let fmt_layer = match json_output {
+    let fmt_layer = match config.json_output {
         true => fmt_layer.json().flatten_event(true).boxed(),
         false => fmt_layer.boxed(),
     };
@@ -30,7 +47,7 @@ pub fn init_logging(
 
     // OpenTelemetry tracing layer
     let mut global_tracer = false;
-    if let Some(otlp_endpoint) = otlp_endpoint {
+    if let Some(endpoint) = config.otlp_endpoint.as_ref() {
         global::set_text_map_propagator(TraceContextPropagator::new());
 
         let tracer = opentelemetry_otlp::new_pipeline()
@@ -38,15 +55,15 @@ pub fn init_logging(
             .with_exporter(
                 opentelemetry_otlp::new_exporter()
                     .tonic()
-                    .with_endpoint(otlp_endpoint),
+                    .with_endpoint(endpoint.clone()),
             )
             .with_trace_config(
                 trace::config()
-                    .with_resource(Resource::new(vec![KeyValue::new(
-                        "service.name",
-                        otlp_service_name,
-                    )]))
-                    .with_sampler(Sampler::AlwaysOn),
+                    .with_resource(Resource::new(vec![
+                        KeyValue::new("service.name", config.service_name.clone()),
+                        KeyValue::new("environment", std::env::var("RUST_ENV").unwrap_or_default()),
+                    ]))
+                    .with_sampler(Sampler::from_rate(1.0)),
             )
             .install_batch(opentelemetry_sdk::runtime::Tokio);
 
@@ -58,12 +75,26 @@ pub fn init_logging(
     }
 
     // Filter events with LOG_LEVEL
-    let env_filter =
-        EnvFilter::try_from_env("LOG_LEVEL").unwrap_or_else(|_| EnvFilter::new("info"));
+    let env_filter = EnvFilter::try_from_env("LOG_LEVEL").unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::registry()
         .with(env_filter)
         .with(layers)
         .init();
+
     global_tracer
+}
+
+/// Sets the log level dynamically.
+pub fn set_log_level(level: &str) {
+    let mut builder = EnvFilter::builder();
+    builder.add_env("RUST_LOG");
+    builder.parse_default_env();
+    builder.add_directive(format!("{}={}", "RUST_LOG", level));
+    tracing_subscriber::EnvFilter::try_from(builder.build()).unwrap().try_init().unwrap();
+}
+
+/// Logs a message with the current log level.
+pub fn log_message(message: &str) {
+    tracing::error!(message);
 }
