@@ -342,7 +342,7 @@ impl MPNetAttentionBias {
         let mut ret = Tensor::zeros_like(relative_position)?;
         let n = relative_position.to_dtype(DType::F32)?.neg()?;
 
-        ret = ret.add(&(&n.lt(0.0)? * num_buckets)?.to_dtype(DType::I64)?)?;
+        ret = ret.add(&(&n.lt(0.0)?.to_dtype(DType::F32)? * num_buckets)?.to_dtype(DType::I64)?)?;
         let n = n.abs()?;
 
         let is_small = n.lt(max_exact)?;
