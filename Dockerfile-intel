@@ -98,7 +98,7 @@ COPY backends/python/server/requirements-hpu.txt backends/python/server/requirem
 RUN cd backends/python/server && \
     make install
 
-FROM intel/intel-extension-for-pytorch:2.1.40-xpu AS xpu
+FROM intel/intel-extension-for-pytorch:2.3.110-xpu AS xpu
 
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80
@@ -112,10 +112,7 @@ RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRO
 
 RUN apt-get update && apt install -y intel-basekit xpu-smi cmake python3-dev ninja-build pciutils
 WORKDIR /usr/src
-RUN pip install PyYAML
-RUN wget https://intel-extension-for-pytorch.s3.amazonaws.com/ipex_dev/xpu/torch-2.1.0.post1%2Bcxx11.abi-cp310-cp310-linux_x86_64.whl && pip install torch-2.1.0.post1+cxx11.abi-cp310-cp310-linux_x86_64.whl
-RUN pip install https://github.com/intel/intel-xpu-backend-for-triton/releases/download/v2.1.0/triton-2.1.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
-RUN git clone https://github.com/intel/intel-extension-for-pytorch && cd intel-extension-for-pytorch && git checkout -b distributed origin/dev/distributed
+RUN pip install torch==2.3.1+cxx11.abi torchvision==0.18.1+cxx11.abi torchaudio==2.3.1+cxx11.abi intel-extension-for-pytorch==2.3.110+xpu oneccl_bind_pt==2.3.100+xpu --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ --no-cache-dir
 
 ENV CCL_ROOT=/opt/intel/oneapi/ccl/latest
 ENV I_MPI_ROOT=/opt/intel/oneapi/mpi/latest
@@ -126,8 +123,6 @@ ENV PATH=/opt/intel/oneapi/mpi/latest/opt/mpi/libfabric/bin:/opt/intel/oneapi/mp
 ENV CCL_ZE_IPC_EXCHANGE=sockets
 ENV CMAKE_PREFIX_PATH=/opt/intel/oneapi/mkl/latest/lib/cmake:/opt/intel/oneapi/compiler/latest
 ENV CPATH=/opt/intel/oneapi/mpi/latest/include:/opt/intel/oneapi/ccl/latest/include:/opt/intel/oneapi/mkl/latest/include
-
-RUN pip uninstall -y intel-extension-for-pytorch && cd intel-extension-for-pytorch && git submodule update --init --recursive && USE_AOT_DEVLIST='pvc' BUILD_SEPARATE_OPS=OFF BUILD_WITH_CPU=OFF USE_XETLA=ON python setup.py install && rm -rf /usr/src/intel-extension-for-pytorch
 
 COPY backends backends
 COPY backends/python/server/text_embeddings_server/models/__init__.py backends/python/server/text_embeddings_server/models/__init__.py

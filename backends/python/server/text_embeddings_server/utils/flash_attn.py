@@ -136,9 +136,9 @@ def attention(q, k, v, out, cu_seqlens, max_s, softmax_scale, is_causal=False):
             import intel_extension_for_pytorch as ipex
 
             return ipex.llm.functional.varlen_attention(
-                q,
-                k,
-                v,
+                q.contiguous() if q.device.type == "xpu" else q,
+                k.contiguous() if k.device.type == "xpu" else k,
+                v.contiguous() if v.device.type == "xpu" else v,
                 out,
                 cu_seqlens,
                 cu_seqlens,
