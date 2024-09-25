@@ -1,0 +1,146 @@
+ARG PLATFORM=cpu
+FROM lukemathwalker/cargo-chef:latest-rust-1.75-bookworm AS chef
+WORKDIR /usr/src
+ENV SCCACHE=0.5.4
+ENV RUSTC_WRAPPER=/usr/local/bin/sccache
+
+# Download and configure sccache
+RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sccache-v$SCCACHE-x86_64-unknown-linux-musl.tar.gz | tar -xzv --strip-components=1 -C /usr/local/bin sccache-v$SCCACHE-x86_64-unknown-linux-musl/sccache && \
+    chmod +x /usr/local/bin/sccache
+
+FROM chef AS planner
+
+COPY backends backends
+COPY core core
+COPY router router
+COPY Cargo.toml ./
+COPY Cargo.lock ./
+
+RUN cargo chef prepare  --recipe-path recipe.json
+
+FROM chef AS builder
+
+ARG GIT_SHA
+ARG DOCKER_LABEL
+
+# sccache specific variables
+ARG ACTIONS_CACHE_URL
+ARG ACTIONS_RUNTIME_TOKEN
+ARG SCCACHE_GHA_ENABLED
+
+COPY --from=planner /usr/src/recipe.json recipe.json
+
+RUN cargo chef cook --release --features python --no-default-features --recipe-path recipe.json && sccache -s
+
+COPY backends backends
+COPY core core
+COPY router router
+COPY Cargo.toml ./
+COPY Cargo.lock ./
+
+RUN PROTOC_ZIP=protoc-21.12-linux-x86_64.zip && \
+    curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v21.12/$PROTOC_ZIP && \
+    unzip -o $PROTOC_ZIP -d /usr/local bin/protoc && \
+    unzip -o $PROTOC_ZIP -d /usr/local 'include/*' && \
+    rm -f $PROTOC_ZIP
+
+FROM builder as http-builder
+
+RUN cargo build --release --bin text-embeddings-router -F python -F http --no-default-features && sccache -s
+
+FROM builder as grpc-builder
+
+COPY proto proto
+
+RUN cargo build --release --bin text-embeddings-router -F grpc -F python --no-default-features && sccache -s
+
+FROM intel/intel-optimized-pytorch:2.4.0-pip-base AS cpu
+ENV HUGGINGFACE_HUB_CACHE=/data \
+    PORT=80
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        cmake \
+        ninja-build \
+        python3-dev &&\
+        rm -rf /var/lib/apt/lists/*
+
+WORKDIR /usr/src
+COPY backends backends
+COPY backends/python/server/text_embeddings_server/models/__init__.py backends/python/server/text_embeddings_server/models/__init__.py
+COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
+COPY backends/python/server/requirements-intel.txt backends/python/server/requirements.txt
+
+RUN python -m pip install torch==2.4.0 torchvision torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cpu
+
+RUN cd backends/python/server && \
+    make install
+
+FROM vault.habana.ai/gaudi-docker/1.17.1/ubuntu22.04/habanalabs/pytorch-installer-2.3.1:latest AS hpu
+ENV HUGGINGFACE_HUB_CACHE=/data \
+    PORT=80
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        cmake \
+        ninja-build \
+        python3-dev &&\
+        rm -rf /var/lib/apt/lists/*
+
+WORKDIR /usr/src
+COPY backends backends
+COPY backends/python/server/text_embeddings_server/models/__init__.py backends/python/server/text_embeddings_server/models/__init__.py
+COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
+COPY backends/python/server/requirements-hpu.txt backends/python/server/requirements.txt
+
+RUN cd backends/python/server && \
+    make install
+
+FROM intel/intel-extension-for-pytorch:2.3.110-xpu AS xpu
+
+ENV HUGGINGFACE_HUB_CACHE=/data \
+    PORT=80
+RUN wget http://nz2.archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2_amd64.deb && \
+    dpkg -i ./libssl1.1_1.1.1f-1ubuntu2_amd64.deb
+
+RUN wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | gpg --dearmor | tee /usr/share/keyrings/intel-graphics.gpg > /dev/null
+
+RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+| gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null && echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | tee /etc/apt/sources.list.d/oneAPI.list
+
+RUN apt-get update && apt install -y intel-basekit xpu-smi cmake python3-dev ninja-build pciutils
+WORKDIR /usr/src
+RUN pip install torch==2.3.1+cxx11.abi torchvision==0.18.1+cxx11.abi torchaudio==2.3.1+cxx11.abi intel-extension-for-pytorch==2.3.110+xpu oneccl_bind_pt==2.3.100+xpu --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ --no-cache-dir
+
+ENV CCL_ROOT=/opt/intel/oneapi/ccl/latest
+ENV I_MPI_ROOT=/opt/intel/oneapi/mpi/latest
+ENV FI_PROVIDER_PATH=/opt/intel/oneapi/mpi/latest/opt/mpi/libfabric/lib/prov:/usr/lib/x86_64-linux-gnu/libfabric
+ENV LIBRARY_PATH=/opt/intel/oneapi/mpi/latest/lib:/opt/intel/oneapi/ccl/latest/lib/:/opt/intel/oneapi/mkl/latest/lib/:/opt/intel/oneapi/compiler/latest/lib
+ENV LD_LIBRARY_PATH=/opt/intel/oneapi/ccl/latest/lib/:/opt/intel/oneapi/mpi/latest/opt/mpi/libfabric/lib:/opt/intel/oneapi/mpi/latest/lib:/opt/intel/oneapi/mkl/latest/lib:/opt/intel/oneapi/compiler/latest/opt/compiler/lib:/opt/intel/oneapi/compiler/latest/lib:/opt/intel/oneapi/lib:/opt/intel/oneapi/lib/intel64:
+ENV PATH=/opt/intel/oneapi/mpi/latest/opt/mpi/libfabric/bin:/opt/intel/oneapi/mpi/latest/bin:/opt/intel/oneapi/mpi/latest/opt/mpi/libfabric/bin:/opt/intel/oneapi/mkl/latest/bin/:/opt/intel/oneapi/compiler/latest/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV CCL_ZE_IPC_EXCHANGE=sockets
+ENV CMAKE_PREFIX_PATH=/opt/intel/oneapi/mkl/latest/lib/cmake:/opt/intel/oneapi/compiler/latest
+ENV CPATH=/opt/intel/oneapi/mpi/latest/include:/opt/intel/oneapi/ccl/latest/include:/opt/intel/oneapi/mkl/latest/include
+
+COPY backends backends
+COPY backends/python/server/text_embeddings_server/models/__init__.py backends/python/server/text_embeddings_server/models/__init__.py
+COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
+COPY backends/python/server/requirements-intel.txt backends/python/server/requirements.txt
+RUN cd backends/python/server && \
+    make install
+
+FROM ${PLATFORM} AS grpc
+
+COPY --from=grpc-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
+
+ENTRYPOINT ["text-embeddings-router"]
+CMD ["--json-output"]
+
+FROM ${PLATFORM}
+
+COPY --from=http-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
+
+ENTRYPOINT ["text-embeddings-router"]
+CMD ["--json-output"]

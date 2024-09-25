@@ -78,9 +78,6 @@ class FlashBatch(Batch):
     @classmethod
     @tracer.start_as_current_span("from_pb")
     def from_pb(cls, pb: embed_pb2.EmbedRequest, device: torch.device) -> "FlashBatch":
-        if device.type != "cuda":
-            raise RuntimeError(f"FlashBatch does not support device {device}")
-
         batch_input_ids = torch.tensor(pb.input_ids, dtype=torch.int32, device=device)
         batch_token_type_ids = torch.tensor(
             pb.token_type_ids, dtype=torch.int32, device=device
