@@ -1,13 +1,13 @@
-import torch
-
-from loguru import logger
 from pathlib import Path
 from typing import Optional
+
+import torch
+from loguru import logger
 from transformers import AutoConfig
 from transformers.models.bert import BertConfig
 
-from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.default_model import DefaultModel
+from text_embeddings_server.models.model import Model
 
 __all__ = ["Model"]
 
@@ -25,7 +25,7 @@ if FLASH_ATTENTION:
     __all__.append(FlashBert)
 
 
-def get_model(model_path: Path, dtype: Optional[str]):
+def get_model(model_path: Path, dtype: Optional[str], pool: str):
     if dtype == "float32":
         dtype = torch.float32
     elif dtype == "float16":
@@ -52,8 +52,10 @@ def get_model(model_path: Path, dtype: Optional[str]):
             and dtype in [torch.float16, torch.bfloat16]
             and FLASH_ATTENTION
         ):
+            if pool != "cls":
+                raise ValueError("FlashBert only supports cls pooling")
             return FlashBert(model_path, device, dtype)
         else:
-            return DefaultModel(model_path, device, dtype)
+            return DefaultModel(model_path, device, dtype, pool)
 
     raise NotImplementedError
