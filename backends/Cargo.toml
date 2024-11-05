@@ -15,6 +15,7 @@ text-embeddings-backend-candle = { path = "candle", optional = true }
 text-embeddings-backend-ort = { path = "ort", optional = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+rand = { workspace = true }
 
 [features]
 clap = ["dep:clap", "text-embeddings-backend-core/clap"]
