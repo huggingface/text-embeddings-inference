@@ -64,4 +64,25 @@ impl Client {
         let response = self.stub.embed(request).await?.into_inner();
         Ok(response.embeddings)
     }
+
+    #[instrument(skip_all)]
+    pub async fn predict(
+        &mut self,
+        input_ids: Vec<u32>,
+        token_type_ids: Vec<u32>,
+        position_ids: Vec<u32>,
+        cu_seq_lengths: Vec<u32>,
+        max_length: u32,
+    ) -> Result<Vec<Score>> {
+        let request = tonic::Request::new(EmbedRequest {
+            input_ids,
+            token_type_ids,
+            position_ids,
+            max_length,
+            cu_seq_lengths,
+        })
+        .inject_context();
+        let response = self.stub.predict(request).await?.into_inner();
+        Ok(response.scores)
+    }
 }

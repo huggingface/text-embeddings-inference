@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from opentelemetry import trace
 
 from text_embeddings_server.pb import embed_pb2
-from text_embeddings_server.pb.embed_pb2 import Embedding
+from text_embeddings_server.pb.embed_pb2 import Embedding, Score
 
 tracer = trace.get_tracer(__name__)
 
