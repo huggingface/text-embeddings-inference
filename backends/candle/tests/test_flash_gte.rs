@@ -3,7 +3,7 @@ mod common;
 
 use crate::common::{sort_embeddings, SnapshotEmbeddings, SnapshotScores};
 use anyhow::Result;
-use common::{batch, cosine_matcher, download_artifacts, load_tokenizer};
+use common::{batch, cosine_matcher, download_artifacts, load_tokenizer, relative_matcher};
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
