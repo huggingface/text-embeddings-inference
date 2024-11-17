@@ -58,10 +58,10 @@ impl GTEClassificationHead {
         };
 
         let pooler = if let Ok(pooler_weight) = vb
-            .pp("new.pooler.dense")
+            .pp("pooler.dense")
             .get((config.hidden_size, config.hidden_size), "weight")
         {
-            let pooler_bias = vb.pp("new.pooler.dense").get(config.hidden_size, "bias")?;
+            let pooler_bias = vb.pp("pooler.dense").get(config.hidden_size, "bias")?;
             Some(Linear::new(pooler_weight, Some(pooler_bias), None))
         } else {
             None
