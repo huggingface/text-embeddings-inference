@@ -1,7 +1,8 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{HiddenAct, LayerNorm, Linear};
-use crate::models::{
-    GTEClassificationHead, GTEConfig, Model, NTKScaling, PositionEmbeddingType, RopeScaling,
+use crate::models::gte::{
+    ClassificationHead, GTEClassificationHead, GTEConfig, Model, NTKScaling, PositionEmbeddingType,
+    RopeScaling,
 };
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
