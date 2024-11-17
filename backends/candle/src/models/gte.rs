@@ -1,6 +1,10 @@
 use crate::layers::HiddenAct;
+use crate::layers::Linear;
 use crate::models::PositionEmbeddingType;
+use candle::{Result, Tensor};
+use candle_nn::VarBuilder;
 use serde::Deserialize;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct NTKScaling {
@@ -32,4 +36,46 @@ pub struct GTEConfig {
     pub logn_attention_scale: bool,
     #[serde(default)]
     pub logn_attention_clip1: bool,
+    pub id2label: Option<HashMap<String, String>>,
+}
+
+pub trait ClassificationHead {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
+}
+
+pub struct GTEClassificationHead {
+    classifier: Linear,
+    span: tracing::Span,
+}
+
+impl GTEClassificationHead {
+    #[allow(dead_code)]
+    pub(crate) fn load(vb: VarBuilder, config: &GTEConfig) -> Result<Self> {
+        let n_classes = match &config.id2label {
+            None => candle::bail!("`id2label` must be set for classifier models"),
+            Some(id2label) => id2label.len(),
+        };
+
+        let classifier_weight = vb
+            .pp("classifier")
+            .get((n_classes, config.hidden_size), "weight")?;
+        let classifier_bias = vb.pp("classifier").get(n_classes, "bias")?;
+        let classifier = Linear::new(classifier_weight, Some(classifier_bias), None);
+
+        Ok(Self {
+            classifier,
+            span: tracing::span!(tracing::Level::TRACE, "classifier"),
+        })
+    }
+}
+
+impl ClassificationHead for GTEClassificationHead {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let hidden_states = hidden_states.unsqueeze(1)?;
+        let hidden_states = self.classifier.forward(&hidden_states)?;
+        let hidden_states = hidden_states.squeeze(1)?;
+        Ok(hidden_states)
+    }
 }
