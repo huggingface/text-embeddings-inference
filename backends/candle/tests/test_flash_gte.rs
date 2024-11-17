@@ -51,3 +51,36 @@ fn test_flash_gte() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+#[serial_test::serial]
+#[cfg(all(
+    feature = "cuda",
+    any(feature = "flash-attn", feature = "flash-attn-v1")
+))]
+fn test_flash_gte_classification() -> Result<()> {
+    let model_root = download_artifacts("Alibaba-NLP/gte-multilingual-reranker-base", None)?;
+    let tokenizer = load_tokenizer(&model_root)?;
+
+    let backend = CandleBackend::new(model_root, "float16".to_string(), ModelType::Classifier)?;
+
+    let input_single = batch(
+        vec![tokenizer
+            .encode(("What is Deep Learning?", "Deep Learning is not..."), true)
+            .unwrap()],
+        [0].to_vec(),
+        vec![],
+    );
+
+    let predictions: Vec<Vec<f32>> = backend
+        .predict(input_single)?
+        .into_iter()
+        .map(|(_, v)| v)
+        .collect();
+    let predictions_single = SnapshotScores::from(predictions);
+
+    let matcher = relative_matcher();
+    insta::assert_yaml_snapshot!("gte_classification_single", predictions_single, &matcher);
+
+    Ok(())
+}
