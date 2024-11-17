@@ -372,7 +372,7 @@ docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingf
 
 ### Using Re-rankers models
 
-`text-embeddings-inference` v0.4.0 added support for CamemBERT, RoBERTa and XLM-RoBERTa Sequence Classification models.
+`text-embeddings-inference` v0.4.0 added support for CamemBERT, RoBERTa, XLM-RoBERTa, and GTE Sequence Classification models.
 Re-rankers models are Sequence Classification cross-encoders models with a single class that scores the similarity
 between a query and a text.
 
@@ -392,7 +392,7 @@ And then you can rank the similarity between a query and a list of texts with:
 ```bash
 curl 127.0.0.1:8080/rerank \
     -X POST \
-    -d '{"query":"What is Deep Learning?", "texts": ["Deep Learning is not...", "Deep learning is..."]}' \
+    -d '{"query": "What is Deep Learning?", "texts": ["Deep Learning is not...", "Deep learning is..."]}' \
     -H 'Content-Type: application/json'
 ```
 
