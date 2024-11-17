@@ -1,7 +1,7 @@
 #![allow(dead_code, unused_imports)]
 mod common;
 
-use crate::common::{sort_embeddings, SnapshotEmbeddings};
+use crate::common::{sort_embeddings, SnapshotEmbeddings, SnapshotScores};
 use anyhow::Result;
 use common::{batch, cosine_matcher, download_artifacts, load_tokenizer};
 use text_embeddings_backend_candle::CandleBackend;
@@ -59,7 +59,10 @@ fn test_flash_gte() -> Result<()> {
     any(feature = "flash-attn", feature = "flash-attn-v1")
 ))]
 fn test_flash_gte_classification() -> Result<()> {
-    let model_root = download_artifacts("Alibaba-NLP/gte-multilingual-reranker-base", Some("refs/pr/11"))?;
+    let model_root = download_artifacts(
+        "Alibaba-NLP/gte-multilingual-reranker-base",
+        Some("refs/pr/11"),
+    )?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(model_root, "float16".to_string(), ModelType::Classifier)?;
