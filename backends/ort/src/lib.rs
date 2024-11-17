@@ -246,7 +246,7 @@ impl Backend for OrtBackend {
         if has_raw_requests {
             // Reshape outputs
             let s = outputs.shape().to_vec();
-            let outputs = outputs.into_shape((s[0] * s[1], s[2])).e()?;
+            let outputs = outputs.into_shape_with_order((s[0] * s[1], s[2])).e()?;
 
             // We need to remove the padding tokens only if batch_size > 1 and there are some
             // member of the batch that require pooling
