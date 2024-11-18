@@ -92,11 +92,12 @@ Text Embeddings Inference currently supports CamemBERT, and XLM-RoBERTa Sequence
 
 Below are some examples of the currently supported models:
 
-| Task               | Model Type  | Model ID                                                                                    |
-|--------------------|-------------|---------------------------------------------------------------------------------------------|
-| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-large](https://huggingface.co/BAAI/bge-reranker-large)                   |
-| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)                     |
-| Sentiment Analysis | RoBERTa     | [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions) |
+| Task               | Model Type  | Model ID                                                                                                        |
+|--------------------|-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
+| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-large](https://huggingface.co/BAAI/bge-reranker-large)                                       |
+| Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)                                         |
+| Re-Ranking         | GTE         | [Alibaba-NLP/gte-multilingual-reranker-base](https://huggingface.co/Alibaba-NLP/gte-multilingual-reranker-base) |
+| Sentiment Analysis | RoBERTa     | [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions)                     |
 
 ### Docker
 
