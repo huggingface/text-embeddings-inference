@@ -27,10 +27,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{DType, Pool};
-use text_embeddings_core::download::{
-    download_artifacts, download_new_st_config, download_pool_config, download_st_config,
-    ST_CONFIG_NAMES,
-};
+use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
 use text_embeddings_core::tokenization::Tokenization;
@@ -69,9 +66,9 @@ pub async fn run(
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
     let model_id_path = Path::new(&model_id);
-    let model_root = if model_id_path.exists() && model_id_path.is_dir() {
+    let (model_root, api_repo) = if model_id_path.exists() && model_id_path.is_dir() {
         // Using a local model
-        model_id_path.to_path_buf()
+        (model_id_path.to_path_buf(), None)
     } else {
         let mut builder = ApiBuilder::new()
             .with_progress(false)
@@ -88,28 +85,13 @@ pub async fn run(
             revision.clone().unwrap_or("main".to_string()),
         ));
 
-        // Optionally download the pooling config.
-        if pooling.is_none() {
-            // If a pooling config exist, download it
-            let _ = download_pool_config(&api_repo).await.map_err(|err| {
-                tracing::warn!("Download failed: {err}");
-                err
-            });
-        }
-
-        // Download legacy sentence transformers config
-        // We don't warn on failure as it is a legacy file
-        let _ = download_st_config(&api_repo).await;
-        // Download new sentence transformers config
-        let _ = download_new_st_config(&api_repo).await.map_err(|err| {
-            tracing::warn!("Download failed: {err}");
-            err
-        });
-
         // Download model from the Hub
-        download_artifacts(&api_repo)
-            .await
-            .context("Could not download model artifacts")?
+        (
+            download_artifacts(&api_repo, pooling.is_none())
+                .await
+                .context("Could not download model artifacts")?,
+            Some(api_repo),
+        )
     };
 
     // Load config
@@ -248,12 +230,14 @@ pub async fn run(
     tracing::info!("Starting model backend");
     let backend = text_embeddings_backend::Backend::new(
         model_root,
+        api_repo,
         dtype.clone(),
         backend_model_type,
         uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_string()),
         otlp_endpoint.clone(),
         otlp_service_name.clone(),
     )
+    .await
     .context("Could not create backend")?;
     backend
         .health()

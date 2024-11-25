@@ -25,7 +25,7 @@ use candle_nn::VarBuilder;
 use nohash_hasher::BuildNoHashHasher;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::Path;
 use text_embeddings_backend_core::{
     Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Predictions,
 };
@@ -69,7 +69,7 @@ pub struct CandleBackend {
 
 impl CandleBackend {
     pub fn new(
-        model_path: PathBuf,
+        model_path: &Path,
         dtype: String,
         model_type: ModelType,
     ) -> Result<Self, BackendError> {

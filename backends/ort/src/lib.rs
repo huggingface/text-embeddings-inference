@@ -3,7 +3,7 @@ use nohash_hasher::BuildNoHashHasher;
 use ort::{GraphOptimizationLevel, Session};
 use std::collections::HashMap;
 use std::ops::{Div, Mul};
-use std::path::PathBuf;
+use std::path::Path;
 use text_embeddings_backend_core::{
     Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool, Predictions,
 };
@@ -16,12 +16,12 @@ pub struct OrtBackend {
 
 impl OrtBackend {
     pub fn new(
-        model_path: PathBuf,
+        model_path: &Path,
         dtype: String,
         model_type: ModelType,
     ) -> Result<Self, BackendError> {
         // Check dtype
-        if &dtype == "float32" {
+        if dtype == "float32" {
         } else {
             return Err(BackendError::Start(format!(
                 "DType {dtype} is not supported"

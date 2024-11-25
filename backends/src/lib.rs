@@ -37,8 +37,9 @@ pub struct Backend {
 }
 
 impl Backend {
-    pub fn new(
+    pub async fn new(
         model_path: PathBuf,
+        api_repo: Option<ApiRepo>,
         dtype: DType,
         model_type: ModelType,
         uds_path: String,
@@ -49,12 +50,14 @@ impl Backend {
 
         let backend = init_backend(
             model_path,
+            api_repo,
             dtype,
             model_type.clone(),
             uds_path,
             otlp_endpoint,
             otlp_service_name,
-        )?;
+        )
+        .await?;
         let padded_model = backend.is_padded();
         let max_batch_size = backend.max_batch_size();
 
@@ -193,48 +196,102 @@ impl Backend {
 }
 
 #[allow(unused)]
-fn init_backend(
+async fn init_backend(
     model_path: PathBuf,
+    api_repo: Option<ApiRepo>,
     dtype: DType,
     model_type: ModelType,
     uds_path: String,
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
+    let mut backend_start_failed = false;
+
+    if cfg!(feature = "ort") {
+        #[cfg(feature = "ort")]
+        {
+            if let Some(api_repo) = api_repo.as_ref() {
+                let start = std::time::Instant::now();
+                download_onnx(api_repo)
+                    .await
+                    .map_err(|err| BackendError::WeightsNotFound(err.to_string()));
+                tracing::info!("Model ONNX weights downloaded in {:?}", start.elapsed());
+            }
+
+            let backend = OrtBackend::new(&model_path, dtype.to_string(), model_type.clone());
+            match backend {
+                Ok(b) => return Ok(Box::new(b)),
+                Err(err) => {
+                    tracing::error!("Could not start ORT backend: {err}");
+                    backend_start_failed = true;
+                }
+            }
+        }
+    }
+
+    if let Some(api_repo) = api_repo.as_ref() {
+        if cfg!(feature = "python") || cfg!(feature = "candle") {
+            let start = std::time::Instant::now();
+            if download_safetensors(api_repo).await.is_err() {
+                tracing::warn!("safetensors weights not found. Using `pytorch_model.bin` instead. Model loading will be significantly slower.");
+                tracing::info!("Downloading `pytorch_model.bin`");
+                api_repo
+                    .get("pytorch_model.bin")
+                    .await
+                    .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
+            }
+
+            tracing::info!("Model weights downloaded in {:?}", start.elapsed());
+        }
+    }
+
     if cfg!(feature = "candle") {
         #[cfg(feature = "candle")]
-        return Ok(Box::new(CandleBackend::new(
-            model_path,
-            dtype.to_string(),
-            model_type,
-        )?));
-    } else if cfg!(feature = "python") {
+        {
+            let backend = CandleBackend::new(&model_path, dtype.to_string(), model_type.clone());
+            match backend {
+                Ok(b) => return Ok(Box::new(b)),
+                Err(err) => {
+                    tracing::error!("Could not start Candle backend: {err}");
+                    backend_start_failed = true;
+                }
+            }
+        }
+    }
+
+    if cfg!(feature = "python") {
         #[cfg(feature = "python")]
         {
-            return Ok(Box::new(
-                std::thread::spawn(move || {
-                    PythonBackend::new(
-                        model_path.to_str().unwrap().to_string(),
-                        dtype.to_string(),
-                        model_type,
-                        uds_path,
-                        otlp_endpoint,
-                        otlp_service_name,
-                    )
-                })
-                .join()
-                .expect("Python Backend management thread failed")?,
-            ));
+            let backend = std::thread::spawn(move || {
+                PythonBackend::new(
+                    model_path.to_str().unwrap().to_string(),
+                    dtype.to_string(),
+                    model_type,
+                    uds_path,
+                    otlp_endpoint,
+                    otlp_service_name,
+                )
+            })
+            .join()
+            .expect("Python Backend management thread failed");
+
+            match backend {
+                Ok(b) => return Ok(Box::new(b)),
+                Err(err) => {
+                    tracing::error!("Could not start Python backend: {err}");
+                    backend_start_failed = true;
+                }
+            }
         }
-    } else if cfg!(feature = "ort") {
-        #[cfg(feature = "ort")]
-        return Ok(Box::new(OrtBackend::new(
-            model_path,
-            dtype.to_string(),
-            model_type,
-        )?));
     }
-    Err(BackendError::NoBackend)
+
+    if backend_start_failed {
+        Err(BackendError::Start(
+            "Could not start a suitable backend".to_string(),
+        ))
+    } else {
+        Err(BackendError::NoBackend)
+    }
 }
 
 #[derive(Debug)]
@@ -298,31 +355,6 @@ enum BackendCommand {
     ),
 }
 
-pub async fn download_weights(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
-    let model_files = if cfg!(feature = "python") || cfg!(feature = "candle") {
-        match download_safetensors(api).await {
-            Ok(p) => p,
-            Err(_) => {
-                tracing::warn!("safetensors weights not found. Using `pytorch_model.bin` instead. Model loading will be significantly slower.");
-                tracing::info!("Downloading `pytorch_model.bin`");
-                let p = api.get("pytorch_model.bin").await?;
-                vec![p]
-            }
-        }
-    } else if cfg!(feature = "ort") {
-        match download_onnx(api).await {
-            Ok(p) => p,
-            Err(err) => {
-                panic!("failed to download `model.onnx` or `model.onnx_data`. Check the onnx file exists in the repository. {err}");
-            }
-        }
-    } else {
-        unreachable!()
-    };
-
-    Ok(model_files)
-}
-
 async fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     // Single file
     tracing::info!("Downloading `model.safetensors`");
@@ -362,6 +394,7 @@ async fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     Ok(safetensors_files)
 }
 
+#[cfg(feature = "ort")]
 async fn download_onnx(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     let mut model_files: Vec<PathBuf> = Vec::new();
 
