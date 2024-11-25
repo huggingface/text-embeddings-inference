@@ -1,6 +1,6 @@
 use ndarray::{s, Axis};
 use nohash_hasher::BuildNoHashHasher;
-use ort::{GraphOptimizationLevel, Session};
+use ort::session::{builder::GraphOptimizationLevel, Session};
 use std::collections::HashMap;
 use std::ops::{Div, Mul};
 use std::path::Path;
@@ -246,6 +246,7 @@ impl Backend for OrtBackend {
         if has_raw_requests {
             // Reshape outputs
             let s = outputs.shape().to_vec();
+            #[allow(deprecated)]
             let outputs = outputs.into_shape((s[0] * s[1], s[2])).e()?;
 
             // We need to remove the padding tokens only if batch_size > 1 and there are some
