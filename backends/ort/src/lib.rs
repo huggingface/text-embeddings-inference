@@ -1,9 +1,9 @@
 use ndarray::{s, Axis};
 use nohash_hasher::BuildNoHashHasher;
-use ort::{GraphOptimizationLevel, Session};
+use ort::session::{builder::GraphOptimizationLevel, Session};
 use std::collections::HashMap;
 use std::ops::{Div, Mul};
-use std::path::PathBuf;
+use std::path::Path;
 use text_embeddings_backend_core::{
     Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool, Predictions,
 };
@@ -16,12 +16,12 @@ pub struct OrtBackend {
 
 impl OrtBackend {
     pub fn new(
-        model_path: PathBuf,
+        model_path: &Path,
         dtype: String,
         model_type: ModelType,
     ) -> Result<Self, BackendError> {
         // Check dtype
-        if &dtype == "float32" {
+        if dtype == "float32" {
         } else {
             return Err(BackendError::Start(format!(
                 "DType {dtype} is not supported"
@@ -246,6 +246,7 @@ impl Backend for OrtBackend {
         if has_raw_requests {
             // Reshape outputs
             let s = outputs.shape().to_vec();
+            #[allow(deprecated)]
             let outputs = outputs.into_shape((s[0] * s[1], s[2])).e()?;
 
             // We need to remove the padding tokens only if batch_size > 1 and there are some
