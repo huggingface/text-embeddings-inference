@@ -27,10 +27,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{DType, Pool};
-use text_embeddings_core::download::{
-    download_artifacts, download_new_st_config, download_pool_config, download_st_config,
-    ST_CONFIG_NAMES,
-};
+use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
 use text_embeddings_core::tokenization::Tokenization;
@@ -69,9 +66,9 @@ pub async fn run(
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
     let model_id_path = Path::new(&model_id);
-    let model_root = if model_id_path.exists() && model_id_path.is_dir() {
+    let (model_root, api_repo) = if model_id_path.exists() && model_id_path.is_dir() {
         // Using a local model
-        model_id_path.to_path_buf()
+        (model_id_path.to_path_buf(), None)
     } else {
         let mut builder = ApiBuilder::new()
             .with_progress(false)
@@ -88,21 +85,13 @@ pub async fn run(
             revision.clone().unwrap_or("main".to_string()),
         ));
 
-        // Optionally download the pooling config.
-        if pooling.is_none() {
-            // If a pooling config exist, download it
-            let _ = download_pool_config(&api_repo).await;
-        }
-
-        // Download sentence transformers config
-        let _ = download_st_config(&api_repo).await;
-        // Download new sentence transformers config
-        let _ = download_new_st_config(&api_repo).await;
-
         // Download model from the Hub
-        download_artifacts(&api_repo)
-            .await
-            .context("Could not download model artifacts")?
+        (
+            download_artifacts(&api_repo, pooling.is_none())
+                .await
+                .context("Could not download model artifacts")?,
+            Some(api_repo),
+        )
     };
 
     // Load config
@@ -241,12 +230,14 @@ pub async fn run(
     tracing::info!("Starting model backend");
     let backend = text_embeddings_backend::Backend::new(
         model_root,
+        api_repo,
         dtype.clone(),
         backend_model_type,
         uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_string()),
         otlp_endpoint.clone(),
         otlp_service_name.clone(),
     )
+    .await
     .context("Could not create backend")?;
     backend
         .health()
@@ -387,10 +378,21 @@ fn get_backend_model_type(
         None => {
             // Load pooling config
             let config_path = model_root.join("1_Pooling/config.json");
-            let config = fs::read_to_string(config_path).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.")?;
-            let config: PoolConfig =
-                serde_json::from_str(&config).context("Failed to parse `1_Pooling/config.json`")?;
-            Pool::try_from(config)?
+
+            match fs::read_to_string(config_path) {
+                Ok(config) => {
+                    let config: PoolConfig = serde_json::from_str(&config)
+                        .context("Failed to parse `1_Pooling/config.json`")?;
+                    Pool::try_from(config)?
+                }
+                Err(err) => {
+                    if !config.model_type.to_lowercase().contains("bert") {
+                        return Err(err).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.");
+                    }
+                    tracing::warn!("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model but the model is a BERT variant. Defaulting to `CLS` pooling.");
+                    text_embeddings_backend::Pool::Cls
+                }
+            }
         }
     };
     Ok(text_embeddings_backend::ModelType::Embedding(pool))
@@ -516,6 +518,7 @@ pub enum ErrorType {
     Overloaded,
     Validation,
     Tokenizer,
+    Empty,
 }
 
 #[derive(Serialize)]

@@ -90,6 +90,8 @@ example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
 example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
 (status = 413, description = "Batch size error", body = ErrorResponse,
 example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )
@@ -291,6 +293,8 @@ example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
 example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
 (status = 413, description = "Batch size error", body = ErrorResponse,
 example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )
@@ -317,7 +321,7 @@ async fn rerank(
         tracing::error!("{message}");
         let err = ErrorResponse {
             error: message,
-            error_type: ErrorType::Validation,
+            error_type: ErrorType::Empty,
         };
         let counter = metrics::counter!("te_request_failure", "err" => "validation");
         counter.increment(1);
@@ -482,6 +486,8 @@ example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
 example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
 (status = 413, description = "Batch size error", body = ErrorResponse,
 example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )
@@ -501,7 +507,7 @@ async fn similarity(
         tracing::error!("{message}");
         let err = ErrorResponse {
             error: message,
-            error_type: ErrorType::Validation,
+            error_type: ErrorType::Empty,
         };
         let counter = metrics::counter!("te_request_failure", "err" => "validation");
         counter.increment(1);
@@ -565,6 +571,8 @@ example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
 example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
 (status = 413, description = "Batch size error", body = ErrorResponse,
 example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )
@@ -632,7 +640,7 @@ async fn embed(
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
-                    error_type: ErrorType::Validation,
+                    error_type: ErrorType::Empty,
                 };
                 let counter = metrics::counter!("te_request_failure", "err" => "validation");
                 counter.increment(1);
@@ -739,6 +747,8 @@ example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
 example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
 (status = 413, description = "Batch size error", body = ErrorResponse,
 example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )
@@ -814,7 +824,7 @@ async fn embed_sparse(
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
-                    error_type: ErrorType::Validation,
+                    error_type: ErrorType::Empty,
                 };
                 let counter = metrics::counter!("te_request_failure", "err" => "validation");
                 counter.increment(1);
@@ -922,6 +932,8 @@ example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
 example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
 (status = 413, description = "Batch size error", body = ErrorResponse,
 example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )
@@ -988,7 +1000,7 @@ async fn embed_all(
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
-                    error_type: ErrorType::Validation,
+                    error_type: ErrorType::Empty,
                 };
                 let counter = metrics::counter!("te_request_failure", "err" => "validation");
                 counter.increment(1);
@@ -1094,6 +1106,8 @@ example = json ! ({"message": "Inference failed", "type": "backend"})),
 example = json ! ({"message": "Model is overloaded", "type": "overloaded"})),
 (status = 422, description = "Tokenization error", body = OpenAICompatErrorResponse,
 example = json ! ({"message": "Tokenization error", "type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = OpenAICompatErrorResponse,
+example = json ! ({"message": "Batch is empty", "type": "empty"})),
 (status = 413, description = "Batch size error", body = OpenAICompatErrorResponse,
 example = json ! ({"message": "Batch size error", "type": "validation"})),
 )
@@ -1182,7 +1196,7 @@ async fn openai_embed(
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
-                    error_type: ErrorType::Validation,
+                    error_type: ErrorType::Empty,
                 };
                 let counter = metrics::counter!("te_request_failure", "err" => "validation");
                 counter.increment(1);
@@ -1297,8 +1311,12 @@ path = "/tokenize",
 request_body = TokenizeRequest,
 responses(
 (status = 200, description = "Tokenized ids", body = TokenizeResponse),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
+(status = 413, description = "Batch size error", body = ErrorResponse,
+example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
-example = json ! ({"message": "Tokenization error", "type": "tokenizer"})),
+example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
 )
 )]
 #[instrument(skip_all)]
@@ -1359,7 +1377,7 @@ async fn tokenize(
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
-                    error_type: ErrorType::Validation,
+                    error_type: ErrorType::Empty,
                 };
                 let counter = metrics::counter!("te_request_failure", "err" => "validation");
                 counter.increment(1);
@@ -1409,8 +1427,12 @@ path = "/decode",
 request_body = DecodeRequest,
 responses(
 (status = 200, description = "Decoded ids", body = DecodeResponse),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
+(status = 413, description = "Batch size error", body = ErrorResponse,
+example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
-example = json ! ({"message": "Tokenization error", "type": "tokenizer"})),
+example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
 )
 )]
 #[instrument(skip_all)]
@@ -1435,7 +1457,7 @@ async fn decode(
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
-                    error_type: ErrorType::Validation,
+                    error_type: ErrorType::Empty,
                 };
                 let counter = metrics::counter!("te_request_failure", "err" => "validation");
                 counter.increment(1);
@@ -1486,6 +1508,8 @@ example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
 example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
 (status = 413, description = "Batch size error", body = ErrorResponse,
 example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )
@@ -1854,6 +1878,7 @@ impl From<&ErrorType> for StatusCode {
             ErrorType::Overloaded => StatusCode::TOO_MANY_REQUESTS,
             ErrorType::Tokenizer => StatusCode::UNPROCESSABLE_ENTITY,
             ErrorType::Validation => StatusCode::PAYLOAD_TOO_LARGE,
+            ErrorType::Empty => StatusCode::BAD_REQUEST,
         }
     }
 }
