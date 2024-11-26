@@ -1,6 +1,5 @@
 use hf_hub::api::tokio::{ApiError, ApiRepo};
 use std::path::PathBuf;
-use text_embeddings_backend::download_weights;
 use tracing::instrument;
 
 // Old classes used other config names than 'sentence_bert_config.json'
@@ -15,20 +14,36 @@ pub const ST_CONFIG_NAMES: [&str; 7] = [
 ];
 
 #[instrument(skip_all)]
-pub async fn download_artifacts(api: &ApiRepo) -> Result<PathBuf, ApiError> {
+pub async fn download_artifacts(api: &ApiRepo, pool_config: bool) -> Result<PathBuf, ApiError> {
     let start = std::time::Instant::now();
 
     tracing::info!("Starting download");
+
+    // Optionally download the pooling config.
+    if pool_config {
+        // If a pooling config exist, download it
+        let _ = download_pool_config(api).await.map_err(|err| {
+            tracing::warn!("Download failed: {err}");
+            err
+        });
+    }
+
+    // Download legacy sentence transformers config
+    // We don't warn on failure as it is a legacy file
+    let _ = download_st_config(api).await;
+    // Download new sentence transformers config
+    let _ = download_new_st_config(api).await.map_err(|err| {
+        tracing::warn!("Download failed: {err}");
+        err
+    });
 
     tracing::info!("Downloading `config.json`");
     api.get("config.json").await?;
 
     tracing::info!("Downloading `tokenizer.json`");
-    api.get("tokenizer.json").await?;
+    let tokenizer_path = api.get("tokenizer.json").await?;
 
-    let model_files = download_weights(api).await?;
-    let model_root = model_files[0].parent().unwrap().to_path_buf();
-
+    let model_root = tokenizer_path.parent().unwrap().to_path_buf();
     tracing::info!("Model artifacts downloaded in {:?}", start.elapsed());
     Ok(model_root)
 }
