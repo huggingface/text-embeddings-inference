@@ -15,12 +15,13 @@ grpcio-status = "^1.51.1"
 grpcio-reflection = "^1.51.1"
 grpc-interceptor = "^0.15.0"
 typer = "^0.6.1"
-safetensors = "^0.3.2"
+safetensors = "^0.4.0"
 loguru = "^0.6.0"
 opentelemetry-api = "^1.15.0"
 opentelemetry-exporter-otlp = "^1.15.0"
 opentelemetry-instrumentation-grpc = "^0.36b0"
-torch = { version = "^2.0.1" }
+torch = { version = "==2.3.1" }
+transformers = { version = "^4.39.0"}
 
 [tool.poetry.extras]
 
@@ -31,6 +32,11 @@ pytest = "^7.3.0"
 [[tool.poetry.source]]
 name = "pytorch-gpu-src"
 url = "https://download.pytorch.org/whl/cu118"
+priority = "explicit"
+
+[[tool.poetry.source]]
+name = "pytorch-gpu-src-rocm"
+url = "https://download.pytorch.org/whl/rocm6.0"
 priority = "explicit"
 
 [tool.pytest.ini_options]

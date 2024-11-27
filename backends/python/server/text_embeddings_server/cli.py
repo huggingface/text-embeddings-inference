@@ -24,6 +24,7 @@ def serve(
     json_output: bool = False,
     otlp_endpoint: Optional[str] = None,
     otlp_service_name: str = "text-embeddings-inference.server",
+    pooling_mode: Optional[str] = None,
 ):
     # Remove default handler
     logger.remove()
@@ -48,7 +49,7 @@ def serve(
     # Downgrade enum into str for easier management later on
     dtype = None if dtype is None else dtype.value
 
-    server.serve(model_path, dtype, uds_path)
+    server.serve(model_path, dtype, uds_path, pooling_mode)
 
 
 if __name__ == "__main__":

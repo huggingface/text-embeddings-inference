@@ -8,14 +8,16 @@ from opentelemetry import trace
 
 from text_embeddings_server.models import Model
 from text_embeddings_server.models.types import PaddedBatch, Embedding
+from typing import Optional
 
 tracer = trace.get_tracer(__name__)
 
 
 class DefaultModel(Model):
-    def __init__(self, model_path: Path, device: torch.device, dtype: torch.dtype):
+    def __init__(self, model_path: Path, device: torch.device, dtype: torch.dtype, pooling_mode: Optional[str]):
         model = AutoModel.from_pretrained(model_path).to(dtype).to(device)
         self.hidden_size = model.config.hidden_size
+        self.pooling_mode = pooling_mode
 
         self.has_position_ids = (
             inspect.signature(model.forward).parameters.get("position_ids", None)
@@ -41,7 +43,14 @@ class DefaultModel(Model):
             kwargs["position_ids"] = batch.position_ids
 
         output = self.model(**kwargs)
-        embedding = output[0][:, 0]
+
+        if self.pooling_mode == "cls":
+            embedding = output[0][:, 0]
+        elif self.pooling_mode == "mean":
+            embedding = output[0].mean(dim=1)
+        else:
+            raise NotImplementedError(f"Pooling {self.pooling_mode} is not implemented in the python backend")
+
         cpu_results = embedding.view(-1).tolist()
 
         return [

@@ -8,44 +8,14 @@ from transformers.activations import ACT2FN
 from transformers.models.bert import BertConfig
 from opentelemetry import trace
 
-# Flash attention imports
-import dropout_layer_norm
-
 from text_embeddings_server.models import Model
 from text_embeddings_server.models.types import FlashBatch, Embedding
-from text_embeddings_server.utils.flash_attn import attention
+from text_embeddings_server.layers.attention import attention
+from text_embeddings_server.layers.layernorm import FastLayerNorm
+from text_embeddings_server.layers.pooling import mean_pooling
+from typing import Optional
 
 tracer = trace.get_tracer(__name__)
-
-
-class FastLayerNorm:
-    def __init__(self, prefix, handle, device, dtype, config: BertConfig):
-        self.weight = handle.get_tensor(f"{prefix}.weight").to(dtype).to(device)
-        self.bias = handle.get_tensor(f"{prefix}.bias").to(dtype).to(device)
-        self.variance_epsilon = config.layer_norm_eps
-
-    def forward(self, hidden_states, residual=None):
-        normed_hidden_states, res, *rest = dropout_layer_norm.dropout_add_ln_fwd(
-            hidden_states,
-            residual,
-            self.weight,
-            self.bias,
-            None,
-            None,
-            None,
-            None,
-            0.0,
-            self.variance_epsilon,
-            1.0,
-            0,
-            None,
-            False,
-            False,
-        )
-        if res is None:
-            res = hidden_states
-
-        return normed_hidden_states, res
 
 
 class BertEmbeddings:
@@ -217,16 +187,17 @@ class FlashBertModel:
         embeddings = self.embeddings.forward(input_ids, token_type_ids, position_ids)
         encoder_outputs = self.encoder.forward(embeddings, cu_seqlens, max_s)
 
-        return encoder_outputs[cu_seqlens[:-1]]
+        return encoder_outputs
 
 
 class FlashBert(Model):
-    def __init__(self, model_path: Path, device: torch.device, dtype: torch.dtype):
+    def __init__(self, model_path: Path, device: torch.device, dtype: torch.dtype, pooling_mode: Optional[str]):
         config = BertConfig.from_pretrained(model_path)
         with safe_open(model_path / "model.safetensors", framework="pt") as f:
             model = FlashBertModel(f, device, dtype, config)
 
         self.hidden_size = config.hidden_size
+        self.pooling_mode = pooling_mode
 
         super(FlashBert, self).__init__(model=model, dtype=dtype, device=device)
 
@@ -243,11 +214,24 @@ class FlashBert(Model):
             cu_seqlens=batch.cu_seqlens,
             max_s=batch.max_s,
         )
-        cpu_results = embedding.view(-1).tolist()
 
-        return [
-            Embedding(
-                values=cpu_results[i * self.hidden_size : (i + 1) * self.hidden_size]
-            )
-            for i in range(len(batch))
-        ]
+        if self.pooling_mode == "cls":
+            embedding = embedding[batch.cu_seqlens[:-1]]
+            cpu_results = embedding.view(-1).tolist()
+
+            return [
+                Embedding(
+                    values=cpu_results[i * self.hidden_size : (i + 1) * self.hidden_size]
+                )
+                for i in range(len(batch))
+            ]
+        elif self.pooling_mode == "mean":
+            res = mean_pooling(embedding, batch.cu_seqlens, batch.max_s)
+            return [
+                Embedding(
+                    values=res[i]
+                )
+                for i in range(len(batch))
+            ]
+        else:
+            raise NotImplementedError(f"Pooling {self.pooling_mode} is not implemented in the python backend")
