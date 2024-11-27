@@ -39,7 +39,7 @@ fn test_flash_qwen2() -> Result<()> {
     };
 
     let backend = CandleBackend::new(
-        model_root,
+        &model_root,
         "float16".to_string(),
         ModelType::Embedding(Pool::LastToken),
     )?;

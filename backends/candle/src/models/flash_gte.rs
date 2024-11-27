@@ -1,6 +1,5 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{HiddenAct, LayerNorm, Linear};
-use crate::models::gte::{ClassificationHead, GTEClassificationHead};
 use crate::models::{GTEConfig, Model, NTKScaling, PositionEmbeddingType, RopeScaling};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
@@ -199,6 +198,58 @@ impl GTELayer {
     }
 }
 
+pub struct GTEClassificationHead {
+    pooler: Option<Linear>,
+    classifier: Linear,
+    span: tracing::Span,
+}
+
+impl GTEClassificationHead {
+    #[allow(dead_code)]
+    pub(crate) fn load(vb: VarBuilder, config: &GTEConfig) -> Result<Self> {
+        let n_classes = match &config.id2label {
+            None => candle::bail!("`id2label` must be set for classifier models"),
+            Some(id2label) => id2label.len(),
+        };
+
+        let pooler = if let Ok(pooler_weight) = vb
+            .pp("pooler.dense")
+            .get((config.hidden_size, config.hidden_size), "weight")
+        {
+            let pooler_bias = vb.pp("pooler.dense").get(config.hidden_size, "bias")?;
+            Some(Linear::new(pooler_weight, Some(pooler_bias), None))
+        } else {
+            None
+        };
+
+        let classifier_weight = vb
+            .pp("classifier")
+            .get((n_classes, config.hidden_size), "weight")?;
+        let classifier_bias = vb.pp("classifier").get(n_classes, "bias")?;
+        let classifier = Linear::new(classifier_weight, Some(classifier_bias), None);
+
+        Ok(Self {
+            classifier,
+            pooler,
+            span: tracing::span!(tracing::Level::TRACE, "classifier"),
+        })
+    }
+
+    pub(crate) fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let mut hidden_states = hidden_states.unsqueeze(1)?;
+        if let Some(pooler) = self.pooler.as_ref() {
+            hidden_states = pooler.forward(&hidden_states)?;
+            hidden_states = hidden_states.tanh()?;
+        }
+
+        let hidden_states = self.classifier.forward(&hidden_states)?;
+        let hidden_states = hidden_states.squeeze(1)?;
+        Ok(hidden_states)
+    }
+}
+
 pub struct FlashGTEModel {
     word_embeddings: Embedding,
     token_type_embeddings: Option<Embedding>,
@@ -206,7 +257,7 @@ pub struct FlashGTEModel {
     embeddings_norm: LayerNorm,
     cos_cache: Tensor,
     sin_cache: Tensor,
-    classifier: Option<Box<dyn ClassificationHead + Send>>,
+    classifier: Option<GTEClassificationHead>,
     pool: Pool,
     pub device: Device,
 
@@ -239,8 +290,7 @@ impl FlashGTEModel {
             ModelType::Classifier => {
                 let pool = Pool::Cls;
 
-                let classifier: Box<dyn ClassificationHead + Send> =
-                    Box::new(GTEClassificationHead::load(vb.clone(), config)?);
+                let classifier = GTEClassificationHead::load(vb.clone(), config)?;
                 (pool, Some(classifier))
             }
             ModelType::Embedding(pool) => (pool, None),
