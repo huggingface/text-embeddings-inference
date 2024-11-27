@@ -1,5 +1,6 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{HiddenAct, LayerNorm, Linear};
+use crate::models::gte::{ClassificationHead, GTEClassificationHead};
 use crate::models::{GTEConfig, Model, NTKScaling, PositionEmbeddingType, RopeScaling};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
@@ -205,6 +206,7 @@ pub struct FlashGTEModel {
     embeddings_norm: LayerNorm,
     cos_cache: Tensor,
     sin_cache: Tensor,
+    classifier: Option<Box<dyn ClassificationHead + Send>>,
     pool: Pool,
     pub device: Device,
 
@@ -233,11 +235,15 @@ impl FlashGTEModel {
             candle::bail!("Only `PositionEmbeddingType::Rope` is supported");
         }
 
-        let pool = match model_type {
+        let (pool, classifier) = match model_type {
             ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for GTE")
+                let pool = Pool::Cls;
+
+                let classifier: Box<dyn ClassificationHead + Send> =
+                    Box::new(GTEClassificationHead::load(vb.clone(), config)?);
+                (pool, Some(classifier))
             }
-            ModelType::Embedding(pool) => pool,
+            ModelType::Embedding(pool) => (pool, None),
         };
 
         let word_embeddings = Embedding::new(
@@ -292,6 +298,7 @@ impl FlashGTEModel {
             embeddings_norm,
             cos_cache,
             sin_cache,
+            classifier,
             pool,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
@@ -457,7 +464,20 @@ impl Model for FlashGTEModel {
     fn is_padded(&self) -> bool {
         false
     }
+
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
+    }
+
+    fn predict(&self, batch: Batch) -> Result<Tensor> {
+        match &self.classifier {
+            None => candle::bail!("`predict` is not implemented for this model"),
+            Some(classifier) => {
+                let (pooled_embeddings, _raw_embeddings) = self.forward(batch)?;
+                let pooled_embeddings =
+                    pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
+                classifier.forward(&pooled_embeddings)
+            }
+        }
     }
 }
