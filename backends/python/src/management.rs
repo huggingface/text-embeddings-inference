@@ -38,7 +38,7 @@ impl BackendProcess {
             Pool::LastToken => "lasttoken",
             Pool::Splade => {
                 return Err(BackendError::Start(format!("{pool:?} is not supported")));
-            },
+            }
         };
 
         // Process args

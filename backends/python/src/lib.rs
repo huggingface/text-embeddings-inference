@@ -30,7 +30,7 @@ impl PythonBackend {
                     "`classifier` model type is not supported".to_string(),
                 ))
             }
-            ModelType::Embedding(pool) => pool
+            ModelType::Embedding(pool) => pool,
         };
 
         let backend_process = management::BackendProcess::new(

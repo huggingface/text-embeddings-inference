@@ -1,14 +1,14 @@
 import inspect
-from pathlib import Path
-from typing import List, Type
-
 import torch
+
+from pathlib import Path
+from typing import Type, List
+from transformers import AutoModel
 from opentelemetry import trace
 from sentence_transformers.models import Pooling
-from transformers import AutoModel
 
 from text_embeddings_server.models import Model
-from text_embeddings_server.models.types import Embedding, PaddedBatch
+from text_embeddings_server.models.types import PaddedBatch, Embedding
 
 tracer = trace.get_tracer(__name__)
 

@@ -1,13 +1,13 @@
+import torch
+
+from loguru import logger
 from pathlib import Path
 from typing import Optional
-
-import torch
-from loguru import logger
 from transformers import AutoConfig
 from transformers.models.bert import BertConfig
 
-from text_embeddings_server.models.default_model import DefaultModel
 from text_embeddings_server.models.model import Model
+from text_embeddings_server.models.default_model import DefaultModel
 
 __all__ = ["Model"]
 
@@ -38,8 +38,6 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
     if torch.cuda.is_available():
         device = torch.device("cuda")
     else:
-        if dtype != torch.float32:
-            raise ValueError("CPU device only supports float32 dtype")
         device = torch.device("cpu")
 
     config = AutoConfig.from_pretrained(model_path)
