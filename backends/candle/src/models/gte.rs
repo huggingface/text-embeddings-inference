@@ -1,6 +1,7 @@
 use crate::layers::HiddenAct;
 use crate::models::PositionEmbeddingType;
 use serde::Deserialize;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct NTKScaling {
@@ -32,4 +33,5 @@ pub struct GTEConfig {
     pub logn_attention_scale: bool,
     #[serde(default)]
     pub logn_attention_clip1: bool,
+    pub id2label: Option<HashMap<String, String>>,
 }

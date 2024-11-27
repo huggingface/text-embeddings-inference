@@ -12,7 +12,7 @@ fn test_jina_code_base() -> Result<()> {
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
-        model_root,
+        &model_root,
         "float32".to_string(),
         ModelType::Embedding(Pool::Mean),
     )?;
