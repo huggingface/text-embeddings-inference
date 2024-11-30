@@ -1,6 +1,6 @@
 use crate::layers::{get_cublas_lt_wrapper, HiddenAct, LayerNorm, Linear};
-use crate::models::{apply_rotary, cos_sin, inv_freqs, Model, PositionEmbeddingType};
-use candle::{Device, IndexOp, Result, Tensor, D};
+use crate::models::{apply_rotary, inv_freqs, Model, PositionEmbeddingType};
+use candle::{DType, Device, IndexOp, Result, Tensor, D};
 use candle_nn::{Embedding, Module, VarBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -108,12 +108,6 @@ impl GTEAttention {
             if let (Device::Cuda(_), Some(cublaslt)) = (device, get_cublas_lt_wrapper()) {
                 #[cfg(feature = "cuda")]
                 {
-                    // cuBLASLt batch matmul implementation requires inputs to be dims3
-                    let (batch_size, _, seq_len, _) = k.shape().dims4()?;
-                    let k = k.flatten(0, 1)?;
-                    let q = q.flatten(0, 1)?;
-                    let v = v.flatten(0, 1)?;
-
                     // Batch matrix multiplication
                     // Fuse softmax scale and attention_bias add
                     let attention_scores = cublaslt.batch_matmul(
@@ -127,7 +121,7 @@ impl GTEAttention {
                     )?;
                     let attention_probs = candle_nn::ops::softmax_last_dim(&attention_scores)?;
 
-                    let context_layer = cublaslt.batch_matmul(
+                    cublaslt.batch_matmul(
                         &v.t()?.contiguous()?,
                         &attention_probs,
                         // We save one allocation
@@ -136,15 +130,7 @@ impl GTEAttention {
                         None,
                         None,
                         None,
-                    )?;
-
-                    // Reshape to dims4
-                    context_layer.reshape((
-                        batch_size,
-                        self.num_attention_heads,
-                        seq_len,
-                        self.attention_head_size,
-                    ))
+                    )
                 }
                 #[cfg(not(feature = "cuda"))]
                 {
@@ -157,7 +143,7 @@ impl GTEAttention {
                 attention_probs.matmul(&v.contiguous()?)
             }?;
 
-        let context_layer = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?;
+        let context_layer = context_layer.flatten_from(D::Minus2)?;
 
         let hidden_states = self.o_proj.forward(&context_layer)?;
 
@@ -579,4 +565,15 @@ impl Model for GTEModel {
             }
         }
     }
+}
+
+fn cos_sin(length: usize, inv_freqs: &Tensor, dtype: DType) -> Result<(Tensor, Tensor)> {
+    let t = Tensor::arange(0u32, length as u32, inv_freqs.device())?
+        .to_dtype(DType::F32)?
+        .reshape((length, 1))?;
+
+    let freqs = t.matmul(inv_freqs)?;
+    let cos = freqs.cos()?.to_dtype(dtype)?;
+    let sin = freqs.sin()?.to_dtype(dtype)?;
+    Ok((cos, sin))
 }
