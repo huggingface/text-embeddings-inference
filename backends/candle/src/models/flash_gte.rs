@@ -1,5 +1,5 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{HiddenAct, LayerNorm, Linear};
+use crate::layers::{LayerNorm, Linear};
 use crate::models::{
     GTEClassificationHead, GTEConfig, Model, NTKScaling, PositionEmbeddingType, RopeScaling, GTEMLP,
 };
@@ -132,7 +132,9 @@ impl GTELayer {
         max_s: usize,
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
-        let attn_output = self.attention.forward(&hidden_states, cos, sin)?;
+        let attn_output = self
+            .attention
+            .forward(&hidden_states, cu_seqlens, cos, sin, max_s)?;
         let normed_attn_res_output = self
             .attention_layer_norm
             .forward(&attn_output, Some(hidden_states))?;
