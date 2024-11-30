@@ -119,7 +119,7 @@ impl GTEAttention {
                     let attention_scores = cublaslt.batch_matmul(
                         &k,
                         &q,
-                        attention_bias.as_ref(),
+                        None,
                         Some(self.softmax_scale as f32),
                         None,
                         None,
