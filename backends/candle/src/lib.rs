@@ -349,7 +349,8 @@ impl CandleBackend {
                 if dtype != DType::F16
                     || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
                 {
-                    return Err(BackendError::Start("GTE is only supported on Cuda devices in fp16 with flash attention enabled".to_string()));
+                    tracing::info!("Starting GTE model on {:?}", device);
+                    Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
                 }
                 tracing::info!("Starting FlashGTE model on {:?}", device);
                 Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))

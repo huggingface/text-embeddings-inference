@@ -1,6 +1,6 @@
 use crate::layers::{get_cublas_lt_wrapper, HiddenAct, LayerNorm, Linear};
 use crate::models::{apply_rotary, cos_sin, inv_freqs, Model, PositionEmbeddingType};
-use candle::{DType, Device, IndexOp, Result, Tensor, D};
+use candle::{Device, IndexOp, Result, Tensor, D};
 use candle_nn::{Embedding, Module, VarBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -339,15 +339,6 @@ pub struct GTEModel {
 
 impl GTEModel {
     pub fn load(vb: VarBuilder, config: &GTEConfig, model_type: ModelType) -> Result<Self> {
-        match vb.device() {
-            Device::Cuda(_) => {}
-            _ => candle::bail!("FlashGTE requires Cuda"),
-        }
-
-        if vb.dtype() != DType::F16 {
-            candle::bail!("FlashGTE requires DType::F16")
-        }
-
         if config.logn_attention_clip1 {
             candle::bail!("`logn_attention_clip1` is not supported");
         }
