@@ -351,9 +351,10 @@ impl CandleBackend {
                 {
                     tracing::info!("Starting GTE model on {:?}", device);
                     Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
+                } else {
+                    tracing::info!("Starting FlashGTE model on {:?}", device);
+                    Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))
                 }
-                tracing::info!("Starting FlashGTE model on {:?}", device);
-                Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))
             }
             #[cfg(feature = "cuda")]
             (Config::Qwen2(config), Device::Cuda(_)) => {
