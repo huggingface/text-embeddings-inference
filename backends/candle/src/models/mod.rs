@@ -44,7 +44,7 @@ pub use gte::{GTEClassificationHead, GTEConfig, GTEModel, NTKScaling, RopeScalin
 pub use jina::JinaBertModel;
 pub use jina_code::JinaCodeBertModel;
 pub use mistral::MistralConfig;
-pub use nomic::{apply_rotary, inv_freqs, NomicBertModel, NomicConfig};
+pub use nomic::{apply_rotary, cos_sin, inv_freqs, NomicBertModel, NomicConfig};
 pub use qwen2::Qwen2Config;
 use text_embeddings_backend_core::Batch;
 

@@ -1,6 +1,6 @@
 use crate::layers::{get_cublas_lt_wrapper, HiddenAct, LayerNorm, Linear};
-use crate::models::{apply_rotary, inv_freqs, Model, PositionEmbeddingType};
-use candle::{DType, Device, IndexOp, Result, Tensor, D};
+use crate::models::{apply_rotary, cos_sin, inv_freqs, Model, PositionEmbeddingType};
+use candle::{Device, IndexOp, Result, Tensor, D};
 use candle_nn::{Embedding, Module, VarBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -426,6 +426,9 @@ impl GTEModel {
         let cos = self.cos_cache.index_select(&position_ids, 0)?;
         let sin = self.sin_cache.index_select(&position_ids, 0)?;
 
+        let cos = cos.unsqueeze(1)?;
+        let sin = sin.unsqueeze(1)?;
+
         for layer in &self.layers {
             let h = layer.forward(&hidden_states, &cos, &sin)?;
             hidden_states = h;
@@ -565,15 +568,4 @@ impl Model for GTEModel {
             }
         }
     }
-}
-
-fn cos_sin(length: usize, inv_freqs: &Tensor, dtype: DType) -> Result<(Tensor, Tensor)> {
-    let t = Tensor::arange(0u32, length as u32, inv_freqs.device())?
-        .to_dtype(DType::F32)?
-        .reshape((length, 1))?;
-
-    let freqs = t.matmul(inv_freqs)?;
-    let cos = freqs.cos()?.to_dtype(dtype)?;
-    let sin = freqs.sin()?.to_dtype(dtype)?;
-    Ok((cos, sin))
 }
