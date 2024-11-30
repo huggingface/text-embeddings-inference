@@ -40,11 +40,11 @@ pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
 use candle::{Result, Tensor};
 pub use distilbert::{DistilBertConfig, DistilBertModel};
 #[allow(unused_imports)]
-pub use gte::{GTEConfig, NTKScaling, RopeScaling};
+pub use gte::{GTEClassificationHead, GTEConfig, GTEModel, NTKScaling, RopeScaling, GTEMLP};
 pub use jina::JinaBertModel;
 pub use jina_code::JinaCodeBertModel;
 pub use mistral::MistralConfig;
-pub use nomic::{NomicBertModel, NomicConfig};
+pub use nomic::{apply_rotary, cos_sin, inv_freqs, NomicBertModel, NomicConfig};
 pub use qwen2::Qwen2Config;
 use text_embeddings_backend_core::Batch;
 

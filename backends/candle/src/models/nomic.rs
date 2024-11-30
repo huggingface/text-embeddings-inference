@@ -176,15 +176,6 @@ impl NomicAttention {
         })
     }
 
-    fn apply_rotary(&self, x: &Tensor, cos: &Tensor, sin: &Tensor) -> Result<Tensor> {
-        let dim = self.attention_head_size / 2;
-        let x1 = x.narrow(D::Minus1, 0, dim)?;
-        let x2 = x.narrow(D::Minus1, dim, dim)?;
-        let rotate_x = Tensor::cat(&[&x2.neg()?, &x1], D::Minus1)?;
-        let rope = (x.broadcast_mul(cos)? + rotate_x.broadcast_mul(sin)?)?;
-        Ok(rope)
-    }
-
     pub fn forward(
         &self,
         hidden_states: &Tensor,
@@ -208,8 +199,8 @@ impl NomicAttention {
         let key_layer = &qkv[1].contiguous()?;
         let value_layer = &qkv[2];
 
-        let query_layer = self.apply_rotary(query_layer, cos, sin)?;
-        let key_layer = self.apply_rotary(key_layer, cos, sin)?;
+        let query_layer = apply_rotary(query_layer, cos, sin, self.attention_head_size)?;
+        let key_layer = apply_rotary(key_layer, cos, sin, self.attention_head_size)?;
 
         #[allow(unused_variables)]
         let context_layer = if let (Device::Cuda(_), Some(cublaslt)) =
@@ -697,6 +688,20 @@ pub fn cos_sin(length: usize, inv_freqs: &Tensor, dtype: DType) -> Result<(Tenso
     let cos = freqs.cos()?.to_dtype(dtype)?;
     let sin = freqs.sin()?.to_dtype(dtype)?;
     Ok((cos, sin))
+}
+
+pub fn apply_rotary(
+    x: &Tensor,
+    cos: &Tensor,
+    sin: &Tensor,
+    attention_head_size: usize,
+) -> Result<Tensor> {
+    let dim = attention_head_size / 2;
+    let x1 = x.narrow(D::Minus1, 0, dim)?;
+    let x2 = x.narrow(D::Minus1, dim, dim)?;
+    let rotate_x = Tensor::cat(&[&x2.neg()?, &x1], D::Minus1)?;
+    let rope = (x.broadcast_mul(cos)? + rotate_x.broadcast_mul(sin)?)?;
+    Ok(rope)
 }
 
 impl Model for NomicBertModel {
