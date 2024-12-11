@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Type, List
 from transformers import AutoModel
 from opentelemetry import trace
+from sentence_transformers.models import Pooling
 
 from text_embeddings_server.models import Model
 from text_embeddings_server.models.types import PaddedBatch, Embedding
@@ -13,9 +14,12 @@ tracer = trace.get_tracer(__name__)
 
 
 class DefaultModel(Model):
-    def __init__(self, model_path: Path, device: torch.device, dtype: torch.dtype):
+    def __init__(
+        self, model_path: Path, device: torch.device, dtype: torch.dtype, pool: str
+    ):
         model = AutoModel.from_pretrained(model_path).to(dtype).to(device)
         self.hidden_size = model.config.hidden_size
+        self.pooling = Pooling(self.hidden_size, pooling_mode=pool)
 
         self.has_position_ids = (
             inspect.signature(model.forward).parameters.get("position_ids", None)
@@ -41,7 +45,13 @@ class DefaultModel(Model):
             kwargs["position_ids"] = batch.position_ids
 
         output = self.model(**kwargs)
-        embedding = output[0][:, 0]
+
+        pooling_features = {
+            "token_embeddings": output[0],
+            "attention_mask": batch.attention_mask,
+        }
+        embedding = self.pooling.forward(pooling_features)["sentence_embedding"]
+
         cpu_results = embedding.view(-1).tolist()
 
         return [
