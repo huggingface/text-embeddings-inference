@@ -1,10 +1,9 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{LayerNorm, Linear};
-use crate::models::{
-    GTEClassificationHead, GTEConfig, Model, NTKScaling, PositionEmbeddingType, RopeScaling, GTEMLP,
-};
+use crate::layers::{get_cos_sin, get_inv_freqs, LayerNorm, Linear};
+use crate::models::{GTEClassificationHead, GTEConfig, Model, PositionEmbeddingType, GTEMLP};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
+use candle_rotary::apply_rotary_inplace;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 struct GTEAttention {
@@ -74,7 +73,7 @@ impl GTEAttention {
         let k = qkv.narrow(1, self.num_attention_heads, self.num_attention_heads)?;
         let v = qkv.narrow(1, self.num_attention_heads * 2, self.num_attention_heads)?;
 
-        candle_rotary::apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
+        apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
 
         let attention = flash_attn_varlen(
             &q,
@@ -219,24 +218,19 @@ impl FlashGTEModel {
             config.layer_norm_eps,
         )?;
 
-        let inv_freqs = if let Some(RopeScaling::Ntk(NTKScaling { factor })) = config.rope_scaling {
-            let inv_freqs = candle_rotary::inv_freqs(
-                layers[0].attention.attention_head_size,
-                config.rope_theta * factor,
-                vb.device(),
-            )?;
-            let s = factor.powf(2.0 / layers[0].attention.attention_head_size as f32) as f64;
-            inv_freqs / s
-        } else {
-            candle_rotary::inv_freqs(
-                layers[0].attention.attention_head_size,
-                config.rope_theta,
-                vb.device(),
-            )
-        }?;
+        let inv_freqs = get_inv_freqs(
+            layers[0].attention.attention_head_size,
+            config.rope_theta,
+            vb.device(),
+            config.rope_scaling.as_ref(),
+        )?;
 
-        let (cos_cache, sin_cache) =
-            candle_rotary::cos_sin(config.max_position_embeddings, &inv_freqs, vb.dtype())?;
+        let (cos_cache, sin_cache) = get_cos_sin(
+            config.max_position_embeddings,
+            &inv_freqs,
+            vb.dtype(),
+            false,
+        )?;
 
         Ok(Self {
             word_embeddings,

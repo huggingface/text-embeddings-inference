@@ -1,21 +1,13 @@
-use crate::layers::{get_cublas_lt_wrapper, HiddenAct, LayerNorm, Linear};
-use crate::models::{apply_rotary, cos_sin, inv_freqs, Model, PositionEmbeddingType};
-use candle::{Device, IndexOp, Result, Tensor, D};
+use crate::layers::{
+    apply_rotary, get_cos_sin, get_cublas_lt_wrapper, get_inv_freqs, HiddenAct, LayerNorm, Linear,
+    RopeScaling,
+};
+use crate::models::{Model, PositionEmbeddingType};
+use candle::{DType, Device, IndexOp, Result, Tensor, D};
 use candle_nn::{Embedding, Module, VarBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct NTKScaling {
-    pub factor: f32,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(tag = "type", rename_all = "kebab-case")]
-pub enum RopeScaling {
-    Ntk(NTKScaling),
-}
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct GTEConfig {
@@ -46,7 +38,7 @@ struct GTEAttention {
     num_attention_heads: usize,
     attention_head_size: usize,
 
-    softmax_scale: f32,
+    softmax_scale: f64,
 
     span: tracing::Span,
 }
@@ -69,7 +61,7 @@ impl GTEAttention {
 
         let o_proj = Linear::new(o_proj_weight, Some(o_proj_bias), None);
 
-        let softmax_scale = 1. / (attention_head_size as f64).sqrt() as f32;
+        let softmax_scale = 1. / (attention_head_size as f64).sqrt();
 
         Ok(Self {
             qkv_linear,
@@ -81,69 +73,101 @@ impl GTEAttention {
         })
     }
 
-    pub fn forward(&self, hidden_states: &Tensor, cos: &Tensor, sin: &Tensor) -> Result<Tensor> {
+    pub fn forward(
+        &self,
+        hidden_states: &Tensor,
+        attention_bias: Option<&Tensor>,
+        cos: &Tensor,
+        sin: &Tensor,
+    ) -> Result<Tensor> {
         let _enter = self.span.enter();
         let device = hidden_states.device();
 
         let qkv = self.qkv_linear.forward(hidden_states)?;
 
-        // Reshape to [tokens, heads, head_size]
         let mut new_qkv_shape = qkv.dims().to_vec();
         new_qkv_shape.pop();
         new_qkv_shape.push(self.num_attention_heads * 3);
         new_qkv_shape.push(self.attention_head_size);
+        let qkv = qkv.reshape(new_qkv_shape.as_slice())?.transpose(1, 2)?;
 
-        let qkv = qkv.reshape(new_qkv_shape)?;
+        let qkv = qkv.chunk(3, 1)?;
+        let query_layer = &qkv[0].contiguous()?;
+        let key_layer = &qkv[1].contiguous()?;
+        let value_layer = &qkv[2];
 
-        // Split qkv tensor
-        let q = qkv.narrow(1, 0, self.num_attention_heads)?;
-        let k = qkv.narrow(1, self.num_attention_heads, self.num_attention_heads)?;
-        let v = qkv.narrow(1, self.num_attention_heads * 2, self.num_attention_heads)?;
-
-        let q = apply_rotary(&q, cos, sin, self.attention_head_size)?;
-        let k = apply_rotary(&k, cos, sin, self.attention_head_size)?;
+        let query_layer = apply_rotary(query_layer, cos, sin, self.attention_head_size)?;
+        let key_layer = apply_rotary(key_layer, cos, sin, self.attention_head_size)?;
 
         #[allow(unused_variables)]
-        let context_layer =
-            if let (Device::Cuda(_), Some(cublaslt)) = (device, get_cublas_lt_wrapper()) {
-                #[cfg(feature = "cuda")]
-                {
-                    // Batch matrix multiplication
-                    // Fuse softmax scale and attention_bias add
-                    let attention_scores = cublaslt.batch_matmul(
-                        &k,
-                        &q,
-                        None,
-                        Some(self.softmax_scale as f32),
-                        None,
-                        None,
-                        None,
-                    )?;
-                    let attention_probs = candle_nn::ops::softmax_last_dim(&attention_scores)?;
+        let context_layer = if let (Device::Cuda(_), Some(cublaslt)) =
+            (device, get_cublas_lt_wrapper())
+        {
+            #[cfg(feature = "cuda")]
+            {
+                // cuBLASLt batch matmul implementation requires inputs to be dims3
+                let (batch_size, _, seq_len, _) = key_layer.shape().dims4()?;
+                let key_layer = key_layer.flatten(0, 1)?;
+                let query_layer = query_layer.flatten(0, 1)?;
+                let value_layer = value_layer.flatten(0, 1)?;
+                let attention_bias = attention_bias.map(|mask| mask.flatten(0, 1)).transpose()?;
 
-                    cublaslt.batch_matmul(
-                        &v.t()?.contiguous()?,
-                        &attention_probs,
-                        // We save one allocation
-                        Some(&q),
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
-                }
-                #[cfg(not(feature = "cuda"))]
-                {
-                    candle::bail!("`cuda` feature is not enabled")
-                }
-            } else {
-                let attention_scores = q.matmul(&k.t()?)?;
-                let attention_scores = (attention_scores * self.softmax_scale as f64)?;
+                // If attention_bias is set, we fuse the add by giving it as the output matrix
+                // and setting beta to 1.0
+                let beta = match attention_bias.is_some() {
+                    true => Some(1.0),
+                    false => None,
+                };
+
+                // Batch matrix multiplication
+                // Fuse softmax scale and attention_bias add
+                let attention_scores = cublaslt.batch_matmul(
+                    &key_layer,
+                    &query_layer,
+                    attention_bias.as_ref(),
+                    Some(self.softmax_scale as f32),
+                    beta,
+                    None,
+                    None,
+                )?;
                 let attention_probs = candle_nn::ops::softmax_last_dim(&attention_scores)?;
-                attention_probs.matmul(&v.contiguous()?)
-            }?;
 
-        let context_layer = context_layer.flatten_from(D::Minus2)?;
+                let context_layer = cublaslt.batch_matmul(
+                    &value_layer.t()?.contiguous()?,
+                    &attention_probs,
+                    // We save one allocation
+                    Some(&query_layer),
+                    None,
+                    None,
+                    None,
+                    None,
+                )?;
+
+                // Reshape to dims4
+                context_layer.reshape((
+                    batch_size,
+                    self.num_attention_heads,
+                    seq_len,
+                    self.attention_head_size,
+                ))
+            }
+            #[cfg(not(feature = "cuda"))]
+            {
+                candle::bail!("`cuda` feature is not enabled")
+            }
+        } else {
+            let attention_scores = query_layer.matmul(&key_layer.t()?)?;
+            let mut attention_scores = (attention_scores * self.softmax_scale)?;
+
+            if let Some(attention_bias) = attention_bias {
+                attention_scores = attention_scores.add(attention_bias)?;
+            }
+
+            let attention_probs = candle_nn::ops::softmax_last_dim(&attention_scores)?;
+            attention_probs.matmul(&value_layer.contiguous()?)
+        }?;
+
+        let context_layer = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?;
 
         let hidden_states = self.o_proj.forward(&context_layer)?;
 
@@ -191,9 +215,9 @@ impl GTEMLP {
         let _enter = self.span.enter();
 
         let up_gate_states = self.up_gate_proj.forward(hidden_states)?;
-        let up_states = up_gate_states.narrow(1, 0, self.intermediate_size)?;
+        let up_states = up_gate_states.narrow(D::Minus1, 0, self.intermediate_size)?;
         let gate_states =
-            up_gate_states.narrow(1, self.intermediate_size, self.intermediate_size)?;
+            up_gate_states.narrow(D::Minus1, self.intermediate_size, self.intermediate_size)?;
 
         let gate_states = match self.act {
             HiddenAct::Gelu => gate_states.gelu(),
@@ -233,9 +257,18 @@ impl GTELayer {
         })
     }
 
-    pub fn forward(&self, hidden_states: &Tensor, cos: &Tensor, sin: &Tensor) -> Result<Tensor> {
+    pub fn forward(
+        &self,
+        hidden_states: &Tensor,
+        attention_bias: Option<&Tensor>,
+        cos: &Tensor,
+        sin: &Tensor,
+    ) -> Result<Tensor> {
         let _enter = self.span.enter();
-        let attn_output = self.attention.forward(hidden_states, cos, sin)?;
+        let attn_output = self
+            .attention
+            .forward(hidden_states, attention_bias, cos, sin)?;
+
         let normed_attn_res_output = self
             .attention_layer_norm
             .forward(&attn_output, Some(hidden_states))?;
@@ -300,16 +333,54 @@ impl GTEClassificationHead {
     }
 }
 
+struct GTEEncoder {
+    layers: Vec<GTELayer>,
+    span: tracing::Span,
+}
+
+impl GTEEncoder {
+    pub fn load(vb: VarBuilder, config: &GTEConfig) -> Result<Self> {
+        let layers = (0..config.num_hidden_layers)
+            .map(|index| GTELayer::load(vb.pp(format!("layer.{index}")), config))
+            .collect::<Result<Vec<_>>>()?;
+
+        let span = tracing::span!(tracing::Level::TRACE, "encoder");
+        Ok(GTEEncoder { layers, span })
+    }
+
+    fn forward(
+        &self,
+        hidden_states: &Tensor,
+        attention_bias: Option<&Tensor>,
+        cos: &Tensor,
+        sin: &Tensor,
+    ) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let mut hidden_states = hidden_states.clone();
+
+        // Use a loop rather than a fold as it's easier to modify when adding debug/...
+        for layer in self.layers.iter() {
+            hidden_states = layer.forward(&hidden_states, attention_bias, cos, sin)?
+        }
+
+        Ok(hidden_states)
+    }
+}
+
 pub struct GTEModel {
     word_embeddings: Embedding,
     token_type_embeddings: Option<Embedding>,
-    layers: Vec<GTELayer>,
     embeddings_norm: LayerNorm,
-    cos_cache: Tensor,
-    sin_cache: Tensor,
+    encoder: GTEEncoder,
+    dtype: DType,
+    rotary_cache: (Tensor, Tensor),
+    rotary_dim: usize,
     classifier: Option<GTEClassificationHead>,
     pool: Pool,
     pub device: Device,
+
+    num_attention_heads: usize,
 
     span: tracing::Span,
 }
@@ -353,9 +424,7 @@ impl GTEModel {
             None
         };
 
-        let layers = (0..config.num_hidden_layers)
-            .map(|index| GTELayer::load(vb.pp(format!("encoder.layer.{index}")), config))
-            .collect::<Result<Vec<_>>>()?;
+        let encoder = GTEEncoder::load(vb.pp("encoder"), config)?;
 
         let embeddings_norm = LayerNorm::load(
             vb.pp("embeddings.LayerNorm"),
@@ -363,169 +432,234 @@ impl GTEModel {
             config.layer_norm_eps,
         )?;
 
-        let inv_freqs = if let Some(RopeScaling::Ntk(NTKScaling { factor })) = config.rope_scaling {
-            let inv_freqs = inv_freqs(
-                layers[0].attention.attention_head_size,
-                config.rope_theta * factor,
-                vb.device(),
-            )?;
-            let s = factor.powf(2.0 / layers[0].attention.attention_head_size as f32) as f64;
-            inv_freqs / s
-        } else {
-            inv_freqs(
-                layers[0].attention.attention_head_size,
-                config.rope_theta,
-                vb.device(),
-            )
-        }?;
+        let rotary_dim = encoder.layers[0].attention.attention_head_size;
+        let inv_freqs = get_inv_freqs(
+            rotary_dim,
+            config.rope_theta,
+            vb.device(),
+            config.rope_scaling.as_ref(),
+        )?;
 
-        let (cos_cache, sin_cache) =
-            cos_sin(config.max_position_embeddings, &inv_freqs, vb.dtype())?;
+        let rotary_cache =
+            get_cos_sin(config.max_position_embeddings, &inv_freqs, vb.dtype(), true)?;
 
         Ok(Self {
             word_embeddings,
             token_type_embeddings,
-            layers,
+            encoder,
             embeddings_norm,
-            cos_cache,
-            sin_cache,
+            rotary_cache,
             classifier,
             pool,
+            num_attention_heads: config.num_attention_heads,
             device: vb.device().clone(),
+            dtype: vb.dtype(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
+            rotary_dim,
         })
     }
 
     pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         let _enter = self.span.enter();
 
-        let batch_size = batch.cumulative_seq_lengths.len() - 1;
-        let shape = batch.input_ids.len();
+        let batch_size = batch.len();
+        let max_length = batch.max_length as usize;
 
-        // Create Cuda tensors
-        let input_ids = Tensor::from_vec(batch.input_ids, shape, &self.device)?;
-        let token_type_ids = Tensor::from_vec(batch.token_type_ids, shape, &self.device)?;
-        let position_ids = Tensor::from_vec(batch.position_ids, shape, &self.device)?;
-        let cu_seqlens = Tensor::from_vec(
-            batch.cumulative_seq_lengths.clone(),
-            batch_size + 1,
-            &self.device,
-        )?;
+        let shape = (batch_size, max_length);
+
+        let (input_ids, type_ids, position_ids, input_lengths, attention_bias, attention_mask) =
+            if batch_size > 1 {
+                // Prepare padded batch
+                let elems = batch_size * max_length;
+
+                let mut input_ids = Vec::with_capacity(elems);
+                let mut type_ids = Vec::with_capacity(elems);
+                let mut position_ids = Vec::with_capacity(elems);
+                let mut attention_mask = Vec::with_capacity(elems);
+                let mut attention_bias = Vec::with_capacity(elems);
+                let mut input_lengths = Vec::with_capacity(batch_size);
+                // Bool to know if we need to use the attention mask
+                let mut masking = false;
+
+                for i in 0..batch_size {
+                    let start = batch.cumulative_seq_lengths[i] as usize;
+                    let end = batch.cumulative_seq_lengths[i + 1] as usize;
+                    let seq_length = (end - start) as u32;
+                    input_lengths.push(seq_length as f32);
+
+                    // Copy values
+                    for j in start..end {
+                        input_ids.push(batch.input_ids[j]);
+                        type_ids.push(batch.token_type_ids[j]);
+                        position_ids.push(batch.position_ids[j]);
+                        attention_mask.push(1.0_f32);
+                        attention_bias.push(0.0);
+                    }
+
+                    // Add padding if needed
+                    let padding = batch.max_length - seq_length;
+                    if padding > 0 {
+                        // Set bool to use attention mask
+                        masking = true;
+                        for _ in 0..padding {
+                            input_ids.push(0);
+                            type_ids.push(0);
+                            position_ids.push(0);
+                            attention_mask.push(0.0_f32);
+                            attention_bias.push(f32::NEG_INFINITY);
+                        }
+                    }
+                }
+
+                let (attention_bias, attention_mask) = match masking {
+                    true => {
+                        // We only need the mask if we use mean pooling
+                        // For CLS pooling, the bias is enough
+                        let attention_mask = if self.pool == Pool::Mean {
+                            let attention_mask = Tensor::from_vec(
+                                attention_mask,
+                                (batch_size, max_length, 1),
+                                &self.device,
+                            )?
+                            .to_dtype(self.dtype)?;
+
+                            Some(attention_mask)
+                        } else {
+                            None
+                        };
+
+                        let attention_bias = Tensor::from_vec(
+                            attention_bias,
+                            (batch_size, 1, 1, max_length),
+                            &self.device,
+                        )?
+                        .to_dtype(self.dtype)?;
+                        // Broadcast once instead of at every layer
+                        let attention_bias = attention_bias
+                            .broadcast_as((
+                                batch_size,
+                                self.num_attention_heads,
+                                max_length,
+                                max_length,
+                            ))?
+                            .contiguous()?;
+                        (Some(attention_bias), attention_mask)
+                    }
+                    false => (None, None),
+                };
+
+                (
+                    input_ids,
+                    type_ids,
+                    position_ids,
+                    input_lengths,
+                    attention_bias,
+                    attention_mask,
+                )
+            } else {
+                (
+                    batch.input_ids,
+                    batch.token_type_ids,
+                    batch.position_ids,
+                    vec![batch.max_length as f32],
+                    None,
+                    None,
+                )
+            };
+
+        // Create CPU tensors
+        let input_ids = Tensor::from_vec(input_ids, shape, &self.device)?;
+        let type_ids = Tensor::from_vec(type_ids, shape, &self.device)?;
+        let position_ids = Tensor::from_vec(position_ids, batch_size * max_length, &self.device)?;
+        let input_lengths =
+            Tensor::from_vec(input_lengths, (batch_size, 1), &self.device)?.to_dtype(self.dtype)?;
+
+        let cos = self.rotary_cache.0.index_select(&position_ids, 0)?;
+        let sin = self.rotary_cache.1.index_select(&position_ids, 0)?;
+
+        let cos = cos.reshape((batch_size, 1, max_length, self.rotary_dim))?;
+        let sin = sin.reshape((batch_size, 1, max_length, self.rotary_dim))?;
 
         let word_embeddings = self.word_embeddings.forward(&input_ids)?;
         let token_type_embeddings = self
             .token_type_embeddings
             .as_ref()
-            .map(|emb| emb.forward(&token_type_ids))
+            .map(|emb| emb.forward(&type_ids))
             .transpose()?;
 
-        let mut hidden_states = self
+        let embedding_output = self
             .embeddings_norm
             .forward(&word_embeddings, token_type_embeddings.as_ref())?;
 
-        let cos = self.cos_cache.index_select(&position_ids, 0)?;
-        let sin = self.sin_cache.index_select(&position_ids, 0)?;
-
-        let cos = cos.unsqueeze(1)?;
-        let sin = sin.unsqueeze(1)?;
-
-        for layer in &self.layers {
-            let h = layer.forward(&hidden_states, &cos, &sin)?;
-            hidden_states = h;
-        }
-
-        let outputs = hidden_states;
+        let outputs =
+            self.encoder
+                .forward(&embedding_output, attention_bias.as_ref(), &cos, &sin)?;
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();
 
         let pooled_embeddings = if has_pooling_requests {
-            match self.pool {
-                // CLS and LastToken pooling
-                Pool::Cls | Pool::LastToken => {
-                    if batch_size > 1 {
-                        // Get token indices form cu_seqlens
-                        let mut indices = match self.pool {
-                            Pool::Cls => cu_seqlens.narrow(0, 0, batch_size)?,
-                            Pool::LastToken => {
-                                let end = cu_seqlens.narrow(0, 1, batch_size)?;
-                                (&end - &end.ones_like()?)?
-                            }
-                            _ => unreachable!(),
-                        };
+            let pooled_indices_length = batch.pooled_indices.len();
+            let mut outputs = outputs.clone();
 
-                        // If raw_indices is empty, we don't need to do anything with
-                        // the pooled_indices
-                        if has_raw_requests {
-                            // We need the pooled indices to select the correct cls indices
-                            let pooled_indices = Tensor::from_vec(
-                                batch.pooled_indices.clone(),
-                                batch.pooled_indices.len(),
-                                &self.device,
-                            )?;
+            // Only use pooled_indices if at least one member of the batch ask for raw embeddings
+            let pooled_indices = if has_raw_requests {
+                let pooled_indices =
+                    Tensor::from_vec(batch.pooled_indices, pooled_indices_length, &self.device)?;
 
-                            // Only select indices that requires pooling
-                            indices = indices.index_select(&pooled_indices, 0)?
-                        }
+                // Select values in the batch
+                outputs = outputs.index_select(&pooled_indices, 0)?;
+                Some(pooled_indices)
+            } else {
+                None
+            };
 
-                        // Select tokens
-                        Some(outputs.index_select(&indices, 0)?)
-                    } else {
-                        Some(
-                            match self.pool {
-                                Pool::Cls => outputs.i(0)?,
-                                Pool::LastToken => {
-                                    outputs.i(batch.cumulative_seq_lengths[1] as usize - 1)?
-                                }
-                                _ => unreachable!(),
-                            }
-                            .unsqueeze(0)?,
-                        )
-                    }
-                }
+            let pooled_embeddings = match self.pool {
+                // CLS pooling
+                Pool::Cls => outputs.i((.., 0))?,
+                // Last token pooling is not supported for this model
+                Pool::LastToken => unreachable!(),
                 // Mean pooling
                 Pool::Mean => {
-                    if batch_size > 1 {
-                        // for each request that requires pooling
-                        let results: Result<Vec<Tensor>> = batch
-                            .pooled_indices
-                            .into_iter()
-                            .map(|i| {
-                                let i = i as usize;
-                                let start = batch.cumulative_seq_lengths[i];
-                                let len = batch.cumulative_seq_lengths[i + 1] - start;
+                    if let Some(ref attention_mask) = attention_mask {
+                        let mut attention_mask = attention_mask.clone();
 
-                                // Mean
-                                let embeddings = outputs.narrow(0, start as usize, len as usize)?;
-                                embeddings.sum_keepdim(0)? / (len as f64)
-                            })
-                            .collect();
+                        if let Some(pooled_indices) = pooled_indices {
+                            // Select values in the batch
+                            attention_mask = attention_mask.index_select(&pooled_indices, 0)?;
+                        };
 
-                        // Concatenate all results
-                        Some(Tensor::cat(&results?, 0)?)
-                    } else {
-                        Some((outputs.sum_keepdim(0)? / (batch.max_length as f64))?)
+                        // Mask padded values
+                        outputs = outputs.broadcast_mul(&attention_mask)?;
                     }
+
+                    (outputs.sum(1)?.broadcast_div(&input_lengths))?
                 }
-                Pool::Splade => {
-                    unreachable!();
-                }
-            }
+                Pool::Splade => unreachable!(),
+            };
+            Some(pooled_embeddings)
         } else {
             None
         };
 
         let raw_embeddings = if has_raw_requests {
-            if batch_size > 1 && has_pooling_requests {
-                // Create indexing vector for the embeddings
-                let mut final_indices: Vec<u32> = Vec::with_capacity(shape);
-                for i in batch.raw_indices.into_iter() {
-                    let i = i as usize;
-                    // Get start/end token index of this specific member of the batch
-                    let start = batch.cumulative_seq_lengths[i];
-                    let end = batch.cumulative_seq_lengths[i + 1];
+            // Reshape outputs
+            let (b, l, h) = outputs.shape().dims3()?;
+            let outputs = outputs.reshape((b * l, h))?;
 
-                    for j in start..end {
+            // We need to remove the padding tokens only if batch_size > 1 and there are some
+            // member of the batch that require pooling
+            // or if batch_size > 1 and the members of the batch have different lengths
+            if (attention_mask.is_some() || has_pooling_requests) && batch_size > 1 {
+                let mut final_indices: Vec<u32> = Vec::with_capacity(batch_size * max_length);
+
+                for i in batch.raw_indices.into_iter() {
+                    let start = i * batch.max_length;
+                    let i = i as usize;
+                    let length =
+                        batch.cumulative_seq_lengths[i + 1] - batch.cumulative_seq_lengths[i];
+
+                    for j in start..start + length {
                         // Add indices for the tokens of this specific member of the batch
                         final_indices.push(j);
                     }
@@ -550,7 +684,7 @@ impl GTEModel {
 
 impl Model for GTEModel {
     fn is_padded(&self) -> bool {
-        false
+        true
     }
 
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
