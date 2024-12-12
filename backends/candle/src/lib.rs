@@ -11,9 +11,8 @@ use crate::compute_cap::{
     compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
 };
 use crate::models::{
-    BertConfig, BertModel, DistilBertConfig, DistilBertModel, GTEConfig, JinaBertModel,
-    JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig, Model, NomicBertModel, NomicConfig,
-    Qwen2Config,
+    BertConfig, BertModel, DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, JinaBertModel,
+    JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig, Model, NomicBertModel, NomicConfig, Qwen2Config,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -26,7 +25,7 @@ use candle_nn::VarBuilder;
 use nohash_hasher::BuildNoHashHasher;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::Path;
 use text_embeddings_backend_core::{
     Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Predictions,
 };
@@ -72,7 +71,7 @@ pub struct CandleBackend {
 
 impl CandleBackend {
     pub fn new(
-        model_path: PathBuf,
+        model_path: &Path,
         dtype: String,
         model_type: ModelType,
     ) -> Result<Self, BackendError> {
@@ -221,10 +220,10 @@ impl CandleBackend {
                 "Mistral is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
             )),
-            (Config::Gte(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
-                "GTE is only supported on Cuda devices in fp16 with flash attention enabled"
-                    .to_string(),
-            )),
+            (Config::Gte(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting GTE model on {:?}", device);
+                Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
+            }
             (Config::Qwen2(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
                 "Qwen2 is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
@@ -356,10 +355,12 @@ impl CandleBackend {
                 if dtype != DType::F16
                     || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
                 {
-                    return Err(BackendError::Start("GTE is only supported on Cuda devices in fp16 with flash attention enabled".to_string()));
+                    tracing::info!("Starting GTE model on {:?}", device);
+                    Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
+                } else {
+                    tracing::info!("Starting FlashGTE model on {:?}", device);
+                    Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))
                 }
-                tracing::info!("Starting FlashGTE model on {:?}", device);
-                Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))
             }
             #[cfg(feature = "cuda")]
             (Config::Qwen2(config), Device::Cuda(_)) => {

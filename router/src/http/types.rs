@@ -375,6 +375,7 @@ pub(crate) struct SimilarityInput {
 pub(crate) struct SimilarityParameters {
     #[schema(default = "false", example = "false", nullable = true)]
     pub truncate: Option<bool>,
+    #[serde(default)]
     #[schema(default = "right", example = "right")]
     pub truncation_direction: TruncationDirection,
     /// The name of the prompt that should be used by for encoding. If not set, no prompt

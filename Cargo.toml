@@ -12,7 +12,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.5.0"
+version = "1.5.1"
 edition = "2021"
 authors = ["Olivier Dehaene"]
 homepage = "https://github.com/huggingface/text-embeddings-inference"
@@ -23,6 +23,7 @@ clap = { version = "4.1", features = ["derive", "env"] }
 hf-hub = { version = "0.3.2", features = ["tokio", "online"], default-features = false }
 metrics = "0.23"
 nohash-hasher = "0.2"
+num_cpus = "1.16.0"
 tokenizers = { version = "0.19.1", default-features = false, features = ["onig", "esaxx_fast"] }
 tokio = { version = "1.25", features = ["rt", "rt-multi-thread", "parking_lot", "sync", "signal"] }
 tracing = "0.1"

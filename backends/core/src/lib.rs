@@ -88,4 +88,6 @@ pub enum BackendError {
     Inference(String),
     #[error("Backend is unhealthy")]
     Unhealthy,
+    #[error("Weights not found: {0}")]
+    WeightsNotFound(String),
 }

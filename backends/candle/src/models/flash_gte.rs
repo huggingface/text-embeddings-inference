@@ -1,8 +1,9 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{HiddenAct, LayerNorm, Linear};
-use crate::models::{GTEConfig, Model, NTKScaling, PositionEmbeddingType, RopeScaling};
+use crate::layers::{get_cos_sin, get_inv_freqs, LayerNorm, Linear};
+use crate::models::{GTEClassificationHead, GTEConfig, Model, PositionEmbeddingType, GTEMLP};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
+use candle_rotary::apply_rotary_inplace;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 struct GTEAttention {
@@ -72,7 +73,7 @@ impl GTEAttention {
         let k = qkv.narrow(1, self.num_attention_heads, self.num_attention_heads)?;
         let v = qkv.narrow(1, self.num_attention_heads * 2, self.num_attention_heads)?;
 
-        candle_rotary::apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
+        apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
 
         let attention = flash_attn_varlen(
             &q,
@@ -93,60 +94,7 @@ impl GTEAttention {
     }
 }
 
-struct GTEMLP {
-    up_gate_proj: Linear,
-    down_proj: Linear,
-
-    act: HiddenAct,
-    intermediate_size: usize,
-
-    span: tracing::Span,
-}
-
-impl GTEMLP {
-    pub fn load(vb: VarBuilder, config: &GTEConfig) -> Result<Self> {
-        let intermediate_size = config.intermediate_size;
-
-        let up_gate_proj_weight = vb
-            .pp("up_gate_proj")
-            .get((intermediate_size * 2, config.hidden_size), "weight")?;
-
-        let up_gate_proj = Linear::new(up_gate_proj_weight, None, None);
-
-        let down_proj_weight = vb
-            .pp("down_proj")
-            .get((config.hidden_size, intermediate_size), "weight")?;
-        let down_proj_bias = vb.pp("down_proj").get(config.hidden_size, "bias")?;
-        let down_proj = Linear::new(down_proj_weight, Some(down_proj_bias), None);
-
-        Ok(Self {
-            up_gate_proj,
-            down_proj,
-            intermediate_size,
-            act: config.hidden_act.clone(),
-            span: tracing::span!(tracing::Level::TRACE, "mlp"),
-        })
-    }
-
-    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let up_gate_states = self.up_gate_proj.forward(hidden_states)?;
-        let up_states = up_gate_states.narrow(1, 0, self.intermediate_size)?;
-        let gate_states =
-            up_gate_states.narrow(1, self.intermediate_size, self.intermediate_size)?;
-
-        let gate_states = match self.act {
-            HiddenAct::Gelu => gate_states.gelu(),
-            HiddenAct::Relu => gate_states.relu(),
-            HiddenAct::Swiglu => gate_states.silu(),
-        }?;
-        let r = self.down_proj.forward(&(gate_states * up_states)?);
-        r
-    }
-}
-
-struct GTELayer {
+pub struct GTELayer {
     attention: GTEAttention,
     mlp: GTEMLP,
     attention_layer_norm: LayerNorm,
@@ -205,6 +153,7 @@ pub struct FlashGTEModel {
     embeddings_norm: LayerNorm,
     cos_cache: Tensor,
     sin_cache: Tensor,
+    classifier: Option<GTEClassificationHead>,
     pool: Pool,
     pub device: Device,
 
@@ -233,11 +182,14 @@ impl FlashGTEModel {
             candle::bail!("Only `PositionEmbeddingType::Rope` is supported");
         }
 
-        let pool = match model_type {
+        let (pool, classifier) = match model_type {
             ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for GTE")
+                let pool = Pool::Cls;
+
+                let classifier = GTEClassificationHead::load(vb.clone(), config)?;
+                (pool, Some(classifier))
             }
-            ModelType::Embedding(pool) => pool,
+            ModelType::Embedding(pool) => (pool, None),
         };
 
         let word_embeddings = Embedding::new(
@@ -266,24 +218,19 @@ impl FlashGTEModel {
             config.layer_norm_eps,
         )?;
 
-        let inv_freqs = if let Some(RopeScaling::Ntk(NTKScaling { factor })) = config.rope_scaling {
-            let inv_freqs = candle_rotary::inv_freqs(
-                layers[0].attention.attention_head_size,
-                config.rope_theta * factor,
-                vb.device(),
-            )?;
-            let s = factor.powf(2.0 / layers[0].attention.attention_head_size as f32) as f64;
-            inv_freqs / s
-        } else {
-            candle_rotary::inv_freqs(
-                layers[0].attention.attention_head_size,
-                config.rope_theta,
-                vb.device(),
-            )
-        }?;
+        let inv_freqs = get_inv_freqs(
+            layers[0].attention.attention_head_size,
+            config.rope_theta,
+            vb.device(),
+            config.rope_scaling.as_ref(),
+        )?;
 
-        let (cos_cache, sin_cache) =
-            candle_rotary::cos_sin(config.max_position_embeddings, &inv_freqs, vb.dtype())?;
+        let (cos_cache, sin_cache) = get_cos_sin(
+            config.max_position_embeddings,
+            &inv_freqs,
+            vb.dtype(),
+            false,
+        )?;
 
         Ok(Self {
             word_embeddings,
@@ -292,6 +239,7 @@ impl FlashGTEModel {
             embeddings_norm,
             cos_cache,
             sin_cache,
+            classifier,
             pool,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
@@ -457,7 +405,20 @@ impl Model for FlashGTEModel {
     fn is_padded(&self) -> bool {
         false
     }
+
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
+    }
+
+    fn predict(&self, batch: Batch) -> Result<Tensor> {
+        match &self.classifier {
+            None => candle::bail!("`predict` is not implemented for this model"),
+            Some(classifier) => {
+                let (pooled_embeddings, _raw_embeddings) = self.forward(batch)?;
+                let pooled_embeddings =
+                    pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
+                classifier.forward(&pooled_embeddings)
+            }
+        }
     }
 }

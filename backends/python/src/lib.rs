@@ -5,7 +5,7 @@ use backend_grpc_client::Client;
 use nohash_hasher::BuildNoHashHasher;
 use std::collections::HashMap;
 use text_embeddings_backend_core::{
-    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool, Predictions,
+    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Predictions,
 };
 use tokio::runtime::Runtime;
 
@@ -24,18 +24,13 @@ impl PythonBackend {
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
     ) -> Result<Self, BackendError> {
-        match model_type {
+        let pool = match model_type {
             ModelType::Classifier => {
                 return Err(BackendError::Start(
                     "`classifier` model type is not supported".to_string(),
                 ))
             }
-            ModelType::Embedding(pool) => {
-                if pool != Pool::Cls {
-                    return Err(BackendError::Start(format!("{pool:?} is not supported")));
-                }
-                pool
-            }
+            ModelType::Embedding(pool) => pool,
         };
 
         let backend_process = management::BackendProcess::new(
@@ -44,6 +39,7 @@ impl PythonBackend {
             &uds_path,
             otlp_endpoint,
             otlp_service_name,
+            pool,
         )?;
         let tokio_runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()

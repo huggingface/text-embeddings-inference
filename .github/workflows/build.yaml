@@ -61,9 +61,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
         with:
           install: true
-          buildkitd-config-inline: |
-            [registry."docker.io"]
-              mirrors = ["registry-us-east-1.prod.aws.ci.huggingface.tech"]
+          buildkitd-config: /tmp/buildkitd.toml
 
       - name: Configure sccache
         uses: actions/github-script@v6
@@ -129,6 +127,7 @@ jobs:
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta-grpc
+        if: ${{ matrix.grpc }}
         uses: docker/metadata-action@v5
         with:
           images: |
@@ -144,6 +143,7 @@ jobs:
 
       - name: Build and push Docker image
         id: build-and-push-grpc
+        if: ${{ matrix.grpc }}
         uses: docker/build-push-action@v6
         with:
           context: .
