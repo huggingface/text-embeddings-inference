@@ -12,7 +12,8 @@ use crate::compute_cap::{
 };
 use crate::models::{
     BertConfig, BertModel, DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, JinaBertModel,
-    JinaCodeBertModel, MistralConfig, Model, NomicBertModel, NomicConfig, Qwen2Config,
+    JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig, Model, NomicBertModel, NomicConfig,
+    Qwen2Config,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -60,6 +61,8 @@ enum Config {
     #[serde(rename = "new")]
     Gte(GTEConfig),
     Qwen2(Qwen2Config),
+    #[serde(rename = "mpnet")]
+    MPNet(MPNetConfig),
 }
 
 pub struct CandleBackend {
@@ -226,6 +229,10 @@ impl CandleBackend {
                 "Qwen2 is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
             )),
+            (Config::MPNet(config), _) => {
+                tracing::info!("Starting MPNet model on {:?}", device);
+                Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
+            }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
                 if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
