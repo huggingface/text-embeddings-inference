@@ -113,6 +113,12 @@ ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80 \
     USE_FLASH_ATTENTION=$DEFAULT_USE_FLASH_ATTENTION
 
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
 FROM base AS grpc
 
 COPY --from=grpc-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router

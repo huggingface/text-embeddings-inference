@@ -26,7 +26,7 @@ if FLASH_ATTENTION:
     __all__.append(FlashBert)
 
 
-def get_model(model_path: Path, dtype: Optional[str]):
+def get_model(model_path: Path, dtype: Optional[str], pool: str):
     if dtype == "float32":
         datatype = torch.float32
     elif dtype == "float16":
@@ -38,6 +38,7 @@ def get_model(model_path: Path, dtype: Optional[str]):
 
     device = get_device()
     logger.info(f"backend device: {device}")
+
     config = AutoConfig.from_pretrained(model_path)
     if config.model_type == "bert":
         config: BertConfig
@@ -47,6 +48,8 @@ def get_model(model_path: Path, dtype: Optional[str]):
             and datatype in [torch.float16, torch.bfloat16]
             and FLASH_ATTENTION
         ):
+            if pool != "cls":
+                raise ValueError("FlashBert only supports cls pooling")
             return FlashBert(model_path, device, datatype)  # type: ignore
         if use_ipex() or device.type == "hpu":
             return FlashBert(model_path, device, datatype)  # type: ignore
