@@ -1,4 +1,6 @@
-use crate::layers::{get_cublas_lt_wrapper, HiddenAct, LayerNorm, Linear};
+use crate::layers::{
+    apply_rotary, get_cos_sin, get_cublas_lt_wrapper, get_inv_freqs, HiddenAct, LayerNorm, Linear,
+};
 use crate::models::Model;
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{Embedding, VarBuilder};
@@ -176,15 +178,6 @@ impl NomicAttention {
         })
     }
 
-    fn apply_rotary(&self, x: &Tensor, cos: &Tensor, sin: &Tensor) -> Result<Tensor> {
-        let dim = self.attention_head_size / 2;
-        let x1 = x.narrow(D::Minus1, 0, dim)?;
-        let x2 = x.narrow(D::Minus1, dim, dim)?;
-        let rotate_x = Tensor::cat(&[&x2.neg()?, &x1], D::Minus1)?;
-        let rope = (x.broadcast_mul(cos)? + rotate_x.broadcast_mul(sin)?)?;
-        Ok(rope)
-    }
-
     pub fn forward(
         &self,
         hidden_states: &Tensor,
@@ -208,8 +201,8 @@ impl NomicAttention {
         let key_layer = &qkv[1].contiguous()?;
         let value_layer = &qkv[2];
 
-        let query_layer = self.apply_rotary(query_layer, cos, sin)?;
-        let key_layer = self.apply_rotary(key_layer, cos, sin)?;
+        let query_layer = apply_rotary(query_layer, cos, sin, self.attention_head_size)?;
+        let key_layer = apply_rotary(key_layer, cos, sin, self.attention_head_size)?;
 
         #[allow(unused_variables)]
         let context_layer = if let (Device::Cuda(_), Some(cublaslt)) =
@@ -416,8 +409,9 @@ impl NomicBertModel {
         let encoder = NomicBertEncoder::load(vb.pp("encoder"), config)?;
 
         let rotary_dim = encoder.layers[0].attention.attention_head_size;
-        let inv_freqs_tensor = inv_freqs(rotary_dim, config.rotary_emb_base, vb.device())?;
-        let rotary_cache = cos_sin(config.n_positions, &inv_freqs_tensor, vb.dtype())?;
+        let inv_freqs_tensor =
+            get_inv_freqs(rotary_dim, config.rotary_emb_base, vb.device(), None)?;
+        let rotary_cache = get_cos_sin(config.n_positions, &inv_freqs_tensor, vb.dtype(), true)?;
 
         let scaled_rotary_cache = if let Some(scaling_factor) = config.rotary_scaling_factor {
             let new_base = (config.rotary_emb_base
@@ -425,8 +419,13 @@ impl NomicBertModel {
                     / config.max_trained_positions as f32)
                     - (scaling_factor - 1.0)))
                 .powi((rotary_dim as f32 / (rotary_dim as f32 - 2.0)) as i32);
-            let inv_freqs_tensor = inv_freqs(rotary_dim, new_base, vb.device())?;
-            Some(cos_sin(config.n_positions, &inv_freqs_tensor, vb.dtype())?)
+            let inv_freqs_tensor = get_inv_freqs(rotary_dim, new_base, vb.device(), None)?;
+            Some(get_cos_sin(
+                config.n_positions,
+                &inv_freqs_tensor,
+                vb.dtype(),
+                true,
+            )?)
         } else {
             None
         };
@@ -678,31 +677,11 @@ impl NomicBertModel {
     }
 }
 
-pub fn inv_freqs(dim: usize, base: f32, device: &Device) -> Result<Tensor> {
-    let inv_freq: Vec<_> = (0..dim)
-        .step_by(2)
-        .map(|i| 1f32 / base.powf(i as f32 / dim as f32))
-        .collect();
-    let inv_freq_len = inv_freq.len();
-    Tensor::from_vec(inv_freq, (1, inv_freq_len), device)
-}
-
-pub fn cos_sin(length: usize, inv_freqs: &Tensor, dtype: DType) -> Result<(Tensor, Tensor)> {
-    let t = Tensor::arange(0u32, length as u32, inv_freqs.device())?
-        .to_dtype(DType::F32)?
-        .reshape((length, 1))?;
-    let freqs = t.matmul(inv_freqs)?;
-    let freqs = Tensor::cat(&[&freqs, &freqs], 1)?;
-
-    let cos = freqs.cos()?.to_dtype(dtype)?;
-    let sin = freqs.sin()?.to_dtype(dtype)?;
-    Ok((cos, sin))
-}
-
 impl Model for NomicBertModel {
     fn is_padded(&self) -> bool {
-        false
+        true
     }
+
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
     }
