@@ -52,6 +52,15 @@ pub enum ModelType {
     Embedding(Pool),
 }
 
+impl fmt::Display for ModelType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ModelType::Classifier => write!(f, "classifier"),
+            ModelType::Embedding(_) => write!(f, "embedding"),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 #[cfg_attr(feature = "clap", derive(ValueEnum))]
 pub enum Pool {

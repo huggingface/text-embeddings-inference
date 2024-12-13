@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use std::{env, fs, io, thread};
-use text_embeddings_backend_core::{BackendError, Pool};
+use text_embeddings_backend_core::{BackendError, ModelType, Pool};
 
 #[derive(Debug)]
 pub(crate) struct BackendProcess {
@@ -22,7 +22,8 @@ impl BackendProcess {
         uds_path: &str,
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
-        pool: Pool,
+        pool: Option<Pool>,
+        modeltype: ModelType,
     ) -> Result<Self, BackendError> {
         // Get UDS path
         let uds = Path::new(uds_path);
@@ -32,13 +33,14 @@ impl BackendProcess {
             fs::remove_file(uds).expect("could not remove UDS file");
         }
 
-        let pool = match pool {
-            Pool::Cls => "cls",
-            Pool::Mean => "mean",
-            Pool::LastToken => "lasttoken",
-            Pool::Splade => {
+        let pool_str = match pool {
+            Some(Pool::Cls) => "cls",
+            Some(Pool::Mean) => "mean",
+            Some(Pool::LastToken) => "lasttoken",
+            Some(Pool::Splade) => {
                 return Err(BackendError::Start(format!("{pool:?} is not supported")));
             }
+            None => "",
         };
 
         // Process args
@@ -51,9 +53,14 @@ impl BackendProcess {
             "--logger-level".to_owned(),
             "INFO".to_owned(),
             "--json-output".to_owned(),
-            "--pool".to_owned(),
-            pool.to_owned(),
+            "--model-type".to_owned(),
+            modeltype.to_string(),
         ];
+        // Add `--pool` argument only if `pool` is not `None`
+        if !pool_str.is_empty() {
+            python_server_args.push("--pool".to_owned());
+            python_server_args.push(pool_str.to_owned());
+        }
 
         // OpenTelemetry
         if let Some(otlp_endpoint) = otlp_endpoint {

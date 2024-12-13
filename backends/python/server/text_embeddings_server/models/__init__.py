@@ -5,9 +5,11 @@ from pathlib import Path
 from typing import Optional
 from transformers import AutoConfig
 from transformers.models.bert import BertConfig
+from typing import TYPE_CHECKING
 
 from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.default_model import DefaultModel
+from text_embeddings_server.models.predict_model import PredictModel
 
 __all__ = ["Model"]
 
@@ -25,7 +27,7 @@ if FLASH_ATTENTION:
     __all__.append(FlashBert)
 
 
-def get_model(model_path: Path, dtype: Optional[str], pool: str):
+def get_model(model_path: Path, dtype: Optional[str], pool: str, model_type: str):
     if dtype == "float32":
         dtype = torch.float32
     elif dtype == "float16":
@@ -54,6 +56,14 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
                 raise ValueError("FlashBert only supports cls pooling")
             return FlashBert(model_path, device, dtype)
         else:
-            return DefaultModel(model_path, device, dtype, pool)
-
+            return DefaultModel(model_path, device, dtype)
+    # predict
+    if model_type == "classifier" and config.model_type in [
+        "roberta",
+        "xlm-roberta",
+        "bert",
+        "deberta-v2"
+    ]:
+        return PredictModel(model_path, device, dtype)
+    breakpoint()
     raise NotImplementedError

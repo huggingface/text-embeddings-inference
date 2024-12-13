@@ -20,7 +20,10 @@ install: gen-server
 	pip install -e .
 
 run-dev:
-	python text_embeddings_server/cli.py serve BAAI/bge-small-en
+	python text_embeddings_server/cli.py BAAI/bge-small-en
+
+run-reranker-dev:
+	python text_embeddings_server/cli.py mixedbread-ai/mxbai-rerank-xsmall-v1 --model-type classifier
 
 export-requirements:
 	poetry export -o requirements.txt --without-hashes
