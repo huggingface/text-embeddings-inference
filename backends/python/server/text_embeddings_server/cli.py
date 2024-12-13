@@ -14,6 +14,9 @@ class Dtype(str, Enum):
     float16 = "float16"
     bloat16 = "bfloat16"
 
+class ModelType(str, Enum):
+    embedding = "embedding"
+    classifier = "classifier"
 
 @app.command()
 def serve(
@@ -25,6 +28,7 @@ def serve(
     otlp_endpoint: Optional[str] = None,
     otlp_service_name: str = "text-embeddings-inference.server",
     pool: str = "cls",
+    model_type: ModelType = "embedding",
 ):
     # Remove default handler
     logger.remove()
@@ -49,7 +53,7 @@ def serve(
     # Downgrade enum into str for easier management later on
     dtype = None if dtype is None else dtype.value
 
-    server.serve(model_path, dtype, uds_path, pool)
+    server.serve(model_path, dtype, uds_path, pool, model_type.value)
 
 
 if __name__ == "__main__":

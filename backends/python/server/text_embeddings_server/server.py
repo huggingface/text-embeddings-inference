@@ -31,21 +31,30 @@ class EmbeddingService(embed_pb2_grpc.EmbeddingServiceServicer):
 
         return embed_pb2.EmbedResponse(embeddings=embeddings)
 
+    async def Predict(self, request, context):
+        batch = self.model.batch_type.from_pb(request, self.model.device)
+
+        scores = self.model.predict(batch)
+
+        return embed_pb2.PredictResponse(scores=scores)
+
 
 def serve(
     model_path: Path,
     dtype: Optional[str],
     uds_path: Path,
     pool: str,
+    model_type: str
 ):
     async def serve_inner(
         model_path: Path,
-        dtype: Optional[str] = None,
+        dtype: Optional[str],
+        model_type: str,
     ):
         unix_socket = f"unix://{uds_path}"
 
         try:
-            model = get_model(model_path, dtype, pool)
+            model = get_model(model_path, dtype, pool, model_type)
         except Exception:
             logger.exception("Error when initializing model")
             raise
@@ -76,4 +85,4 @@ def serve(
             logger.info("Signal received. Shutting down")
             await server.stop(0)
 
-    asyncio.run(serve_inner(model_path, dtype))
+    asyncio.run(serve_inner(model_path, dtype, model_type))

@@ -3,7 +3,7 @@ import torch
 from abc import ABC, abstractmethod
 from typing import List, TypeVar, Type
 
-from text_embeddings_server.models.types import Batch, Embedding
+from text_embeddings_server.models.types import Batch, Embedding, Score
 
 B = TypeVar("B", bound=Batch)
 
@@ -24,6 +24,8 @@ class Model(ABC):
     def batch_type(self) -> Type[B]:
         raise NotImplementedError
 
-    @abstractmethod
     def embed(self, batch: B) -> List[Embedding]:
+        raise NotImplementedError
+
+    def predict(self, batch: B) -> List[Score]:
         raise NotImplementedError
