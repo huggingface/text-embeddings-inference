@@ -42,7 +42,7 @@ class PredictModel(Model):
         kwargs = {"input_ids": batch.input_ids, "attention_mask": batch.attention_mask}
         if self.has_token_type_ids:
             kwargs["token_type_ids"] = batch.token_type_ids
-        if self.has_position_ids: 
+        if self.has_position_ids:
             kwargs["position_ids"] = batch.position_ids
 
         logits = self.model(**kwargs).logits

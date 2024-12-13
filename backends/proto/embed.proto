@@ -37,4 +37,4 @@ message Score {
 
 message PredictResponse {
     repeated Score scores = 1;
-} 
+}
