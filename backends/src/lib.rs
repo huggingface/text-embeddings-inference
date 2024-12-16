@@ -1,8 +1,11 @@
 mod dtype;
 
 use hf_hub::api::tokio::{ApiError, ApiRepo};
+use rand::Rng;
 use std::cmp::{max, min};
+use std::env;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -23,6 +26,28 @@ use text_embeddings_backend_ort::OrtBackend;
 
 #[cfg(feature = "python")]
 use text_embeddings_backend_python::PythonBackend;
+
+fn powers_of_two(max_value: usize) -> Vec<usize> {
+    let mut result = Vec::new();
+    let mut power: usize = 1;
+
+    while power <= max_value {
+        result.push(power);
+        power *= 2;
+    }
+
+    result
+}
+
+fn is_hpu() -> bool {
+    match Command::new("hl-smi")
+        .args(["-Q", "name", "-f", "csv"])
+        .output()
+    {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Backend {
@@ -76,12 +101,113 @@ impl Backend {
     }
 
     #[instrument(skip(self))]
+    pub async fn warmup_hpu(
+        &self,
+        mut max_input_length: usize,
+        max_token: usize,
+        max_bs: Option<usize>,
+    ) -> Result<(), BackendError> {
+        let read_env_var = |key: &str, default: usize| -> usize {
+            env::var(key)
+                .ok()
+                .map_or(default, |value| value.parse::<usize>().unwrap())
+        };
+        let seq_bucket_size: usize = read_env_var("PAD_SEQUENCE_TO_MULTIPLE_OF", 128);
+        let max_warmup_length: usize = read_env_var("MAX_WARMUP_SEQUENCE_LENGTH", 1024);
+
+        let max_batch_size = max_bs.unwrap_or_else(|| read_env_var("MAX_WARMUP_BATCH_SIZE", 8));
+
+        let mut batch_sizes: Vec<usize> = powers_of_two(max_batch_size);
+        if let Some(&last) = batch_sizes.last() {
+            if last < max_batch_size {
+                batch_sizes.push(max_batch_size);
+            }
+        }
+        if max_warmup_length > max_input_length {
+            return Err(BackendError::Start(
+                format!("max_warmup_length ({max_warmup_length}) exceeds model's max_input_length ({max_input_length}), you can modify this value adding `-e MAX_WARMUP_SEQUENCE_LENGTH=<new_warmup_length>` to your Docker run command")
+            ));
+        }
+        if seq_bucket_size > max_warmup_length {
+            return Err(BackendError::Start(
+                format!("PAD_SEQUENCE_TO_MULTIPLE_OF ({seq_bucket_size}) exceeds model's max warmup length ({max_warmup_length}), you can modify these values adding `-e PAD_SEQUENCE_TO_MULTIPLE_OF=<new_value>` or `-e MAX_WARMUP_SEQUENCE_LENGTH=<new_value> to your Docker run command`")
+            ));
+        }
+
+        max_input_length = std::cmp::min(max_input_length, max_warmup_length);
+        let mut seq_lengths: Vec<usize> = (seq_bucket_size..=max_input_length)
+            .step_by(seq_bucket_size)
+            .collect();
+        if let Some(&last) = seq_lengths.last() {
+            if last < max_input_length {
+                seq_lengths.push(max_input_length);
+            }
+        }
+
+        let mut shapes: Vec<(u32, u32)> = Vec::with_capacity(batch_sizes.len() * seq_lengths.len());
+        for batch_size in &batch_sizes {
+            for seq_length in &seq_lengths {
+                shapes.push((*batch_size as u32, *seq_length as u32));
+            }
+        }
+        for shape in shapes.iter() {
+            let batch = self.create_warmup_batch(*shape, max_token as u32);
+            match &self.model_type {
+                ModelType::Classifier => self.predict(batch).await.map(|_| ()),
+                ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+            }?;
+            tracing::info!("finish warmup for batch: {}, length: {}", shape.0, shape.1);
+        }
+        Ok(())
+    }
+
+    #[instrument(skip_all)]
+    pub fn create_warmup_batch(&self, shape: (u32, u32), max_token: u32) -> Batch {
+        let (batch_size, length) = shape;
+        let mut batched_input_ids = Vec::new();
+        let mut batched_token_type_ids = Vec::new();
+        let mut batched_position_ids = Vec::new();
+        let mut cumulative_seq_lengths = Vec::with_capacity(batch_size as usize + 1);
+        let mut pooled_indices = Vec::with_capacity(batch_size as usize);
+        cumulative_seq_lengths.push(0);
+        let input_ids: Vec<u32> = (0..length)
+            .map(|_| rand::thread_rng().gen_range(0..max_token))
+            .collect();
+        let token_type_ids: Vec<u32> = vec![0; length as usize];
+        let position_ids: Vec<u32> = (0..length).collect();
+        let mut current_length = 0;
+        for batch_id in 0..batch_size {
+            batched_input_ids.extend(input_ids.iter().cloned());
+            batched_token_type_ids.extend(token_type_ids.iter().cloned());
+            batched_position_ids.extend(position_ids.iter().cloned());
+            current_length += input_ids.len();
+            cumulative_seq_lengths.push(current_length as u32);
+            pooled_indices.push(batch_id);
+        }
+        Batch {
+            input_ids: batched_input_ids,
+            token_type_ids: batched_token_type_ids,
+            position_ids: batched_position_ids,
+            cumulative_seq_lengths,
+            max_length: length,
+            pooled_indices,
+            raw_indices: vec![],
+        }
+    }
+
+    #[instrument(skip(self))]
     pub async fn warmup(
         &self,
         max_input_length: usize,
         max_batch_tokens: usize,
         max_batch_requests: Option<usize>,
     ) -> Result<(), BackendError> {
+        if is_hpu() {
+            return self
+                .warmup_hpu(max_input_length, max_batch_tokens, max_batch_requests)
+                .await;
+        }
+
         let mut input_ids = Vec::with_capacity(max_batch_tokens);
         let mut token_type_ids = Vec::with_capacity(max_batch_tokens);
         let mut position_ids = Vec::with_capacity(max_batch_tokens);

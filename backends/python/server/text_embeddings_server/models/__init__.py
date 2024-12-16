@@ -8,6 +8,7 @@ from transformers.models.bert import BertConfig
 
 from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.default_model import DefaultModel
+from text_embeddings_server.utils.device import get_device, use_ipex
 
 __all__ = ["Model"]
 
@@ -27,33 +28,42 @@ if FLASH_ATTENTION:
 
 def get_model(model_path: Path, dtype: Optional[str], pool: str):
     if dtype == "float32":
-        dtype = torch.float32
+        datatype = torch.float32
     elif dtype == "float16":
-        dtype = torch.float16
+        datatype = torch.float16
     elif dtype == "bfloat16":
-        dtype = torch.bfloat16
+        datatype = torch.bfloat16
     else:
         raise RuntimeError(f"Unknown dtype {dtype}")
 
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
+    device = get_device()
+    logger.info(f"backend device: {device}")
 
     config = AutoConfig.from_pretrained(model_path)
-
     if config.model_type == "bert":
         config: BertConfig
         if (
             device.type == "cuda"
             and config.position_embedding_type == "absolute"
-            and dtype in [torch.float16, torch.bfloat16]
+            and datatype in [torch.float16, torch.bfloat16]
             and FLASH_ATTENTION
         ):
             if pool != "cls":
                 raise ValueError("FlashBert only supports cls pooling")
-            return FlashBert(model_path, device, dtype)
-        else:
-            return DefaultModel(model_path, device, dtype, pool)
+            return FlashBert(model_path, device, datatype)  # type: ignore
+        if use_ipex() or device.type == "hpu":
+            return FlashBert(model_path, device, datatype)  # type: ignore
 
-    raise NotImplementedError
+        return DefaultModel(model_path, device, datatype)
+    else:
+        if device.type == "hpu":
+            from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+            from optimum.habana.transformers.modeling_utils import (
+                adapt_transformers_to_gaudi,
+            )
+
+            adapt_transformers_to_gaudi()
+            model_handle = DefaultModel(model_path, device, datatype)
+            model_handle.model = wrap_in_hpu_graph(model_handle.model)
+            return model_handle
+        return DefaultModel(model_path, device, datatype)

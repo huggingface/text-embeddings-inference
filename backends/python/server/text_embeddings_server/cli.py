@@ -48,7 +48,6 @@ def serve(
 
     # Downgrade enum into str for easier management later on
     dtype = None if dtype is None else dtype.value
-
     server.serve(model_path, dtype, uds_path, pool)
 
 
