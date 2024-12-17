@@ -1,9 +1,10 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{LayerNorm, Linear};
+use crate::layers::{get_cos_sin, get_inv_freqs, LayerNorm, Linear};
 use crate::models::nomic::{NomicBertEmbeddings, NomicBertGatedMLP};
 use crate::models::{Model, NomicConfig};
 use candle::{DType, Device, IndexOp, Result, Tensor, D};
 use candle_nn::VarBuilder;
+use candle_rotary::apply_rotary_inplace;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 struct NomicAttention {
@@ -68,7 +69,7 @@ impl NomicAttention {
         let qkv = qkv.reshape(new_qkv_shape.as_slice())?;
         let qkv = qkv.chunk(3, 1)?;
 
-        candle_rotary::apply_rotary_inplace(&qkv[0], &qkv[1], &cos, &sin, true)?;
+        apply_rotary_inplace(&qkv[0], &qkv[1], &cos, &sin, true)?;
 
         let attention = flash_attn_varlen(
             &qkv[0],
@@ -221,8 +222,8 @@ impl FlashNomicBertModel {
         let encoder = NomicBertEncoder::load(vb.pp("encoder"), config)?;
 
         let rotary_dim = encoder.layers[0].attention.attention_head_size;
-        let inv_freqs = candle_rotary::inv_freqs(rotary_dim, config.rotary_emb_base, vb.device())?;
-        let rotary_cache = candle_rotary::cos_sin(config.n_positions, &inv_freqs, vb.dtype())?;
+        let inv_freqs = get_inv_freqs(rotary_dim, config.rotary_emb_base, vb.device(), None)?;
+        let rotary_cache = get_cos_sin(config.n_positions, &inv_freqs, vb.dtype(), false)?;
 
         let scaled_rotary_cache = if let Some(scaling_factor) = config.rotary_scaling_factor {
             let new_base = (config.rotary_emb_base
@@ -230,11 +231,12 @@ impl FlashNomicBertModel {
                     / config.max_trained_positions as f32)
                     - (scaling_factor - 1.0)))
                 .powi((rotary_dim as f32 / (rotary_dim as f32 - 2.0)) as i32);
-            let inv_freqs = candle_rotary::inv_freqs(rotary_dim, new_base, vb.device())?;
-            Some(candle_rotary::cos_sin(
+            let inv_freqs = get_inv_freqs(rotary_dim, new_base, vb.device(), None)?;
+            Some(get_cos_sin(
                 config.n_positions,
                 &inv_freqs,
                 vb.dtype(),
+                false,
             )?)
         } else {
             None

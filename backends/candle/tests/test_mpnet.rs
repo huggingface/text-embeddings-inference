@@ -1,26 +1,20 @@
-#![allow(dead_code, unused_imports)]
-
 mod common;
 
-use crate::common::{sort_embeddings, SnapshotEmbeddings, SnapshotScores};
+use crate::common::{sort_embeddings, SnapshotEmbeddings};
 use anyhow::Result;
-use common::{batch, cosine_matcher, download_artifacts, load_tokenizer, relative_matcher};
+use common::{batch, cosine_matcher, download_artifacts, load_tokenizer};
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
 #[test]
 #[serial_test::serial]
-#[cfg(all(
-    feature = "cuda",
-    any(feature = "flash-attn", feature = "flash-attn-v1")
-))]
-fn test_flash_mini() -> Result<()> {
-    let model_root = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None)?;
+fn test_mini() -> Result<()> {
+    let model_root = download_artifacts("sentence-transformers/all-mpnet-base-v2", None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
         &model_root,
-        "float16".to_string(),
+        "float32".to_string(),
         ModelType::Embedding(Pool::Mean),
     )?;
 
@@ -74,17 +68,13 @@ fn test_flash_mini() -> Result<()> {
 
 #[test]
 #[serial_test::serial]
-#[cfg(all(
-    feature = "cuda",
-    any(feature = "flash-attn", feature = "flash-attn-v1")
-))]
-fn test_flash_mini_pooled_raw() -> Result<()> {
-    let model_root = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None)?;
+fn test_mini_pooled_raw() -> Result<()> {
+    let model_root = download_artifacts("sentence-transformers/all-mpnet-base-v2", None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
         &model_root,
-        "float16".to_string(),
+        "float32".to_string(),
         ModelType::Embedding(Pool::Cls),
     )?;
 
@@ -142,99 +132,6 @@ fn test_flash_mini_pooled_raw() -> Result<()> {
     assert_eq!(raw_embeddings_batch[0], embeddings_single[0]);
     assert_eq!(raw_embeddings_batch[15], embeddings_single[0]);
     assert_eq!(embeddings_single.len(), 7);
-
-    Ok(())
-}
-
-#[test]
-#[serial_test::serial]
-#[cfg(all(
-    feature = "cuda",
-    any(feature = "flash-attn", feature = "flash-attn-v1")
-))]
-fn test_flash_emotions() -> Result<()> {
-    let model_root = download_artifacts("SamLowe/roberta-base-go_emotions", None)?;
-    let tokenizer = load_tokenizer(&model_root)?;
-
-    let backend = CandleBackend::new(&model_root, "float16".to_string(), ModelType::Classifier)?;
-
-    let input_batch = batch(
-        vec![
-            tokenizer.encode("I like you.", true).unwrap(),
-            tokenizer
-                .encode("I am not having a great day.", true)
-                .unwrap(),
-            tokenizer.encode("I like you.", true).unwrap(),
-        ],
-        [0, 1, 2].to_vec(),
-        vec![],
-    );
-
-    let matcher = relative_matcher();
-
-    let predictions: Vec<Vec<f32>> = backend
-        .predict(input_batch)?
-        .into_iter()
-        .map(|(_, v)| v)
-        .collect();
-    let predictions_batch = SnapshotScores::from(predictions);
-    insta::assert_yaml_snapshot!("emotions_batch", predictions_batch, &matcher);
-
-    let input_single = batch(
-        vec![tokenizer.encode("I like you.", true).unwrap()],
-        [0].to_vec(),
-        vec![],
-    );
-
-    let predictions: Vec<Vec<f32>> = backend
-        .predict(input_single)?
-        .into_iter()
-        .map(|(_, v)| v)
-        .collect();
-    let predictions_single = SnapshotScores::from(predictions);
-
-    insta::assert_yaml_snapshot!("emotions_single", predictions_single, &matcher);
-    assert_eq!(predictions_batch[0], predictions_single[0]);
-    assert_eq!(predictions_batch[2], predictions_single[0]);
-
-    Ok(())
-}
-
-#[test]
-#[serial_test::serial]
-#[cfg(all(
-    feature = "cuda",
-    any(feature = "flash-attn", feature = "flash-attn-v1")
-))]
-fn test_flash_bert_classification() -> Result<()> {
-    let model_root = download_artifacts("ibm/re2g-reranker-nq", Some("refs/pr/3"))?;
-    let tokenizer = load_tokenizer(&model_root)?;
-
-    let backend = CandleBackend::new(&model_root, "float16".to_string(), ModelType::Classifier)?;
-
-    let input_single = batch(
-        vec![tokenizer
-            .encode(
-                (
-                    "PrimeTime is a timing signoff tool",
-                    "PrimeTime can perform most accurate timing analysis",
-                ),
-                true,
-            )
-            .unwrap()],
-        [0].to_vec(),
-        vec![],
-    );
-
-    let predictions: Vec<Vec<f32>> = backend
-        .predict(input_single)?
-        .into_iter()
-        .map(|(_, v)| v)
-        .collect();
-    let predictions_single = SnapshotScores::from(predictions);
-
-    let matcher = relative_matcher();
-    insta::assert_yaml_snapshot!("bert_classification_single", predictions_single, &matcher);
 
     Ok(())
 }

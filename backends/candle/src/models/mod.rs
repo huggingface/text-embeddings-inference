@@ -34,16 +34,18 @@ mod flash_mistral;
 #[cfg(feature = "cuda")]
 mod flash_qwen2;
 mod gte;
+mod mpnet;
 mod qwen2;
 
 pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
 use candle::{Result, Tensor};
 pub use distilbert::{DistilBertConfig, DistilBertModel};
 #[allow(unused_imports)]
-pub use gte::{GTEConfig, NTKScaling, RopeScaling};
+pub use gte::{GTEClassificationHead, GTEConfig, GTEModel, GTEMLP};
 pub use jina::JinaBertModel;
 pub use jina_code::JinaCodeBertModel;
 pub use mistral::MistralConfig;
+pub use mpnet::{MPNetConfig, MPNetModel};
 pub use nomic::{NomicBertModel, NomicConfig};
 pub use qwen2::Qwen2Config;
 use text_embeddings_backend_core::Batch;

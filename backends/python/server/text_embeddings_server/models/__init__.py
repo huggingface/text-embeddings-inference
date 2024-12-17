@@ -27,7 +27,7 @@ if FLASH_ATTENTION:
     __all__.append(FlashBert)
 
 
-def get_model(model_path: Path, dtype: Optional[str]):
+def get_model(model_path: Path, dtype: Optional[str], pool: str):
     if dtype == "float32":
         datatype = torch.float32
     elif dtype == "float16":
@@ -40,8 +40,6 @@ def get_model(model_path: Path, dtype: Optional[str]):
     if torch.cuda.is_available():
         device = torch.device("cuda")
     else:
-        if datatype != torch.float32:
-            raise ValueError("CPU device only supports float32 dtype")
         device = torch.device("cpu")
 
     config = AutoConfig.from_pretrained(model_path)
@@ -54,17 +52,19 @@ def get_model(model_path: Path, dtype: Optional[str]):
             and datatype in [torch.float16, torch.bfloat16]
             and FLASH_ATTENTION
         ):
+            if pool != "cls":
+                raise ValueError("FlashBert only supports cls pooling")
             return FlashBert(model_path, device, datatype)
         else:
             if config.architectures[0] in MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES.values():
                 return ClassificationModel(model_path, device, datatype)
             else:
-                return DefaultModel(model_path, device, datatype)
+                return DefaultModel(model_path, device, datatype, pool)
     else:
         try:
             if config.architectures[0] in MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES.values():
                 return ClassificationModel(model_path, device, datatype)
             else:
-                return DefaultModel(model_path, device, datatype)
+                return DefaultModel(model_path, device, datatype, pool)
         except:
             raise RuntimeError(f"Unsupported model_type {config.model_type}")
