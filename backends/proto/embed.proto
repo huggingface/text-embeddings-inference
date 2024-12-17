@@ -7,6 +7,8 @@ service EmbeddingService {
     rpc Embed (EmbedRequest) returns (EmbedResponse);
     /// Health check
     rpc Health (HealthRequest) returns (HealthResponse);
+    /// Predict
+    rpc Predict (EmbedRequest) returns (PredictResponse);
 }
 
 message HealthRequest {}
@@ -27,4 +29,12 @@ message Embedding {
 
 message EmbedResponse {
     repeated Embedding embeddings = 1;
+}
+
+message Score {
+    repeated float values = 1;
+}
+
+message PredictResponse {
+    repeated Score scores = 1;
 }
