@@ -4,7 +4,7 @@ use candle_nn::VarBuilder;
 #[derive(Debug)]
 pub struct LayerNorm {
     weight: Tensor,
-    bias: Tensor,
+    bias: Option<Tensor>,
     epsilon: f32,
     span: tracing::Span,
 }
@@ -17,7 +17,8 @@ impl LayerNorm {
                 .or_else(|_| vb.get(hidden_size, "gamma"))?,
             bias: vb
                 .get(hidden_size, "bias")
-                .or_else(|_| vb.get(hidden_size, "beta"))?,
+                .or_else(|_| vb.get(hidden_size, "beta"))
+                .ok(),
             epsilon,
             span: tracing::span!(tracing::Level::TRACE, "layer-norm"),
         })
@@ -49,7 +50,12 @@ impl LayerNorm {
                 let hidden_states = hidden_states_normed
                     .to_dtype(hidden_states_dtype)?
                     .broadcast_mul(&self.weight)?;
-                hidden_states.broadcast_add(&self.bias)
+
+                if let Some(bias) = &self.bias {
+                    hidden_states.broadcast_add(bias)
+                } else {
+                    Ok(hidden_states)
+                }
             }
             Device::Cuda(_) => {
                 #[cfg(feature = "cuda")]
@@ -66,12 +72,12 @@ impl LayerNorm {
                             &hidden_states,
                             &residual,
                             &self.weight,
-                            Some(&self.bias),
+                            &self.bias,
                             self.epsilon,
                         )?;
                         Ok(result)
                     } else {
-                        layer_norm(&hidden_states, &self.weight, Some(&self.bias), self.epsilon)
+                        layer_norm(&hidden_states, &self.weight, &self.bias, self.epsilon)
                     }?;
                     result.reshape(original_shape)
                 }

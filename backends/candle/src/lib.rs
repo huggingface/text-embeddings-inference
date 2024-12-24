@@ -12,8 +12,8 @@ use crate::compute_cap::{
 };
 use crate::models::{
     BertConfig, BertModel, DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, JinaBertModel,
-    JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig, Model, NomicBertModel, NomicConfig,
-    Qwen2Config,
+    JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig, Model, ModernBertConfig,
+    ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -63,6 +63,8 @@ enum Config {
     Qwen2(Qwen2Config),
     #[serde(rename = "mpnet")]
     MPNet(MPNetConfig),
+    #[serde(rename(deserialize = "modernbert"))]
+    ModernBert(ModernBertConfig),
 }
 
 pub struct CandleBackend {
@@ -233,6 +235,12 @@ impl CandleBackend {
                 tracing::info!("Starting MPNet model on {:?}", device);
                 Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
             }
+            (Config::ModernBert(config), _) => {
+                tracing::info!("Starting ModernBert model on {:?}", device);
+                Ok(Box::new(
+                    ModernBertModel::load(vb, &config, model_type).s()?,
+                ))
+            }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
                 if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
@@ -373,6 +381,25 @@ impl CandleBackend {
                 tracing::info!("Starting FlashQwen2 model on {:?}", device);
                 Ok(Box::new(
                     FlashQwen2Model::load(vb, &config, model_type).s()?,
+                ))
+            }
+            #[cfg(feature = "cuda")]
+            (Config::ModernBert(config), Device::Cuda(_)) => {
+                if cfg!(feature = "flash-attn")
+                    && dtype == DType::F16
+                    && &std::env::var("USE_FLASH_ATTENTION")
+                        .unwrap_or("True".to_string())
+                        .to_lowercase()
+                        == "true"
+                {
+                    return Err(BackendError::Start(
+                        "ModernBert does not support flash attention".to_string(),
+                    ));
+                }
+
+                tracing::info!("Starting ModernBert model on {:?}", device);
+                Ok(Box::new(
+                    ModernBERTModel::load(vb, &config, model_type).s()?,
                 ))
             }
         };
