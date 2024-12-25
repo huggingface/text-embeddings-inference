@@ -32,6 +32,7 @@ pub(crate) fn flash_attn_varlen(
     softmax_scale: f32,
     causal: bool,
     window_size_left: Option<usize>,
+    window_size_right: Option<usize>,
 ) -> Result<Tensor, candle::Error> {
     let runtime_compute_cap = get_runtime_compute_cap();
 
@@ -39,7 +40,7 @@ pub(crate) fn flash_attn_varlen(
         if alibi_slopes.is_some() {
             candle::bail!("Flash attention v1 does not support alibi");
         }
-        if window_size_left.is_some() {
+        if window_size_left.is_some() | window_size_right.is_some() {
             candle::bail!("Flash attention v1 does not support attention windowing");
         }
 
@@ -65,7 +66,13 @@ pub(crate) fn flash_attn_varlen(
         {
             use candle_flash_attn::{flash_attn_varlen_alibi_windowed, flash_attn_varlen_windowed};
 
-            let window_size_right = if causal { Some(0) } else { None };
+            let window_size_right = if causal {
+                Some(0)
+            } else if window_size_right.is_some() {
+                window_size_right
+            } else {
+                None
+            };
 
             let attention = if let Some(alibi_slopes) = alibi_slopes {
                 flash_attn_varlen_alibi_windowed(

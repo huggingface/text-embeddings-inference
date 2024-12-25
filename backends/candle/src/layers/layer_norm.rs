@@ -72,12 +72,17 @@ impl LayerNorm {
                             &hidden_states,
                             &residual,
                             &self.weight,
-                            &self.bias,
+                            self.bias.as_ref(),
                             self.epsilon,
                         )?;
                         Ok(result)
                     } else {
-                        layer_norm(&hidden_states, &self.weight, &self.bias, self.epsilon)
+                        layer_norm(
+                            &hidden_states,
+                            &self.weight,
+                            self.bias.as_ref(),
+                            self.epsilon,
+                        )
                     }?;
                     result.reshape(original_shape)
                 }

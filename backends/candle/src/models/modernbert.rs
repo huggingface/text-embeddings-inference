@@ -77,7 +77,7 @@ impl ModernBertEmbeddings {
     }
 }
 
-struct ModernBertMLP {
+pub struct ModernBertMLP {
     wi: Linear,
     wo: Linear,
     activation: Option<HiddenAct>,

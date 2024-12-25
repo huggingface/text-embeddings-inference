@@ -1,11 +1,13 @@
+use std::collections::HashMap;
+
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{LayerNorm, Linear};
+use crate::layers::{apply_rotary, get_cos_sin, get_inv_freqs, LayerNorm, Linear};
 use crate::models::modernbert::{
     ClassificationHead, ModernBertClassificationHead, ModernBertConfig, ModernBertEmbeddings,
     ModernBertMLP,
 };
 use crate::models::Model;
-use candle::{DType, Device, IndexOp, Result, Tensor};
+use candle::{DType, Device, IndexOp, Result, Shape, Tensor};
 use candle_nn::VarBuilder;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
@@ -15,13 +17,15 @@ struct ModernBertAttention {
 
     num_attention_heads: usize,
     attention_head_size: usize,
-    softmax_scale: f64,
+    softmax_scale: f32,
+    local_attention: usize,
+    use_local_attention: bool,
 
     span: tracing::Span,
 }
 
 impl ModernBertAttention {
-    pub fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
+    pub fn load(vb: VarBuilder, index: usize, config: &ModernBertConfig) -> Result<Self> {
         let attention_head_size = config.hidden_size / config.num_attention_heads;
         let hidden_size = config.hidden_size;
 
@@ -43,7 +47,9 @@ impl ModernBertAttention {
         };
         let wo = Linear::new(wo_weight, wo_bias, None);
 
-        let softmax_scale = 1. / (attention_head_size as f64).sqrt();
+        let softmax_scale = (1. / (attention_head_size as f64).sqrt()) as f32;
+
+        let use_local_attention = index % config.global_attn_every_n_layers != 0;
 
         Ok(Self {
             wqkv,
@@ -51,6 +57,8 @@ impl ModernBertAttention {
             num_attention_heads: config.num_attention_heads,
             attention_head_size,
             softmax_scale,
+            local_attention: config.local_attention / 2 as usize,
+            use_local_attention,
             span: tracing::span!(tracing::Level::TRACE, "attention"),
         })
     }
@@ -81,6 +89,12 @@ impl ModernBertAttention {
         let query_layer = apply_rotary(query_layer, cos, sin, self.attention_head_size)?;
         let key_layer = apply_rotary(key_layer, cos, sin, self.attention_head_size)?;
 
+        let attention_size = if self.use_local_attention {
+            Some(self.local_attention)
+        } else {
+            None
+        };
+
         let attention = flash_attn_varlen(
             &query_layer,
             &key_layer,
@@ -92,7 +106,8 @@ impl ModernBertAttention {
             max_s,
             self.softmax_scale,
             false,
-            self.local_attention,
+            attention_size,
+            attention_size,
         )?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
@@ -123,7 +138,7 @@ impl ModernBertEncoderLayer {
             None
         };
 
-        let attn = ModernBertAttention::load(vb.pp("attn"), config)?;
+        let attn = ModernBertAttention::load(vb.pp("attn"), index, config)?;
 
         let mlp_norm = LayerNorm::load(
             vb.pp("mlp_norm"),
@@ -238,7 +253,7 @@ pub struct FlashModernBertModel {
 }
 
 impl FlashModernBertModel {
-    pub fn load(vb: VarBuilder, config: &BertConfig, model_type: ModelType) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &ModernBertConfig, model_type: ModelType) -> Result<Self> {
         match vb.device() {
             Device::Cuda(_) => {}
             _ => candle::bail!("FlashModernBert requires Cuda"),
@@ -388,8 +403,8 @@ impl FlashModernBertModel {
             let cos = cos.index_select(&position_ids, 0)?;
             let sin = sin.index_select(&position_ids, 0)?;
 
-            let cos = cos.reshape((batch_size, 1, max_length, self.rotary_dim))?;
-            let sin = sin.reshape((batch_size, 1, max_length, self.rotary_dim))?;
+            let cos = cos.reshape((batch_size, 1, batch.max_length, self.rotary_dim))?;
+            let sin = sin.reshape((batch_size, 1, batch.max_length, self.rotary_dim))?;
 
             rotary_cache.insert(use_local_attention, (cos, sin));
         }
@@ -465,28 +480,7 @@ impl FlashModernBertModel {
                     }
                 }
                 Pool::Splade => {
-                    let splade_head = self.splade.as_ref().unwrap();
-                    let relu_log = splade_head.forward(&outputs)?;
-
-                    if batch_size > 1 {
-                        let results: Result<Vec<Tensor>> = batch
-                            .pooled_indices
-                            .into_iter()
-                            .map(|i| {
-                                let i = i as usize;
-                                let start = batch.cumulative_seq_lengths[i];
-                                let len = batch.cumulative_seq_lengths[i + 1] - start;
-
-                                relu_log
-                                    .narrow(0, start as usize, len as usize)?
-                                    .max_keepdim(0)
-                            })
-                            .collect();
-
-                        Some(Tensor::cat(&results?, 0)?)
-                    } else {
-                        Some(relu_log.max_keepdim(0)?)
-                    }
+                    unreachable!();
                 }
             }
         } else {

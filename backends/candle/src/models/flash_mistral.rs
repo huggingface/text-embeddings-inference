@@ -105,6 +105,7 @@ impl MistralAttention {
             self.softmax_scale,
             true,
             self.window_size_left,
+            None,
         )?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
