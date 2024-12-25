@@ -255,7 +255,6 @@ impl ModernBertAttention {
                 let attn_weights = query_layer.matmul(&key_layer.t()?)?;
                 let attn_weights = (attn_weights * self.softmax_scale)?;
                 let attn_weights = attn_weights.add(attention_mask)?;
-
                 let attn_weights = candle_nn::ops::softmax_last_dim(&attn_weights)?;
                 attn_weights.matmul(&value_layer.contiguous()?)
             }?;
@@ -277,7 +276,7 @@ struct ModernBertEncoderLayer {
 
 impl ModernBertEncoderLayer {
     pub fn load(vb: VarBuilder, index: usize, config: &ModernBertConfig) -> Result<Self> {
-        let attn_norm = if index > 0 {
+        let attn_norm = if index != 0 {
             Some(LayerNorm::load(
                 vb.pp("attn_norm"),
                 config.hidden_size,
@@ -316,20 +315,23 @@ impl ModernBertEncoderLayer {
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let mut hidden_states = hidden_states.clone();
+        let residual = hidden_states.clone();
 
-        if let Some(attn_norm) = &self.attn_norm {
-            hidden_states = attn_norm.forward(&hidden_states, None)?;
-        }
+        let attn_norm = if let Some(attn_norm) = &self.attn_norm {
+            attn_norm.forward(hidden_states, None)?
+        } else {
+            hidden_states.clone()
+        };
 
-        let hidden_states = self
-            .attn
-            .forward(&hidden_states, attention_mask, cos, sin)?;
+        let attn_outputs = self.attn.forward(&attn_norm, attention_mask, cos, sin)?;
+
+        let hidden_states = residual.add(&attn_outputs)?;
+
         let mlp_output = self
             .mlp
             .forward(&self.mlp_norm.forward(&hidden_states, None)?)?;
 
-        hidden_states.broadcast_add(&mlp_output)
+        hidden_states.add(&mlp_output)
     }
 }
 
@@ -714,22 +716,17 @@ impl ModernBertModel {
             };
 
             let pooled_embeddings = match self.pool {
-                // CLS pooling
                 Pool::Cls => outputs.i((.., 0))?,
-                // Last token pooling is not supported for this model
                 Pool::LastToken | Pool::Splade => unreachable!(),
-                // Mean pooling
                 Pool::Mean => {
                     if let Some(ref attention_mask) = attention_mask {
                         let mut attention_mask = attention_mask.clone();
 
                         if let Some(pooled_indices) = pooled_indices {
-                            // Select values in the batch
                             attention_mask = attention_mask.index_select(&pooled_indices, 0)?;
                             input_lengths = input_lengths.index_select(&pooled_indices, 0)?;
                         };
 
-                        // Mask padded values
                         outputs = outputs.broadcast_mul(&attention_mask)?;
                     }
 
@@ -742,7 +739,6 @@ impl ModernBertModel {
         };
 
         let raw_embeddings = if has_raw_requests {
-            // Reshape outputs
             let (b, l, h) = outputs.shape().dims3()?;
             let outputs = outputs.reshape((b * l, h))?;
 

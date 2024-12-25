@@ -383,25 +383,6 @@ impl CandleBackend {
                     FlashQwen2Model::load(vb, &config, model_type).s()?,
                 ))
             }
-            #[cfg(feature = "cuda")]
-            (Config::ModernBert(config), Device::Cuda(_)) => {
-                if cfg!(feature = "flash-attn")
-                    && dtype == DType::F16
-                    && &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        == "true"
-                {
-                    return Err(BackendError::Start(
-                        "ModernBert does not support flash attention".to_string(),
-                    ));
-                }
-
-                tracing::info!("Starting ModernBert model on {:?}", device);
-                Ok(Box::new(
-                    ModernBERTModel::load(vb, &config, model_type).s()?,
-                ))
-            }
         };
 
         Ok(Self {
