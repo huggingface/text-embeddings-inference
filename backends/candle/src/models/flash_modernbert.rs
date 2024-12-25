@@ -7,7 +7,7 @@ use crate::models::modernbert::{
     ModernBertMLP,
 };
 use crate::models::Model;
-use candle::{DType, Device, IndexOp, Result, Shape, Tensor};
+use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::VarBuilder;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
@@ -244,7 +244,6 @@ pub struct FlashModernBertModel {
     rotary_cache: HashMap<bool, (Tensor, Tensor)>,
 
     device: Device,
-    dtype: DType,
 
     span: tracing::Span,
 }
@@ -322,7 +321,6 @@ impl FlashModernBertModel {
             rotary_dim,
             rotary_cache,
             device: vb.device().clone(),
-            dtype: vb.dtype(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
     }
