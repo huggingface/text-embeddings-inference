@@ -387,6 +387,7 @@ impl FlashModernBertModel {
 
         let batch_size = batch.len();
         let shape = batch.input_ids.len();
+        let max_length = batch.max_length as usize;
 
         let input_ids = Tensor::from_vec(batch.input_ids, shape, &self.device)?;
         let position_ids = Tensor::from_vec(batch.position_ids, shape, &self.device)?;
@@ -403,8 +404,8 @@ impl FlashModernBertModel {
             let cos = cos.index_select(&position_ids, 0)?;
             let sin = sin.index_select(&position_ids, 0)?;
 
-            let cos = cos.reshape((batch_size, 1, batch.max_length, self.rotary_dim))?;
-            let sin = sin.reshape((batch_size, 1, batch.max_length, self.rotary_dim))?;
+            let cos = cos.reshape((batch_size, 1, max_length, self.rotary_dim))?;
+            let sin = sin.reshape((batch_size, 1, max_length, self.rotary_dim))?;
 
             rotary_cache.insert(use_local_attention, (cos, sin));
         }
@@ -414,7 +415,7 @@ impl FlashModernBertModel {
             &hidden_states,
             &cu_seqlens,
             &rotary_cache,
-            batch.max_length as usize,
+            max_length,
         )?;
         let outputs = self.final_norm.forward(&hidden_states, None)?;
 

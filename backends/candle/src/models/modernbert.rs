@@ -644,7 +644,7 @@ impl ModernBertModel {
         } else {
             (
                 batch.input_ids,
-                vec![batch.max_length as f32],
+                vec![max_length as f32],
                 batch.position_ids,
                 None,
             )
