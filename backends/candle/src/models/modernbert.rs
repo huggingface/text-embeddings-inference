@@ -480,6 +480,10 @@ impl ModernBertModel {
                     candle::bail!("`splade` is not supported for ModernBert")
                 }
 
+                if pool == Pool::LastToken {
+                    candle::bail!("`LastToken` is not supported for ModernBert")
+                }
+
                 (pool, None)
             }
         };
