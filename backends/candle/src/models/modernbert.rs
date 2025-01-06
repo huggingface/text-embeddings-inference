@@ -488,13 +488,22 @@ impl ModernBertModel {
             }
         };
 
-        let embeddings = ModernBertEmbeddings::load(vb.pp("model.embeddings"), config)?;
-        let encoder = ModernBertEncoder::load(vb.pp("model.layers"), config)?;
+        let embeddings = ModernBertEmbeddings::load(vb.pp("model.embeddings"), config)
+            .or_else(|_| ModernBertEmbeddings::load(vb.pp("embeddings"), config))?;
+        let encoder = ModernBertEncoder::load(vb.pp("model.layers"), config)
+            .or_else(|_| ModernBertEncoder::load(vb.pp("layers"), config))?;
         let final_norm = LayerNorm::load(
             vb.pp("model.final_norm"),
             config.hidden_size,
             config.norm_eps as f32,
-        )?;
+        )
+        .or_else(|_| {
+            LayerNorm::load(
+                vb.pp("final_norm"),
+                config.hidden_size,
+                config.norm_eps as f32,
+            )
+        })?;
 
         let rotary_dim = config.hidden_size / config.num_attention_heads;
         let mut rotary_cache: HashMap<bool, (Tensor, Tensor)> = HashMap::new();
