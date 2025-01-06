@@ -273,10 +273,6 @@ impl FlashModernBertModel {
                     candle::bail!("`splade` is not supported for ModernBert")
                 }
 
-                if pool == Pool::LastToken {
-                    candle::bail!("`last_token` is not supported for ModernBert");
-                }
-
                 (pool, None)
             }
         };
@@ -354,12 +350,9 @@ impl FlashModernBertModel {
         }
 
         let hidden_states = self.embeddings.forward(&input_ids)?;
-        let hidden_states = self.encoder.forward(
-            &hidden_states,
-            &cu_seqlens,
-            &rotary_cache,
-            max_length,
-        )?;
+        let hidden_states =
+            self.encoder
+                .forward(&hidden_states, &cu_seqlens, &rotary_cache, max_length)?;
         let outputs = self.final_norm.forward(&hidden_states, None)?;
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
