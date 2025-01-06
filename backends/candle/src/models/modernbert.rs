@@ -480,10 +480,6 @@ impl ModernBertModel {
                     candle::bail!("`splade` is not supported for ModernBert")
                 }
 
-                if pool == Pool::LastToken {
-                    candle::bail!("`last_token` is not supported for ModernBert");
-                }
-
                 (pool, None)
             }
         };
@@ -540,7 +536,6 @@ impl ModernBertModel {
         &self,
         attention_mask: Option<&Tensor>,
         input_shape: &Shape,
-        num_attention_heads: usize,
     ) -> Result<Tensor> {
         let extended_attention_mask = if let Some(attention_mask) = attention_mask {
             attention_mask.squeeze(2)?
@@ -552,17 +547,17 @@ impl ModernBertModel {
         .to_dtype(self.dtype)?;
 
         let (bs, seq_len) = input_shape.dims2()?;
-        let extended_attention_mask =
-            extended_attention_mask.broadcast_as((bs, num_attention_heads, seq_len, seq_len))?;
+        let extended_attention_mask = extended_attention_mask.broadcast_as((
+            bs,
+            self.num_attention_heads,
+            seq_len,
+            seq_len,
+        ))?;
 
         Ok(extended_attention_mask)
     }
 
-    fn get_silding_window_mask(
-        &self,
-        attention_mask: &Tensor,
-        local_attention: usize,
-    ) -> Result<Tensor> {
+    fn get_silding_window_mask(&self, attention_mask: &Tensor) -> Result<Tensor> {
         let attention_mask = attention_mask.to_dtype(DType::U8)?;
         let mask_shape = attention_mask.shape();
         let (_, _, seq_len, _) = mask_shape.dims4()?;
@@ -572,9 +567,9 @@ impl ModernBertModel {
 
         let distance = (&rows - &rows.t()?)?.abs()?;
 
-        let window_size = local_attention / 2;
+        let window_size = (self.local_attention / 2) as i64;
         let window_mask = distance
-            .le(window_size as i64)?
+            .le(window_size)?
             .unsqueeze(0)?
             .unsqueeze(0)?
             .broadcast_as(mask_shape)?;
@@ -656,14 +651,10 @@ impl ModernBertModel {
             Tensor::from_vec(input_lengths, (batch_size, 1), &self.device)?.to_dtype(self.dtype)?;
 
         let global_attention_mask = self
-            .get_global_attention_mask(
-                attention_mask.as_ref(),
-                input_ids.shape(),
-                self.num_attention_heads,
-            )?
+            .get_global_attention_mask(attention_mask.as_ref(), input_ids.shape())?
             .to_dtype(self.dtype)?;
         let silding_attention_mask = self
-            .get_silding_window_mask(&global_attention_mask, self.local_attention)?
+            .get_silding_window_mask(&global_attention_mask)?
             .to_dtype(self.dtype)?;
 
         let min_value = match self.dtype {
@@ -703,12 +694,10 @@ impl ModernBertModel {
             let pooled_indices_length = batch.pooled_indices.len();
             let mut outputs = outputs.clone();
 
-            // Only use pooled_indices if at least one member of the batch ask for raw embeddings
             let pooled_indices = if has_raw_requests {
                 let pooled_indices =
                     Tensor::from_vec(batch.pooled_indices, pooled_indices_length, &self.device)?;
 
-                // Select values in the batch
                 outputs = outputs.index_select(&pooled_indices, 0)?;
                 Some(pooled_indices)
             } else {
