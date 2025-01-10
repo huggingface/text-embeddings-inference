@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Optional
 from transformers import AutoConfig
 from transformers.models.bert import BertConfig
-from transformers.models.auto.modeling_auto import MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES
+from transformers.models.auto.modeling_auto import (
+    MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES,
+)
 
 from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.default_model import DefaultModel
@@ -45,15 +47,16 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
     if config.model_type == "bert":
         config: BertConfig
         if (
-            use_ipex() or device.type in ["cuda", "hpu"]
+            use_ipex()
+            or device.type in ["cuda", "hpu"]
             and config.position_embedding_type == "absolute"
             and datatype in [torch.float16, torch.bfloat16]
             and FLASH_ATTENTION
         ):
             if pool != "cls":
-                raise ValueError("FlashBert only supports cls pooling")
+                return DefaultModel(model_path, device, datatype, pool)
             return FlashBert(model_path, device, datatype)
-        if config.architectures[0] in MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES.values():
+        if config.architectures[0].endswith("Classification"):
             return ClassificationModel(model_path, device, datatype)
         else:
             return DefaultModel(model_path, device, datatype, pool)
@@ -65,14 +68,14 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
             )
 
             adapt_transformers_to_gaudi()
-            if config.architectures[0] in MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES.values():
+            if config.architectures[0].endswith("Classification"):
                 model_handle = ClassificationModel(model_path, device, datatype)
             else:
-                model_handle = DefaultModel(model_path, device, datatype)
+                model_handle = DefaultModel(model_path, device, datatype, pool)
             model_handle.model = wrap_in_hpu_graph(model_handle.model)
             return model_handle
         elif use_ipex():
-          if config.architectures[0] in MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES.values():
-            return ClassificationModel(model_path, device, datatype)
-          else:
-            return DefaultModel(model_path, device, datatype)
+            if config.architectures[0].endswith("Classification"):
+                return ClassificationModel(model_path, device, datatype)
+            else:
+                return DefaultModel(model_path, device, datatype, pool)

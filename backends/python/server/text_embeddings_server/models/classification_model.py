@@ -11,6 +11,7 @@ from text_embeddings_server.models.types import PaddedBatch, Embedding, Score
 
 tracer = trace.get_tracer(__name__)
 
+
 class ClassificationModel(Model):
     def __init__(self, model_path: Path, device: torch.device, dtype: torch.dtype):
         model = AutoModelForSequenceClassification.from_pretrained(model_path)
@@ -26,7 +27,9 @@ class ClassificationModel(Model):
             is not None
         )
 
-        super(ClassificationModel, self).__init__(model=model, dtype=dtype, device=device)
+        super(ClassificationModel, self).__init__(
+            model=model, dtype=dtype, device=device
+        )
 
     @property
     def batch_type(self) -> Type[PaddedBatch]:
