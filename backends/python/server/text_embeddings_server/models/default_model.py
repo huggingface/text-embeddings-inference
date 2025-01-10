@@ -43,7 +43,6 @@ class DefaultModel(Model):
             kwargs["token_type_ids"] = batch.token_type_ids
         if self.has_position_ids:
             kwargs["position_ids"] = batch.position_ids
-
         output = self.model(**kwargs)
 
         pooling_features = {

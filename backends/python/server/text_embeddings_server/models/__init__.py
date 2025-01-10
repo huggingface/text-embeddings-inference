@@ -10,6 +10,7 @@ from transformers.models.auto.modeling_auto import MODEL_FOR_SEQUENCE_CLASSIFICA
 from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.default_model import DefaultModel
 from text_embeddings_server.models.classification_model import ClassificationModel
+from text_embeddings_server.utils.device import get_device, use_ipex
 
 __all__ = ["Model"]
 
@@ -37,17 +38,14 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
     else:
         raise RuntimeError(f"Unknown dtype {dtype}")
 
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
+    device = get_device()
+    logger.info(f"backend device: {device}")
 
     config = AutoConfig.from_pretrained(model_path)
-
     if config.model_type == "bert":
         config: BertConfig
         if (
-            device.type == "cuda"
+            use_ipex() or device.type in ["cuda", "hpu"]
             and config.position_embedding_type == "absolute"
             and datatype in [torch.float16, torch.bfloat16]
             and FLASH_ATTENTION
@@ -55,16 +53,26 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
             if pool != "cls":
                 raise ValueError("FlashBert only supports cls pooling")
             return FlashBert(model_path, device, datatype)
+        if config.architectures[0] in MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES.values():
+            return ClassificationModel(model_path, device, datatype)
         else:
-            if config.architectures[0] in MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES.values():
-                return ClassificationModel(model_path, device, datatype)
-            else:
-                return DefaultModel(model_path, device, datatype, pool)
+            return DefaultModel(model_path, device, datatype, pool)
     else:
-        try:
+        if device.type == "hpu":
+            from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+            from optimum.habana.transformers.modeling_utils import (
+                adapt_transformers_to_gaudi,
+            )
+
+            adapt_transformers_to_gaudi()
             if config.architectures[0] in MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES.values():
-                return ClassificationModel(model_path, device, datatype)
+                model_handle = ClassificationModel(model_path, device, datatype)
             else:
-                return DefaultModel(model_path, device, datatype, pool)
-        except:
-            raise RuntimeError(f"Unsupported model_type {config.model_type}")
+                model_handle = DefaultModel(model_path, device, datatype)
+            model_handle.model = wrap_in_hpu_graph(model_handle.model)
+            return model_handle
+        elif use_ipex():
+          if config.architectures[0] in MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES.values():
+            return ClassificationModel(model_path, device, datatype)
+          else:
+            return DefaultModel(model_path, device, datatype)
