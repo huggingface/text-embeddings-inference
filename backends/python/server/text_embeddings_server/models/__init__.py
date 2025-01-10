@@ -5,9 +5,6 @@ from pathlib import Path
 from typing import Optional
 from transformers import AutoConfig
 from transformers.models.bert import BertConfig
-from transformers.models.auto.modeling_auto import (
-    MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES,
-)
 
 from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.default_model import DefaultModel
