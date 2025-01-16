@@ -408,29 +408,84 @@ impl GTEModel {
             ModelType::Embedding(pool) => (pool, None),
         };
 
-        let word_embeddings = Embedding::new(
-            vb.pp("embeddings.word_embeddings")
-                .get((config.vocab_size, config.hidden_size), "weight")?,
-            config.hidden_size,
-        );
+        // As some GTE variants as e.g. `Alibaba-NLP/gte-multilingual-reranker-base` require custom
+        // code their weights for anything other than the classifier are preceeded by "new." which
+        // is the architecture name as per https://huggingface.co/Alibaba-NLP/new-impl/blob/main/modeling.py
+        // so the "new." prefix needs to be checked as a rollback to be able to load some of the
+        // GTE models from Alibaba-NLP.
+        let encoder = match GTEEncoder::load(vb.pp("encoder"), config) {
+            Ok(encoder) => encoder,
+            Err(err) => {
+                if let Ok(encoder) = GTEEncoder::load(vb.pp("new.encoder"), config) {
+                    encoder
+                } else {
+                    return Err(err);
+                }
+            }
+        };
+
+        let word_embeddings = {
+            let weight = match vb
+                .pp("embeddings.word_embeddings")
+                .get((config.vocab_size, config.hidden_size), "weight")
+            {
+                Ok(weight) => weight,
+                Err(err) => {
+                    if let Ok(weight) = vb
+                        .pp("new.embeddings.word_embeddings")
+                        .get((config.vocab_size, config.hidden_size), "weight")
+                    {
+                        weight
+                    } else {
+                        return Err(err);
+                    }
+                }
+            };
+
+            Embedding::new(weight, config.hidden_size)
+        };
 
         let token_type_embeddings = if config.type_vocab_size > 0 {
-            Some(Embedding::new(
-                vb.pp("embeddings.token_type_embeddings")
-                    .get((config.type_vocab_size, config.hidden_size), "weight")?,
-                config.hidden_size,
-            ))
+            let weight = match vb
+                .pp("embeddings.token_type_embeddings")
+                .get((config.type_vocab_size, config.hidden_size), "weight")
+            {
+                Ok(weight) => weight,
+                Err(err) => {
+                    if let Ok(weight) = vb
+                        .pp("new.embeddings.token_type_embeddings")
+                        .get((config.type_vocab_size, config.hidden_size), "weight")
+                    {
+                        weight
+                    } else {
+                        return Err(err);
+                    }
+                }
+            };
+
+            Some(Embedding::new(weight, config.hidden_size))
         } else {
             None
         };
 
-        let encoder = GTEEncoder::load(vb.pp("encoder"), config)?;
-
-        let embeddings_norm = LayerNorm::load(
+        let embeddings_norm = match LayerNorm::load(
             vb.pp("embeddings.LayerNorm"),
             config.hidden_size,
             config.layer_norm_eps,
-        )?;
+        ) {
+            Ok(norm) => norm,
+            Err(err) => {
+                if let Ok(norm) = LayerNorm::load(
+                    vb.pp("new.embeddings.LayerNorm"),
+                    config.hidden_size,
+                    config.layer_norm_eps,
+                ) {
+                    norm
+                } else {
+                    return Err(err);
+                }
+            }
+        };
 
         let rotary_dim = encoder.layers[0].attention.attention_head_size;
         let inv_freqs = get_inv_freqs(
