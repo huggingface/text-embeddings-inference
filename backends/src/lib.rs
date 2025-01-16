@@ -530,8 +530,11 @@ async fn download_onnx(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
         Err(err) => {
             tracing::warn!("Could not download `model.onnx`: {err}");
             tracing::info!("Downloading `onnx/model.onnx`");
-            let p = api.get("onnx/model.onnx").await?;
-            model_files.push(p.parent().unwrap().to_path_buf())
+
+            match api.get("onnx/model.onnx").await {
+                Ok(p) => model_files.push(p.parent().unwrap().to_path_buf()),
+                Err(err) => tracing::warn!("Could not download `onnx/model.onnx`: {err}"),
+            };
         }
     };
 
