@@ -31,6 +31,13 @@ class EmbeddingService(embed_pb2_grpc.EmbeddingServiceServicer):
 
         return embed_pb2.EmbedResponse(embeddings=embeddings)
 
+    async def Predict(self, request, context):
+        batch = self.model.batch_type.from_pb(request, self.model.device)
+
+        scores = self.model.predict(batch)
+
+        return embed_pb2.PredictResponse(scores=scores)
+
 
 def serve(
     model_path: Path,
