@@ -127,12 +127,13 @@ jobs:
           platforms: 'linux/amd64'
           build-args: |
             SCCACHE_GHA_ENABLED=${{ matrix.sccache }}
-            ACTIONS_CACHE_URL=${{ env.ACTIONS_CACHE_URL }}
-            ACTIONS_RUNTIME_TOKEN=${{ env.ACTIONS_RUNTIME_TOKEN }}
             CUDA_COMPUTE_CAP=${{ matrix.cudaComputeCap }}
             GIT_SHA=${{ env.GITHUB_SHA }}
             DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
             ${{matrix.extraBuildArgs}}
+          secrets: |
+            actions_cache_url=${{ env.ACTIONS_CACHE_URL }}
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=s3,region=us-east-1,bucket=${{ vars.AWS_S3BUCKET_GITHUB_BUILDX_CACHE }},name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ steps.aws-creds.outputs.aws-access-key-id }},secret_access_key=${{ steps.aws-creds.outputs.aws-secret-access-key }},session_token=${{ steps.aws-creds.outputs.aws-session-token }},mode=max
@@ -168,12 +169,13 @@ jobs:
           platforms: 'linux/amd64'
           build-args: |
             SCCACHE_GHA_ENABLED=${{ matrix.sccache }}
-            ACTIONS_CACHE_URL=${{ env.ACTIONS_CACHE_URL }}
-            ACTIONS_RUNTIME_TOKEN=${{ env.ACTIONS_RUNTIME_TOKEN }}
             CUDA_COMPUTE_CAP=${{ matrix.cudaComputeCap }}
             GIT_SHA=${{ env.GITHUB_SHA }}
             DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
             ${{matrix.extraBuildArgs}}
+          secrets: |
+            actions_cache_url=${{ env.ACTIONS_CACHE_URL }}
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
           tags: ${{ steps.meta-grpc.outputs.tags }}
           labels: ${{ steps.meta-grpc.outputs.labels }}
           cache-from: type=s3,region=us-east-1,bucket=${{ vars.AWS_S3BUCKET_GITHUB_BUILDX_CACHE }},name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ steps.aws-creds.outputs.aws-access-key-id }},secret_access_key=${{ steps.aws-creds.outputs.aws-secret-access-key }},session_token=${{ steps.aws-creds.outputs.aws-session-token }},mode=max

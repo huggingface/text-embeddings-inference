@@ -36,8 +36,6 @@ ARG DOCKER_LABEL
 ARG VERTEX="false"
 
 # sccache specific variables
-ARG ACTIONS_CACHE_URL
-ARG ACTIONS_RUNTIME_TOKEN
 ARG SCCACHE_GHA_ENABLED
 
 # Limit parallelism
@@ -83,7 +81,9 @@ COPY router router
 COPY Cargo.toml ./
 COPY Cargo.lock ./
 
-RUN if [ $VERTEX = "true" ]; \
+RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    if [ $VERTEX = "true" ]; \
     then \
         CUDA_COMPUTE_CAP=75 cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F google  && sccache -s; \
     else \
@@ -92,7 +92,9 @@ RUN if [ $VERTEX = "true" ]; \
 
 RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-75
 
-RUN if [ $VERTEX = "true" ]; \
+RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    if [ $VERTEX = "true" ]; \
     then \
         CUDA_COMPUTE_CAP=80 cargo build --release --bin text-embeddings-router -F candle-cuda -F google  && sccache -s; \
     else \
@@ -101,7 +103,9 @@ RUN if [ $VERTEX = "true" ]; \
 
 RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-80
 
-RUN if [ $VERTEX = "true" ]; \
+RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    if [ $VERTEX = "true" ]; \
     then \
         CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda -F google  && sccache -s; \
     else \
