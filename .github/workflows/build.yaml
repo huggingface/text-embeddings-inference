@@ -91,6 +91,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: configure aws credentials
+        id: aws-creds
+        uses: aws-actions/configure-aws-credentials@4fc4975a852c8cd99761e2de1f4ba73402e44dd9
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_GITHUB_BUILDX_CACHE }}
+          role-duration-seconds: 7200
+          aws-region: us-east-1
+          output-credentials: true
+          
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v5
@@ -105,10 +114,12 @@ jobs:
             type=semver,pattern=${{ matrix.imageNamePrefix }}{{major}}.{{minor}}
             type=raw,value=${{ matrix.imageNamePrefix }}latest
             type=raw,value=${{ matrix.imageNamePrefix }}sha-${{ env.GITHUB_SHA_SHORT }}
-
+            
       - name: Build and push Docker image
         id: build-and-push
         uses: docker/build-push-action@v6
+        env: 
+          DOCKER_BUILD_SUMMARY: false
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -124,8 +135,8 @@ jobs:
             ${{matrix.extraBuildArgs}}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=s3,region=us-east-1,bucket=ci-docker-buildx-cache,name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_ACCESS_KEY_ID }},secret_access_key=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_SECRET_ACCESS_KEY }},mode=max
-          cache-to: type=s3,region=us-east-1,bucket=ci-docker-buildx-cache,name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_ACCESS_KEY_ID }},secret_access_key=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_SECRET_ACCESS_KEY }},mode=max
+          cache-from: type=s3,region=us-east-1,bucket=${{ vars.AWS_S3BUCKET_GITHUB_BUILDX_CACHE }},name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ steps.aws-creds.outputs.aws-access-key-id }},secret_access_key=${{ steps.aws-creds.outputs.aws-secret-access-key }},mode=max
+          cache-to: type=s3,region=us-east-1,bucket=${{ vars.AWS_S3BUCKET_GITHUB_BUILDX_CACHE }},name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ steps.aws-creds.outputs.aws-access-key-id }},secret_access_key=${{ steps.aws-creds.outputs.aws-secret-access-key }},mode=max
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta-grpc
@@ -147,6 +158,8 @@ jobs:
         id: build-and-push-grpc
         if: ${{ matrix.grpc }}
         uses: docker/build-push-action@v6
+        env: 
+          DOCKER_BUILD_SUMMARY: false
         with:
           context: .
           target: grpc
@@ -163,4 +176,4 @@ jobs:
             ${{matrix.extraBuildArgs}}
           tags: ${{ steps.meta-grpc.outputs.tags }}
           labels: ${{ steps.meta-grpc.outputs.labels }}
-          cache-from: type=s3,region=us-east-1,bucket=ci-docker-buildx-cache,name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_ACCESS_KEY_ID }},secret_access_key=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_SECRET_ACCESS_KEY }},mode=max
+          cache-from: type=s3,region=us-east-1,bucket=${{ vars.AWS_S3BUCKET_GITHUB_BUILDX_CACHE }},name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ steps.aws-creds.outputs.aws-access-key-id }},secret_access_key=${{ steps.aws-creds.outputs.aws-secret-access-key }},mode=max
