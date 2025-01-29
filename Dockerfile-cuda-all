@@ -47,28 +47,36 @@ WORKDIR /usr/src
 
 COPY --from=planner /usr/src/recipe.json recipe.json
 
-RUN if [ $VERTEX = "true" ]; \
+RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    if [ $VERTEX = "true" ]; \
     then \
       cargo chef cook --release --features google --recipe-path recipe.json && sccache -s; \
     else \
       cargo chef cook --release --recipe-path recipe.json && sccache -s; \
     fi;
 
-RUN if [ $VERTEX = "true" ]; \
+RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    if [ $VERTEX = "true" ]; \
     then \
       CUDA_COMPUTE_CAP=75 cargo chef cook --release --features google --features candle-cuda-turing --recipe-path recipe.json && sccache -s; \
     else \
       CUDA_COMPUTE_CAP=75 cargo chef cook --release --features candle-cuda-turing --recipe-path recipe.json && sccache -s; \
     fi;
 
-RUN if [ $VERTEX = "true" ]; \
+RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    if [ $VERTEX = "true" ]; \
     then \
       CUDA_COMPUTE_CAP=80 cargo chef cook --release --features google --features candle-cuda --recipe-path recipe.json && sccache -s; \
     else \
       CUDA_COMPUTE_CAP=80 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s; \
     fi;
 
-RUN if [ $VERTEX = "true" ]; \
+RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    if [ $VERTEX = "true" ]; \
     then \
       CUDA_COMPUTE_CAP=90 cargo chef cook --release --features google --features candle-cuda --recipe-path recipe.json && sccache -s; \
     else \
