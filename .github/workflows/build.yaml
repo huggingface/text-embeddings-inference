@@ -99,7 +99,7 @@ jobs:
           role-duration-seconds: 7200
           aws-region: us-east-1
           output-credentials: true
-          
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v5
@@ -114,11 +114,11 @@ jobs:
             type=semver,pattern=${{ matrix.imageNamePrefix }}{{major}}.{{minor}}
             type=raw,value=${{ matrix.imageNamePrefix }}latest
             type=raw,value=${{ matrix.imageNamePrefix }}sha-${{ env.GITHUB_SHA_SHORT }}
-            
+
       - name: Build and push Docker image
         id: build-and-push
         uses: docker/build-push-action@v6
-        env: 
+        env:
           DOCKER_BUILD_SUMMARY: false
         with:
           context: .
@@ -159,7 +159,7 @@ jobs:
         id: build-and-push-grpc
         if: ${{ matrix.grpc }}
         uses: docker/build-push-action@v6
-        env: 
+        env:
           DOCKER_BUILD_SUMMARY: false
         with:
           context: .
