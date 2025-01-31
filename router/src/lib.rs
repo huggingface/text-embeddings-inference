@@ -352,6 +352,15 @@ fn get_backend_model_type(
     pooling: Option<text_embeddings_backend::Pool>,
 ) -> Result<text_embeddings_backend::ModelType> {
     for arch in &config.architectures {
+        // Edge case affecting `Alibaba-NLP/gte-multilingual-base` and possibly other fine-tunes of
+        // the same base model. More context at https://huggingface.co/Alibaba-NLP/gte-multilingual-base/discussions/7
+        if arch == "NewForTokenClassification"
+            && (config.id2label.is_none() | config.label2id.is_none())
+        {
+            tracing::warn!("Provided `--model-id` is likely an AlibabaNLP GTE model, but the `config.json` contains the architecture `NewForTokenClassification` but it doesn't contain the `id2label` and `label2id` mapping, so `NewForTokenClassification` architecture will be ignored.");
+            continue;
+        }
+
         if Some(text_embeddings_backend::Pool::Splade) == pooling && arch.ends_with("MaskedLM") {
             return Ok(text_embeddings_backend::ModelType::Embedding(
                 text_embeddings_backend::Pool::Splade,
