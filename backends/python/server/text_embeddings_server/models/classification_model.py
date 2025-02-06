@@ -13,8 +13,16 @@ tracer = trace.get_tracer(__name__)
 
 
 class ClassificationModel(Model):
-    def __init__(self, model_path: Path, device: torch.device, dtype: torch.dtype):
-        model = AutoModelForSequenceClassification.from_pretrained(model_path)
+    def __init__(
+        self,
+        model_path: Path,
+        device: torch.device,
+        dtype: torch.dtype,
+        trust_remote: bool = False,
+    ):
+        model = AutoModelForSequenceClassification.from_pretrained(
+            model_path, trust_remote_code=trust_remote
+        )
         model = model.to(dtype).to(device)
 
         self.hidden_size = model.config.hidden_size
