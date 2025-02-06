@@ -8,6 +8,11 @@ from text_embeddings_server.pb import embed_pb2
 from text_embeddings_server.pb.embed_pb2 import Embedding, Score
 
 tracer = trace.get_tracer(__name__)
+PAD_SEQUENCE_TO_MULTIPLE_OF = int(os.environ.get("PAD_SEQUENCE_TO_MULTIPLE_OF", 128))
+
+
+def round_up(number, k):
+    return (number + k - 1) // k * k
 
 
 class Batch(ABC):
@@ -30,11 +35,23 @@ class PaddedBatch(Batch):
 
     @classmethod
     @tracer.start_as_current_span("from_pb")
-    def from_pb(cls, pb: embed_pb2.EmbedRequest, device: torch.device) -> "PaddedBatch":
+    def from_pb(
+        cls, pb: embed_pb2.EmbedRequest, device: torch.device, max_input_length: int
+    ) -> "PaddedBatch":
+        if pb.max_length > max_input_length:
+            raise RuntimeError(f"input length exceeds model config's max_input_length")
+
+        batch_size = len(pb.cu_seq_lengths) - 1
+        if device.type == "hpu":
+            # To better utilize HPU, we need to do batch/seq_len bucketing
+            max_length = round_up(pb.max_length, PAD_SEQUENCE_TO_MULTIPLE_OF)
+            max_length = min(max_length, max_input_length)
+            new_bs = 2 ** math.ceil(math.log2(batch_size))
+        else:
+            new_bs = batch_size
+            max_length = pb.max_length
         # Allocate padded tensors all at once
-        all_tensors = torch.zeros(
-            [4, len(pb.cu_seq_lengths) - 1, pb.max_length], dtype=torch.int32
-        )
+        all_tensors = torch.zeros([4, new_bs, max_length], dtype=torch.int32)
 
         for i, start_index in enumerate(pb.cu_seq_lengths[:-1]):
             end_index = pb.cu_seq_lengths[i + 1]
