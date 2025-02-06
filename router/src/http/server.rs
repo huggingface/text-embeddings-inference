@@ -581,8 +581,7 @@ async fn embed(
 
     let (response, metadata) = match req.inputs {
         Input::Single(input) => {
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_count", "method" => "single").increment(1);
 
             let compute_chars = input.count_chars();
 
@@ -599,8 +598,7 @@ async fn embed(
                 .await
                 .map_err(ErrorResponse::from)?;
 
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_success", "method" => "single").increment(1);
 
             (
                 EmbedResponse(vec![response.results]),
@@ -761,8 +759,7 @@ async fn embed_sparse(
 
     let (response, metadata) = match req.inputs {
         Input::Single(input) => {
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_count", "method" => "single").increment(1);
 
             let compute_chars = input.count_chars();
 
@@ -778,8 +775,7 @@ async fn embed_sparse(
                 .await
                 .map_err(ErrorResponse::from)?;
 
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_success", "method" => "single").increment(1);
 
             (
                 EmbedSparseResponse(vec![sparsify(response.results)]),
@@ -932,8 +928,7 @@ async fn embed_all(
 
     let (response, metadata) = match req.inputs {
         Input::Single(input) => {
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_count", "method" => "single").increment(1);
 
             let compute_chars = input.count_chars();
 
@@ -949,8 +944,7 @@ async fn embed_all(
                 .await
                 .map_err(ErrorResponse::from)?;
 
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_success", "method" => "single").increment(1);
 
             (
                 EmbedAllResponse(vec![response.results]),
@@ -1117,8 +1111,7 @@ async fn openai_embed(
 
     let (embeddings, metadata) = match req.input {
         Input::Single(input) => {
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_count", "method" => "single").increment(1);
 
             let compute_chars = input.count_chars();
 
@@ -1135,8 +1128,7 @@ async fn openai_embed(
                 .await
                 .map_err(ErrorResponse::from)?;
 
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_success", "method" => "single").increment(1);
 
             let embedding = encode_embedding(response.results);
             (
