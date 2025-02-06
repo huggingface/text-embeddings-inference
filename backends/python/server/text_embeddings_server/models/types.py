@@ -1,3 +1,4 @@
+import os
 import torch
 
 from abc import ABC, abstractmethod
@@ -94,7 +95,9 @@ class FlashBatch(Batch):
 
     @classmethod
     @tracer.start_as_current_span("from_pb")
-    def from_pb(cls, pb: embed_pb2.EmbedRequest, device: torch.device) -> "FlashBatch":
+    def from_pb(
+        cls, pb: embed_pb2.EmbedRequest, device: torch.device, max_input_length: int
+    ) -> "FlashBatch":
         batch_input_ids = torch.tensor(pb.input_ids, dtype=torch.int32, device=device)
         batch_token_type_ids = torch.tensor(
             pb.token_type_ids, dtype=torch.int32, device=device
