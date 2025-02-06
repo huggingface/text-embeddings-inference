@@ -15,9 +15,18 @@ tracer = trace.get_tracer(__name__)
 
 class DefaultModel(Model):
     def __init__(
-        self, model_path: Path, device: torch.device, dtype: torch.dtype, pool: str
+        self,
+        model_path: Path,
+        device: torch.device,
+        dtype: torch.dtype,
+        pool: str,
+        trust_remote: bool = False,
     ):
-        model = AutoModel.from_pretrained(model_path).to(dtype).to(device)
+        model = (
+            AutoModel.from_pretrained(model_path, trust_remote_code=trust_remote)
+            .to(dtype)
+            .to(device)
+        )
         self.hidden_size = model.config.hidden_size
         self.pooling = Pooling(self.hidden_size, pooling_mode=pool)
 
