@@ -8,6 +8,7 @@ from transformers import AutoConfig
 from transformers.models.bert import BertConfig
 
 from text_embeddings_server.models.model import Model
+from text_embeddings_server.models.masked_model import MaskedLanguageModel
 from text_embeddings_server.models.default_model import DefaultModel
 from text_embeddings_server.models.classification_model import ClassificationModel
 from text_embeddings_server.utils.device import get_device, use_ipex
@@ -53,6 +54,8 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
             and FLASH_ATTENTION
         ):
             if pool != "cls":
+                if config.architectures[0].endswith("ForMaskedLM"):
+                    return MaskedLanguageModel(model_path, device, datatype, pool)
                 return DefaultModel(
                     model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
                 )
@@ -61,6 +64,8 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
             return ClassificationModel(
                 model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
             )
+        elif config.architectures[0].endswith("ForMaskedLM"):
+            return MaskedLanguageModel(model_path, device, datatype, pool)
         else:
             return DefaultModel(
                 model_path,
@@ -84,6 +89,8 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
                     datatype,
                     trust_remote=TRUST_REMOTE_CODE,
                 )
+            elif config.architectures[0].endswith("ForMaskedLM"):
+                return MaskedLanguageModel(model_path, device, datatype, pool)
             else:
                 model_handle = DefaultModel(
                     model_path,
@@ -102,6 +109,8 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
                     datatype,
                     trust_remote=TRUST_REMOTE_CODE,
                 )
+            elif config.architectures[0].endswith("ForMaskedLM"):
+                return MaskedLanguageModel(model_path, device, datatype, pool)
             else:
                 return DefaultModel(
                     model_path,
