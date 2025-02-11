@@ -1,4 +1,5 @@
 import os
+import math
 import torch
 from text_embeddings_server.utils.device import use_ipex, is_hpu
 
@@ -12,6 +13,13 @@ HAS_FLASH_ATTN_V2 = False
 
 is_hpu = is_hpu()
 use_ipex = use_ipex()
+
+PAD_SEQUENCE_TO_MULTIPLE_OF = int(os.environ.get("PAD_SEQUENCE_TO_MULTIPLE_OF", 128))
+
+
+def round_up(number, k):
+    return (number + k - 1) // k * k
+
 
 if use_ipex or is_hpu:
     HAS_FLASH_ATTN_V2 = True
@@ -81,22 +89,24 @@ def hpu_attn(
     seqlen_k_[:batch_size] = seqlen_k[1:]
     seqlen_k = (seqlen_k_ - seqlen_k)[:batch_size]
 
+    padded_length = round_up(max_seqlen_q, PAD_SEQUENCE_TO_MULTIPLE_OF)
+    new_bs = 2 ** math.ceil(math.log2(batch_size))
     pad_q = torch.zeros(
-        [batch_size, max_seqlen_q, num_head, head_size],
+        [new_bs, padded_length, num_head, head_size],
         dtype=q.dtype,
         device=q.device,
     )
     pad_k = torch.zeros(
-        [batch_size, max_seqlen_k, num_head_k, head_size],
+        [new_bs, padded_length, num_head_k, head_size],
         dtype=k.dtype,
         device=k.device,
     )
     pad_v = torch.zeros(
-        [batch_size, max_seqlen_k, num_head_k, head_size],
+        [new_bs, padded_length, num_head_k, head_size],
         dtype=v.dtype,
         device=v.device,
     )
-    q_mask = torch.arange(0, max_seqlen_q, device=q.device)[None, :].repeat(
+    q_mask = torch.arange(0, padded_length, device=q.device)[None, :].repeat(
         batch_size, 1
     )
     q_mask = q_mask < seqlen_q[:, None].repeat(1, q_mask.size(-1))
@@ -104,9 +114,9 @@ def hpu_attn(
         batch_size, 1
     )
     k_mask = k_mask < seqlen_k[:, None].repeat(1, k_mask.size(-1))
-    align_mask_seqlen = max_seqlen_k
+    align_mask_seqlen = padded_length
     attn_mask = torch.empty(
-        [batch_size, 1, 1, align_mask_seqlen],
+        [new_bs, 1, 1, align_mask_seqlen],
         dtype=q.dtype,
         device=q.device,
     ).fill_(float("-inf"))
