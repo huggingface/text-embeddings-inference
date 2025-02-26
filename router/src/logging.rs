@@ -14,6 +14,7 @@ pub fn init_logging(
     otlp_endpoint: Option<&String>,
     otlp_service_name: String,
     json_output: bool,
+    disable_spans: bool,
 ) -> bool {
     let mut layers = Vec::new();
 
@@ -22,10 +23,15 @@ pub fn init_logging(
         .with_file(true)
         .with_line_number(true);
 
-    let fmt_layer = match json_output {
-        true => fmt_layer.json().flatten_event(true).boxed(),
-        false => fmt_layer.boxed(),
-    };
+        let fmt_layer = match json_output {
+          true => fmt_layer
+              .json()
+              .flatten_event(true)
+              .with_current_span(!disable_spans)
+              .with_span_list(!disable_spans)
+              .boxed(),
+          false => fmt_layer.boxed(),
+      };
     layers.push(fmt_layer);
 
     // OpenTelemetry tracing layer
