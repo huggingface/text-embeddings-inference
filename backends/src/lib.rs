@@ -338,11 +338,16 @@ async fn init_backend(
         {
             if let Some(api_repo) = api_repo.as_ref() {
                 let start = std::time::Instant::now();
-                match download_onnx(api_repo).await {
-                    Ok(_) => {
+                let model_files = download_onnx(api_repo)
+                    .await
+                    .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
+                match model_files.is_empty() {
+                    true => {
+                        tracing::error!("Model ONNX files not found in the repository")
+                    }
+                    false => {
                         tracing::info!("Model ONNX weights downloaded in {:?}", start.elapsed())
                     }
-                    Err(err) => BackendError::WeightsNotFound(err.to_string()),
                 }
             }
 
