@@ -9,7 +9,7 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
 #[test]
 #[serial_test::serial]
 fn test_mini() -> Result<()> {
-    let model_root = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None)?;
+    let model_root = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None).unwrap();
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -189,7 +189,8 @@ fn test_emotions() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_bert_classification() -> Result<()> {
-    let model_root = download_artifacts("ibm/re2g-reranker-nq", Some("refs/pr/3"))?;
+    let model_root =
+        download_artifacts("ibm-research/re2g-reranker-nq", Some("refs/pr/3")).unwrap();
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(&model_root, "float32".to_string(), ModelType::Classifier)?;

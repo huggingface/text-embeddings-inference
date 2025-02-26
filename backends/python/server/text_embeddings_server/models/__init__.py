@@ -8,6 +8,7 @@ from transformers.models.bert import BertConfig
 
 from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.default_model import DefaultModel
+from text_embeddings_server.models.classification_model import ClassificationModel
 from text_embeddings_server.utils.device import get_device, use_ipex
 
 __all__ = ["Model"]
@@ -43,18 +44,19 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
     if config.model_type == "bert":
         config: BertConfig
         if (
-            device.type == "cuda"
+            use_ipex()
+            or device.type in ["cuda", "hpu"]
             and config.position_embedding_type == "absolute"
             and datatype in [torch.float16, torch.bfloat16]
             and FLASH_ATTENTION
         ):
             if pool != "cls":
-                raise ValueError("FlashBert only supports cls pooling")
-            return FlashBert(model_path, device, datatype)  # type: ignore
-        if use_ipex() or device.type == "hpu":
-            return FlashBert(model_path, device, datatype)  # type: ignore
-
-        return DefaultModel(model_path, device, datatype)
+                return DefaultModel(model_path, device, datatype, pool)
+            return FlashBert(model_path, device, datatype)
+        if config.architectures[0].endswith("Classification"):
+            return ClassificationModel(model_path, device, datatype)
+        else:
+            return DefaultModel(model_path, device, datatype, pool)
     else:
         if device.type == "hpu":
             from habana_frameworks.torch.hpu import wrap_in_hpu_graph
@@ -63,7 +65,14 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
             )
 
             adapt_transformers_to_gaudi()
-            model_handle = DefaultModel(model_path, device, datatype)
+            if config.architectures[0].endswith("Classification"):
+                model_handle = ClassificationModel(model_path, device, datatype)
+            else:
+                model_handle = DefaultModel(model_path, device, datatype, pool)
             model_handle.model = wrap_in_hpu_graph(model_handle.model)
             return model_handle
-        return DefaultModel(model_path, device, datatype)
+        elif use_ipex():
+            if config.architectures[0].endswith("Classification"):
+                return ClassificationModel(model_path, device, datatype)
+            else:
+                return DefaultModel(model_path, device, datatype, pool)

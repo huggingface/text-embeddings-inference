@@ -254,10 +254,9 @@ pub async fn run(
 
     let max_batch_requests = backend
         .max_batch_size
-        .map(|s| {
+        .inspect(|&s| {
             tracing::warn!("Backend does not support a batch size > {s}");
             tracing::warn!("forcing `max_batch_requests={s}`");
-            s
         })
         .or(max_batch_requests);
 
@@ -295,9 +294,8 @@ pub async fn run(
         std::env::var("AIP_HTTP_PORT")
             .ok()
             .and_then(|p| p.parse().ok())
-            .map(|p| {
+            .inspect(|&p| {
                 tracing::info!("`AIP_HTTP_PORT` is set: overriding port {port} by port {p}");
-                p
             })
             .unwrap_or(port)
     } else {

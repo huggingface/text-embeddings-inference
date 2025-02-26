@@ -8,7 +8,7 @@ from opentelemetry import trace
 from sentence_transformers.models import Pooling
 
 from text_embeddings_server.models import Model
-from text_embeddings_server.models.types import PaddedBatch, Embedding
+from text_embeddings_server.models.types import PaddedBatch, Embedding, Score
 
 tracer = trace.get_tracer(__name__)
 
@@ -59,3 +59,7 @@ class DefaultModel(Model):
             )
             for i in range(len(batch))
         ]
+
+    @tracer.start_as_current_span("predict")
+    def predict(self, batch: PaddedBatch) -> List[Score]:
+        pass
