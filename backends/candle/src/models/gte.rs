@@ -408,7 +408,7 @@ impl GTEModel {
             ModelType::Embedding(pool) => (pool, None),
         };
 
-        // As some GTE variants as e.g. `Alibaba-NLP/gte-multilingual-reranker-base` require custom
+        // NOTE: As some GTE variants as e.g. `Alibaba-NLP/gte-multilingual-reranker-base` require custom
         // code their weights for anything other than the classifier are preceeded by "new." which
         // is the architecture name as per https://huggingface.co/Alibaba-NLP/new-impl/blob/main/modeling.py
         // so the "new." prefix needs to be checked as a rollback to be able to load some of the
