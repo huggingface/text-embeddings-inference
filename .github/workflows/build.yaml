@@ -31,8 +31,10 @@ jobs:
         uses: actions/checkout@v3
 
       - id: set-matrix
+        env:
+          GITHUB_REF: ${{ github.ref }}
         run: |
-          branchName=$(echo '${{ github.ref }}' | sed 's,refs/heads/,,g')
+          branchName=$(echo $GITHUB_REF | sed 's,refs/heads/,,g')
           matrix=$(jq --arg branchName "$branchName" 'map(. | select((.runOn==$branchName) or (.runOn=="always")) )' .github/workflows/matrix.json)
           echo "{\"include\":$(echo $matrix)}"
           echo ::set-output name=matrix::{\"include\":$(echo $matrix)}\"
@@ -89,6 +91,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: configure aws credentials
+        id: aws-creds
+        uses: aws-actions/configure-aws-credentials@4fc4975a852c8cd99761e2de1f4ba73402e44dd9
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_GITHUB_BUILDX_CACHE }}
+          role-duration-seconds: 7200
+          aws-region: us-east-1
+          output-credentials: true
+
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v5
@@ -107,6 +118,8 @@ jobs:
       - name: Build and push Docker image
         id: build-and-push
         uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_SUMMARY: false
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -114,16 +127,17 @@ jobs:
           platforms: 'linux/amd64'
           build-args: |
             SCCACHE_GHA_ENABLED=${{ matrix.sccache }}
-            ACTIONS_CACHE_URL=${{ env.ACTIONS_CACHE_URL }}
-            ACTIONS_RUNTIME_TOKEN=${{ env.ACTIONS_RUNTIME_TOKEN }}
             CUDA_COMPUTE_CAP=${{ matrix.cudaComputeCap }}
             GIT_SHA=${{ env.GITHUB_SHA }}
             DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
             ${{matrix.extraBuildArgs}}
+          secrets: |
+            actions_cache_url=${{ env.ACTIONS_CACHE_URL }}
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=s3,region=us-east-1,bucket=ci-docker-buildx-cache,name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_ACCESS_KEY_ID }},secret_access_key=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_SECRET_ACCESS_KEY }},mode=max
-          cache-to: type=s3,region=us-east-1,bucket=ci-docker-buildx-cache,name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_ACCESS_KEY_ID }},secret_access_key=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_SECRET_ACCESS_KEY }},mode=max
+          cache-from: type=s3,region=us-east-1,bucket=${{ vars.AWS_S3BUCKET_GITHUB_BUILDX_CACHE }},name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ steps.aws-creds.outputs.aws-access-key-id }},secret_access_key=${{ steps.aws-creds.outputs.aws-secret-access-key }},session_token=${{ steps.aws-creds.outputs.aws-session-token }},mode=max
+          cache-to: type=s3,region=us-east-1,bucket=${{ vars.AWS_S3BUCKET_GITHUB_BUILDX_CACHE }},name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ steps.aws-creds.outputs.aws-access-key-id }},secret_access_key=${{ steps.aws-creds.outputs.aws-secret-access-key }},session_token=${{ steps.aws-creds.outputs.aws-session-token }},mode=max
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta-grpc
@@ -145,6 +159,8 @@ jobs:
         id: build-and-push-grpc
         if: ${{ matrix.grpc }}
         uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_SUMMARY: false
         with:
           context: .
           target: grpc
@@ -153,12 +169,13 @@ jobs:
           platforms: 'linux/amd64'
           build-args: |
             SCCACHE_GHA_ENABLED=${{ matrix.sccache }}
-            ACTIONS_CACHE_URL=${{ env.ACTIONS_CACHE_URL }}
-            ACTIONS_RUNTIME_TOKEN=${{ env.ACTIONS_RUNTIME_TOKEN }}
             CUDA_COMPUTE_CAP=${{ matrix.cudaComputeCap }}
             GIT_SHA=${{ env.GITHUB_SHA }}
             DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
             ${{matrix.extraBuildArgs}}
+          secrets: |
+            actions_cache_url=${{ env.ACTIONS_CACHE_URL }}
+            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
           tags: ${{ steps.meta-grpc.outputs.tags }}
           labels: ${{ steps.meta-grpc.outputs.labels }}
-          cache-from: type=s3,region=us-east-1,bucket=ci-docker-buildx-cache,name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_ACCESS_KEY_ID }},secret_access_key=${{ secrets.S3_CI_DOCKER_BUILDX_CACHE_SECRET_ACCESS_KEY }},mode=max
+          cache-from: type=s3,region=us-east-1,bucket=${{ vars.AWS_S3BUCKET_GITHUB_BUILDX_CACHE }},name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ steps.aws-creds.outputs.aws-access-key-id }},secret_access_key=${{ steps.aws-creds.outputs.aws-secret-access-key }},session_token=${{ steps.aws-creds.outputs.aws-session-token }},mode=max
