@@ -33,6 +33,7 @@ pub fn get_cublas_lt_wrapper() -> Option<&'static CublasLtWrapper> {
                     });
             }
         });
+        #[allow(static_mut_refs)]
         CUBLASLT.as_ref()
     }
 }

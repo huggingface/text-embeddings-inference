@@ -43,13 +43,13 @@ ARG CARGO_BUILD_JOBS
 ARG CARGO_BUILD_INCREMENTAL
 
 # sccache specific variables
-ARG ACTIONS_CACHE_URL
-ARG ACTIONS_RUNTIME_TOKEN
 ARG SCCACHE_GHA_ENABLED
 
 WORKDIR /usr/src
 
-RUN if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
+RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
     then  \
         nvprune --generate-code code=sm_${CUDA_COMPUTE_CAP} /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
     elif [ ${CUDA_COMPUTE_CAP} -ge 80 -a ${CUDA_COMPUTE_CAP} -lt 90 ]; \
@@ -64,7 +64,9 @@ RUN if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
 
 COPY --from=planner /usr/src/recipe.json recipe.json
 
-RUN if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
+RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
     then \
         cargo chef cook --release --features candle-cuda-turing --features static-linking --no-default-features --recipe-path recipe.json && sccache -s; \
     else \
@@ -79,7 +81,9 @@ COPY Cargo.lock ./
 
 FROM builder AS http-builder
 
-RUN if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
+RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
     then \
         cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F static-linking -F http --no-default-features && sccache -s; \
     else \
@@ -100,7 +104,9 @@ RUN PROTOC_ZIP=protoc-21.12-linux-x86_64.zip && \
 
 COPY proto proto
 
-RUN if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
+RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
     then \
         cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F static-linking -F grpc --no-default-features && sccache -s; \
     else \

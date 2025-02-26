@@ -5,7 +5,7 @@ use backend_grpc_client::Client;
 use nohash_hasher::BuildNoHashHasher;
 use std::collections::HashMap;
 use text_embeddings_backend_core::{
-    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Predictions,
+    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool, Predictions,
 };
 use tokio::runtime::Runtime;
 
@@ -25,11 +25,7 @@ impl PythonBackend {
         otlp_service_name: String,
     ) -> Result<Self, BackendError> {
         let pool = match model_type {
-            ModelType::Classifier => {
-                return Err(BackendError::Start(
-                    "`classifier` model type is not supported".to_string(),
-                ))
-            }
+            ModelType::Classifier => Pool::Cls,
             ModelType::Embedding(pool) => pool,
         };
 
@@ -105,9 +101,32 @@ impl Backend for PythonBackend {
         Ok(embeddings)
     }
 
-    fn predict(&self, _batch: Batch) -> Result<Predictions, BackendError> {
-        Err(BackendError::Inference(
-            "`predict` is not implemented".to_string(),
-        ))
+    fn predict(&self, batch: Batch) -> Result<Predictions, BackendError> {
+        if !batch.raw_indices.is_empty() {
+            return Err(BackendError::Inference(
+                "raw embeddings are not supported for the Python backend.".to_string(),
+            ));
+        }
+        let batch_size = batch.len();
+        let results = self
+            .tokio_runtime
+            .block_on(self.backend_client.clone().predict(
+                batch.input_ids,
+                batch.token_type_ids,
+                batch.position_ids,
+                batch.cumulative_seq_lengths,
+                batch.max_length,
+            ))
+            .map_err(|err| BackendError::Inference(err.to_string()))?;
+        let raw_results: Vec<Vec<f32>> = results.into_iter().map(|r| r.values).collect();
+
+        let mut predictions =
+            HashMap::with_capacity_and_hasher(batch_size, BuildNoHashHasher::default());
+
+        for (i, r) in raw_results.into_iter().enumerate() {
+            predictions.insert(i, r);
+        }
+
+        Ok(predictions)
     }
 }
