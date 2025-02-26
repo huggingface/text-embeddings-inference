@@ -338,10 +338,12 @@ async fn init_backend(
         {
             if let Some(api_repo) = api_repo.as_ref() {
                 let start = std::time::Instant::now();
-                download_onnx(api_repo)
-                    .await
-                    .map_err(|err| BackendError::WeightsNotFound(err.to_string()));
-                tracing::info!("Model ONNX weights downloaded in {:?}", start.elapsed());
+                match download_onnx(api_repo).await {
+                    Ok(_) => {
+                        tracing::info!("Model ONNX weights downloaded in {:?}", start.elapsed())
+                    }
+                    Err(err) => BackendError::WeightsNotFound(err.to_string()),
+                }
             }
 
             let backend = OrtBackend::new(&model_path, dtype.to_string(), model_type.clone());
