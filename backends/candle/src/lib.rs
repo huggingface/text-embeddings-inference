@@ -12,8 +12,8 @@ use crate::compute_cap::{
 };
 use crate::models::{
     BertConfig, BertModel, DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, JinaBertModel,
-    JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig, Model, NomicBertModel, NomicConfig,
-    Qwen2Config,
+    JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig, Model, ModernBertConfig,
+    ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -65,6 +65,8 @@ enum Config {
     Qwen2(Qwen2Config),
     #[serde(rename = "mpnet")]
     MPNet(MPNetConfig),
+    #[serde(rename(deserialize = "modernbert"))]
+    ModernBert(ModernBertConfig),
 }
 
 pub struct CandleBackend {
@@ -234,6 +236,12 @@ impl CandleBackend {
             (Config::MPNet(config), _) => {
                 tracing::info!("Starting MPNet model on {:?}", device);
                 Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
+            }
+            (Config::ModernBert(config), _) => {
+                tracing::info!("Starting ModernBert model on {:?}", device);
+                Ok(Box::new(
+                    ModernBertModel::load(vb, &config, model_type).s()?,
+                ))
             }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
