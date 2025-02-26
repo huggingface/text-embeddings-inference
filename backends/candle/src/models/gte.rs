@@ -419,7 +419,7 @@ impl GTEModel {
                 if let Ok(encoder) = GTEEncoder::load(vb.pp("new.encoder"), config) {
                     encoder
                 } else {
-                    return Err(err);
+                    return Err("Couldn't find neither the tensor `encoder` nor `new.encoder`");
                 }
             }
         };
@@ -437,7 +437,7 @@ impl GTEModel {
                     {
                         weight
                     } else {
-                        return Err(err);
+                        return Err("Couldn't find neither the tensor `embeddings.word_embeddings` nor `new.embeddings.word_embeddings`");
                     }
                 }
             };
@@ -458,7 +458,7 @@ impl GTEModel {
                     {
                         weight
                     } else {
-                        return Err(err);
+                        return Err("Couldn't find neither the tensor `embeddings.token_type_embeddings` nor `new.embeddings.token_type_embeddings`");
                     }
                 }
             };
@@ -482,7 +482,7 @@ impl GTEModel {
                 ) {
                     norm
                 } else {
-                    return Err(err);
+                    return Err("Couldn't find neither the tensor `embeddings.LayerNorm` nor `new.embeddings.LayerNorm`");
                 }
             }
         };
