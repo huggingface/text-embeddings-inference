@@ -338,10 +338,17 @@ async fn init_backend(
         {
             if let Some(api_repo) = api_repo.as_ref() {
                 let start = std::time::Instant::now();
-                download_onnx(api_repo)
+                let model_files = download_onnx(api_repo)
                     .await
-                    .map_err(|err| BackendError::WeightsNotFound(err.to_string()));
-                tracing::info!("Model ONNX weights downloaded in {:?}", start.elapsed());
+                    .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
+                match model_files.is_empty() {
+                    true => {
+                        tracing::error!("Model ONNX files not found in the repository")
+                    }
+                    false => {
+                        tracing::info!("Model ONNX weights downloaded in {:?}", start.elapsed())
+                    }
+                }
             }
 
             let backend = OrtBackend::new(&model_path, dtype.to_string(), model_type.clone());
@@ -530,8 +537,11 @@ async fn download_onnx(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
         Err(err) => {
             tracing::warn!("Could not download `model.onnx`: {err}");
             tracing::info!("Downloading `onnx/model.onnx`");
-            let p = api.get("onnx/model.onnx").await?;
-            model_files.push(p.parent().unwrap().to_path_buf())
+
+            match api.get("onnx/model.onnx").await {
+                Ok(p) => model_files.push(p.parent().unwrap().to_path_buf()),
+                Err(err) => tracing::warn!("Could not download `onnx/model.onnx`: {err}"),
+            };
         }
     };
 
