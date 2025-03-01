@@ -56,6 +56,7 @@ Ember, GTE and E5. TEI implements many features such as:
   [Candle](https://github.com/huggingface/candle)
   and [cuBLASLt](https://docs.nvidia.com/cuda/cublas/#using-the-cublaslt-api)
 * [Safetensors](https://github.com/huggingface/safetensors) weight loading
+* [ONNX](https://github.com/onnx/onnx) weight loading
 * Production ready (distributed tracing with Open Telemetry, Prometheus metrics)
 
 ## Get Started
@@ -476,7 +477,9 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 Then run:
 
 ```shell
-# On x86
+# On x86 with ONNX backend (recommended)
+cargo install --path router -F ort
+# On x86 with Intel backend
 cargo install --path router -F mkl
 # On M1 or M2
 cargo install --path router -F metal
@@ -496,11 +499,11 @@ text-embeddings-router --model-id $model --port 8080
 sudo apt-get install libssl-dev gcc -y
 ```
 
-### Cuda
+### CUDA
 
-GPUs with Cuda compute capabilities < 7.5 are not supported (V100, Titan V, GTX 1000 series, ...).
+GPUs with CUDA compute capabilities < 7.5 are not supported (V100, Titan V, GTX 1000 series, ...).
 
-Make sure you have Cuda and the nvidia drivers installed. NVIDIA drivers on your device need to be compatible with CUDA
+Make sure you have CUDA and the nvidia drivers installed. NVIDIA drivers on your device need to be compatible with CUDA
 version 12.2 or higher.
 You also need to add the nvidia binaries to your path:
 
@@ -536,7 +539,7 @@ You can build the CPU container with:
 docker build .
 ```
 
-To build the Cuda containers, you need to know the compute cap of the GPU you will be using
+To build the CUDA containers, you need to know the compute cap of the GPU you will be using
 at runtime.
 
 Then you can build the container with:
