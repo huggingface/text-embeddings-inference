@@ -15,9 +15,20 @@ tracer = trace.get_tracer(__name__)
 
 class MaskedLanguageModel(Model):
     def __init__(
-        self, model_path: Path, device: torch.device, dtype: torch.dtype, pool: str
+        self,
+        model_path: Path,
+        device: torch.device,
+        dtype: torch.dtype,
+        pool: str,
+        trust_remote: bool = False,
     ):
-        model = AutoModelForMaskedLM.from_pretrained(model_path).to(dtype).to(device)
+        model = (
+            AutoModelForMaskedLM.from_pretrained(
+                model_path, trust_remote_code=trust_remote
+            )
+            .to(dtype)
+            .to(device)
+        )
         self.hidden_size = model.config.hidden_size
         self.vocab_size = model.config.vocab_size
         self.pooling_mode = pool
@@ -35,7 +46,9 @@ class MaskedLanguageModel(Model):
             is not None
         )
 
-        super(MaskedLanguageModel, self).__init__(model=model, dtype=dtype, device=device)
+        super(MaskedLanguageModel, self).__init__(
+            model=model, dtype=dtype, device=device
+        )
 
     @property
     def batch_type(self) -> Type[PaddedBatch]:

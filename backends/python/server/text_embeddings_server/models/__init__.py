@@ -55,7 +55,13 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
         ):
             if pool != "cls":
                 if config.architectures[0].endswith("ForMaskedLM"):
-                    return MaskedLanguageModel(model_path, device, datatype, pool)
+                    return MaskedLanguageModel(
+                        model_path,
+                        device,
+                        datatype,
+                        pool,
+                        trust_remote=TRUST_REMOTE_CODE,
+                    )
                 return DefaultModel(
                     model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
                 )
@@ -65,7 +71,9 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
                 model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
             )
         elif config.architectures[0].endswith("ForMaskedLM"):
-            return MaskedLanguageModel(model_path, device, datatype, pool)
+            return MaskedLanguageModel(
+                model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
+            )
         else:
             return DefaultModel(
                 model_path,
@@ -90,7 +98,9 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
                     trust_remote=TRUST_REMOTE_CODE,
                 )
             elif config.architectures[0].endswith("ForMaskedLM"):
-                return MaskedLanguageModel(model_path, device, datatype, pool)
+                return MaskedLanguageModel(
+                    model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
+                )
             else:
                 model_handle = DefaultModel(
                     model_path,
@@ -110,7 +120,9 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
                     trust_remote=TRUST_REMOTE_CODE,
                 )
             elif config.architectures[0].endswith("ForMaskedLM"):
-                return MaskedLanguageModel(model_path, device, datatype, pool)
+                return MaskedLanguageModel(
+                    model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
+                )
             else:
                 return DefaultModel(
                     model_path,
