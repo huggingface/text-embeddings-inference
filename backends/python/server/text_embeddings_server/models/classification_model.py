@@ -26,6 +26,17 @@ class ClassificationModel(Model):
         model = model.to(dtype).to(device)
 
         self.hidden_size = model.config.hidden_size
+        position_offset = 0
+        model_type = model.config.model_type
+        if model_type in ["xlm-roberta", "camembert", "roberta"]:
+            position_offset = model.config.pad_token_id + 1
+        if hasattr(model.config, "max_seq_length"):
+            self.max_input_length = model.config.max_seq_length
+        else:
+            self.max_input_length = (
+                model.config.max_position_embeddings - position_offset
+            )
+
         self.has_position_ids = (
             inspect.signature(model.forward).parameters.get("position_ids", None)
             is not None
