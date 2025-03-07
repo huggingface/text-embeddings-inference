@@ -8,7 +8,7 @@ from transformers.activations import ACT2FN
 from transformers.models.bert import BertConfig
 from opentelemetry import trace
 from text_embeddings_server.models import Model
-from text_embeddings_server.models.types import FlashBatch, Embedding
+from text_embeddings_server.models.types import FlashBatch, Embedding, PaddedBatch
 from text_embeddings_server.utils.flash_attn import attention
 from text_embeddings_server.utils.device import use_ipex
 
@@ -166,22 +166,41 @@ class BertAttention:
         self.num_heads = config.num_attention_heads
         self.device = device
 
-    def forward(self, hidden_states, cu_seqlens, max_s):
+    def forward(self, hidden_states, cu_seqlens, max_s, attn_mask=None):
         residual = hidden_states
+        bs = 1
+        if hidden_states.dim() > 2:
+            bs, _, hidden_dim = hidden_states.size()
+            hidden_states = hidden_states.view(-1, hidden_dim)
 
         qkv = torch.addmm(self.qkv_bias, hidden_states, self.qkv_weight)
-        q, k, v = qkv.view(-1, self.num_heads * 3, self.head_size).split(
-            self.num_heads, dim=1
-        )
+        if residual.dim() > 2:
+            q, k, v = qkv.view(bs, -1, self.num_heads * 3, self.head_size).split(
+                self.num_heads, dim=2
+            )
+        else:
+            q, k, v = qkv.view(-1, self.num_heads * 3, self.head_size).split(
+                self.num_heads, dim=1
+            )
 
         attn_output = torch.empty_like(q)
-        attention(q, k, v, attn_output, cu_seqlens, max_s, self.softmax_scale)
+        attention(
+            q,
+            k,
+            v,
+            attn_output,
+            cu_seqlens,
+            max_s,
+            self.softmax_scale,
+            attn_mask=attn_mask,
+        )
 
         hidden_states = torch.addmm(
             self.dense_bias,
             attn_output.view(-1, self.num_heads * self.head_size),
             self.dense_weight,
         )
+        hidden_states = hidden_states.view(bs, -1, hidden_dim)
         hidden_states, _ = self.layer_norm.forward(hidden_states, residual)
 
         return hidden_states
@@ -224,10 +243,14 @@ class BertLayer:
             f"{prefix}.output.LayerNorm", handle, device, dtype, config
         )
 
-    def forward(self, hidden_states, cu_seqlens, max_s):
-        hidden_states = self.attention.forward(hidden_states, cu_seqlens, max_s)
+    def forward(self, hidden_states, cu_seqlens, max_s, attn_mask=None):
+        hidden_states = self.attention.forward(
+            hidden_states, cu_seqlens, max_s, attn_mask
+        )
         residual = hidden_states
-
+        if hidden_states.dim() > 2:
+            bs, _, hidden_dim = hidden_states.size()
+            hidden_states = hidden_states.view(-1, hidden_dim)
         hidden_states = torch.addmm(
             self.intermediate_bias, hidden_states, self.intermediate_weight
         )
@@ -237,6 +260,8 @@ class BertLayer:
             hidden_states,
             self.output_weight,
         )
+        if residual.dim() > 2:
+            hidden_states = hidden_states.view(bs, -1, hidden_dim)
         hidden_states, _ = self.layer_norm.forward(hidden_states, residual)
         return hidden_states
 
@@ -248,9 +273,9 @@ class BertEncoder:
             for i in range(config.num_hidden_layers)
         ]
 
-    def forward(self, hidden_states, cu_seqlens, max_s):
+    def forward(self, hidden_states, cu_seqlens, max_s, attn_mask=None):
         for layer in self.layers:
-            hidden_states = layer.forward(hidden_states, cu_seqlens, max_s)
+            hidden_states = layer.forward(hidden_states, cu_seqlens, max_s, attn_mask)
         return hidden_states
 
 
@@ -259,10 +284,21 @@ class FlashBertModel:
         self.embeddings = BertEmbeddings("embeddings", handle, device, dtype, config)
         self.encoder = BertEncoder("encoder", handle, device, dtype, config)
 
-    def forward(self, input_ids, token_type_ids, position_ids, cu_seqlens, max_s):
+    def forward(
+        self,
+        input_ids,
+        token_type_ids,
+        position_ids,
+        cu_seqlens,
+        max_s,
+        mask=None,
+        attn_mask=None,
+    ):
         embeddings = self.embeddings.forward(input_ids, token_type_ids, position_ids)
-        encoder_outputs = self.encoder.forward(embeddings, cu_seqlens, max_s)
-
+        encoder_outputs = self.encoder.forward(embeddings, cu_seqlens, max_s, attn_mask)
+        if mask is not None:
+            outputs = encoder_outputs[mask]
+            return outputs[cu_seqlens[:-1]]
         return encoder_outputs[cu_seqlens[:-1]]
 
 
@@ -271,6 +307,7 @@ class FlashBert(Model):
         config = BertConfig.from_pretrained(model_path)
         with safe_open(model_path / "model.safetensors", framework="pt") as f:
             model = FlashBertModel(f, device, dtype, config)
+        self.device = device
         if device.type == "hpu":
             from habana_frameworks.torch.hpu import wrap_in_hpu_graph
 
@@ -281,7 +318,8 @@ class FlashBert(Model):
 
     @property
     def batch_type(self) -> Type[FlashBatch]:
-        return FlashBatch
+        # for hpu devices, we use PaddedBatch as we do not have real varlen fwd yet
+        return FlashBatch if self.device.type != "hpu" else PaddedBatch
 
     @tracer.start_as_current_span("embed")
     def embed(self, batch: FlashBatch) -> List[Embedding]:
@@ -291,6 +329,37 @@ class FlashBert(Model):
             position_ids=batch.position_ids,
             cu_seqlens=batch.cu_seqlens,
             max_s=batch.max_s,
+        )
+        cpu_results = embedding.view(-1).tolist()
+
+        return [
+            Embedding(
+                values=cpu_results[i * self.hidden_size : (i + 1) * self.hidden_size]
+            )
+            for i in range(len(batch))
+        ]
+
+    @tracer.start_as_current_span("embed")
+    def embed(self, batch: PaddedBatch) -> List[Embedding]:
+        input_lens = batch.attention_mask.cumsum(-1)[:, -1].to(torch.int32)
+        max_input_lens = input_lens.max().item()
+        cu_seqlens = torch.cat(
+            (input_lens.new_tensor([0]), input_lens.cumsum(-1).int())
+        )
+        mask = batch.attention_mask.to(torch.bool)
+        batch_size = input_lens.size(0)
+        attn_mask = torch.empty(
+            [batch_size, 1, 1, max_input_lens], device=self.device
+        ).fill_(float("-inf"))
+        attn_mask[:, :, :, :max_input_lens].masked_fill_(mask[:, None, None, :], 0)
+        embedding = self.model.forward(
+            input_ids=batch.input_ids,
+            token_type_ids=batch.token_type_ids,
+            position_ids=batch.position_ids,
+            cu_seqlens=cu_seqlens,
+            max_s=max_input_lens,
+            mask=mask,
+            attn_mask=attn_mask,
         )
         cpu_results = embedding.view(-1).tolist()
 

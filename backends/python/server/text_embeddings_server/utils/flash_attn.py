@@ -62,6 +62,7 @@ def hpu_attn(
     k,
     v,
     out,
+    attn_mask,
     seqlen_q,
     seqlen_k,
     max_seqlen_q,
@@ -71,66 +72,21 @@ def hpu_attn(
 ):
     from habana_frameworks.torch.hpex.kernels import FusedSDPA
 
-    total_q, num_head, head_size = q.size()
-    total_k, num_head_k, _ = k.size()
-    batch_size = seqlen_q.size(0) - 1
-    seqlen_q_ = seqlen_q.clone()
-    seqlen_q_[:batch_size] = seqlen_q[1:]
-    seqlen_q = (seqlen_q_ - seqlen_q)[:batch_size]
-    seqlen_k_ = seqlen_k.clone()
-    seqlen_k_[:batch_size] = seqlen_k[1:]
-    seqlen_k = (seqlen_k_ - seqlen_k)[:batch_size]
-
-    pad_q = torch.zeros(
-        [batch_size, max_seqlen_q, num_head, head_size],
-        dtype=q.dtype,
-        device=q.device,
-    )
-    pad_k = torch.zeros(
-        [batch_size, max_seqlen_k, num_head_k, head_size],
-        dtype=k.dtype,
-        device=k.device,
-    )
-    pad_v = torch.zeros(
-        [batch_size, max_seqlen_k, num_head_k, head_size],
-        dtype=v.dtype,
-        device=v.device,
-    )
-    q_mask = torch.arange(0, max_seqlen_q, device=q.device)[None, :].repeat(
-        batch_size, 1
-    )
-    q_mask = q_mask < seqlen_q[:, None].repeat(1, q_mask.size(-1))
-    k_mask = torch.arange(0, max_seqlen_k, device=k.device)[None, :].repeat(
-        batch_size, 1
-    )
-    k_mask = k_mask < seqlen_k[:, None].repeat(1, k_mask.size(-1))
-    align_mask_seqlen = max_seqlen_k
-    attn_mask = torch.empty(
-        [batch_size, 1, 1, align_mask_seqlen],
-        dtype=q.dtype,
-        device=q.device,
-    ).fill_(float("-inf"))
-    attn_mask[:, :, :, :max_seqlen_k].masked_fill_(k_mask[:, None, None, :], 0)
-
-    pad_q[q_mask] = q
-    pad_k[k_mask] = k
-    pad_v[k_mask] = v
-
-    pad_q = pad_q.permute(0, 2, 1, 3)
-    pad_k = pad_k.permute(0, 2, 1, 3)
-    pad_v = pad_v.permute(0, 2, 1, 3)
+    q = q.transpose(1, 2)
+    k = k.transpose(1, 2)
+    v = v.transpose(1, 2)
     if is_causal:
         attn_mask = None
 
-    out_ = FusedSDPA.apply(
-        pad_q, pad_k, pad_v, attn_mask, 0.0, is_causal, softmax_scale
-    )
-    out_ = out_.permute(0, 2, 1, 3)
-    out.copy_(out_[q_mask])
+    out_ = FusedSDPA.apply(q, k, v, attn_mask, 0.0, is_causal, softmax_scale)
+    out_ = out_.transpose(1, 2)
+    out.copy_(out_)
     return out
 
 
-def attention(q, k, v, out, cu_seqlens, max_s, softmax_scale, is_causal=False):
+def attention(
+    q, k, v, out, cu_seqlens, max_s, softmax_scale, is_causal=False, attn_mask=None
+):
     if HAS_FLASH_ATTN_V2:
         if use_ipex:
             import intel_extension_for_pytorch as ipex
@@ -157,6 +113,7 @@ def attention(q, k, v, out, cu_seqlens, max_s, softmax_scale, is_causal=False):
                 k,
                 v,
                 out,
+                attn_mask,
                 cu_seqlens,
                 cu_seqlens,
                 max_s,

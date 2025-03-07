@@ -1,3 +1,4 @@
+import os
 import torch
 
 from loguru import logger
@@ -12,9 +13,17 @@ from text_embeddings_server.models.classification_model import ClassificationMod
 from text_embeddings_server.utils.device import get_device, use_ipex
 
 __all__ = ["Model"]
-
+ALLOW_REDUCED_PRECISION = os.getenv(
+    "ALLOW_REDUCED_PRECISION_FP16_BF16", "true"
+).lower() in [
+    "true",
+    "1",
+]
 # Disable gradients
 torch.set_grad_enabled(False)
+# WA for perf degradation from pytorch 2.5
+if ALLOW_REDUCED_PRECISION:
+    torch._C._set_math_sdp_allow_fp16_bf16_reduction(True)
 
 FLASH_ATTENTION = True
 try:
