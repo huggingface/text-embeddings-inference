@@ -13,6 +13,7 @@ ALLOW_REDUCED_PRECISION = os.getenv(
     "1",
 ]
 
+
 def _is_ipex_available():
     def get_major_and_minor_from_version(full_version):
         return (
@@ -60,6 +61,7 @@ def get_device():
         device = torch.device("cuda")
     elif is_hpu():
         import habana_frameworks.torch.core as htcore
+
         # WA for perf degradation from pytorch 2.5
         if ALLOW_REDUCED_PRECISION:
             torch._C._set_math_sdp_allow_fp16_bf16_reduction(True)

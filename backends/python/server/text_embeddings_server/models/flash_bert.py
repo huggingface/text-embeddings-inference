@@ -189,8 +189,14 @@ class BertAttention:
             self.softmax_scale,
             attn_mask=attn_mask,
         )
-
-        hidden_states = F.linear(hidden_states, self.dense_weight, self.dense_bias)
+        if hidden_states.dim() > 2:
+            hidden_states = F.linear(hidden_states, self.dense_weight, self.dense_bias)
+        else:
+            hidden_states = torch.addmm(
+                self.dense_bias,
+                attn_output.view(-1, self.num_heads * self.head_size),
+                self.dense_weight,
+            )
         hidden_states, _ = self.layer_norm.forward(hidden_states, residual)
 
         return hidden_states
@@ -238,7 +244,9 @@ class BertLayer:
             hidden_states, cu_seqlens, max_s, attn_mask
         )
         residual = hidden_states
-        hidden_states = F.linear(hidden_states, self.intermediate_weight.T, self.intermediate_bias)
+        hidden_states = F.linear(
+            hidden_states, self.intermediate_weight.T, self.intermediate_bias
+        )
         hidden_states = self.intermediate_act_fn(hidden_states)
         hidden_states = F.linear(hidden_states, self.output_weight.T, self.output_bias)
         hidden_states, _ = self.layer_norm.forward(hidden_states, residual)
@@ -327,7 +335,7 @@ class FlashBert(Model):
             cu_seqlens=cu_seqlens,
             max_s=max_input_lens,
             mask=mask,
-            attn_mask=attn_mask
+            attn_mask=attn_mask,
         )
         cpu_results = embedding.view(-1).tolist()
 
