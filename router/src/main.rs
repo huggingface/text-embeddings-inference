@@ -145,6 +145,10 @@ struct Args {
     #[clap(long, env)]
     json_output: bool,
 
+    // Whether or not to include the log trace through spans
+    #[clap(long, env)]
+    disable_spans: bool,
+
     /// The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC.
     /// e.g. `http://localhost:4317`
     #[clap(long, env)]
@@ -170,6 +174,7 @@ async fn main() -> Result<()> {
         args.otlp_endpoint.as_ref(),
         args.otlp_service_name.clone(),
         args.json_output,
+        args.disable_spans,
     );
 
     tracing::info!("{args:?}");
