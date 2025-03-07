@@ -1,3 +1,4 @@
+import os
 import torch
 
 from loguru import logger
@@ -12,6 +13,9 @@ from text_embeddings_server.models.classification_model import ClassificationMod
 from text_embeddings_server.utils.device import get_device, use_ipex
 
 __all__ = ["Model"]
+
+TRUST_REMOTE_CODE = os.getenv("TRUST_REMOTE_CODE", "false").lower() in ["true", "1"]
+
 # Disable gradients
 torch.set_grad_enabled(False)
 
@@ -39,7 +43,7 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
     device = get_device()
     logger.info(f"backend device: {device}")
 
-    config = AutoConfig.from_pretrained(model_path)
+    config = AutoConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
     if config.model_type == "bert":
         config: BertConfig
         if (
@@ -50,12 +54,22 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
             and FLASH_ATTENTION
         ):
             if pool != "cls":
-                return DefaultModel(model_path, device, datatype, pool)
+                return DefaultModel(
+                    model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
+                )
             return FlashBert(model_path, device, datatype)
         if config.architectures[0].endswith("Classification"):
-            return ClassificationModel(model_path, device, datatype)
+            return ClassificationModel(
+                model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
+            )
         else:
-            return DefaultModel(model_path, device, datatype, pool)
+            return DefaultModel(
+                model_path,
+                device,
+                datatype,
+                pool,
+                trust_remote=TRUST_REMOTE_CODE,
+            )
     else:
         if device.type == "hpu":
             from habana_frameworks.torch.hpu import wrap_in_hpu_graph
@@ -65,13 +79,35 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
 
             adapt_transformers_to_gaudi()
             if config.architectures[0].endswith("Classification"):
-                model_handle = ClassificationModel(model_path, device, datatype)
+                model_handle = ClassificationModel(
+                    model_path,
+                    device,
+                    datatype,
+                    trust_remote=TRUST_REMOTE_CODE,
+                )
             else:
-                model_handle = DefaultModel(model_path, device, datatype, pool)
+                model_handle = DefaultModel(
+                    model_path,
+                    device,
+                    datatype,
+                    pool,
+                    trust_remote=TRUST_REMOTE_CODE,
+                )
             model_handle.model = wrap_in_hpu_graph(model_handle.model)
             return model_handle
         elif use_ipex():
             if config.architectures[0].endswith("Classification"):
-                return ClassificationModel(model_path, device, datatype)
+                return ClassificationModel(
+                    model_path,
+                    device,
+                    datatype,
+                    trust_remote=TRUST_REMOTE_CODE,
+                )
             else:
-                return DefaultModel(model_path, device, datatype, pool)
+                return DefaultModel(
+                    model_path,
+                    device,
+                    datatype,
+                    pool,
+                    trust_remote=TRUST_REMOTE_CODE,
+                )
