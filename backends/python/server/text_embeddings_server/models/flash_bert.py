@@ -269,6 +269,12 @@ class FlashBertModel:
 class FlashBert(Model):
     def __init__(self, model_path: Path, device: torch.device, dtype: torch.dtype):
         config = BertConfig.from_pretrained(model_path)
+
+        if hasattr(config, "max_seq_length"):
+            self.max_input_length = config.max_seq_length
+        else:
+            self.max_input_length = config.max_position_embeddings
+
         with safe_open(model_path / "model.safetensors", framework="pt") as f:
             model = FlashBertModel(f, device, dtype, config)
         if device.type == "hpu":
