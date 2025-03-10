@@ -13,7 +13,6 @@ HAS_FLASH_ATTN_V2 = False
 is_hpu = is_hpu()
 use_ipex = use_ipex()
 
-
 if use_ipex or is_hpu:
     HAS_FLASH_ATTN_V2 = True
 else:
