@@ -323,9 +323,9 @@ class FlashBert(Model):
             mask = batch.attention_mask.to(torch.bool)
             batch_size = input_lens.size(0)
             attn_mask = torch.empty(
-                [batch_size, 1, 1, max_input_lens], device=self.device
+                [batch_size, 1, 1, mask.shape[-1]], device=self.device
             ).fill_(float("-inf"))
-            attn_mask[:, :, :, :max_input_lens].masked_fill_(mask[:, None, None, :], 0)
+            attn_mask[:, :, :, :].masked_fill_(mask[:, None, None, :], 0)
         elif isinstance(batch, FlashBatch):
             cu_seqlens = batch.cu_seqlens
             mask = None

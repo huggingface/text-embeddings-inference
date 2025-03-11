@@ -15,7 +15,6 @@ from text_embeddings_server.utils.device import get_device, use_ipex
 __all__ = ["Model"]
 
 TRUST_REMOTE_CODE = os.getenv("TRUST_REMOTE_CODE", "false").lower() in ["true", "1"]
-
 # Disable gradients
 torch.set_grad_enabled(False)
 
