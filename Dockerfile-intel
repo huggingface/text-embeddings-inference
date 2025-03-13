@@ -58,7 +58,7 @@ RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     cargo build --release --bin text-embeddings-router -F grpc -F python --no-default-features && sccache -s
 
-FROM intel/intel-optimized-pytorch:2.4.0-pip-base AS cpu
+FROM intel/intel-extension-for-pytorch:2.6.0-pip-base AS cpu
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80
 
@@ -76,7 +76,7 @@ COPY backends/python/server/text_embeddings_server/models/__init__.py backends/p
 COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
 COPY backends/python/server/requirements-intel.txt backends/python/server/requirements.txt
 
-RUN python -m pip install torch==2.4.0 torchvision torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cpu
+RUN python -m pip install torch==2.6.0 torchvision torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu --no-cache-dir
 
 RUN cd backends/python/server && \
     make install
