@@ -97,7 +97,7 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
                     datatype,
                     trust_remote=TRUST_REMOTE_CODE,
                 )
-            elif config.architectures[0].endswith("ForMaskedLM"):
+            elif config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
                 model_handle = MaskedLanguageModel(
                     model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
                 )
@@ -119,9 +119,9 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
                     datatype,
                     trust_remote=TRUST_REMOTE_CODE,
                 )
-            elif config.architectures[0].endswith("ForMaskedLM"):
+            elif config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
                 return MaskedLanguageModel(
-                    model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
+                    model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
                 )
             else:
                 return DefaultModel(

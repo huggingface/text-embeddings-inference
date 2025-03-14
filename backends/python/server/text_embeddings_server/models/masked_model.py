@@ -8,7 +8,7 @@ from opentelemetry import trace
 
 from text_embeddings_server.models import Model
 from text_embeddings_server.models.types import PaddedBatch, Embedding, Score
-from text_embeddings_server.models.pooling import DefaultPooling, SpladePooling
+from text_embeddings_server.models.pooling import SpladePooling
 
 tracer = trace.get_tracer(__name__)
 
@@ -19,7 +19,6 @@ class MaskedLanguageModel(Model):
         model_path: Path,
         device: torch.device,
         dtype: torch.dtype,
-        pool: str,
         trust_remote: bool = False,
     ):
         model = (
@@ -29,13 +28,7 @@ class MaskedLanguageModel(Model):
             .to(dtype)
             .to(device)
         )
-        self.hidden_size = model.config.hidden_size
-        self.vocab_size = model.config.vocab_size
-        self.pooling_mode = pool
-        if pool == "splade":
-            self.pooling = SpladePooling()
-        else:
-            self.pooling = DefaultPooling(self.hidden_size, pooling_mode=pool)
+        self.pooling = SpladePooling()
         position_offset = 0
         model_type = model.config.model_type
         if model_type in ["xlm-roberta", "camembert", "roberta"]:
@@ -74,9 +67,7 @@ class MaskedLanguageModel(Model):
         embedding = self.pooling.forward(output, batch.attention_mask)
         cpu_results = embedding.view(-1).tolist()
 
-        step_size = (
-            embedding.shape[-1] if self.pooling_mode == "splade" else self.hidden_size
-        )
+        step_size = embedding.shape[-1]
         return [
             Embedding(values=cpu_results[i * step_size : (i + 1) * step_size])
             for i in range(len(batch))
