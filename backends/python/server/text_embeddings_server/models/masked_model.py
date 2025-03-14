@@ -36,7 +36,16 @@ class MaskedLanguageModel(Model):
             self.pooling = SpladePooling()
         else:
             self.pooling = DefaultPooling(self.hidden_size, pooling_mode=pool)
-
+        position_offset = 0
+        model_type = model.config.model_type
+        if model_type in ["xlm-roberta", "camembert", "roberta"]:
+            position_offset = model.config.pad_token_id + 1
+        if hasattr(model.config, "max_seq_length"):
+            self.max_input_length = model.config.max_seq_length
+        else:
+            self.max_input_length = (
+                model.config.max_position_embeddings - position_offset
+            )
         self.has_position_ids = (
             inspect.signature(model.forward).parameters.get("position_ids", None)
             is not None
@@ -65,7 +74,9 @@ class MaskedLanguageModel(Model):
         embedding = self.pooling.forward(output, batch.attention_mask)
         cpu_results = embedding.view(-1).tolist()
 
-        step_size = embedding.shape[-1]
+        step_size = (
+            embedding.shape[-1] if self.pooling_mode == "splade" else self.hidden_size
+        )
         return [
             Embedding(values=cpu_results[i * step_size : (i + 1) * step_size])
             for i in range(len(batch))

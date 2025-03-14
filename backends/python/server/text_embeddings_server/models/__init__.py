@@ -98,7 +98,7 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
                     trust_remote=TRUST_REMOTE_CODE,
                 )
             elif config.architectures[0].endswith("ForMaskedLM"):
-                return MaskedLanguageModel(
+                model_handle = MaskedLanguageModel(
                     model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
                 )
             else:
