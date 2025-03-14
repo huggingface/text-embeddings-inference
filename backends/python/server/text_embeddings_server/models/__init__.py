@@ -54,12 +54,11 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
             and FLASH_ATTENTION
         ):
             if pool != "cls":
-                if config.architectures[0].endswith("ForMaskedLM"):
+                if config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
                     return MaskedLanguageModel(
                         model_path,
                         device,
                         datatype,
-                        pool,
                         trust_remote=TRUST_REMOTE_CODE,
                     )
                 return DefaultModel(
@@ -70,9 +69,9 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
             return ClassificationModel(
                 model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
             )
-        elif config.architectures[0].endswith("ForMaskedLM"):
+        elif config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
             return MaskedLanguageModel(
-                model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
+                model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
             )
         else:
             return DefaultModel(
@@ -99,7 +98,7 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
                 )
             elif config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
                 model_handle = MaskedLanguageModel(
-                    model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
+                    model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
                 )
             else:
                 model_handle = DefaultModel(
