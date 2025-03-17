@@ -147,13 +147,13 @@ pub async fn run(
             .build()
             .unwrap();
         match tokenizer.get_post_processor() {
-            None => tokenizer.with_post_processor(template),
+            None => tokenizer.with_post_processor(Some(template)),
             Some(post_processor) => {
                 let post_processor = Sequence::new(vec![
                     post_processor.clone(),
                     PostProcessorWrapper::Template(template),
                 ]);
-                tokenizer.with_post_processor(post_processor)
+                tokenizer.with_post_processor(Some(post_processor))
             }
         };
     }
