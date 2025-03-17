@@ -67,8 +67,13 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
                 )
             try:
                 return FlashBert(model_path, device, datatype)
-            except:
-                return DefaultModel(model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE)
+            except FileNotFoundError as e:
+                logger.info(
+                    "Do not have safetensors file for this model, use default transformers model path instead"
+                )
+                return DefaultModel(
+                    model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
+                )
         if config.architectures[0].endswith("Classification"):
             return ClassificationModel(
                 model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
