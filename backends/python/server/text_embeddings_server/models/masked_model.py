@@ -8,7 +8,7 @@ from opentelemetry import trace
 
 from text_embeddings_server.models import Model
 from text_embeddings_server.models.types import PaddedBatch, Embedding, Score
-from text_embeddings_server.models.pooling import DefaultPooling, SpladePooling
+from text_embeddings_server.models.pooling import SpladePooling
 
 tracer = trace.get_tracer(__name__)
 
@@ -19,7 +19,6 @@ class MaskedLanguageModel(Model):
         model_path: Path,
         device: torch.device,
         dtype: torch.dtype,
-        pool: str,
         trust_remote: bool = False,
     ):
         model = (
@@ -29,14 +28,17 @@ class MaskedLanguageModel(Model):
             .to(dtype)
             .to(device)
         )
-        self.hidden_size = model.config.hidden_size
-        self.vocab_size = model.config.vocab_size
-        self.pooling_mode = pool
-        if pool == "splade":
-            self.pooling = SpladePooling()
+        self.pooling = SpladePooling()
+        position_offset = 0
+        model_type = model.config.model_type
+        if model_type in ["xlm-roberta", "camembert", "roberta"]:
+            position_offset = model.config.pad_token_id + 1
+        if hasattr(model.config, "max_seq_length"):
+            self.max_input_length = model.config.max_seq_length
         else:
-            self.pooling = DefaultPooling(self.hidden_size, pooling_mode=pool)
-
+            self.max_input_length = (
+                model.config.max_position_embeddings - position_offset
+            )
         self.has_position_ids = (
             inspect.signature(model.forward).parameters.get("position_ids", None)
             is not None
