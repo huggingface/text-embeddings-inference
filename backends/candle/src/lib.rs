@@ -355,7 +355,7 @@ impl CandleBackend {
                 ))
             }
             #[cfg(feature = "cuda")]
-            (Config::Gte(config), Device::Cuda(_)) => {
+            (Config::Gte(config) | Config::GteAlibaba(config), Device::Cuda(_)) => {
                 if dtype != DType::F16
                     || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
                 {
