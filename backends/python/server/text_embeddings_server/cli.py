@@ -18,6 +18,7 @@ class Dtype(str, Enum):
 @app.command()
 def serve(
     model_path: Path,
+    model_id: str,
     dtype: Dtype = "float32",
     uds_path: Path = "/tmp/text-embeddings-server",
     logger_level: str = "INFO",
@@ -48,7 +49,7 @@ def serve(
 
     # Downgrade enum into str for easier management later on
     dtype = None if dtype is None else dtype.value
-    server.serve(model_path, dtype, uds_path, pool)
+    server.serve(model_id, model_path, dtype, uds_path, pool)
 
 
 if __name__ == "__main__":

@@ -46,21 +46,21 @@ class EmbeddingService(embed_pb2_grpc.EmbeddingServiceServicer):
 
 
 def serve(
-    model_path: Path,
     model_id: str,
+    model_path: Path,
     dtype: Optional[str],
     uds_path: Path,
     pool: str,
 ):
     async def serve_inner(
-        model_path: Path,
         model_id: str,
+        model_path: Path,
         dtype: Optional[str] = None,
     ):
         unix_socket = f"unix://{uds_path}"
 
         try:
-            model = get_model(model_path, model_id, dtype, pool)
+            model = get_model(model_id, model_path, dtype, pool)
         except Exception:
             logger.exception("Error when initializing model")
             raise
@@ -91,4 +91,4 @@ def serve(
             logger.info("Signal received. Shutting down")
             await server.stop(0)
 
-    asyncio.run(serve_inner(model_path, dtype))
+    asyncio.run(serve_inner(model_id, model_path, dtype))

@@ -44,7 +44,7 @@ impl BackendProcess {
         let mut python_server_args = vec![
             model_path,
             "--model_id".to_owned(),
-            model_id,
+            model_id.to_owned(),
             "--dtype".to_owned(),
             dtype,
             "--uds-path".to_owned(),

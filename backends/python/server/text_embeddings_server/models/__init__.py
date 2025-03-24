@@ -30,7 +30,7 @@ if FLASH_ATTENTION:
     __all__.append(FlashBert)
 
 
-def get_model(model_path: Path, model_id: str, dtype: Optional[str], pool: str):
+def get_model(model_id: str, model_path: Path, dtype: Optional[str], pool: str):
     if dtype == "float32":
         datatype = torch.float32
     elif dtype == "float16":
