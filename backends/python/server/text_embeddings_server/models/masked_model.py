@@ -16,6 +16,7 @@ tracer = trace.get_tracer(__name__)
 class MaskedLanguageModel(Model):
     def __init__(
         self,
+        model_id: str,
         model_path: Path,
         device: torch.device,
         dtype: torch.dtype,
@@ -23,7 +24,7 @@ class MaskedLanguageModel(Model):
     ):
         model = (
             AutoModelForMaskedLM.from_pretrained(
-                model_path, trust_remote_code=trust_remote
+                model_id, cache_dir=model_path, trust_remote_code=trust_remote
             )
             .to(dtype)
             .to(device)

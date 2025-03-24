@@ -58,6 +58,7 @@ def get_model(model_id: str, model_path: Path, dtype: Optional[str], pool: str):
             if pool != "cls":
                 if config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
                     return MaskedLanguageModel(
+                        model_id,
                         model_path,
                         device,
                         datatype,
@@ -74,11 +75,11 @@ def get_model(model_id: str, model_path: Path, dtype: Optional[str], pool: str):
             return FlashBert(model_path, device, datatype)
         if config.architectures[0].endswith("Classification"):
             return ClassificationModel(
-                model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
+                model_id, model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
             )
         elif config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
             return MaskedLanguageModel(
-                model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
+                model_id, model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
             )
         else:
             return DefaultModel(
@@ -99,6 +100,7 @@ def get_model(model_id: str, model_path: Path, dtype: Optional[str], pool: str):
             adapt_transformers_to_gaudi()
             if config.architectures[0].endswith("Classification"):
                 model_handle = ClassificationModel(
+                    model_id,
                     model_path,
                     device,
                     datatype,
@@ -106,7 +108,11 @@ def get_model(model_id: str, model_path: Path, dtype: Optional[str], pool: str):
                 )
             elif config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
                 model_handle = MaskedLanguageModel(
-                    model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
+                    model_id,
+                    model_path,
+                    device,
+                    datatype,
+                    trust_remote=TRUST_REMOTE_CODE,
                 )
             else:
                 model_handle = DefaultModel(
@@ -122,6 +128,7 @@ def get_model(model_id: str, model_path: Path, dtype: Optional[str], pool: str):
         elif use_ipex():
             if config.architectures[0].endswith("Classification"):
                 return ClassificationModel(
+                    model_id,
                     model_path,
                     device,
                     datatype,
@@ -129,7 +136,11 @@ def get_model(model_id: str, model_path: Path, dtype: Optional[str], pool: str):
                 )
             elif config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
                 return MaskedLanguageModel(
-                    model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
+                    model_id,
+                    model_path,
+                    device,
+                    datatype,
+                    trust_remote=TRUST_REMOTE_CODE,
                 )
             else:
                 return DefaultModel(
