@@ -30,7 +30,7 @@ if FLASH_ATTENTION:
     __all__.append(FlashBert)
 
 
-def get_model(model_path: Path, dtype: Optional[str], pool: str):
+def get_model(model_path: Path, model_id: str, dtype: Optional[str], pool: str):
     if dtype == "float32":
         datatype = torch.float32
     elif dtype == "float16":
@@ -43,7 +43,9 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
     device = get_device()
     logger.info(f"backend device: {device}")
 
-    config = AutoConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
+    config = AutoConfig.from_pretrained(
+        model_id, cache_dir=model_path, trust_remote_code=TRUST_REMOTE_CODE
+    )
     if config.model_type == "bert":
         config: BertConfig
         if (
@@ -62,7 +64,12 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
                         trust_remote=TRUST_REMOTE_CODE,
                     )
                 return DefaultModel(
-                    model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
+                    model_id,
+                    model_path,
+                    device,
+                    datatype,
+                    pool,
+                    trust_remote=TRUST_REMOTE_CODE,
                 )
             return FlashBert(model_path, device, datatype)
         if config.architectures[0].endswith("Classification"):
@@ -75,6 +82,7 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
             )
         else:
             return DefaultModel(
+                model_id,
                 model_path,
                 device,
                 datatype,
@@ -102,6 +110,7 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
                 )
             else:
                 model_handle = DefaultModel(
+                    model_id,
                     model_path,
                     device,
                     datatype,
@@ -124,6 +133,7 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
                 )
             else:
                 return DefaultModel(
+                    model_id,
                     model_path,
                     device,
                     datatype,

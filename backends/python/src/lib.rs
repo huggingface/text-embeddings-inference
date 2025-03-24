@@ -18,6 +18,7 @@ pub struct PythonBackend {
 impl PythonBackend {
     pub fn new(
         model_path: String,
+        model_id: String,
         dtype: String,
         model_type: ModelType,
         uds_path: String,
@@ -31,6 +32,7 @@ impl PythonBackend {
 
         let backend_process = management::BackendProcess::new(
             model_path,
+            model_id,
             dtype,
             &uds_path,
             otlp_endpoint,

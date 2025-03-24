@@ -18,6 +18,7 @@ pub(crate) struct BackendProcess {
 impl BackendProcess {
     pub(crate) fn new(
         model_path: String,
+        model_id: String,
         dtype: String,
         uds_path: &str,
         otlp_endpoint: Option<String>,
@@ -42,6 +43,8 @@ impl BackendProcess {
         // Process args
         let mut python_server_args = vec![
             model_path,
+            "--model_id".to_owned(),
+            model_id,
             "--dtype".to_owned(),
             dtype,
             "--uds-path".to_owned(),

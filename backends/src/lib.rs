@@ -64,6 +64,7 @@ pub struct Backend {
 impl Backend {
     pub async fn new(
         model_path: PathBuf,
+        model_id: String,
         api_repo: Option<ApiRepo>,
         dtype: DType,
         model_type: ModelType,
@@ -75,6 +76,7 @@ impl Backend {
 
         let backend = init_backend(
             model_path,
+            model_id,
             api_repo,
             dtype,
             model_type.clone(),
@@ -324,6 +326,7 @@ impl Backend {
 #[allow(unused)]
 async fn init_backend(
     model_path: PathBuf,
+    model_id: String,
     api_repo: Option<ApiRepo>,
     dtype: DType,
     model_type: ModelType,
@@ -391,6 +394,7 @@ async fn init_backend(
             let backend = std::thread::spawn(move || {
                 PythonBackend::new(
                     model_path.to_str().unwrap().to_string(),
+                    model_id,
                     dtype.to_string(),
                     model_type,
                     uds_path,
