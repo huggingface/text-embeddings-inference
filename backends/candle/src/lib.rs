@@ -59,8 +59,9 @@ enum Config {
     NomicBert(NomicConfig),
     #[allow(dead_code)]
     Mistral(MistralConfig),
-    #[serde(rename = "new")]
     Gte(GTEConfig),
+    #[serde(rename = "new")]
+    GteAlibaba(GTEConfig),
     #[allow(dead_code)]
     Qwen2(Qwen2Config),
     #[serde(rename = "mpnet")]
@@ -223,7 +224,7 @@ impl CandleBackend {
                 "Mistral is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
             )),
-            (Config::Gte(config), Device::Cpu | Device::Metal(_)) => {
+            (Config::Gte(config) | Config::GteAlibaba(config), Device::Cpu | Device::Metal(_)) => {
                 tracing::info!("Starting GTE model on {:?}", device);
                 Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
             }
@@ -354,7 +355,7 @@ impl CandleBackend {
                 ))
             }
             #[cfg(feature = "cuda")]
-            (Config::Gte(config), Device::Cuda(_)) => {
+            (Config::Gte(config) | Config::GteAlibaba(config), Device::Cuda(_)) => {
                 if dtype != DType::F16
                     || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
                 {
