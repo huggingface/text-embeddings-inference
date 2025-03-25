@@ -171,7 +171,7 @@ impl Backend {
         let mut pooled_indices = Vec::with_capacity(batch_size as usize);
         cumulative_seq_lengths.push(0);
         let input_ids: Vec<u32> = (0..length)
-            .map(|_| rand::thread_rng().gen_range(0..max_token))
+            .map(|_| rand::rng().random_range(0..max_token))
             .collect();
         let token_type_ids: Vec<u32> = vec![0; length as usize];
         let position_ids: Vec<u32> = (0..length).collect();

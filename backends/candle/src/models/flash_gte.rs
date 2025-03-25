@@ -192,31 +192,9 @@ impl FlashGTEModel {
             ModelType::Embedding(pool) => (pool, None),
         };
 
-        let word_embeddings = Embedding::new(
-            vb.pp("embeddings.word_embeddings")
-                .get((config.vocab_size, config.hidden_size), "weight")?,
-            config.hidden_size,
-        );
-
-        let token_type_embeddings = if config.type_vocab_size > 0 {
-            Some(Embedding::new(
-                vb.pp("embeddings.token_type_embeddings")
-                    .get((config.type_vocab_size, config.hidden_size), "weight")?,
-                config.hidden_size,
-            ))
-        } else {
-            None
-        };
-
-        let layers = (0..config.num_hidden_layers)
-            .map(|index| GTELayer::load(vb.pp(format!("encoder.layer.{index}")), config))
-            .collect::<Result<Vec<_>>>()?;
-
-        let embeddings_norm = LayerNorm::load(
-            vb.pp("embeddings.LayerNorm"),
-            config.hidden_size,
-            config.layer_norm_eps,
-        )?;
+        let (word_embeddings, token_type_embeddings, layers, embeddings_norm) =
+            Self::inner_load(vb.pp("new"), config)
+                .or_else(|_| Self::inner_load(vb.clone(), config))?;
 
         let inv_freqs = get_inv_freqs(
             layers[0].attention.attention_head_size,
@@ -244,6 +222,43 @@ impl FlashGTEModel {
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
+    }
+
+    fn inner_load(
+        vb: VarBuilder,
+        config: &GTEConfig,
+    ) -> Result<(Embedding, Option<Embedding>, Vec<GTELayer>, LayerNorm)> {
+        let word_embeddings = Embedding::new(
+            vb.pp("embeddings.word_embeddings")
+                .get((config.vocab_size, config.hidden_size), "weight")?,
+            config.hidden_size,
+        );
+
+        let token_type_embeddings = if config.type_vocab_size > 0 {
+            Some(Embedding::new(
+                vb.pp("embeddings.token_type_embeddings")
+                    .get((config.type_vocab_size, config.hidden_size), "weight")?,
+                config.hidden_size,
+            ))
+        } else {
+            None
+        };
+
+        let layers = (0..config.num_hidden_layers)
+            .map(|index| GTELayer::load(vb.pp(format!("encoder.layer.{index}")), config))
+            .collect::<Result<Vec<_>>>()?;
+
+        let embeddings_norm = LayerNorm::load(
+            vb.pp("embeddings.LayerNorm"),
+            config.hidden_size,
+            config.layer_norm_eps,
+        )?;
+        Ok((
+            word_embeddings,
+            token_type_embeddings,
+            layers,
+            embeddings_norm,
+        ))
     }
 
     pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
