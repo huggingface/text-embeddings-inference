@@ -63,7 +63,7 @@
   },
   {
     "name": "cpu-ipex",
-    "imageNamePrefix": "cpu-ipex",
+    "imageNamePrefix": "cpu-ipex-",
     "runOn": "always",
     "sccache": true,
     "extraBuildArgs": "PLATFORM=cpu",
@@ -72,7 +72,7 @@
   },
   {
     "name": "xpu-ipex",
-    "imageNamePrefix": "xpu-ipex",
+    "imageNamePrefix": "xpu-ipex-",
     "runOn": "always",
     "sccache": true,
     "extraBuildArgs": "PLATFORM=xpu",
@@ -81,7 +81,7 @@
   },
   {
     "name": "hpu",
-    "imageNamePrefix": "hpu",
+    "imageNamePrefix": "hpu-",
     "runOn": "always",
     "sccache": true,
     "extraBuildArgs": "PLATFORM=hpu",
