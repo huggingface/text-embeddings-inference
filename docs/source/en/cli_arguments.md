@@ -131,10 +131,10 @@ Options:
 
           [env: DEFAULT_PROMPT=]
 
-      --hf-api-token <HF_API_TOKEN>
+      --hf-api-token <HF_TOKEN>
           Your HuggingFace hub token
 
-          [env: HF_API_TOKEN=]
+          [env: HF_TOKEN=]
 
       --hostname <HOSTNAME>
           The IP address to listen on

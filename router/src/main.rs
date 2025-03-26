@@ -106,10 +106,15 @@ struct Args {
     #[clap(long, env, conflicts_with = "default_prompt_name")]
     default_prompt: Option<String>,
 
-    /// Your HuggingFace hub token
-    #[clap(long, env)]
+    /// [DEPRECATED IN FAVOR OF `--hf-token`] Your Hugging Face Hub token
+    #[clap(long, env, hide = true)]
     #[redact(partial)]
     hf_api_token: Option<String>,
+
+    /// Your Hugging Face Hub token
+    #[clap(long, env, conflicts_with = "hf_api_token")]
+    #[redact(partial)]
+    hf_token: Option<String>,
 
     /// The IP address to listen on
     #[clap(default_value = "0.0.0.0", long, env)]
@@ -188,6 +193,13 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Since `--hf-api-token` is deprecated in favor of `--hf-token`, we need to still make sure
+    // that if the user provides the token with `--hf-api-token` the token is still parsed properly
+    if args.hf_api_token.is_some() {
+        tracing::warn!("The `--hf-api-token` argument (and the `HF_API_TOKEN` env var) is deprecated and will be removed in a future version. Please use `--hf-token` (or the `HF_TOKEN` env var) instead.");
+    }
+    let token = args.hf_token.or(args.hf_api_token);
+
     text_embeddings_router::run(
         args.model_id,
         args.revision,
@@ -201,7 +213,7 @@ async fn main() -> Result<()> {
         args.auto_truncate,
         args.default_prompt,
         args.default_prompt_name,
-        args.hf_api_token,
+        token,
         Some(args.hostname),
         args.port,
         Some(args.uds_path),
