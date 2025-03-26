@@ -183,7 +183,8 @@ fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     Ok(safetensors_files)
 }
 
-pub fn relative_matcher() -> YamlMatcher<SnapshotScores> {
+#[allow(unused)]
+pub(crate) fn relative_matcher() -> YamlMatcher<SnapshotScores> {
     YamlMatcher::new()
 }
 
@@ -201,7 +202,7 @@ pub fn load_tokenizer(model_root: &Path) -> Result<Tokenizer> {
             // We are forced to clone since `Tokenizer` does not have a `get_mut` for `pre_tokenizer`
             let mut m = m.clone();
             m.set_prepend_scheme(PrependScheme::First);
-            tokenizer.with_pre_tokenizer(PreTokenizerWrapper::Metaspace(m));
+            tokenizer.with_pre_tokenizer(Some(PreTokenizerWrapper::Metaspace(m)));
         } else if let PreTokenizerWrapper::Sequence(s) = pre_tokenizer {
             let pre_tokenizers = s.get_pre_tokenizers();
             // Check if we have a Metaspace pre tokenizer in the sequence
@@ -226,9 +227,9 @@ pub fn load_tokenizer(model_root: &Path) -> Result<Tokenizer> {
                     }
                     new_pre_tokenizers.push(pre_tokenizer);
                 }
-                tokenizer.with_pre_tokenizer(PreTokenizerWrapper::Sequence(Sequence::new(
+                tokenizer.with_pre_tokenizer(Some(PreTokenizerWrapper::Sequence(Sequence::new(
                     new_pre_tokenizers,
-                )));
+                ))));
             }
         }
     }
