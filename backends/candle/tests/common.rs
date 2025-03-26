@@ -183,7 +183,6 @@ fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     Ok(safetensors_files)
 }
 
-
 #[allow(unused)]
 pub(crate) fn relative_matcher() -> YamlMatcher<SnapshotScores> {
     YamlMatcher::new()
