@@ -70,7 +70,9 @@ pub async fn run(
         // Using a local model
         (model_id_path.to_path_buf(), None)
     } else {
-        let mut builder = ApiBuilder::new().with_progress(false).with_token(hf_token);
+        let mut builder = ApiBuilder::from_env()
+            .with_progress(false)
+            .with_token(hf_api_token);
 
         if let Some(cache_dir) = huggingface_hub_cache {
             builder = builder.with_cache_dir(cache_dir.into());
