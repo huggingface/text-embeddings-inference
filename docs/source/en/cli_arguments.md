@@ -182,6 +182,11 @@ Options:
 
           [env: JSON_OUTPUT=]
 
+      --disable-spans
+          Disables the span logging trace
+
+          [env: DISABLE_SPANS=]
+
       --otlp-endpoint <OTLP_ENDPOINT>
           The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC. e.g. `http://localhost:4317`
 
