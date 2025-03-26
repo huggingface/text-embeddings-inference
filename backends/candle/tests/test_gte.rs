@@ -50,6 +50,49 @@ fn test_alibaba_gte() -> Result<()> {
 }
 
 #[test]
+fn test_alibaba_gte_new() -> Result<()> {
+    let model_root = download_artifacts("Alibaba-NLP/gte-multilingual-base", None)?;
+    let tokenizer = load_tokenizer(&model_root)?;
+
+    let backend = CandleBackend::new(
+        &model_root,
+        "float32".to_string(),
+        ModelType::Embedding(Pool::Cls),
+    )?;
+
+    let input_batch = batch(
+        vec![
+            tokenizer.encode("What is Deep Learning?", true).unwrap(),
+            tokenizer.encode("Deep Learning is...", true).unwrap(),
+            tokenizer.encode("What is Deep Learning?", true).unwrap(),
+        ],
+        [0, 1, 2].to_vec(),
+        vec![],
+    );
+
+    let matcher = cosine_matcher();
+
+    let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_batch)?);
+    let embeddings_batch = SnapshotEmbeddings::from(pooled_embeddings);
+    insta::assert_yaml_snapshot!("alibaba_new_gte_batch", embeddings_batch, &matcher);
+
+    let input_single = batch(
+        vec![tokenizer.encode("What is Deep Learning?", true).unwrap()],
+        [0].to_vec(),
+        vec![],
+    );
+
+    let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_single)?);
+    let embeddings_single = SnapshotEmbeddings::from(pooled_embeddings);
+
+    insta::assert_yaml_snapshot!("alibaba_new_gte_single", embeddings_single, &matcher);
+    assert_eq!(embeddings_batch[0], embeddings_single[0]);
+    assert_eq!(embeddings_batch[2], embeddings_single[0]);
+
+    Ok(())
+}
+
+#[test]
 fn test_snowflake_gte() -> Result<()> {
     let model_root = download_artifacts("Snowflake/snowflake-arctic-embed-m-v2.0", None)?;
     let tokenizer = load_tokenizer(&model_root)?;
