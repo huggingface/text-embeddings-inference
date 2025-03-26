@@ -206,8 +206,11 @@
                 openssl
                 pkg-config
                 cudaPackages.cudatoolkit
+                python3Packages.python
+                python3Packages.venvShellHook
               ];
-              LD_LIBRARY_PATH = "/run/opengl-driver/lib";
+              venvDir = "./.venv";
+              LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib:/run/opengl-driver/lib";
               LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib:/run/opengl-driver/lib";
               CUDA_ROOT = "${pkgs.cudaPackages.cudatoolkit}";
             };
