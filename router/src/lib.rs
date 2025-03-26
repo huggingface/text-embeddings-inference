@@ -72,7 +72,7 @@ pub async fn run(
     } else {
         let mut builder = ApiBuilder::from_env()
             .with_progress(false)
-            .with_token(hf_api_token);
+            .with_token(hf_token);
 
         if let Some(cache_dir) = huggingface_hub_cache {
             builder = builder.with_cache_dir(cache_dir.into());
