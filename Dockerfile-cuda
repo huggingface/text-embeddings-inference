@@ -24,6 +24,7 @@ FROM base-builder AS planner
 WORKDIR /usr/src
 
 COPY backends backends
+COPY candle-extensions candle-extensions
 COPY core core
 COPY router router
 COPY Cargo.toml ./
