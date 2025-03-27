@@ -6,10 +6,9 @@ edition = "2021"
 description = "CUBLASLt gemm for the candle ML framework."
 
 [dependencies]
-# candle = { version = "0.8", package = "candle-core", features = ["cuda"]}
 candle = { workspace=true, features = ["cuda"]}
 cudarc = { workspace = true, features = [ "cublaslt", "f16" ]}
-half = { version = "2.3.1", features = ["num-traits"] }
+half = { workspace = true}
 
 [features]
 static-linking = ["cudarc/static-linking"]

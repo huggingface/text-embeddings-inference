@@ -1,0 +1,15 @@
+[package]
+name = "candle-layer-norm"
+version = "0.0.1"
+edition = "2021"
+
+description = "Layer Norm layer for the candle ML framework."
+
+[dependencies]
+candle = { workspace = true, features = ["cuda"] }
+half = { workspace = true }
+
+[build-dependencies]
+anyhow = { version = "1", features = ["backtrace"] }
+num_cpus = "1.15.0"
+rayon = "1.7.0"
