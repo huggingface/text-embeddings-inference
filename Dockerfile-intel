@@ -10,6 +10,7 @@ RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sc
 
 FROM chef AS planner
 
+COPY candle-extensions candle-extensions
 COPY backends backends
 COPY core core
 COPY router router
