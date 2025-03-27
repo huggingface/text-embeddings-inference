@@ -46,8 +46,7 @@ serde_json = "1.0"
 thiserror = "1.0"
 rand = "0.9"
 serial_test = "2.0.0"
-# cudarc = { version = "0.13" , features =["cuda-version-from-build-system"]}
-cudarc = { git = "https://github.com/Narsil/cudarc" , rev = "1956436aeddea1da04fc3226282bc07c07eeaa35", features =["cuda-12020"]}
+cudarc = { version = "0.13" , features =["cuda-12020"]}
 candle = { version = "0.8", package = "candle-core" }
 candle-nn = { version = "0.8", package = "candle-nn" }
 candle-transformers = { version = "0.8", package = "candle-transformers" }
@@ -60,6 +59,10 @@ half = { version = "2.3.1", features = ["num-traits"] }
 
 [patch.crates-io]
 cudarc = { git = "https://github.com/Narsil/cudarc" , rev = "1956436aeddea1da04fc3226282bc07c07eeaa35"}
+candle = { git = "https://github.com/Narsil/candle", rev = "2e273ddf31b1b796d3cfcd181ccb98deaa48466e", package = "candle-core" }
+candle-nn = { git = "https://github.com/Narsil/candle", rev = "2e273ddf31b1b796d3cfcd181ccb98deaa48466e", package = "candle-nn" }
+candle-transformers = { git = "https://github.com/Narsil/candle", rev = "2e273ddf31b1b796d3cfcd181ccb98deaa48466e", package = "candle-transformers" }
+candle-flash-attn = { git = "https://github.com/Narsil/candle", rev = "2e273ddf31b1b796d3cfcd181ccb98deaa48466e", package = "candle-flash-attn" }
 
 [profile.release]
 debug = 0
