@@ -44,13 +44,13 @@ RUN PROTOC_ZIP=protoc-21.12-linux-x86_64.zip && \
     unzip -o $PROTOC_ZIP -d /usr/local 'include/*' && \
     rm -f $PROTOC_ZIP
 
-FROM builder as http-builder
+FROM builder AS http-builder
 
 RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     cargo build --release --bin text-embeddings-router -F python -F http --no-default-features && sccache -s
 
-FROM builder as grpc-builder
+FROM builder AS grpc-builder
 
 COPY proto proto
 
