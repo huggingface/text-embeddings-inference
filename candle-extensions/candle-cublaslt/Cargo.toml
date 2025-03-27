@@ -9,6 +9,3 @@ description = "CUBLASLt gemm for the candle ML framework."
 candle = { workspace=true, features = ["cuda"]}
 cudarc = { workspace = true, features = [ "cublaslt", "f16" ]}
 half = { workspace = true}
-
-[features]
-static-linking = ["cudarc/static-linking"]

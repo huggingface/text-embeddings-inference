@@ -47,12 +47,19 @@ thiserror = "1.0"
 rand = "0.9"
 serial_test = "2.0.0"
 # cudarc = { version = "0.13" , features =["cuda-version-from-build-system"]}
-cudarc = { version = "0.10", default-features = false }
-candle = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-core" }
-candle-nn = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-nn" }
-candle-transformers = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-transformers" }
-candle-flash-attn = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-flash-attn" }
+cudarc = { git = "https://github.com/Narsil/cudarc" , rev = "1956436aeddea1da04fc3226282bc07c07eeaa35", features =["cuda-version-from-build-system"]}
+candle = { version = "0.8", package = "candle-core" }
+candle-nn = { version = "0.8", package = "candle-nn" }
+candle-transformers = { version = "0.8", package = "candle-transformers" }
+candle-flash-attn = { version = "0.8", package = "candle-flash-attn" }
+# candle = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-core" }
+# candle-nn = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-nn" }
+# candle-transformers = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-transformers" }
+# candle-flash-attn = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-flash-attn" }
 half = { version = "2.3.1", features = ["num-traits"] }
+
+[patch.crates-io]
+cudarc = { git = "https://github.com/Narsil/cudarc" , rev = "1956436aeddea1da04fc3226282bc07c07eeaa35"}
 
 [profile.release]
 debug = 0
