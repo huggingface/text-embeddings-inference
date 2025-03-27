@@ -10,6 +10,16 @@ members = [
     "core",
     "router",
 ]
+default-members = [
+    "backends",
+    "backends/candle",
+    "backends/ort",
+    "backends/core",
+    "backends/python",
+    "backends/grpc-client",
+    "core",
+    "router",
+]
 resolver = "2"
 
 [workspace.package]
