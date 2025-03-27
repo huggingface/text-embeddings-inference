@@ -443,7 +443,6 @@ impl GTEModel {
         vb: VarBuilder,
         config: &GTEConfig,
     ) -> Result<(Embedding, Option<Embedding>, GTEEncoder, LayerNorm)> {
-
         let word_embeddings = Embedding::new(
             vb.pp("embeddings.word_embeddings")
                 .get((config.vocab_size, config.hidden_size), "weight")?,
