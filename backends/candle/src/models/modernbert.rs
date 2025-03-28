@@ -332,7 +332,9 @@ impl ModernBertEncoderLayer {
             .mlp
             .forward(&self.mlp_norm.forward(&hidden_states, None)?)?;
 
-        hidden_states.add(&mlp_output)
+        let hidden_states = hidden_states.add(&mlp_output)?;
+        
+        Ok(hidden_states)
     }
 }
 
