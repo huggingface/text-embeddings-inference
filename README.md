@@ -82,7 +82,7 @@ Below are some examples of the currently supported models:
 | N/A       | 0.1B                | JinaBERT    | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)             |
 | N/A       | 0.1B                | JinaBERT    | [jinaai/jina-embeddings-v2-base-code](https://hf.co/jinaai/jina-embeddings-v2-base-code)         |
 | N/A       | 0.1B                | MPNet       | [sentence-transformers/all-mpnet-base-v2](https://hf.co/sentence-transformers/all-mpnet-base-v2)            |
-| N/A       | 0.4B                | ModernBert  | [answerdotai/ModernBERT-large](https://hf.co/answerdotai/ModernBERT-large) |
+| N/A       | 0.4B                | ModernBERT  | [answerdotai/ModernBERT-large](https://hf.co/answerdotai/ModernBERT-large) |
 
 To explore the list of best performing text embeddings models, visit the
 [Massive Text Embedding Benchmark (MTEB) Leaderboard](https://huggingface.co/spaces/mteb/leaderboard).
