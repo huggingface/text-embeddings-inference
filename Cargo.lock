@@ -524,7 +524,6 @@ dependencies = [
 [[package]]
 name = "candle-cublaslt"
 version = "0.2.2"
-source = "git+https://github.com/huggingface/candle-cublaslt?rev=cf789b7dd6d4abb19b03b9556442f94f0588b4a0#cf789b7dd6d4abb19b03b9556442f94f0588b4a0"
 dependencies = [
  "candle-core",
  "cudarc",
@@ -874,7 +873,8 @@ dependencies = [
 [[package]]
 name = "cudarc"
 version = "0.10.0"
-source = "git+https://github.com/coreylowman/cudarc?rev=c388e724af93a3e8fbe484f5ded2d8b3c1badd8e#c388e724af93a3e8fbe484f5ded2d8b3c1badd8e"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9395df0cab995685664e79cc35ad6302bf08fb9c5d82301875a183affe1278b1"
 dependencies = [
  "half",
 ]

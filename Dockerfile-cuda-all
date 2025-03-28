@@ -23,6 +23,7 @@ FROM base-builder AS planner
 
 WORKDIR /usr/src
 
+COPY candle-extensions candle-extensions
 COPY backends backends
 COPY core core
 COPY router router
@@ -85,6 +86,7 @@ RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
       CUDA_COMPUTE_CAP=90 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s; \
     fi;
 
+COPY candle-extensions candle-extensions
 COPY backends backends
 COPY core core
 COPY router router
