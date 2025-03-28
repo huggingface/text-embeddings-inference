@@ -69,7 +69,7 @@ fn test_mini() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_mini_pooled_raw() -> Result<()> {
-    let model_root = download_artifacts("sentence-transformers/all-mpnet-base-v2", None)?;
+    let model_root = download_artifacts("answerdotai/ModernBERT-base", None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -103,8 +103,8 @@ fn test_mini_pooled_raw() -> Result<()> {
     // Check that the first token of each raw embeddings member is the same as the cls pooling ones
     assert_eq!(pooled_embeddings_batch[0], raw_embeddings_batch[0]);
     assert_eq!(pooled_embeddings_batch[1], raw_embeddings_batch[7]);
-    assert_eq!(pooled_embeddings_batch[2], raw_embeddings_batch[15]);
-    assert_eq!(raw_embeddings_batch.len(), 22);
+    assert_eq!(pooled_embeddings_batch[2], raw_embeddings_batch[13]);
+    assert_eq!(raw_embeddings_batch.len(), 20);
 
     let input_single = batch(
         vec![tokenizer.encode("What is Deep Learning?", true).unwrap()],
@@ -130,7 +130,7 @@ fn test_mini_pooled_raw() -> Result<()> {
     insta::assert_yaml_snapshot!("mini_single_raw", embeddings_single, &matcher);
 
     assert_eq!(raw_embeddings_batch[0], embeddings_single[0]);
-    assert_eq!(raw_embeddings_batch[15], embeddings_single[0]);
+    assert_eq!(raw_embeddings_batch[13], embeddings_single[0]);
     assert_eq!(embeddings_single.len(), 7);
 
     Ok(())
