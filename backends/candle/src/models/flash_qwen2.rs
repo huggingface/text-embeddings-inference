@@ -21,8 +21,8 @@ struct Qwen2Attention {
 
 impl Qwen2Attention {
     pub fn load(vb: VarBuilder, config: &Qwen2Config) -> Result<Self> {
-        if config.sliding_window.is_some() {
-            candle::bail!("Sliding window is not supported for Qwen2");
+        if config.use_sliding_window {
+            candle::bail!("Sliding window is not supported for Qwen2",);
         }
 
         let num_attention_heads = config.num_attention_heads;
