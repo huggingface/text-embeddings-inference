@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use crate::layers::{
-    apply_rotary, get_cos_sin, get_cublas_lt_wrapper, get_inv_freqs, HiddenAct, LayerNorm, Linear,
+    apply_rotary, get_cos_sin, get_cublas_lt_wrapper, get_inv_freqs, HiddenAct, LayerNormNoBias,
+    Linear,
 };
 use crate::models::Model;
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
@@ -52,7 +53,7 @@ pub struct ModernBertConfig {
 #[derive(Debug)]
 pub struct ModernBertEmbeddings {
     tok_embeddings: Embedding,
-    norm: LayerNorm,
+    norm: LayerNormNoBias,
     span: tracing::Span,
 }
 
@@ -64,7 +65,7 @@ impl ModernBertEmbeddings {
                     .get((config.vocab_size, config.hidden_size), "weight")?,
                 config.hidden_size,
             ),
-            norm: LayerNorm::load(vb.pp("norm"), config.hidden_size, config.norm_eps as f32)?,
+            norm: LayerNormNoBias::load(vb.pp("norm"), config.hidden_size, config.norm_eps as f32)?,
             span: tracing::span!(tracing::Level::TRACE, "embeddings"),
         })
     }
@@ -267,9 +268,9 @@ impl ModernBertAttention {
 }
 
 struct ModernBertEncoderLayer {
-    attn_norm: Option<LayerNorm>,
+    attn_norm: Option<LayerNormNoBias>,
     attn: ModernBertAttention,
-    mlp_norm: LayerNorm,
+    mlp_norm: LayerNormNoBias,
     mlp: ModernBertMLP,
 
     span: tracing::Span,
@@ -278,7 +279,7 @@ struct ModernBertEncoderLayer {
 impl ModernBertEncoderLayer {
     pub fn load(vb: VarBuilder, index: usize, config: &ModernBertConfig) -> Result<Self> {
         let attn_norm = if index != 0 {
-            Some(LayerNorm::load(
+            Some(LayerNormNoBias::load(
                 vb.pp("attn_norm"),
                 config.hidden_size,
                 config.norm_eps as f32,
@@ -289,7 +290,7 @@ impl ModernBertEncoderLayer {
 
         let attn = ModernBertAttention::load(vb.pp("attn"), config)?;
 
-        let mlp_norm = LayerNorm::load(
+        let mlp_norm = LayerNormNoBias::load(
             vb.pp("mlp_norm"),
             config.hidden_size,
             config.norm_eps as f32,
@@ -394,7 +395,7 @@ pub trait ClassificationHead {
 
 pub struct ModernBertClassificationHead {
     dense: Linear,
-    norm: LayerNorm,
+    norm: LayerNormNoBias,
     classifier: Linear,
     span: tracing::Span,
 }
@@ -411,7 +412,8 @@ impl ModernBertClassificationHead {
             Some(config.classifier_activation.clone()),
         );
 
-        let norm = LayerNorm::load(vb.pp("norm"), config.hidden_size, config.norm_eps as f32)?;
+        let norm =
+            LayerNormNoBias::load(vb.pp("norm"), config.hidden_size, config.norm_eps as f32)?;
 
         let classifier_weight = vb.pp("dense").get(
             (config.num_labels.unwrap_or(1), config.hidden_size),
@@ -451,7 +453,7 @@ impl ClassificationHead for ModernBertClassificationHead {
 pub struct ModernBertModel {
     embeddings: ModernBertEmbeddings,
     encoder: ModernBertEncoder,
-    final_norm: LayerNorm,
+    final_norm: LayerNormNoBias,
     pool: Pool,
     classifier: Option<Box<dyn ClassificationHead + Send>>,
 
@@ -495,13 +497,13 @@ impl ModernBertModel {
             .or_else(|_| ModernBertEmbeddings::load(vb.pp("embeddings"), config))?;
         let encoder = ModernBertEncoder::load(vb.pp("model.layers"), config)
             .or_else(|_| ModernBertEncoder::load(vb.pp("layers"), config))?;
-        let final_norm = LayerNorm::load(
+        let final_norm = LayerNormNoBias::load(
             vb.pp("model.final_norm"),
             config.hidden_size,
             config.norm_eps as f32,
         )
         .or_else(|_| {
-            LayerNorm::load(
+            LayerNormNoBias::load(
                 vb.pp("final_norm"),
                 config.hidden_size,
                 config.norm_eps as f32,
