@@ -25,11 +25,24 @@ class EmbeddingService(embed_pb2_grpc.EmbeddingServiceServicer):
         return embed_pb2.HealthResponse()
 
     async def Embed(self, request, context):
-        batch = self.model.batch_type.from_pb(request, self.model.device)
+        max_input_length = self.model.max_input_length
+        batch = self.model.batch_type.from_pb(
+            request, self.model.device, max_input_length
+        )
 
         embeddings = self.model.embed(batch)
 
         return embed_pb2.EmbedResponse(embeddings=embeddings)
+
+    async def Predict(self, request, context):
+        max_input_length = self.model.max_input_length
+        batch = self.model.batch_type.from_pb(
+            request, self.model.device, max_input_length
+        )
+
+        scores = self.model.predict(batch)
+
+        return embed_pb2.PredictResponse(scores=scores)
 
 
 def serve(

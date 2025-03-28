@@ -54,7 +54,7 @@ pub async fn run(
     auto_truncate: bool,
     default_prompt: Option<String>,
     default_prompt_name: Option<String>,
-    hf_api_token: Option<String>,
+    hf_token: Option<String>,
     hostname: Option<String>,
     port: u16,
     uds_path: Option<String>,
@@ -70,12 +70,16 @@ pub async fn run(
         // Using a local model
         (model_id_path.to_path_buf(), None)
     } else {
-        let mut builder = ApiBuilder::new()
+        let mut builder = ApiBuilder::from_env()
             .with_progress(false)
-            .with_token(hf_api_token);
+            .with_token(hf_token);
 
         if let Some(cache_dir) = huggingface_hub_cache {
             builder = builder.with_cache_dir(cache_dir.into());
+        }
+
+        if let Ok(origin) = std::env::var("HF_HUB_USER_AGENT_ORIGIN") {
+            builder = builder.with_user_agent("origin", origin.as_str());
         }
 
         let api = builder.build().unwrap();
@@ -254,10 +258,9 @@ pub async fn run(
 
     let max_batch_requests = backend
         .max_batch_size
-        .map(|s| {
+        .inspect(|&s| {
             tracing::warn!("Backend does not support a batch size > {s}");
             tracing::warn!("forcing `max_batch_requests={s}`");
-            s
         })
         .or(max_batch_requests);
 
@@ -295,9 +298,8 @@ pub async fn run(
         std::env::var("AIP_HTTP_PORT")
             .ok()
             .and_then(|p| p.parse().ok())
-            .map(|p| {
+            .inspect(|&p| {
                 tracing::info!("`AIP_HTTP_PORT` is set: overriding port {port} by port {p}");
-                p
             })
             .unwrap_or(port)
     } else {
@@ -352,6 +354,15 @@ fn get_backend_model_type(
     pooling: Option<text_embeddings_backend::Pool>,
 ) -> Result<text_embeddings_backend::ModelType> {
     for arch in &config.architectures {
+        // Edge case affecting `Alibaba-NLP/gte-multilingual-base` and possibly other fine-tunes of
+        // the same base model. More context at https://huggingface.co/Alibaba-NLP/gte-multilingual-base/discussions/7
+        if arch == "NewForTokenClassification"
+            && (config.id2label.is_none() | config.label2id.is_none())
+        {
+            tracing::warn!("Provided `--model-id` is likely an AlibabaNLP GTE model, but the `config.json` contains the architecture `NewForTokenClassification` but it doesn't contain the `id2label` and `label2id` mapping, so `NewForTokenClassification` architecture will be ignored.");
+            continue;
+        }
+
         if Some(text_embeddings_backend::Pool::Splade) == pooling && arch.ends_with("MaskedLM") {
             return Ok(text_embeddings_backend::ModelType::Embedding(
                 text_embeddings_backend::Pool::Splade,

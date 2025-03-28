@@ -408,29 +408,9 @@ impl GTEModel {
             ModelType::Embedding(pool) => (pool, None),
         };
 
-        let word_embeddings = Embedding::new(
-            vb.pp("embeddings.word_embeddings")
-                .get((config.vocab_size, config.hidden_size), "weight")?,
-            config.hidden_size,
-        );
-
-        let token_type_embeddings = if config.type_vocab_size > 0 {
-            Some(Embedding::new(
-                vb.pp("embeddings.token_type_embeddings")
-                    .get((config.type_vocab_size, config.hidden_size), "weight")?,
-                config.hidden_size,
-            ))
-        } else {
-            None
-        };
-
-        let encoder = GTEEncoder::load(vb.pp("encoder"), config)?;
-
-        let embeddings_norm = LayerNorm::load(
-            vb.pp("embeddings.LayerNorm"),
-            config.hidden_size,
-            config.layer_norm_eps,
-        )?;
+        let (word_embeddings, token_type_embeddings, encoder, embeddings_norm) =
+            Self::inner_load(vb.pp("new"), config)
+                .or_else(|_| Self::inner_load(vb.clone(), config))?;
 
         let rotary_dim = encoder.layers[0].attention.attention_head_size;
         let inv_freqs = get_inv_freqs(
@@ -457,6 +437,41 @@ impl GTEModel {
             span: tracing::span!(tracing::Level::TRACE, "model"),
             rotary_dim,
         })
+    }
+
+    fn inner_load(
+        vb: VarBuilder,
+        config: &GTEConfig,
+    ) -> Result<(Embedding, Option<Embedding>, GTEEncoder, LayerNorm)> {
+        let word_embeddings = Embedding::new(
+            vb.pp("embeddings.word_embeddings")
+                .get((config.vocab_size, config.hidden_size), "weight")?,
+            config.hidden_size,
+        );
+
+        let token_type_embeddings = if config.type_vocab_size > 0 {
+            Some(Embedding::new(
+                vb.pp("embeddings.token_type_embeddings")
+                    .get((config.type_vocab_size, config.hidden_size), "weight")?,
+                config.hidden_size,
+            ))
+        } else {
+            None
+        };
+
+        let encoder = GTEEncoder::load(vb.pp("encoder"), config)?;
+
+        let embeddings_norm = LayerNorm::load(
+            vb.pp("embeddings.LayerNorm"),
+            config.hidden_size,
+            config.layer_norm_eps,
+        )?;
+        Ok((
+            word_embeddings,
+            token_type_embeddings,
+            encoder,
+            embeddings_norm,
+        ))
     }
 
     pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {

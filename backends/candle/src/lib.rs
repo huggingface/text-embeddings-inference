@@ -57,9 +57,11 @@ enum Config {
     DistilBert(DistilBertConfig),
     #[serde(rename(deserialize = "nomic_bert"))]
     NomicBert(NomicConfig),
+    #[allow(dead_code)]
     Mistral(MistralConfig),
-    #[serde(rename = "new")]
+    #[serde(alias = "new")]
     Gte(GTEConfig),
+    #[allow(dead_code)]
     Qwen2(Qwen2Config),
     #[serde(rename = "mpnet")]
     MPNet(MPNetConfig),

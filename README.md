@@ -56,6 +56,7 @@ Ember, GTE and E5. TEI implements many features such as:
   [Candle](https://github.com/huggingface/candle)
   and [cuBLASLt](https://docs.nvidia.com/cuda/cublas/#using-the-cublaslt-api)
 * [Safetensors](https://github.com/huggingface/safetensors) weight loading
+* [ONNX](https://github.com/onnx/onnx) weight loading
 * Production ready (distributed tracing with Open Telemetry, Prometheus metrics)
 
 ## Get Started
@@ -71,17 +72,19 @@ Below are some examples of the currently supported models:
 
 | MTEB Rank | Model Size          | Model Type  | Model ID                                                                                         |
 |-----------|---------------------|-------------|--------------------------------------------------------------------------------------------------|
-| 1         | 7B (Very Expensive) | Mistral     | [Salesforce/SFR-Embedding-2_R](https://hf.co/Salesforce/SFR-Embedding-2_R)                       |
-| 2         | 7B (Very Expensive) | Qwen2       | [Alibaba-NLP/gte-Qwen2-7B-instruct](https://hf.co/Alibaba-NLP/gte-Qwen2-7B-instruct)             |
-| 9         | 1.5B (Expensive)    | Qwen2       | [Alibaba-NLP/gte-Qwen2-1.5B-instruct](https://hf.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct)         |
-| 15        | 0.4B                | Alibaba GTE | [Alibaba-NLP/gte-large-en-v1.5](https://hf.co/Alibaba-NLP/gte-large-en-v1.5)                     |
+| 3         | 7B (Very Expensive) | Qwen2       | [Alibaba-NLP/gte-Qwen2-7B-instruct](https://hf.co/Alibaba-NLP/gte-Qwen2-7B-instruct)             |
+| 11        | 1.5B (Expensive)    | Qwen2       | [Alibaba-NLP/gte-Qwen2-1.5B-instruct](https://hf.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct)         |
+| 14        | 7B (Very Expensive) | Mistral     | [Salesforce/SFR-Embedding-2_R](https://hf.co/Salesforce/SFR-Embedding-2_R)                       |
 | 20        | 0.3B                | Bert        | [WhereIsAI/UAE-Large-V1](https://hf.co/WhereIsAI/UAE-Large-V1)                                   |
-| 24        | 0.5B                | XLM-RoBERTa | [intfloat/multilingual-e5-large-instruct](https://hf.co/intfloat/multilingual-e5-large-instruct) |
+| 31        | 0.5B                | XLM-RoBERTa | [Snowflake/snowflake-arctic-embed-l-v2.0](https://hf.co/Snowflake/snowflake-arctic-embed-l-v2.0) |
+| 37        | 0.3B                | Alibaba GTE | [Snowflake/snowflake-arctic-embed-m-v2.0](https://hf.co/Snowflake/snowflake-arctic-embed-m-v2.0) |
+| 49        | 0.5B                | XLM-RoBERTa | [intfloat/multilingual-e5-large-instruct](https://hf.co/intfloat/multilingual-e5-large-instruct) |
+| N/A       | 0.4B                | Alibaba GTE | [Alibaba-NLP/gte-large-en-v1.5](https://hf.co/Alibaba-NLP/gte-large-en-v1.5)                     |
 | N/A       | 0.1B                | NomicBert   | [nomic-ai/nomic-embed-text-v1](https://hf.co/nomic-ai/nomic-embed-text-v1)                       |
 | N/A       | 0.1B                | NomicBert   | [nomic-ai/nomic-embed-text-v1.5](https://hf.co/nomic-ai/nomic-embed-text-v1.5)                   |
 | N/A       | 0.1B                | JinaBERT    | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)             |
 | N/A       | 0.1B                | JinaBERT    | [jinaai/jina-embeddings-v2-base-code](https://hf.co/jinaai/jina-embeddings-v2-base-code)         |
-| N/A       | 0.1B                | MPNet       | [sentence-transformers/all-mpnet-base-v2](https://hf.co/sentence-transformers/all-mpnet-base-v2)            |
+| N/A       | 0.1B                | MPNet       | [sentence-transformers/all-mpnet-base-v2](https://hf.co/sentence-transformers/all-mpnet-base-v2) |
 | N/A       | 0.4B                | ModernBERT  | [answerdotai/ModernBERT-large](https://hf.co/answerdotai/ModernBERT-large) |
 
 To explore the list of best performing text embeddings models, visit the
@@ -237,10 +240,10 @@ Options:
 
           [env: DEFAULT_PROMPT=]
 
-      --hf-api-token <HF_API_TOKEN>
-          Your HuggingFace hub token
+      --hf-token <HF_TOKEN>
+          Your Hugging Face Hub token
 
-          [env: HF_API_TOKEN=]
+          [env: HF_TOKEN=]
 
       --hostname <HOSTNAME>
           The IP address to listen on
@@ -288,6 +291,11 @@ Options:
 
           [env: JSON_OUTPUT=]
 
+      --disable-spans
+          Disables the span logging trace
+
+          [env: DISABLE_SPANS=]
+
       --otlp-endpoint <OTLP_ENDPOINT>
           The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC. e.g. `http://localhost:4317`
 
@@ -330,14 +338,14 @@ at: [https://huggingface.github.io/text-embeddings-inference](https://huggingfac
 
 ### Using a private or gated model
 
-You have the option to utilize the `HF_API_TOKEN` environment variable for configuring the token employed by
+You have the option to utilize the `HF_TOKEN` environment variable for configuring the token employed by
 `text-embeddings-inference`. This allows you to gain access to protected resources.
 
 For example:
 
 1. Go to https://huggingface.co/settings/tokens
 2. Copy your cli READ token
-3. Export `HF_API_TOKEN=<your cli READ token>`
+3. Export `HF_TOKEN=<your cli READ token>`
 
 or with Docker:
 
@@ -346,7 +354,7 @@ model=<your private model>
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 token=<your cli READ token>
 
-docker run --gpus all -e HF_API_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.6 --model-id $model
+docker run --gpus all -e HF_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.6 --model-id $model
 ```
 
 ### Air gapped deployment
@@ -477,7 +485,9 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 Then run:
 
 ```shell
-# On x86
+# On x86 with ONNX backend (recommended)
+cargo install --path router -F ort
+# On x86 with Intel backend
 cargo install --path router -F mkl
 # On M1 or M2
 cargo install --path router -F metal
@@ -497,11 +507,11 @@ text-embeddings-router --model-id $model --port 8080
 sudo apt-get install libssl-dev gcc -y
 ```
 
-### Cuda
+### CUDA
 
-GPUs with Cuda compute capabilities < 7.5 are not supported (V100, Titan V, GTX 1000 series, ...).
+GPUs with CUDA compute capabilities < 7.5 are not supported (V100, Titan V, GTX 1000 series, ...).
 
-Make sure you have Cuda and the nvidia drivers installed. NVIDIA drivers on your device need to be compatible with CUDA
+Make sure you have CUDA and the nvidia drivers installed. NVIDIA drivers on your device need to be compatible with CUDA
 version 12.2 or higher.
 You also need to add the nvidia binaries to your path:
 
@@ -537,7 +547,7 @@ You can build the CPU container with:
 docker build .
 ```
 
-To build the Cuda containers, you need to know the compute cap of the GPU you will be using
+To build the CUDA containers, you need to know the compute cap of the GPU you will be using
 at runtime.
 
 Then you can build the container with:

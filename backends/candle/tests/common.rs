@@ -107,10 +107,14 @@ pub fn download_artifacts(
     model_id: &'static str,
     revision: Option<&'static str>,
 ) -> Result<PathBuf> {
-    let mut builder = ApiBuilder::new().with_progress(false);
+    let mut builder = ApiBuilder::from_env().with_progress(false);
 
     if let Some(cache_dir) = std::env::var_os("HUGGINGFACE_HUB_CACHE") {
         builder = builder.with_cache_dir(cache_dir.into());
+    }
+
+    if let Ok(origin) = std::env::var("HF_HUB_USER_AGENT_ORIGIN") {
+        builder = builder.with_user_agent("origin", origin.as_str());
     }
 
     let api = builder.build().unwrap();
@@ -179,7 +183,8 @@ fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     Ok(safetensors_files)
 }
 
-pub fn relative_matcher() -> YamlMatcher<SnapshotScores> {
+#[allow(unused)]
+pub(crate) fn relative_matcher() -> YamlMatcher<SnapshotScores> {
     YamlMatcher::new()
 }
 

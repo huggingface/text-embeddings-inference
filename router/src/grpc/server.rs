@@ -598,8 +598,7 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         &self,
         request: Request<EmbedRequest>,
     ) -> Result<Response<EmbedResponse>, Status> {
-        let counter = metrics::counter!("te_request_count", "method" => "single");
-        counter.increment(1);
+        metrics::counter!("te_request_count", "method" => "single").increment(1);
 
         let permit = self
             .infer
@@ -610,8 +609,7 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         let (response, metadata) = self.embed_pooled_inner(request, permit).await?;
         let headers = HeaderMap::from(metadata);
 
-        let counter = metrics::counter!("te_request_count", "method" => "single");
-        counter.increment(1);
+        metrics::counter!("te_request_success", "method" => "single").increment(1);
 
         Ok(Response::from_parts(
             MetadataMap::from_headers(headers),
@@ -728,8 +726,7 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
         &self,
         request: Request<PredictRequest>,
     ) -> Result<Response<PredictResponse>, Status> {
-        let counter = metrics::counter!("te_request_count", "method" => "single");
-        counter.increment(1);
+        metrics::counter!("te_request_count", "method" => "single").increment(1);
 
         let permit = self
             .infer
@@ -749,8 +746,7 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
             .await?;
         let headers = HeaderMap::from(metadata);
 
-        let counter = metrics::counter!("te_request_count", "method" => "single");
-        counter.increment(1);
+        metrics::counter!("te_request_success", "method" => "single").increment(1);
 
         Ok(Response::from_parts(
             MetadataMap::from_headers(headers),
@@ -763,8 +759,8 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
         &self,
         request: Request<PredictPairRequest>,
     ) -> Result<Response<PredictResponse>, Status> {
-        let counter = metrics::counter!("te_request_count", "method" => "single");
-        counter.increment(1);
+        metrics::counter!("te_request_count", "method" => "single").increment(1);
+
         let request = request.into_inner();
 
         let mut inputs = request.inputs;
@@ -800,8 +796,7 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
             .await?;
         let headers = HeaderMap::from(metadata);
 
-        let counter = metrics::counter!("te_request_count", "method" => "single");
-        counter.increment(1);
+        metrics::counter!("te_request_success", "method" => "single").increment(1);
 
         Ok(Response::from_parts(
             MetadataMap::from_headers(headers),

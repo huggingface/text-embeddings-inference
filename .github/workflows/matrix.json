@@ -60,5 +60,32 @@
     "sccache": true,
     "grpc": true,
     "dockerfile": "Dockerfile"
+  },
+  {
+    "name": "cpu-ipex",
+    "imageNamePrefix": "cpu-ipex-",
+    "runOn": "always",
+    "sccache": true,
+    "extraBuildArgs": "PLATFORM=cpu",
+    "grpc": true,
+    "dockerfile": "Dockerfile-intel"
+  },
+  {
+    "name": "xpu-ipex",
+    "imageNamePrefix": "xpu-ipex-",
+    "runOn": "always",
+    "sccache": true,
+    "extraBuildArgs": "PLATFORM=xpu",
+    "grpc": true,
+    "dockerfile": "Dockerfile-intel"
+  },
+  {
+    "name": "hpu",
+    "imageNamePrefix": "hpu-",
+    "runOn": "always",
+    "sccache": true,
+    "extraBuildArgs": "PLATFORM=hpu",
+    "grpc": true,
+    "dockerfile": "Dockerfile-intel"
   }
 ]
