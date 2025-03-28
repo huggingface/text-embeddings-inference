@@ -7,6 +7,9 @@ members = [
     "backends/python",
     "backends/grpc-client",
     "candle-extensions/candle-cublaslt",
+    "candle-extensions/candle-flash-attn-v1",
+    "candle-extensions/candle-layer-norm",
+    "candle-extensions/candle-rotary",
     "core",
     "router",
 ]
@@ -49,13 +52,7 @@ candle = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104
 candle-nn = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-nn" }
 candle-transformers = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-transformers" }
 candle-flash-attn = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-flash-attn" }
-
-
-[patch.crates-io]
-candle = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-core" }
-candle-nn = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-nn" }
-candle-transformers = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-transformers" }
-candle-flash-attn = { git = "https://github.com/OlivierDehaene/candle", rev = "7e02ad856104799b73a946ac1e153f0de77feaaf", package = "candle-flash-attn" }
+half = { version = "2.3.1", features = ["num-traits"] }
 
 [profile.release]
 debug = 0
