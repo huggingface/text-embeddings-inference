@@ -19,4 +19,4 @@ bindgen_cuda = "0.1.1"
 
 [dev-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
-candle-nn = { version = "0.3.0", features = ["cuda"] }
+candle-nn = { workspace = true }

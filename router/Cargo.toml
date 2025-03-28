@@ -57,6 +57,9 @@ tonic-health = { version = "0.11.0", optional = true }
 tonic-reflection = { version = "0.11.0", optional = true }
 tokio-stream = { version = "0.1.14", optional = true }
 
+# Optional
+cudarc = { workspace = true, optional = true }
+
 # Malloc trim hack for linux
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2.149"
@@ -88,5 +91,5 @@ candle = ["text-embeddings-backend/candle"]
 candle-cuda = ["candle", "text-embeddings-backend/flash-attn"]
 candle-cuda-turing = ["candle", "text-embeddings-backend/flash-attn-v1"]
 candle-cuda-volta = ["candle", "text-embeddings-backend/cuda"]
-static-linking = ["text-embeddings-backend/static-linking"]
+static-linking = ["cudarc/static-linking"]
 google = []
