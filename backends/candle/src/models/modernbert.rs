@@ -553,8 +553,7 @@ impl ModernBertModel {
             Tensor::ones(*input_shape, DType::F32, &self.device)?
         }
         .unsqueeze(1)?
-        .unsqueeze(1)?
-        .to_dtype(self.dtype)?;
+        .unsqueeze(1)?;
 
         let (bs, seq_len) = *input_shape;
         let extended_attention_mask = extended_attention_mask.broadcast_as((
@@ -564,8 +563,12 @@ impl ModernBertModel {
             seq_len,
         ))?;
 
-        let inverted_mask = (1.0 - extended_attention_mask)?;
-        let inverted_mask = (inverted_mask * f32::MIN as f64)?;
+        let min_value = match self.dtype {
+            DType::F32 => f32::MIN as f64,
+            _ => -65504.0_f64, // f16 minumum value
+        };
+
+        let inverted_mask = ((1.0 - extended_attention_mask)? * min_value)?;
 
         inverted_mask.to_dtype(self.dtype)
     }
@@ -573,18 +576,24 @@ impl ModernBertModel {
     fn get_local_attention_mask(&self, seq_len: usize) -> Result<Tensor> {
         let window_size: usize = self.local_attention / 2;
 
+        let min_value = match self.dtype {
+            DType::F32 => f32::MIN as f64,
+            _ => -65504.0_f64, // f16 minumum value
+        };
+
         let mask: Vec<_> = (0..seq_len)
             .flat_map(|i| {
                 (0..seq_len).map(move |j| {
                     if (j as i32 - i as i32).abs() > window_size as i32 {
-                        f32::NEG_INFINITY
+                        min_value
                     } else {
                         0.
                     }
                 })
             })
             .collect();
-        Tensor::from_slice(&mask, (seq_len, seq_len), &self.device)
+
+        Tensor::from_slice(&mask, (seq_len, seq_len), &self.device)?.to_dtype(self.dtype)
     }
 
     fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
@@ -656,8 +665,8 @@ impl ModernBertModel {
         let mut input_lengths =
             Tensor::from_vec(input_lengths, (batch_size, 1), &self.device)?.to_dtype(self.dtype)?;
 
-        let global_attention_mask = self
-            .get_global_attention_mask(attention_mask.as_ref(), &shape)?;
+        let global_attention_mask =
+            self.get_global_attention_mask(attention_mask.as_ref(), &shape)?;
         let local_attention_mask = self.get_local_attention_mask(max_length)?;
 
         let hidden_states = self.embeddings.forward(&input_ids)?;
