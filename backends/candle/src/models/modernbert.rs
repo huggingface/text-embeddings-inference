@@ -260,8 +260,9 @@ impl ModernBertAttention {
             }?;
 
         let hidden_states = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?;
+        let hidden_states = self.wo.forward(&hidden_states)?;
 
-        self.wo.forward(&hidden_states)
+        Ok(hidden_states)
     }
 }
 
