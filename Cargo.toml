@@ -47,6 +47,7 @@ thiserror = "1.0"
 rand = "0.9"
 serial_test = "2.0.0"
 cudarc = { version = "0.13" , features =["cuda-12020"]}
+intel-mkl-src = { version = "0.8" }
 candle = { version = "0.8", package = "candle-core" }
 candle-nn = { version = "0.8", package = "candle-nn" }
 candle-transformers = { version = "0.8", package = "candle-transformers" }
@@ -59,6 +60,9 @@ candle = { git = "https://github.com/huggingface/candle", rev = "ec6d7ca7738f405
 candle-nn = { git = "https://github.com/huggingface/candle", rev = "ec6d7ca7738f4052b6613edc8f4d2bb6866a7539", package = "candle-nn" }
 candle-transformers = { git = "https://github.com/huggingface/candle", rev = "ec6d7ca7738f4052b6613edc8f4d2bb6866a7539", package = "candle-transformers" }
 candle-flash-attn = { git = "https://github.com/huggingface/candle", rev = "ec6d7ca7738f4052b6613edc8f4d2bb6866a7539", package = "candle-flash-attn" }
+# candle = { path = "../candle/candle-core", package = "candle-core" }
+# candle-nn = { path = "../candle/candle-nn" }
+# candle-flash-attn = { path = "../candle/candle-flash-attn" }
 
 [profile.release]
 debug = 0

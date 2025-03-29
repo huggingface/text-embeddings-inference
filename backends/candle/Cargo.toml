@@ -8,7 +8,7 @@ homepage.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 accelerate-src = { version = "0.3.2", optional = true }
-intel-mkl-src = { version = "0.8.1", optional = true  }
+intel-mkl-src = { workspace = true, optional = true  }
 candle = { workspace = true }
 candle-nn = { workspace = true }
 candle-transformers = { workspace = true }
@@ -40,8 +40,8 @@ anyhow = { version = "1", features = ["backtrace"] }
 [features]
 accelerate = ["dep:accelerate-src", "candle/accelerate", "candle-nn/accelerate"]
 metal = ["candle/metal", "candle-nn/metal"]
-mkl = ["dep:intel-mkl-src", "intel-mkl-src/mkl-static-lp64-iomp", "candle/mkl"]
-mkl-dynamic = ["dep:intel-mkl-src", "intel-mkl-src/mkl-dynamic-lp64-iomp", "candle/mkl"]
+mkl = ["dep:intel-mkl-src", "candle/_mkl"]
+# mkl-dynamic = ["dep:intel-mkl-src", "intel-mkl-src/mkl-dynamic-lp64-iomp", "candle/mkl"]
 cuda = ["candle/_cuda", "candle-nn/_cuda", "dep:candle-cublaslt", "dep:candle-layer-norm", "dep:candle-rotary"]
 flash-attn-v1 = ["dep:candle-flash-attn-v1", "cuda"]
 flash-attn = ["dep:candle-flash-attn", "cuda"]

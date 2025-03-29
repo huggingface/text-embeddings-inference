@@ -4546,6 +4546,7 @@ dependencies = [
  "http 1.3.1",
  "init-tracing-opentelemetry",
  "insta",
+ "intel-mkl-src",
  "is_close",
  "libc",
  "metrics",
