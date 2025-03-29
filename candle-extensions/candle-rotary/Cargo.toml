@@ -10,7 +10,7 @@ license = "MIT OR Apache-2.0"
 readme = "README.md"
 
 [dependencies]
-candle = { workspace = true, features = ["cuda"]}
+candle = { workspace = true, features = ["_cuda"]}
 half = { workspace = true }
 
 [build-dependencies]

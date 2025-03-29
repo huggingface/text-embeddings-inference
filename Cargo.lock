@@ -495,7 +495,6 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 [[package]]
 name = "candle-core"
 version = "0.8.4"
-source = "git+https://github.com/Narsil/candle?rev=2e273ddf31b1b796d3cfcd181ccb98deaa48466e#2e273ddf31b1b796d3cfcd181ccb98deaa48466e"
 dependencies = [
  "accelerate-src",
  "byteorder",
@@ -534,7 +533,6 @@ dependencies = [
 [[package]]
 name = "candle-flash-attn"
 version = "0.8.4"
-source = "git+https://github.com/Narsil/candle?rev=2e273ddf31b1b796d3cfcd181ccb98deaa48466e#2e273ddf31b1b796d3cfcd181ccb98deaa48466e"
 dependencies = [
  "anyhow",
  "bindgen_cuda",
@@ -557,7 +555,6 @@ dependencies = [
 [[package]]
 name = "candle-kernels"
 version = "0.8.4"
-source = "git+https://github.com/Narsil/candle?rev=2e273ddf31b1b796d3cfcd181ccb98deaa48466e#2e273ddf31b1b796d3cfcd181ccb98deaa48466e"
 dependencies = [
  "bindgen_cuda",
 ]
@@ -576,7 +573,6 @@ dependencies = [
 [[package]]
 name = "candle-metal-kernels"
 version = "0.8.4"
-source = "git+https://github.com/Narsil/candle?rev=2e273ddf31b1b796d3cfcd181ccb98deaa48466e#2e273ddf31b1b796d3cfcd181ccb98deaa48466e"
 dependencies = [
  "metal 0.27.0",
  "once_cell",
@@ -587,7 +583,6 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.8.4"
-source = "git+https://github.com/Narsil/candle?rev=2e273ddf31b1b796d3cfcd181ccb98deaa48466e#2e273ddf31b1b796d3cfcd181ccb98deaa48466e"
 dependencies = [
  "accelerate-src",
  "candle-core",
@@ -615,7 +610,8 @@ dependencies = [
 [[package]]
 name = "candle-transformers"
 version = "0.8.4"
-source = "git+https://github.com/Narsil/candle?rev=2e273ddf31b1b796d3cfcd181ccb98deaa48466e#2e273ddf31b1b796d3cfcd181ccb98deaa48466e"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94a0900d49f8605e0e7e6693a1f560e6271279de98e5fa369e7abf3aac245020"
 dependencies = [
  "byteorder",
  "candle-core",
@@ -872,7 +868,7 @@ dependencies = [
 [[package]]
 name = "cudarc"
 version = "0.13.5"
-source = "git+https://github.com/Narsil/cudarc?rev=1956436aeddea1da04fc3226282bc07c07eeaa35#1956436aeddea1da04fc3226282bc07c07eeaa35"
+source = "git+https://github.com/Narsil/cudarc?rev=18ae111a4e8779c11377636b9cc3379f686e99c6#18ae111a4e8779c11377636b9cc3379f686e99c6"
 dependencies = [
  "half",
  "libloading",
