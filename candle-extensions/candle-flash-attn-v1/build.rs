@@ -3,15 +3,39 @@
 // variable in order to cache the compiled artifacts and avoid recompiling too often.
 use anyhow::{Context, Result};
 use rayon::prelude::*;
+use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-const KERNEL_FILES: [&str; 4] = [
-    "flash_api.cu",
-    "fmha_fwd_hdim32.cu",
-    "fmha_fwd_hdim64.cu",
-    "fmha_fwd_hdim128.cu",
-];
+// const KERNEL_FILES: [&str; 4] = [
+//     "flash_api.cu",
+//     "fmha_fwd_hdim32.cu",
+//     "fmha_fwd_hdim64.cu",
+//     "fmha_fwd_hdim128.cu",
+// ];
+
+/// Recursively reads the filenames in a directory and stores them in a Vec.
+fn _read_dir_recursively(dir_path: &PathBuf, paths: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    for entry in fs::read_dir(dir_path)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            _read_dir_recursively(&path, paths)?;
+        } else {
+            paths.push(path);
+        }
+    }
+
+    Ok(())
+}
+
+/// Recursively reads the filenames in a directory and stores them in a Vec.
+fn read_dir_recursively(dir_path: &PathBuf) -> std::io::Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    _read_dir_recursively(dir_path, &mut paths)?;
+    Ok(paths)
+}
 
 fn main() -> Result<()> {
     let num_cpus = std::env::var("RAYON_NUM_THREADS").map_or_else(
@@ -25,12 +49,11 @@ fn main() -> Result<()> {
         .unwrap();
 
     println!("cargo:rerun-if-changed=build.rs");
-    for kernel_file in KERNEL_FILES.iter() {
-        println!("cargo:rerun-if-changed=kernels/{kernel_file}");
+
+    let paths = read_dir_recursively(&PathBuf::from_str("kernels")?)?;
+    for file in paths.iter() {
+        println!("cargo:rerun-if-changed={}", file.display());
     }
-    println!("cargo:rerun-if-changed=kernels/**.h");
-    println!("cargo:rerun-if-changed=kernels/**.cuh");
-    println!("cargo:rerun-if-changed=kernels/fmha/**.h");
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").context("OUT_DIR not set")?);
     let build_dir = match std::env::var("CANDLE_FLASH_ATTN_BUILD_DIR") {
         Err(_) =>
@@ -57,12 +80,17 @@ fn main() -> Result<()> {
     let out_file = build_dir.join("libflashattentionv1.a");
 
     let kernel_dir = PathBuf::from("kernels");
-    let cu_files: Vec<_> = KERNEL_FILES
+    let kernels: Vec<_> = paths
+        .iter()
+        .filter(|f| f.extension().map(|ext| ext == "cu").unwrap_or_default())
+        .collect();
+    let cu_files: Vec<_> = kernels
         .iter()
         .map(|f| {
             let mut obj_file = out_dir.join(f);
+            fs::create_dir_all(obj_file.parent().unwrap()).unwrap();
             obj_file.set_extension("o");
-            (kernel_dir.join(f), obj_file)
+            (f, obj_file)
         })
         .collect();
     let out_modified: Result<_, _> = out_file.metadata().and_then(|m| m.modified());

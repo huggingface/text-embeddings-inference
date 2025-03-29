@@ -176,6 +176,8 @@ fn set_cuda_include_dir() -> Result<()> {
         .chain(roots)
         .find(|path| path.join("include").join("cuda.h").is_file())
         .context("cannot find include/cuda.h")?;
+    println!("cargo:rustc-link-search={}", root.join("lib").display());
+    println!("cargo:rustc-link-search={}", root.join("lib64").display());
     println!(
         "cargo:rustc-env=CUDA_INCLUDE_DIR={}",
         root.join("include").display()
