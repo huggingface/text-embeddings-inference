@@ -38,19 +38,13 @@ impl fmt::Display for DType {
 #[allow(clippy::derivable_impls)]
 impl Default for DType {
     fn default() -> Self {
-        #[cfg(any(
-            feature = "accelerate",
-            feature = "mkl",
-            feature = "mkl-dynamic",
-            feature = "ort"
-        ))]
+        #[cfg(any(feature = "accelerate", feature = "mkl", feature = "ort"))]
         {
             DType::Float32
         }
         #[cfg(not(any(
             feature = "accelerate",
             feature = "mkl",
-            feature = "mkl-dynamic",
             feature = "ort",
             feature = "python"
         )))]

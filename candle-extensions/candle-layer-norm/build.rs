@@ -23,8 +23,8 @@ fn main() -> Result<()> {
     for kernel_file in KERNEL_FILES.iter() {
         println!("cargo:rerun-if-changed=kernels/{kernel_file}");
     }
-    println!("cargo:rerun-if-changed=kernels/**.cu");
     println!("cargo:rerun-if-changed=kernels/ln_fwd_kernels.cuh");
+    println!("cargo:rerun-if-changed=kernels/ln.h");
     println!("cargo:rerun-if-changed=kernels/ln_kernel_traits.h");
     println!("cargo:rerun-if-changed=kernels/ln_utils.cuh");
     println!("cargo:rerun-if-changed=kernels/static_switch.h");
@@ -176,6 +176,8 @@ fn set_cuda_include_dir() -> Result<()> {
         .chain(roots)
         .find(|path| path.join("include").join("cuda.h").is_file())
         .context("cannot find include/cuda.h")?;
+    println!("cargo:rustc-link-search={}", root.join("lib").display());
+    println!("cargo:rustc-link-search={}", root.join("lib64").display());
     println!(
         "cargo:rustc-env=CUDA_INCLUDE_DIR={}",
         root.join("include").display()

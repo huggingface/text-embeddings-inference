@@ -6,6 +6,6 @@ edition = "2021"
 description = "CUBLASLt gemm for the candle ML framework."
 
 [dependencies]
-candle = { workspace=true, features = ["cuda"]}
+candle = { workspace=true, features = ["_cuda"]}
 cudarc = { workspace = true, features = [ "cublaslt", "f16" ]}
 half = { workspace = true}
