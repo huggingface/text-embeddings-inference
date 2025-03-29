@@ -113,6 +113,7 @@ impl Qwen2Attention {
             self.softmax_scale,
             false,
             None,
+            None,
         )?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
