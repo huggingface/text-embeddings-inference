@@ -1,4 +1,4 @@
-#[cfg(any(feature = "mkl", feature = "mkl-dynamic"))]
+#[cfg(feature = "mkl")]
 extern crate intel_mkl_src;
 
 #[cfg(feature = "accelerate")]

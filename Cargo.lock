@@ -495,6 +495,7 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 [[package]]
 name = "candle-core"
 version = "0.8.4"
+source = "git+https://github.com/huggingface/candle?rev=ec6d7ca7738f4052b6613edc8f4d2bb6866a7539#ec6d7ca7738f4052b6613edc8f4d2bb6866a7539"
 dependencies = [
  "accelerate-src",
  "byteorder",
@@ -533,6 +534,7 @@ dependencies = [
 [[package]]
 name = "candle-flash-attn"
 version = "0.8.4"
+source = "git+https://github.com/huggingface/candle?rev=ec6d7ca7738f4052b6613edc8f4d2bb6866a7539#ec6d7ca7738f4052b6613edc8f4d2bb6866a7539"
 dependencies = [
  "anyhow",
  "bindgen_cuda",
@@ -555,6 +557,7 @@ dependencies = [
 [[package]]
 name = "candle-kernels"
 version = "0.8.4"
+source = "git+https://github.com/huggingface/candle?rev=ec6d7ca7738f4052b6613edc8f4d2bb6866a7539#ec6d7ca7738f4052b6613edc8f4d2bb6866a7539"
 dependencies = [
  "bindgen_cuda",
 ]
@@ -573,6 +576,7 @@ dependencies = [
 [[package]]
 name = "candle-metal-kernels"
 version = "0.8.4"
+source = "git+https://github.com/huggingface/candle?rev=ec6d7ca7738f4052b6613edc8f4d2bb6866a7539#ec6d7ca7738f4052b6613edc8f4d2bb6866a7539"
 dependencies = [
  "metal 0.27.0",
  "once_cell",
@@ -583,6 +587,7 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.8.4"
+source = "git+https://github.com/huggingface/candle?rev=ec6d7ca7738f4052b6613edc8f4d2bb6866a7539#ec6d7ca7738f4052b6613edc8f4d2bb6866a7539"
 dependencies = [
  "accelerate-src",
  "candle-core",
@@ -610,8 +615,7 @@ dependencies = [
 [[package]]
 name = "candle-transformers"
 version = "0.8.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94a0900d49f8605e0e7e6693a1f560e6271279de98e5fa369e7abf3aac245020"
+source = "git+https://github.com/huggingface/candle?rev=ec6d7ca7738f4052b6613edc8f4d2bb6866a7539#ec6d7ca7738f4052b6613edc8f4d2bb6866a7539"
 dependencies = [
  "byteorder",
  "candle-core",
