@@ -1,4 +1,7 @@
-use crate::layers::{get_cublas_lt_wrapper, HiddenAct, LayerNormNoBias, Linear, RotaryEmbedding};
+use crate::layers::{
+    apply_rotary, get_cos_sin, get_cublas_lt_wrapper, get_inv_freqs, HiddenAct, LayerNormNoBias,
+    Linear,
+};
 use crate::models::Model;
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{Embedding, VarBuilder};
@@ -182,7 +185,7 @@ impl ModernBertAttention {
         &self,
         hidden_states: &Tensor,
         attention_mask: &Tensor,
-        rotary_embed: &RotaryEmbedding,
+        rotary_cache: &(Tensor, Tensor),
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
         let device = hidden_states.device();
@@ -200,7 +203,18 @@ impl ModernBertAttention {
         let key_layer = &qkv[1].contiguous()?;
         let value_layer = &qkv[2];
 
-        let (query_layer, key_layer) = rotary_embed.apply_rotary_emb_qk(query_layer, key_layer)?;
+        let query_layer = apply_rotary(
+            query_layer,
+            &rotary_cache.0,
+            &rotary_cache.1,
+            self.attention_head_size,
+        )?;
+        let key_layer = apply_rotary(
+            key_layer,
+            &rotary_cache.0,
+            &rotary_cache.1,
+            self.attention_head_size,
+        )?;
 
         #[allow(unused_variables)]
         let context_layer =
@@ -305,7 +319,7 @@ impl ModernBertEncoderLayer {
         &self,
         hidden_states: &Tensor,
         attention_mask: &Tensor,
-        rotary_embed: &RotaryEmbedding,
+        rotary_cache: &(Tensor, Tensor),
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
@@ -319,7 +333,7 @@ impl ModernBertEncoderLayer {
 
         let attn_outputs = self
             .attn
-            .forward(&attn_norm, attention_mask, rotary_embed)?;
+            .forward(&attn_norm, attention_mask, rotary_cache)?;
 
         let hidden_states = residual.add(&attn_outputs)?;
 
@@ -361,8 +375,8 @@ impl ModernBertEncoder {
         hidden_states: &Tensor,
         global_attention_mask: &Tensor,
         local_attention_mask: &Tensor,
-        global_rotaray_emb: &RotaryEmbedding,
-        local_rotaray_emb: &RotaryEmbedding,
+        global_rotaray_cache: &(Tensor, Tensor),
+        local_rotaray_cache: &(Tensor, Tensor),
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
@@ -371,16 +385,13 @@ impl ModernBertEncoder {
         for (index, layer) in self.layers.iter().enumerate() {
             let use_local_attention = index % self.global_attn_every_n_layers != 0;
 
-            let (attention_mask, rotary_embed) = if use_local_attention {
-                (
-                    &global_attention_mask.broadcast_add(local_attention_mask)?,
-                    local_rotaray_emb,
-                )
+            let (attention_mask, rotary_cache) = if use_local_attention {
+                (local_attention_mask, local_rotaray_cache)
             } else {
-                (global_attention_mask, global_rotaray_emb)
+                (global_attention_mask, global_rotaray_cache)
             };
 
-            hidden_states = layer.forward(&hidden_states, attention_mask, rotary_embed)?;
+            hidden_states = layer.forward(&hidden_states, attention_mask, rotary_cache)?;
         }
 
         Ok(hidden_states)
@@ -456,8 +467,9 @@ pub struct ModernBertModel {
     classifier: Option<Box<dyn ClassificationHead + Send>>,
 
     local_attention: usize,
-    global_rotary_emb: RotaryEmbedding,
-    local_rotary_emb: RotaryEmbedding,
+    global_inv_freqs: Tensor,
+    local_inv_freqs: Tensor,
+    rotary_dim: usize,
     pad_token_id: u32,
     num_attention_heads: usize,
 
@@ -508,21 +520,19 @@ impl ModernBertModel {
             )
         })?;
 
-        let rotary_dim = config.hidden_size / config.num_attention_heads;
+        let attention_head_size = config.hidden_size / config.num_attention_heads;
 
-        let global_rotary_emb = RotaryEmbedding::new(
-            vb.dtype(),
-            rotary_dim,
-            config.max_position_embeddings,
-            config.global_rope_theta,
+        let global_inv_freqs = get_inv_freqs(
+            attention_head_size,
+            config.global_rope_theta as f32,
             vb.device(),
+            None,
         )?;
-        let local_rotary_emb = RotaryEmbedding::new(
-            vb.dtype(),
-            rotary_dim,
-            config.max_position_embeddings,
-            config.local_rope_theta,
+        let local_inv_freqs = get_inv_freqs(
+            attention_head_size,
+            config.local_rope_theta as f32,
             vb.device(),
+            None,
         )?;
 
         Ok(Self {
@@ -532,8 +542,9 @@ impl ModernBertModel {
             pool,
             classifier,
             local_attention: config.local_attention,
-            global_rotary_emb,
-            local_rotary_emb,
+            global_inv_freqs,
+            local_inv_freqs,
+            rotary_dim: attention_head_size,
             pad_token_id: config.pad_token_id as u32,
             num_attention_heads: config.num_attention_heads,
             device: vb.device().clone(),
@@ -563,37 +574,31 @@ impl ModernBertModel {
             seq_len,
         ))?;
 
-        let min_value = match self.dtype {
-            DType::F32 => f32::MIN as f64,
-            _ => -65504.0_f64, // f16 minumum value
-        };
-
-        let inverted_mask = ((1.0 - extended_attention_mask)? * min_value)?;
-
-        inverted_mask.to_dtype(self.dtype)
+        Ok(extended_attention_mask)
     }
 
-    fn get_local_attention_mask(&self, seq_len: usize) -> Result<Tensor> {
-        let window_size: usize = self.local_attention / 2;
+    fn get_local_attention_mask(&self, attention_mask: &Tensor) -> Result<Tensor> {
+        let attention_mask = attention_mask.to_dtype(DType::U8)?;
 
-        let min_value = match self.dtype {
-            DType::F32 => f32::MIN as f64,
-            _ => -65504.0_f64, // f16 minumum value
-        };
+        let mask_shape = attention_mask.shape();
+        let (_, _, seq_len, _) = mask_shape.dims4()?;
 
-        let mask: Vec<_> = (0..seq_len)
-            .flat_map(|i| {
-                (0..seq_len).map(move |j| {
-                    if (j as i32 - i as i32).abs() > window_size as i32 {
-                        min_value
-                    } else {
-                        0.
-                    }
-                })
-            })
-            .collect();
+        let rows = Tensor::arange(0, seq_len as i64, attention_mask.device())?.unsqueeze(0)?;
+        let rows = rows.broadcast_as((seq_len, seq_len))?;
 
-        Tensor::from_slice(&mask, (seq_len, seq_len), &self.device)?.to_dtype(self.dtype)
+        let distance = (&rows - &rows.t()?)?.abs()?;
+
+        let window_size = (self.local_attention / 2) as i64;
+        let window_mask = distance
+            .le(window_size)?
+            .unsqueeze(0)?
+            .unsqueeze(0)?
+            .broadcast_as(mask_shape)?;
+
+        let zero_tensor = Tensor::zeros_like(&attention_mask)?;
+        let local_attention_mask = attention_mask.where_cond(&window_mask, &zero_tensor)?;
+
+        Ok(local_attention_mask)
     }
 
     fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
@@ -604,7 +609,7 @@ impl ModernBertModel {
 
         let shape = (batch_size, max_length);
 
-        let (input_ids, input_lengths, _, attention_mask) = if batch_size > 1 {
+        let (input_ids, input_lengths, position_ids, attention_mask) = if batch_size > 1 {
             let elems = batch_size * max_length;
 
             let mut input_ids = Vec::with_capacity(elems);
@@ -662,20 +667,59 @@ impl ModernBertModel {
         };
 
         let input_ids = Tensor::from_vec(input_ids, shape, &self.device)?;
+        let position_ids = Tensor::from_vec(position_ids, batch_size * max_length, &self.device)?;
         let mut input_lengths =
             Tensor::from_vec(input_lengths, (batch_size, 1), &self.device)?.to_dtype(self.dtype)?;
 
-        let global_attention_mask =
-            self.get_global_attention_mask(attention_mask.as_ref(), &shape)?;
-        let local_attention_mask = self.get_local_attention_mask(max_length)?;
+        let global_attention_mask = self
+            .get_global_attention_mask(attention_mask.as_ref(), &shape)?
+            .to_dtype(self.dtype)?;
+        let local_attention_mask = self
+            .get_local_attention_mask(&global_attention_mask)?
+            .to_dtype(self.dtype)?;
+
+        let min_value = match self.dtype {
+            DType::F32 => f32::MIN as f64,
+            _ => -65504.0, // f16 minimum value
+        };
+
+        let global_attention_mask = ((1.0 - global_attention_mask)? * min_value)?;
+        let local_attention_mask = ((1.0 - local_attention_mask)? * min_value)?;
+
+        let global_rotary_cache =
+            get_cos_sin(max_length, &self.global_inv_freqs, self.dtype, true)?;
+        let local_rotary_cache = get_cos_sin(max_length, &self.local_inv_freqs, self.dtype, true)?;
+
+        let global_rotary_cache = (
+            global_rotary_cache
+                .0
+                .index_select(&position_ids, 0)?
+                .reshape((batch_size, 1, max_length, self.rotary_dim))?,
+            global_rotary_cache
+                .1
+                .index_select(&position_ids, 0)?
+                .reshape((batch_size, 1, max_length, self.rotary_dim))?,
+        );
+
+        let local_rotary_cache = (
+            local_rotary_cache
+                .0
+                .index_select(&position_ids, 0)?
+                .reshape((batch_size, 1, max_length, self.rotary_dim))?,
+            local_rotary_cache
+                .1
+                .index_select(&position_ids, 0)?
+                .reshape((batch_size, 1, max_length, self.rotary_dim))?,
+        );
 
         let hidden_states = self.embeddings.forward(&input_ids)?;
+
         let hidden_states = self.encoder.forward(
             &hidden_states,
             &global_attention_mask,
             &local_attention_mask,
-            &self.global_rotary_emb,
-            &self.local_rotary_emb,
+            &global_rotary_cache,
+            &local_rotary_cache,
         )?;
         let outputs = self.final_norm.forward(&hidden_states, None)?;
 

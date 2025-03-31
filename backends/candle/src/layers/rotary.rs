@@ -1,45 +1,5 @@
 use candle::{DType, Device, Result, Tensor, D};
-use candle_nn::rotary_emb::rope;
 use serde::Deserialize;
-
-#[derive(Debug, Clone)]
-pub struct RotaryEmbedding {
-    pub cos: Tensor,
-    pub sin: Tensor,
-}
-
-impl RotaryEmbedding {
-    pub fn new(
-        dtype: DType,
-        dim: usize,
-        max_seq_len: usize,
-        rope_theta: f64,
-        device: &Device,
-    ) -> Result<Self> {
-        let inv_freq: Vec<_> = (0..dim)
-            .step_by(2)
-            .map(|i| 1f32 / rope_theta.powf(i as f64 / dim as f64) as f32)
-            .collect();
-        let inv_freq_len = inv_freq.len();
-        let inv_freq = Tensor::from_vec(inv_freq, (1, inv_freq_len), device)?.to_dtype(dtype)?;
-
-        let t = Tensor::arange(0u32, max_seq_len as u32, device)?
-            .to_dtype(dtype)?
-            .reshape((max_seq_len, 1))?;
-        let freqs = t.matmul(&inv_freq)?;
-
-        Ok(Self {
-            sin: freqs.sin()?,
-            cos: freqs.cos()?,
-        })
-    }
-
-    pub fn apply_rotary_emb_qk(&self, q: &Tensor, k: &Tensor) -> Result<(Tensor, Tensor)> {
-        let q_embed = rope(&q.contiguous()?, &self.cos, &self.sin)?;
-        let k_embed = rope(&k.contiguous()?, &self.cos, &self.sin)?;
-        Ok((q_embed, k_embed))
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct NTKScaling {

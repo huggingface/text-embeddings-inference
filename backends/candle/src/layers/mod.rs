@@ -11,4 +11,4 @@ pub use layer_norm::{LayerNorm, LayerNormNoBias};
 pub use linear::{HiddenAct, Linear};
 #[allow(unused_imports)]
 pub use rms_norm::RMSNorm;
-pub use rotary::{apply_rotary, get_cos_sin, get_inv_freqs, RopeScaling, RotaryEmbedding};
+pub use rotary::{apply_rotary, get_cos_sin, get_inv_freqs, RopeScaling};
