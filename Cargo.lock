@@ -872,10 +872,9 @@ dependencies = [
 [[package]]
 name = "cudarc"
 version = "0.13.5"
-source = "git+https://github.com/Narsil/cudarc?rev=61a028a3d3cac8acd8f71921293a43c2fe4f1b47#61a028a3d3cac8acd8f71921293a43c2fe4f1b47"
+source = "git+https://github.com/Narsil/cudarc?rev=b2d6443329e559e9580204b55ecaf44cd6fb6d90#b2d6443329e559e9580204b55ecaf44cd6fb6d90"
 dependencies = [
  "half",
- "libloading",
 ]
 
 [[package]]
