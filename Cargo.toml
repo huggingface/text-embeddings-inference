@@ -46,8 +46,8 @@ serde_json = "1.0"
 thiserror = "1.0"
 rand = "0.9"
 serial_test = "2.0.0"
-cudarc = { version = "0.13" , features =["cuda-12020"]}
-intel-mkl-src = { version = "0.8" }
+cudarc = { version = "0.13" , features =["cuda-12020"], default-features = false}
+intel-mkl-src = { version = "0.8"}
 candle = { version = "0.8", package = "candle-core" }
 candle-nn = { version = "0.8", package = "candle-nn" }
 candle-transformers = { version = "0.8", package = "candle-transformers" }
@@ -55,20 +55,17 @@ candle-flash-attn = { version = "0.8", package = "candle-flash-attn" }
 half = { version = "2.3.1", features = ["num-traits"] }
 
 [patch.crates-io]
-cudarc = { git = "https://github.com/Narsil/cudarc" , rev = "18ae111a4e8779c11377636b9cc3379f686e99c6"}
+cudarc = { git = "https://github.com/Narsil/cudarc" , rev = "b2d6443329e559e9580204b55ecaf44cd6fb6d90"}
 candle = { git = "https://github.com/huggingface/candle", rev = "ec6d7ca7738f4052b6613edc8f4d2bb6866a7539", package = "candle-core" }
 candle-nn = { git = "https://github.com/huggingface/candle", rev = "ec6d7ca7738f4052b6613edc8f4d2bb6866a7539", package = "candle-nn" }
 candle-transformers = { git = "https://github.com/huggingface/candle", rev = "ec6d7ca7738f4052b6613edc8f4d2bb6866a7539", package = "candle-transformers" }
 candle-flash-attn = { git = "https://github.com/huggingface/candle", rev = "ec6d7ca7738f4052b6613edc8f4d2bb6866a7539", package = "candle-flash-attn" }
-# candle = { path = "../candle/candle-core", package = "candle-core" }
-# candle-nn = { path = "../candle/candle-nn" }
-# candle-flash-attn = { path = "../candle/candle-flash-attn" }
 
 [profile.release]
 debug = 0
-# lto = "fat"
+lto = "fat"
 opt-level = 3
-# codegen-units = 1
+codegen-units = 1
 strip = "symbols"
 panic = "abort"
 
