@@ -41,3 +41,27 @@ runtime_compute_cap=80
 
 docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
 ```
+
+To build a CPU container with Intel® Extension for PyTorch acceleration, you can build the container following:
+
+```shell
+platform="cpu"
+
+docker build . -f Dockerfile-intel --build-arg PLATFORM=$platform  -t tei_cpu_ipex
+```
+
+To build an XPU container with Intel® Extension for PyTorch acceleration, you can build the container following:
+
+```shell
+platform="xpu"
+
+docker build . -f Dockerfile-intel --build-arg PLATFORM=$platform  -t tei_xpu_ipex
+```
+
+To build an HPU(Gaudi) container, you can build the container following:
+
+```shell
+platform="hpu"
+
+docker build . -f Dockerfile-intel --build-arg PLATFORM=$platform  -t tei_hpu
+```
