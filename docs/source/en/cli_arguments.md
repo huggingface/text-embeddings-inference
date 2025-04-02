@@ -142,7 +142,7 @@ Options:
           [env: HOSTNAME=]
           [default: 0.0.0.0]
 
-  -p, --port <PORT>
+      -p, --port <PORT>
           The port to listen on
 
           [env: PORT=]
