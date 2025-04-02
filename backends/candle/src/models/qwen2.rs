@@ -13,6 +13,6 @@ pub struct Qwen2Config {
     pub max_position_embeddings: usize,
     pub rms_norm_eps: f32,
     pub rope_theta: f32,
-    pub sliding_window: usize,
+    pub sliding_window: Option<usize>,
     pub use_sliding_window: bool,
 }
