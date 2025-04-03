@@ -322,11 +322,10 @@ class FlashBert(Model):
     @tracer.start_as_current_span("embed")
     def embed(self, batch: Union[FlashBatch, PaddedBatch]) -> List[Embedding]:
         if isinstance(batch, PaddedBatch):
-            cumsum_lens = batch.attention_mask.cumsum(-1)
-            input_lens = cumsum_lens[:, -1].to(dtype=torch.int32)
+            input_lens = batch.attention_mask.cumsum(-1)[:, -1].to(torch.int32)
             max_input_lens = input_lens.max().item()
             cu_seqlens = torch.cat(
-                (torch.zeros(1, dtype=torch.int32, device=input_lens.device), cumsum_lens.view(-1).to(torch.int32))
+                (input_lens.new_tensor([0]), input_lens.cumsum(-1).int())
             )
             mask = batch.attention_mask.bool()
             batch_size = input_lens.size(0)
