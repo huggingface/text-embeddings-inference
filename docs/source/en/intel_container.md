@@ -14,13 +14,13 @@ rendered properly in your Markdown viewer.
 
 -->
 
-# Using TEI locally with Intel® Hardware
+# Using TEI Container with Intel® Hardware
 
 This guide explains how to build and deploy `text-embeddings-inference` containers optimized for Intel® hardware, including CPUs, XPUs, and HPUs.
 
 ## CPU
 
-### Build Docker Container
+### Build Docker Image
 
 To build a container optimized for Intel® CPUs, run the following command:
 
@@ -43,7 +43,7 @@ docker run -p 8080:80 -v $volume:/data tei_cpu_ipex --model-id $model
 
 ## XPU
 
-### Build Docker Container
+### Build Docker Image
 
 To build a container optimized for Intel® XPUs, run the following command:
 
@@ -66,7 +66,7 @@ docker run -p 8080:80 -v $volume:/data --device=/dev/dri -v /dev/dri/by-path:/de
 
 ## HPU
 
-### Build Docker Container
+### Build Docker Image
 
 To build a container optimized for Intel® HPUs (Gaudi), run the following command:
 
@@ -87,4 +87,24 @@ volume=$PWD/data
 docker run -p 8080:80 -v $volume:/data --runtime=habana -e HABANA_VISIBLE_DEVICES=all -e MAX_WARMUP_SEQUENCE_LENGTH=512 tei_hpu --model-id $model --dtype bfloat16
 ```
 
-Now you are ready to use `text-embeddings-inference` locally with Intel® hardware.
+## Prebuilt Docker Images
+
+For convenience, prebuilt Docker images are available on GitHub Container Registry (GHCR). You can pull these images directly without the need to build them manually:
+
+### CPU
+To use the prebuilt image optimized for Intel® CPUs, run:
+```shell
+docker pull ghcr.io/huggingface/text-embeddings-inference:cpu-ipex-latest
+```
+
+### XPU
+To use the prebuilt image optimized for Intel® XPUs, run:
+```shell
+docker pull ghcr.io/huggingface/text-embeddings-inference:xpu-ipex-latest
+```
+
+### HPU
+To use the prebuilt image optimized for Intel® HPUs (Gaudi), run:
+```shell
+docker pull ghcr.io/huggingface/text-embeddings-inference:hpu-latest
+```
