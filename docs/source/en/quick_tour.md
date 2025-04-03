@@ -36,30 +36,6 @@ volume=$PWD/data
 docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.6 --model-id $model
 ```
 
-And if you want to deploy your model on intel CPU, you can following:
-
-```shell
-model='BAAI/bge-large-en-v1.5'
-volume=$PWD/data
-
-docker run -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:cpu-ipex-latest --model-id $model
-```
-
-If you want to deploy your model on intel XPU, you can following:
-```shell
-model='BAAI/bge-large-en-v1.5'
-volume=$PWD/data
-
-docker run -p 8080:80 -v $volume:/data --device=/dev/dri -v /dev/dri/by-path:/dev/dri/by-path --pull always ghcr.io/huggingface/text-embeddings-inference:xpu-ipex-latest --model-id $model --dtype float16
-```
-
-If you want to deploy your model on HPU(Gaudi), you can following:
-```shell
-model='BAAI/bge-large-en-v1.5'
-volume=$PWD/data
-
-docker run -p 8080:80 -v $volume:/data --runtime=habana -e HABANA_VISIBLE_DEVICES=all -e MAX_WARMUP_SEQUENCE_LENGTH=512 ghcr.io/huggingface/text-embeddings-inference:hpu-latest --model-id BAAI/bge-large-en-v1.5 --dtype bfloat16
-```
 <Tip>
 
 We also recommend sharing a volume with the Docker container (`volume=$PWD/data`) to avoid downloading weights every run.
