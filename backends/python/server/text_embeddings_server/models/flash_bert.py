@@ -305,6 +305,7 @@ class FlashBert(Model):
         with safe_open(model_path / "model.safetensors", framework="pt") as f:
             model = FlashBertModel(f, device, dtype, config)
         self.device = device
+        self.dtype = dtype
         if device.type == "hpu":
             from habana_frameworks.torch.hpu import wrap_in_hpu_graph
 
@@ -326,12 +327,15 @@ class FlashBert(Model):
             cu_seqlens = torch.cat(
                 (input_lens.new_tensor([0]), input_lens.cumsum(-1).int())
             )
-            mask = batch.attention_mask.to(torch.bool)
+            mask = batch.attention_mask.bool()
             batch_size = input_lens.size(0)
-            attn_mask = torch.empty(
-                [batch_size, 1, 1, mask.shape[-1]], device=self.device
-            ).fill_(float("-inf"))
-            attn_mask[:, :, :, :].masked_fill_(mask[:, None, None, :], 0)
+            attn_mask = torch.full(
+                [batch_size, 1, 1, mask.shape[-1]],
+                fill_value=torch.finfo(self.dtype).min,
+                device=self.device,
+                dtype=self.dtype,
+            )
+            attn_mask.masked_fill_(mask[:, None, None, :], 0)
         elif isinstance(batch, FlashBatch):
             cu_seqlens = batch.cu_seqlens
             mask = None
