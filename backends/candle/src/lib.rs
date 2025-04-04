@@ -24,7 +24,7 @@ use anyhow::Context;
 use candle::{DType, Device};
 use candle_nn::VarBuilder;
 use nohash_hasher::BuildNoHashHasher;
-use serde::Deserialize;
+use serde::{de::Deserializer, Deserialize};
 use std::collections::HashMap;
 use std::path::Path;
 use text_embeddings_backend_core::{
@@ -33,17 +33,56 @@ use text_embeddings_backend_core::{
 
 /// This enum is needed to be able to differentiate between jina models that also use
 /// the `bert` model type and valid Bert models.
-/// We use the `_name_or_path` field in the config to do so. This might not be robust in the long
-/// run but is still better than the other options...
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(tag = "_name_or_path")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BertConfigWrapper {
-    #[serde(rename = "jinaai/jina-bert-implementation")]
     JinaBert(BertConfig),
-    #[serde(rename = "jinaai/jina-bert-v2-qk-post-norm")]
     JinaCodeBert(BertConfig),
-    #[serde(untagged)]
     Bert(BertConfig),
+}
+
+/// Custom deserializer is required as we need to capture both whether the `_name_or_path` value
+/// is any of the JinaBERT alternatives, or alternatively to also support fine-tunes and re-uploads
+/// with Sentence Transformers, we also need to check the value for the `auto_map.AutoConfig`
+/// configuration file, and see if that points to the relevant remote code repositories on the Hub
+impl<'de> Deserialize<'de> for BertConfigWrapper {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        #[allow(unused_mut)]
+        let mut value = serde_json::Value::deserialize(deserializer)?;
+
+        let name_or_path = value
+            .get("_name_or_path")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string)
+            .unwrap_or_default();
+
+        let auto_config = value
+            .get("auto_map")
+            .and_then(|v| v.get("AutoConfig"))
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string)
+            .unwrap_or_default();
+
+        let config = BertConfig::deserialize(value).map_err(Error::custom)?;
+
+        if name_or_path == "jinaai/jina-bert-implementation"
+            || auto_config.contains("jinaai/jina-bert-implementation")
+        {
+            // https://huggingface.co/jinaai/jina-bert-implementation
+            Ok(Self::JinaBert(config))
+        } else if name_or_path == "jinaai/jina-bert-v2-qk-post-norm"
+            || auto_config.contains("jinaai/jina-bert-v2-qk-post-norm")
+        {
+            // https://huggingface.co/jinaai/jina-bert-v2-qk-post-norm
+            Ok(Self::JinaCodeBert(config))
+        } else {
+            Ok(Self::Bert(config))
+        }
+    }
 }
 
 #[derive(Deserialize)]

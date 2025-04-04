@@ -872,9 +872,10 @@ dependencies = [
 [[package]]
 name = "cudarc"
 version = "0.13.5"
-source = "git+https://github.com/Narsil/cudarc?rev=b2d6443329e559e9580204b55ecaf44cd6fb6d90#b2d6443329e559e9580204b55ecaf44cd6fb6d90"
+source = "git+https://github.com/Narsil/cudarc?rev=8b4f18b4bcd5e4b1a9daf40abc3a2e27f83f06e9#8b4f18b4bcd5e4b1a9daf40abc3a2e27f83f06e9"
 dependencies = [
  "half",
+ "lazy_static",
 ]
 
 [[package]]
