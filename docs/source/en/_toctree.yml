@@ -19,6 +19,8 @@
 #    title: Using TEI CLI
   - local: custom_container
     title: Build custom container for TEI
+  - local: intel_container
+    title: Using TEI container with Intel Hardware
   - local: examples
     title: Example uses
   title: Tutorials
