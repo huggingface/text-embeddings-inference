@@ -1,7 +1,7 @@
 use std::fs;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("cargo:rerun-if-changed=../../proto/embed.proto");
+    println!("cargo:rerun-if-changed=../proto/embed.proto");
     fs::create_dir("src/pb").unwrap_or(());
 
     let mut config = prost_build::Config::new();

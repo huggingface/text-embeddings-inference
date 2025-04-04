@@ -578,7 +578,10 @@ impl ModernBertModel {
     }
 
     fn get_local_attention_mask(&self, attention_mask: &Tensor) -> Result<Tensor> {
-        let attention_mask = attention_mask.to_dtype(DType::U8)?;
+        let dev = attention_mask.device();
+        let attention_mask = attention_mask
+            .to_device(&Device::Cpu)?
+            .to_dtype(DType::U8)?;
 
         let mask_shape = attention_mask.shape();
         let (_, _, seq_len, _) = mask_shape.dims4()?;
@@ -597,6 +600,7 @@ impl ModernBertModel {
 
         let zero_tensor = Tensor::zeros_like(&attention_mask)?;
         let local_attention_mask = attention_mask.where_cond(&window_mask, &zero_tensor)?;
+        let local_attention_mask = local_attention_mask.to_device(dev)?;
 
         Ok(local_attention_mask)
     }
