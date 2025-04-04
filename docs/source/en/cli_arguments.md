@@ -131,8 +131,8 @@ Options:
 
           [env: DEFAULT_PROMPT=]
 
-      --hf-api-token <HF_TOKEN>
-          Your HuggingFace hub token
+      --hf-token <HF_TOKEN>
+          Your Hugging Face Hub token
 
           [env: HF_TOKEN=]
 
@@ -142,7 +142,7 @@ Options:
           [env: HOSTNAME=]
           [default: 0.0.0.0]
 
-  -p, --port <PORT>
+      -p, --port <PORT>
           The port to listen on
 
           [env: PORT=]
