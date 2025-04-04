@@ -7,7 +7,7 @@ mod rms_norm;
 mod rotary;
 
 pub use cublaslt::get_cublas_lt_wrapper;
-pub use layer_norm::LayerNorm;
+pub use layer_norm::{LayerNorm, LayerNormNoBias};
 pub use linear::{HiddenAct, Linear};
 #[allow(unused_imports)]
 pub use rms_norm::RMSNorm;

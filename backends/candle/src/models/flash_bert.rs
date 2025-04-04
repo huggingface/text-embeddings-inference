@@ -104,6 +104,7 @@ impl BertAttention {
             self.softmax_scale,
             false,
             None,
+            None,
         )?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
