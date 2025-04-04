@@ -55,7 +55,7 @@ candle-flash-attn = { version = "0.8", package = "candle-flash-attn" }
 half = { version = "2.3.1", features = ["num-traits"] }
 
 [patch.crates-io]
-cudarc = { git = "https://github.com/Narsil/cudarc" , rev = "b2d6443329e559e9580204b55ecaf44cd6fb6d90"}
+cudarc = { git = "https://github.com/Narsil/cudarc" , rev = "e9eaaffa030c49eb51b3cc1ac8e1fb9dd93d0feb"}
 candle = { git = "https://github.com/huggingface/candle", rev = "ec6d7ca7738f4052b6613edc8f4d2bb6866a7539", package = "candle-core" }
 candle-nn = { git = "https://github.com/huggingface/candle", rev = "ec6d7ca7738f4052b6613edc8f4d2bb6866a7539", package = "candle-nn" }
 candle-transformers = { git = "https://github.com/huggingface/candle", rev = "ec6d7ca7738f4052b6613edc8f4d2bb6866a7539", package = "candle-transformers" }
