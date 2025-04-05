@@ -359,7 +359,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::ModernBert(config), Device::Cuda(_)) => {
-                if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                if cfg!(feature = "flash-attn")
                     && dtype == DType::F16
                     // Allow disabling because of flash attention v1 precision problems
                     // See: https://github.com/huggingface/text-embeddings-inference/issues/37
@@ -370,6 +370,8 @@ impl CandleBackend {
                         FlashModernBertModel::load(vb, &config, model_type).s()?,
                     ))
                 } else {
+                    #[cfg!(feature = "flash-attn-v1")]
+                    tracing::warn!("Flash attention V1 cannot be used with ModernBert because it lacks windowing support.");
                     tracing::info!("Starting ModernBert model on {:?}", device);
                     Ok(Box::new(
                         ModernBertModel::load(vb, &config, model_type).s()?,
