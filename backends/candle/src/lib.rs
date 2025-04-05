@@ -365,12 +365,12 @@ impl CandleBackend {
                     // See: https://github.com/huggingface/text-embeddings-inference/issues/37
                     && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
                 {
-                    tracing::info!("Starting FlashBert model on {:?}", device);
+                    tracing::info!("Starting FlashModernBert model on {:?}", device);
                     Ok(Box::new(
                         FlashModernBertModel::load(vb, &config, model_type).s()?,
                     ))
                 } else {
-                    tracing::info!("Starting Bert model on {:?}", device);
+                    tracing::info!("Starting ModernBert model on {:?}", device);
                     Ok(Box::new(
                         ModernBertModel::load(vb, &config, model_type).s()?,
                     ))
