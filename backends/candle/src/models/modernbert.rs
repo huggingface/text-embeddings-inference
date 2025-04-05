@@ -466,7 +466,7 @@ pub struct ModernBertModel {
     pool: Pool,
     classifier: Option<Box<dyn ClassificationHead + Send>>,
 
-    local_attention: usize,
+    window_size: usize,
     global_inv_freqs: Tensor,
     local_inv_freqs: Tensor,
     rotary_dim: usize,
@@ -541,7 +541,7 @@ impl ModernBertModel {
             final_norm,
             pool,
             classifier,
-            local_attention: config.local_attention,
+            window_size: config.local_attention / 2,
             global_inv_freqs,
             local_inv_freqs,
             rotary_dim: attention_head_size,
@@ -578,12 +578,10 @@ impl ModernBertModel {
     }
 
     fn get_window_mask(&self, seq_len: usize) -> Result<Tensor> {
-        let window_size = self.local_attention / 2;
-
         let inverted_window_mask: Vec<f32> = (0..seq_len)
             .flat_map(|i| {
                 (0..seq_len).map(move |j| {
-                    if (j as i32 - i as i32).abs() > window_size as i32 {
+                    if (j as i32 - i as i32).abs() > self.window_size as i32 {
                         1.
                     } else {
                         0.
