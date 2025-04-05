@@ -578,25 +578,25 @@ impl ModernBertModel {
     }
 
     fn get_local_attention_mask(&self, attention_mask: &Tensor) -> Result<Tensor> {
-        let attention_mask = attention_mask.to_dtype(DType::U8)?;
+        let (_, _, seq_len, _) = attention_mask.dims4()?;
+        let window_size = self.local_attention / 2;
 
-        let mask_shape = attention_mask.shape();
-        let (_, _, seq_len, _) = mask_shape.dims4()?;
+        let mask: Vec<f32> = (0..seq_len)
+            .flat_map(|i| {
+                (0..seq_len).map(move |j| {
+                    if (j as i32 - i as i32).abs() > window_size as i32 {
+                        1.
+                    } else {
+                        0.
+                    }
+                })
+            })
+            .collect();
 
-        let rows = Tensor::arange(0, seq_len as i64, attention_mask.device())?.unsqueeze(0)?;
-        let rows = rows.broadcast_as((seq_len, seq_len))?;
+        let window_mask = Tensor::from_slice(&mask, (seq_len, seq_len), &self.device)?;
+        let window_mask = window_mask.to_dtype(attention_mask.dtype())?;
 
-        let distance = (&rows - &rows.t()?)?.abs()?;
-
-        let window_size = (self.local_attention / 2) as i64;
-        let window_mask = distance
-            .le(window_size)?
-            .unsqueeze(0)?
-            .unsqueeze(0)?
-            .broadcast_as(mask_shape)?;
-
-        let zero_tensor = Tensor::zeros_like(&attention_mask)?;
-        let local_attention_mask = attention_mask.where_cond(&window_mask, &zero_tensor)?;
+        let local_attention_mask = attention_mask.broadcast_add(&window_mask)?;
 
         Ok(local_attention_mask)
     }
