@@ -18,7 +18,8 @@ use crate::models::{
 #[cfg(feature = "cuda")]
 use crate::models::{
     FlashBertModel, FlashDistilBertModel, FlashGTEModel, FlashJinaBertModel,
-    FlashJinaCodeBertModel, FlashMistralModel, FlashNomicBertModel, FlashQwen2Model,
+    FlashJinaCodeBertModel, FlashMistralModel, FlashModernBertModel, FlashNomicBertModel,
+    FlashQwen2Model,
 };
 use anyhow::Context;
 use candle::{DType, Device};
@@ -276,7 +277,7 @@ impl CandleBackend {
                 tracing::info!("Starting MPNet model on {:?}", device);
                 Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
             }
-            (Config::ModernBert(config), _) => match device {
+            (Config::ModernBert(config), Device::Cpu | Device::Metal(_)) => match device {
                 Device::Metal(_) => {
                     return Err(BackendError::Start(
                         "ModernBert is not currently supported on MPS device".to_string(),
@@ -353,6 +354,27 @@ impl CandleBackend {
                     tracing::info!("Starting Bert model on {:?}", device);
                     Ok(Box::new(
                         BertModel::load_roberta(vb, &config, model_type).s()?,
+                    ))
+                }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::ModernBert(config), Device::Cuda(_)) => {
+                if cfg!(feature = "flash-attn")
+                    && dtype == DType::F16
+                    // Allow disabling because of flash attention v1 precision problems
+                    // See: https://github.com/huggingface/text-embeddings-inference/issues/37
+                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
+                {
+                    tracing::info!("Starting FlashModernBert model on {:?}", device);
+                    Ok(Box::new(
+                        FlashModernBertModel::load(vb, &config, model_type).s()?,
+                    ))
+                } else {
+                    #[cfg(feature = "flash-attn-v1")]
+                    tracing::warn!("Flash attention V1 cannot be used with ModernBert because it lacks windowing support.");
+                    tracing::info!("Starting ModernBert model on {:?}", device);
+                    Ok(Box::new(
+                        ModernBertModel::load(vb, &config, model_type).s()?,
                     ))
                 }
             }

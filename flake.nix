@@ -220,6 +220,8 @@
               LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib:/run/opengl-driver/lib";
               LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib:/run/opengl-driver/lib";
               CUDA_ROOT = "${pkgs.cudaPackages.cudatoolkit}";
+              CANDLE_FLASH_ATTN_BUILD_DIR = "./kernels";
+              CANDLE_LAYER_NORM_BUILD_DIR = "./kernels";
             };
       }
     );

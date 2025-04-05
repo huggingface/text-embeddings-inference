@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{apply_rotary, get_cos_sin, get_inv_freqs, LayerNorm, Linear};
+use crate::layers::{get_cos_sin, get_inv_freqs, LayerNormNoBias, Linear};
 use crate::models::modernbert::{
     ClassificationHead, ModernBertClassificationHead, ModernBertConfig, ModernBertEmbeddings,
     ModernBertMLP,
@@ -9,6 +9,7 @@ use crate::models::modernbert::{
 use crate::models::Model;
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::VarBuilder;
+use candle_rotary::apply_rotary_inplace;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 struct ModernBertAttention {
@@ -79,26 +80,25 @@ impl ModernBertAttention {
         new_qkv_shape.pop();
         new_qkv_shape.push(self.num_attention_heads * 3);
         new_qkv_shape.push(self.attention_head_size);
-        let qkv = qkv.reshape(new_qkv_shape.as_slice())?.transpose(1, 2)?;
+        let qkv = qkv.reshape(new_qkv_shape.as_slice())?;
 
-        let qkv = qkv.chunk(3, 1)?;
-        let query_layer = &qkv[0].contiguous()?;
-        let key_layer = &qkv[1].contiguous()?;
-        let value_layer = &qkv[2];
+        // Split qkv tensor
+        let q = qkv.narrow(1, 0, self.num_attention_heads)?;
+        let k = qkv.narrow(1, self.num_attention_heads, self.num_attention_heads)?;
+        let v = qkv.narrow(1, self.num_attention_heads * 2, self.num_attention_heads)?;
 
-        let query_layer = apply_rotary(query_layer, cos, sin, self.attention_head_size)?;
-        let key_layer = apply_rotary(key_layer, cos, sin, self.attention_head_size)?;
+        apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
 
-        let attention_size = if self.use_local_attention {
+        let window_size = if self.use_local_attention {
             Some(self.local_attention)
         } else {
             None
         };
 
         let attention = flash_attn_varlen(
-            &query_layer,
-            &key_layer,
-            &value_layer,
+            &q,
+            &k,
+            &v,
             None,
             cu_seqlens,
             cu_seqlens,
@@ -106,8 +106,8 @@ impl ModernBertAttention {
             max_s,
             self.softmax_scale,
             false,
-            attention_size,
-            attention_size,
+            window_size,
+            window_size,
         )?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
@@ -118,9 +118,9 @@ impl ModernBertAttention {
 }
 
 struct ModernBertEncoderLayer {
-    attn_norm: Option<LayerNorm>,
+    attn_norm: Option<LayerNormNoBias>,
     attn: ModernBertAttention,
-    mlp_norm: LayerNorm,
+    mlp_norm: LayerNormNoBias,
     mlp: ModernBertMLP,
 
     span: tracing::Span,
@@ -129,7 +129,7 @@ struct ModernBertEncoderLayer {
 impl ModernBertEncoderLayer {
     pub fn load(vb: VarBuilder, index: usize, config: &ModernBertConfig) -> Result<Self> {
         let attn_norm = if index != 0 {
-            Some(LayerNorm::load(
+            Some(LayerNormNoBias::load(
                 vb.pp("attn_norm"),
                 config.hidden_size,
                 config.norm_eps as f32,
@@ -140,7 +140,7 @@ impl ModernBertEncoderLayer {
 
         let attn = ModernBertAttention::load(vb.pp("attn"), index, config)?;
 
-        let mlp_norm = LayerNorm::load(
+        let mlp_norm = LayerNormNoBias::load(
             vb.pp("mlp_norm"),
             config.hidden_size,
             config.norm_eps as f32,
@@ -236,11 +236,10 @@ impl ModernBertEncoder {
 pub struct FlashModernBertModel {
     embeddings: ModernBertEmbeddings,
     encoder: ModernBertEncoder,
-    final_norm: LayerNorm,
+    final_norm: LayerNormNoBias,
     pool: Pool,
     classifier: Option<Box<dyn ClassificationHead + Send>>,
 
-    rotary_dim: usize,
     rotary_cache: HashMap<bool, (Tensor, Tensor)>,
 
     device: Device,
@@ -277,13 +276,22 @@ impl FlashModernBertModel {
             }
         };
 
-        let embeddings = ModernBertEmbeddings::load(vb.pp("model.embeddings"), config)?;
-        let encoder = ModernBertEncoder::load(vb.pp("model.layers"), config)?;
-        let final_norm = LayerNorm::load(
+        let embeddings = ModernBertEmbeddings::load(vb.pp("model.embeddings"), config)
+            .or_else(|_| ModernBertEmbeddings::load(vb.pp("embeddings"), config))?;
+        let encoder = ModernBertEncoder::load(vb.pp("model.layers"), config)
+            .or_else(|_| ModernBertEncoder::load(vb.pp("layers"), config))?;
+        let final_norm = LayerNormNoBias::load(
             vb.pp("model.final_norm"),
             config.hidden_size,
             config.norm_eps as f32,
-        )?;
+        )
+        .or_else(|_| {
+            LayerNormNoBias::load(
+                vb.pp("final_norm"),
+                config.hidden_size,
+                config.norm_eps as f32,
+            )
+        })?;
 
         let rotary_dim = config.hidden_size / config.num_attention_heads;
         let mut rotary_cache: HashMap<bool, (Tensor, Tensor)> = HashMap::new();
@@ -295,15 +303,11 @@ impl FlashModernBertModel {
                 config.global_rope_theta
             };
 
-            let max_position_embeddings = if use_local_attention {
-                config.max_position_embeddings
-            } else {
-                config.local_attention
-            };
+            let max_position_embeddings = config.max_position_embeddings;
 
             let inv_freqs = get_inv_freqs(rotary_dim, rope_theta as f32, vb.device(), None)?;
 
-            let (cos, sin) = get_cos_sin(max_position_embeddings, &inv_freqs, vb.dtype(), true)?;
+            let (cos, sin) = get_cos_sin(max_position_embeddings, &inv_freqs, vb.dtype(), false)?;
 
             rotary_cache.insert(use_local_attention, (cos, sin));
         }
@@ -314,7 +318,6 @@ impl FlashModernBertModel {
             final_norm,
             pool,
             classifier,
-            rotary_dim,
             rotary_cache,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
@@ -342,9 +345,6 @@ impl FlashModernBertModel {
 
             let cos = cos.index_select(&position_ids, 0)?;
             let sin = sin.index_select(&position_ids, 0)?;
-
-            let cos = cos.reshape((batch_size, 1, max_length, self.rotary_dim))?;
-            let sin = sin.reshape((batch_size, 1, max_length, self.rotary_dim))?;
 
             rotary_cache.insert(use_local_attention, (cos, sin));
         }
