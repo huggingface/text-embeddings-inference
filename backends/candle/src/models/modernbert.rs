@@ -578,17 +578,15 @@ impl ModernBertModel {
     }
 
     fn get_window_mask(&self, seq_len: usize) -> Result<Tensor> {
-        let inverted_window_mask: Vec<f32> = (0..seq_len)
-            .flat_map(|i| {
-                (0..seq_len).map(move |j| {
-                    if (j as i32 - i as i32).abs() > self.window_size as i32 {
-                        1.
-                    } else {
-                        0.
-                    }
-                })
-            })
-            .collect();
+        let mut inverted_window_mask = vec![0.0_f32; seq_len * seq_len];
+
+        for i in 0..seq_len {
+            let start = i.saturating_sub(self.window_size);
+            let end = (i + self.window_size + 1).min(seq_len);
+
+            inverted_window_mask[(i * seq_len)..(i * seq_len + start)].fill(1.0);
+            inverted_window_mask[(i * seq_len + end)..((i + 1) * seq_len)].fill(1.0);
+        }
 
         let inverted_window_mask =
             Tensor::from_slice(&inverted_window_mask, (seq_len, seq_len), &self.device)?;
