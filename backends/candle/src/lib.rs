@@ -277,19 +277,12 @@ impl CandleBackend {
                 tracing::info!("Starting MPNet model on {:?}", device);
                 Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
             }
-            (Config::ModernBert(config), Device::Cpu | Device::Metal(_)) => match device {
-                Device::Metal(_) => {
-                    return Err(BackendError::Start(
-                        "ModernBert is not currently supported on MPS device".to_string(),
-                    ));
-                }
-                _ => {
-                    tracing::info!("Starting ModernBert model on {:?}", device);
-                    Ok(Box::new(
-                        ModernBertModel::load(vb, &config, model_type).s()?,
-                    ))
-                }
-            },
+            (Config::ModernBert(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting ModernBert model on {:?}", device);
+                Ok(Box::new(
+                    ModernBertModel::load(vb, &config, model_type).s()?,
+                ))
+            }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
                 if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
