@@ -370,7 +370,7 @@ impl CandleBackend {
                         FlashModernBertModel::load(vb, &config, model_type).s()?,
                     ))
                 } else {
-                    #[cfg!(feature = "flash-attn-v1")]
+                    #[cfg(feature = "flash-attn-v1")]
                     tracing::warn!("Flash attention V1 cannot be used with ModernBert because it lacks windowing support.");
                     tracing::info!("Starting ModernBert model on {:?}", device);
                     Ok(Box::new(
