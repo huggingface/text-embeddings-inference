@@ -278,11 +278,6 @@ impl CandleBackend {
                 Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
             }
             (Config::ModernBert(config), Device::Cpu | Device::Metal(_)) => match device {
-                Device::Metal(_) => {
-                    return Err(BackendError::Start(
-                        "ModernBert is not currently supported on MPS device".to_string(),
-                    ));
-                }
                 _ => {
                     tracing::info!("Starting ModernBert model on {:?}", device);
                     Ok(Box::new(
