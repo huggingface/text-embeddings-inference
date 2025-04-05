@@ -577,11 +577,10 @@ impl ModernBertModel {
         Ok(extended_attention_mask)
     }
 
-    fn get_local_attention_mask(&self, attention_mask: &Tensor) -> Result<Tensor> {
-        let (_, _, seq_len, _) = attention_mask.dims4()?;
+    fn get_window_mask(&self, seq_len: usize) -> Result<Tensor> {
         let window_size = self.local_attention / 2;
 
-        let mask: Vec<f32> = (0..seq_len)
+        let inverted_window_mask: Vec<f32> = (0..seq_len)
             .flat_map(|i| {
                 (0..seq_len).map(move |j| {
                     if (j as i32 - i as i32).abs() > window_size as i32 {
@@ -593,12 +592,36 @@ impl ModernBertModel {
             })
             .collect();
 
-        let window_mask = Tensor::from_slice(&mask, (seq_len, seq_len), &self.device)?;
-        let window_mask = window_mask.to_dtype(attention_mask.dtype())?;
+        let inverted_window_mask =
+            Tensor::from_slice(&inverted_window_mask, (seq_len, seq_len), &self.device)?;
 
-        let local_attention_mask = attention_mask.broadcast_add(&window_mask)?;
+        Ok(inverted_window_mask)
+    }
 
-        Ok(local_attention_mask)
+    fn get_attention_mask(
+        &self,
+        attention_mask: Option<&Tensor>,
+        input_shape: &(usize, usize),
+    ) -> Result<(Tensor, Tensor)> {
+        let global_attention_mask = self
+            .get_global_attention_mask(attention_mask, input_shape)?
+            .to_dtype(self.dtype)?;
+
+        let min_value = match self.dtype {
+            DType::F32 => f32::MIN as f64,
+            _ => -65504.0, // f16 minimum value
+        };
+
+        let global_attention_mask = ((1.0 - global_attention_mask)? * min_value)?;
+        let global_attention_mask = global_attention_mask.to_dtype(self.dtype)?;
+
+        let seq_len = global_attention_mask.dim(2)?;
+        let window_mask = self.get_window_mask(seq_len)?;
+        let window_mask = (window_mask * min_value)?.to_dtype(self.dtype)?;
+
+        let local_attention_mask = global_attention_mask.broadcast_add(&window_mask)?;
+
+        Ok((global_attention_mask, local_attention_mask))
     }
 
     fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
@@ -671,20 +694,8 @@ impl ModernBertModel {
         let mut input_lengths =
             Tensor::from_vec(input_lengths, (batch_size, 1), &self.device)?.to_dtype(self.dtype)?;
 
-        let global_attention_mask = self
-            .get_global_attention_mask(attention_mask.as_ref(), &shape)?
-            .to_dtype(self.dtype)?;
-        let local_attention_mask = self
-            .get_local_attention_mask(&global_attention_mask)?
-            .to_dtype(self.dtype)?;
-
-        let min_value = match self.dtype {
-            DType::F32 => f32::MIN as f64,
-            _ => -65504.0, // f16 minimum value
-        };
-
-        let global_attention_mask = ((1.0 - global_attention_mask)? * min_value)?;
-        let local_attention_mask = ((1.0 - local_attention_mask)? * min_value)?;
+        let (global_attention_mask, local_attention_mask) =
+            self.get_attention_mask(attention_mask.as_ref(), &shape)?;
 
         let global_rotary_cache =
             get_cos_sin(max_length, &self.global_inv_freqs, self.dtype, true)?;
