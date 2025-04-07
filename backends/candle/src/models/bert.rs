@@ -474,11 +474,12 @@ pub struct BertSpladeHead {
 
 impl BertSpladeHead {
     pub(crate) fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
-        let vb = vb.pp("cls.predictions");
         let transform_weight = vb
-            .pp("transform.dense")
+            .pp("cls.predictions.transform.dense")
             .get((config.hidden_size, config.hidden_size), "weight")?;
-        let transform_bias = vb.pp("transform.dense").get(config.hidden_size, "bias")?;
+        let transform_bias = vb
+            .pp("cls.predictions.transform.dense")
+            .get(config.hidden_size, "bias")?;
         let transform = Linear::new(
             transform_weight,
             Some(transform_bias),
@@ -486,15 +487,26 @@ impl BertSpladeHead {
         );
 
         let transform_layer_norm = LayerNorm::load(
-            vb.pp("transform.LayerNorm"),
+            vb.pp("cls.predictions.transform.LayerNorm"),
             config.hidden_size,
             config.layer_norm_eps as f32,
         )?;
 
-        let decoder_weight = vb
-            .pp("decoder")
-            .get((config.vocab_size, config.hidden_size), "weight")?;
-        let decoder_bias = vb.get(config.vocab_size, "bias")?;
+        // When `pytorch_model.bin` originally contains `cls.predictions.decoder.weight`, but since
+        // the tensor content is duplicated with the content on `bert.embeddings.word_embeddings.weight`
+        // when converting the file from BIN to Safentensors, the duplicated tensors are removed,
+        // meaning that we need to capture both alternatives to handle both BIN and Safentensors
+        // files for models with Splade pooling
+        let decoder_weight = if vb.contains_tensor("cls.predictions.decoder.weight") {
+            vb.pp("cls.predictions.decoder")
+                .get((config.vocab_size, config.hidden_size), "weight")?
+        } else {
+            vb.pp("bert.embeddings.word_embeddings")
+                .get((config.vocab_size, config.hidden_size), "weight")?
+        };
+        // Same applies for the tensor `cls.predictions.decoder.bias` which is duplicated with
+        // `cls.predictions.bias` and removed in the BIN to Safentensors conversion
+        let decoder_bias = vb.get(config.vocab_size, "cls.predictions.bias")?;
         let decoder = Linear::new(decoder_weight, Some(decoder_bias), Some(HiddenAct::Relu));
 
         Ok(Self {
