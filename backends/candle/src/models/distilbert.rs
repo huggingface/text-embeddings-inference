@@ -392,10 +392,9 @@ impl DistilBertSpladeHead {
         );
 
         // When `pytorch_model.bin` originally contains `vocab_projector.weight` but the tensor
-        // content is duplicated with the content on `distilbert.embeddings.word_embeddings.weight`
-        // when converting the file from BIN to Safentensors, the duplicated tensors are removed,
-        // meaning that we need to capture both alternatives to handle both BIN and Safentensors
-        // files for models with Splade pooling
+        // content shares the memory with the content on `distilbert.embeddings.word_embeddings.weight`,
+        // e.g. a subset of the original tensor, when converting the file from BIN to Safentensors
+        // the latter tensor that shares the memory with the previous will be removed
         let vocab_projector_weight = if vb.contains_tensor("vocab_projector.weight") {
             vb.pp("vocab_projector")
                 .get((config.vocab_size, config.dim), "weight")?

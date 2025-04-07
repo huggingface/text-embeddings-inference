@@ -493,10 +493,9 @@ impl BertSpladeHead {
         )?;
 
         // When `pytorch_model.bin` originally contains `cls.predictions.decoder.weight` but the
-        // tensor content is duplicated with the content on `bert.embeddings.word_embeddings.weight`
-        // when converting the file from BIN to Safentensors, the duplicated tensors are removed,
-        // meaning that we need to capture both alternatives to handle both BIN and Safentensors
-        // files for models with Splade pooling
+        // tensor content shares the memory with the content on `bert.embeddings.word_embeddings.weight`,
+        // e.g. a subset of the original tensor, when converting the file from BIN to Safentensors
+        // the latter tensor that shares the memory with the previous will be removed
         let decoder_weight = if vb.contains_tensor("cls.predictions.decoder.weight") {
             vb.pp("cls.predictions.decoder")
                 .get((config.vocab_size, config.hidden_size), "weight")?
@@ -504,7 +503,7 @@ impl BertSpladeHead {
             vb.pp("bert.embeddings.word_embeddings")
                 .get((config.vocab_size, config.hidden_size), "weight")?
         };
-        // Same applies for the tensor `cls.predictions.decoder.bias` which is duplicated with
+        // Same applies for the tensor `cls.predictions.decoder.bias` which is shared with
         // `cls.predictions.bias` and removed in the BIN to Safentensors conversion
         let decoder_bias = vb.pp("cls.predictions").get(config.vocab_size, "bias")?;
         let decoder = Linear::new(decoder_weight, Some(decoder_bias), Some(HiddenAct::Relu));
