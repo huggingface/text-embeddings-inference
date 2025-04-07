@@ -506,7 +506,7 @@ impl BertSpladeHead {
         };
         // Same applies for the tensor `cls.predictions.decoder.bias` which is duplicated with
         // `cls.predictions.bias` and removed in the BIN to Safentensors conversion
-        let decoder_bias = vb.get(config.vocab_size, "cls.predictions.bias")?;
+        let decoder_bias = vb.pp("cls.predictions").get(config.vocab_size, "bias")?;
         let decoder = Linear::new(decoder_weight, Some(decoder_bias), Some(HiddenAct::Relu));
 
         Ok(Self {
