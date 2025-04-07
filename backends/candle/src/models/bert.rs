@@ -492,8 +492,8 @@ impl BertSpladeHead {
             config.layer_norm_eps as f32,
         )?;
 
-        // When `pytorch_model.bin` originally contains `cls.predictions.decoder.weight`, but since
-        // the tensor content is duplicated with the content on `bert.embeddings.word_embeddings.weight`
+        // When `pytorch_model.bin` originally contains `cls.predictions.decoder.weight` but the
+        // tensor content is duplicated with the content on `bert.embeddings.word_embeddings.weight`
         // when converting the file from BIN to Safentensors, the duplicated tensors are removed,
         // meaning that we need to capture both alternatives to handle both BIN and Safentensors
         // files for models with Splade pooling
