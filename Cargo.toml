@@ -26,7 +26,7 @@ default-members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.6.1"
+version = "1.7.0"
 edition = "2021"
 authors = ["Olivier Dehaene", "Nicolas Patry", "Alvaro Bartolome"]
 homepage = "https://github.com/huggingface/text-embeddings-inference"
