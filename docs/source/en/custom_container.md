@@ -37,6 +37,9 @@ Once you have determined the compute capability is determined, set it as the `ru
 the container as shown in the example below:
 
 ```shell
+# Get submodule dependencies
+git submodule update --init
+
 runtime_compute_cap=80
 
 docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
