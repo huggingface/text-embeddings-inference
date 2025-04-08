@@ -391,9 +391,17 @@ impl DistilBertSpladeHead {
             Some(config.activation.clone()),
         );
 
-        let vocab_projector_weight = vb
-            .pp("vocab_projector")
-            .get((config.vocab_size, config.dim), "weight")?;
+        // When `pytorch_model.bin` originally contains `vocab_projector.weight` but the tensor
+        // content shares the memory with the content on `distilbert.embeddings.word_embeddings.weight`,
+        // e.g. a subset of the original tensor, when converting the file from BIN to Safentensors
+        // the latter tensor that shares the memory with the previous will be removed
+        let vocab_projector_weight = if vb.contains_tensor("vocab_projector.weight") {
+            vb.pp("vocab_projector")
+                .get((config.vocab_size, config.dim), "weight")?
+        } else {
+            vb.pp("distilbert.embeddings.word_embeddings")
+                .get((config.vocab_size, config.dim), "weight")?
+        };
         let vocab_projector_bias = vb.pp("vocab_projector").get(config.vocab_size, "bias")?;
         let vocab_projector = Linear::new(
             vocab_projector_weight,
