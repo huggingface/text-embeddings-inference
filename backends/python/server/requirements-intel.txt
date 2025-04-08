@@ -42,3 +42,4 @@ win32-setctime==1.1.0 ; python_version >= "3.9" and python_version < "3.13" and 
 wrapt==1.15.0 ; python_version >= "3.9" and python_version < "3.13"
 transformers==4.40.0 ; python_version >= "3.9" and python_version < "3.13"
 pyrsistent==0.20.0 ; python_version >= "3.9" and python_version < "3.13"
+einops==0.8.0 ; python_version >= "3.9" and python_version < "3.13"
