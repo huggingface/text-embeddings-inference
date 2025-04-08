@@ -553,6 +553,9 @@ at runtime.
 Then you can build the container with:
 
 ```shell
+# Get submodule dependencies
+git submodule update --init
+
 # Example for Turing (T4, RTX 2000 series, ...)
 runtime_compute_cap=75
 
