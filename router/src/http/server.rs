@@ -34,6 +34,7 @@ use text_embeddings_backend::BackendError;
 use text_embeddings_core::infer::{
     AllEmbeddingsInferResponse, Infer, InferMetadata, PooledEmbeddingsInferResponse,
 };
+use text_embeddings_core::tokenization::{into_tokens, SimpleToken as CoreSimpleToken};
 use text_embeddings_core::TextEmbeddingsError;
 use tokio::sync::OwnedSemaphorePermit;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -1295,32 +1296,22 @@ async fn tokenize(
             .map_err(ErrorResponse::from)?;
         let input = encoded_input.unwrap_or(input);
 
-        let tokens: Vec<SimpleToken> = encoding
-            .get_ids()
-            .iter()
-            .zip(encoding.get_offsets())
-            .zip(encoding.get_special_tokens_mask())
-            .zip(encoding.get_tokens())
-            .map(|(((&id, &(start, stop)), special), token)| {
-                let special = *special == 1;
-                match special {
-                    true => SimpleToken {
-                        id,
-                        text: token.clone(),
-                        special,
-                        start: None,
-                        stop: None,
-                    },
-                    false => {
-                        let text: String = input.chars().skip(start).take(stop - start).collect();
-                        SimpleToken {
-                            id,
-                            text,
-                            special,
-                            start: Some(start),
-                            stop: Some(stop),
-                        }
-                    }
+        let tokens: Vec<SimpleToken> = into_tokens(encoding, &input)
+            .into_iter()
+            .map(|t| {
+                let CoreSimpleToken {
+                    id,
+                    text,
+                    special,
+                    start,
+                    stop,
+                } = t;
+                SimpleToken {
+                    id,
+                    text,
+                    special,
+                    start,
+                    stop,
                 }
             })
             .collect();

@@ -16,6 +16,16 @@ pub struct Tokenization {
     sender: async_channel::Sender<TokenizerRequest>,
 }
 
+#[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
+pub struct SimpleToken {
+    pub id: u32,
+    pub text: String,
+    pub special: bool,
+    pub start: Option<usize>,
+    pub stop: Option<usize>,
+}
+
 impl Tokenization {
     pub fn new(
         workers: usize,
@@ -484,4 +494,156 @@ enum TokenizerRequest {
         oneshot::Sender<Result<String, TextEmbeddingsError>>,
         Span,
     ),
+}
+
+pub fn into_tokens(encoding: tokenizers::Encoding, input: &str) -> Vec<SimpleToken> {
+    encoding
+        .get_ids()
+        .iter()
+        .zip(encoding.get_offsets())
+        .zip(encoding.get_special_tokens_mask())
+        .zip(encoding.get_tokens())
+        .map(|(((&id, &(start, stop)), special), token)| {
+            let special = *special == 1;
+            match special {
+                true => SimpleToken {
+                    id,
+                    text: token.clone(),
+                    special,
+                    start: None,
+                    stop: None,
+                },
+                false => {
+                    let text: Vec<u8> = input.bytes().skip(start).take(stop - start).collect();
+                    let text: String = String::from_utf8_lossy(&text).to_string();
+                    SimpleToken {
+                        id,
+                        text,
+                        special,
+                        start: Some(start),
+                        stop: Some(stop),
+                    }
+                }
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hf_hub::api::sync::ApiBuilder;
+
+    #[test]
+    fn tokenizer() {
+        let api = ApiBuilder::from_env().build().unwrap();
+        let filename = api
+            .model("BAAI/bge-m3".to_string())
+            .get("tokenizer.json")
+            .unwrap();
+        let string = "这是一个文本向量化的测试句子";
+        let tokenizer = Tokenizer::from_file(filename).unwrap();
+
+        let encoded = tokenizer.encode(string, true).unwrap();
+        assert_eq!(
+            encoded.get_offsets(),
+            vec![
+                (0, 0),
+                (0, 3),
+                (0, 12),
+                (12, 18),
+                (18, 21),
+                (21, 24),
+                (24, 30),
+                (30, 36),
+                (36, 39),
+                (39, 42),
+                (0, 0)
+            ]
+        );
+
+        let tokens = into_tokens(encoded, &string);
+        assert_eq!(
+            tokens,
+            vec![
+                SimpleToken {
+                    id: 0,
+                    text: "<s>".to_string(),
+                    special: true,
+                    start: None,
+                    stop: None
+                },
+                SimpleToken {
+                    id: 6,
+                    text: "这".to_string(),
+                    special: false,
+                    start: Some(0),
+                    stop: Some(3)
+                },
+                SimpleToken {
+                    id: 100013,
+                    text: "这是一个".to_string(),
+                    special: false,
+                    start: Some(0),
+                    stop: Some(12)
+                },
+                SimpleToken {
+                    id: 189061,
+                    text: "文本".to_string(),
+                    special: false,
+                    start: Some(12),
+                    stop: Some(18)
+                },
+                SimpleToken {
+                    id: 2110,
+                    text: "向".to_string(),
+                    special: false,
+                    start: Some(18),
+                    stop: Some(21)
+                },
+                SimpleToken {
+                    id: 3272,
+                    text: "量".to_string(),
+                    special: false,
+                    start: Some(21),
+                    stop: Some(24)
+                },
+                SimpleToken {
+                    id: 41904,
+                    text: "化的".to_string(),
+                    special: false,
+                    start: Some(24),
+                    stop: Some(30)
+                },
+                SimpleToken {
+                    id: 49125,
+                    text: "测试".to_string(),
+                    special: false,
+                    start: Some(30),
+                    stop: Some(36)
+                },
+                SimpleToken {
+                    id: 27683,
+                    text: "句".to_string(),
+                    special: false,
+                    start: Some(36),
+                    stop: Some(39)
+                },
+                SimpleToken {
+                    id: 1344,
+                    text: "子".to_string(),
+                    special: false,
+                    start: Some(39),
+                    stop: Some(42)
+                },
+                SimpleToken {
+                    id: 2,
+                    text: "</s>".to_string(),
+                    special: true,
+                    start: None,
+                    stop: None
+                }
+            ]
+        );
+    }
 }

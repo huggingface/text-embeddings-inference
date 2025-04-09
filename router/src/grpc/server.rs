@@ -15,7 +15,9 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use text_embeddings_core::infer::Infer;
-use text_embeddings_core::tokenization::EncodingInput;
+use text_embeddings_core::tokenization::{
+    into_tokens, EncodingInput, SimpleToken as CoreSimpleToken,
+};
 use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_stream::StreamExt;
@@ -340,32 +342,22 @@ impl TextEmbeddingsService {
             .map_err(ErrorResponse::from)?;
         let inputs = encoded_inputs.unwrap_or(inputs);
 
-        let tokens: Vec<SimpleToken> = encoding
-            .get_ids()
-            .iter()
-            .zip(encoding.get_offsets())
-            .zip(encoding.get_special_tokens_mask())
-            .zip(encoding.get_tokens())
-            .map(|(((&id, &(start, stop)), special), token)| {
-                let special = *special == 1;
-                match special {
-                    true => SimpleToken {
-                        id,
-                        text: token.clone(),
-                        special,
-                        start: None,
-                        stop: None,
-                    },
-                    false => {
-                        let text: String = inputs.chars().skip(start).take(stop - start).collect();
-                        SimpleToken {
-                            id,
-                            text,
-                            special,
-                            start: Some(start as u32),
-                            stop: Some(stop as u32),
-                        }
-                    }
+        let tokens: Vec<SimpleToken> = into_tokens(encoding, &inputs)
+            .into_iter()
+            .map(|t| {
+                let CoreSimpleToken {
+                    id,
+                    text,
+                    special,
+                    start,
+                    stop,
+                } = t;
+                SimpleToken {
+                    id,
+                    text,
+                    special,
+                    start: start.map(|s| s as u32),
+                    stop: stop.map(|s| s as u32),
                 }
             })
             .collect();
