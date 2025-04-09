@@ -25,10 +25,10 @@ On Google Cloud, there are 3 main options for deploying TEI (or any other Docker
 
 This guide explains how to deploy TEI on Cloud Run, a fully managed service by Google. Cloud Run is a so-called serverless offering. This means that the server infrastructure is handled by Google, you only need to provide a Docker container. The benefit of this is that you only pay for compute when there is demand for your application. Cloud Run will automatically spin up servers when there's demand, and scale down to zero when there is no demand.
 
-We will showcase how to deploy the model with or without a GPU.
+We will showcase how to deploy any text embedding model with or without a GPU.
 
 > [!NOTE]
-> GPU support on Cloud Run was just made generally available. If you're interested in using it, [request a quota increase](https://cloud.google.com/run/quotas#increase) for `Total Nvidia L4 GPU allocation, per project per region`. At the time of writing this example, NVIDIA L4 GPUs (24GiB VRAM) are the only available GPUs on Cloud Run; enabling automatic scaling up to 7 instances by default (more available via quota), as well as scaling down to zero instances when there are no requests.
+> At the time of writing, GPU support on Cloud Run is generally available in 4 regions. If you're interested in using it, [request a quota increase](https://cloud.google.com/run/quotas#increase) for `Total Nvidia L4 GPU allocation, per project per region`. So far, NVIDIA L4 GPUs (24GiB VRAM) are the only available GPUs on Cloud Run; enabling automatic scaling up to 7 instances by default (more available via quota), as well as scaling down to zero instances when there are no requests.
 
 ## Setup / Configuration
 
@@ -92,11 +92,12 @@ The command needs you to specify the following parameters:
 Finally, you can run the `gcloud run deploy` command to deploy TEI on Cloud Run as:
 
 ```bash
-export SERVICE_NAME="text-embedding-server" # or choose another name for your service
+export SERVICE_NAME="text-embedding-server" # choose a name for your service
+export MODEL_ID="ibm-granite/granite-embedding-278m-multilingual" # choose any embedding model
 
 gcloud run deploy $SERVICE_NAME \
     --image=$CONTAINER_URI \
-    --args="--model-id=ibm-granite/granite-embedding-278m-multilingual" \
+    --args="--model-id=$MODEL_ID,--max-concurrent-requests=64" \
     --set-env-vars=HF_HUB_ENABLE_HF_TRANSFER=1 \
     --port=8080 \
     --cpu=8 \
@@ -110,7 +111,7 @@ If you want to deploy with a GPU, run the following command:
 ```bash
 gcloud run deploy $SERVICE_NAME \
     --image=$CONTAINER_URI \
-    --args="--model-id=ibm-granite/granite-embedding-278m-multilingual,--max-concurrent-requests=64" \
+    --args="--model-id=$MODEL_ID,--max-concurrent-requests=64" \
     --set-env-vars=HF_HUB_ENABLE_HF_TRANSFER=1 \
     --port=8080 \
     --cpu=8 \
@@ -129,7 +130,7 @@ Or as it follows if you created the Cloud NAT:
 ```bash
 gcloud beta run deploy $SERVICE_NAME \
     --image=$CONTAINER_URI \
-    --args="--model-id=ibm-granite/granite-embedding-278m-multilingual" \
+    --args="--model-id=$MODEL_ID,--max-concurrent-requests=64" \
     --set-env-vars=HF_HUB_ENABLE_HF_TRANSFER=1 \
     --port=8080 \
     --cpu=8 \
