@@ -1312,7 +1312,8 @@ async fn tokenize(
                         stop: None,
                     },
                     false => {
-                        let text: String = input.chars().skip(start).take(stop - start).collect();
+                        let text: Vec<u8> = input.bytes().skip(start).take(stop - start).collect();
+                        let text: String = String::from_utf8_lossy(&text).to_string();
                         SimpleToken {
                             id,
                             text,

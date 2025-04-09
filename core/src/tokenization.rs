@@ -485,3 +485,38 @@ enum TokenizerRequest {
         Span,
     ),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hf_hub::api::sync::ApiBuilder;
+
+    #[test]
+    fn tokenizer() {
+        let api = ApiBuilder::from_env().build().unwrap();
+        let filename = api
+            .model("BAAI/bge-m3".to_string())
+            .get("tokenizer.json")
+            .unwrap();
+        let string = "这是一个文本向量化的测试句子";
+        let tokenizer = Tokenizer::from_file(filename).unwrap();
+
+        let encoded = tokenizer.encode(string, true).unwrap();
+        assert_eq!(
+            encoded.get_offsets(),
+            vec![
+                (0, 0),
+                (0, 3),
+                (0, 12),
+                (12, 18),
+                (18, 21),
+                (21, 24),
+                (24, 30),
+                (30, 36),
+                (36, 39),
+                (39, 42),
+                (0, 0)
+            ]
+        );
+    }
+}
