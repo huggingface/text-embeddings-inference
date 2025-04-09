@@ -356,8 +356,8 @@ impl TextEmbeddingsService {
                     id,
                     text,
                     special,
-                    start,
-                    stop,
+                    start: start.map(|s| s as u32),
+                    stop: stop.map(|s| s as u32),
                 }
             })
             .collect();
