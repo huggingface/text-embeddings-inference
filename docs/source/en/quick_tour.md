@@ -23,7 +23,7 @@ The easiest way to get started with TEI is to use one of the official Docker con
 
 Hence one needs to install Docker following their [installation instructions](https://docs.docker.com/get-docker/).
 
-TEI supports inference both on GPU and CPU. If you plan on using a GPU, make sure to check that your hardware is supported by checking [this table](https://github.com/huggingface/text-embeddings-inference?tab=readme-ov-file#docker-images). 
+TEI supports inference both on GPU and CPU. If you plan on using a GPU, make sure to check that your hardware is supported by checking [this table](https://github.com/huggingface/text-embeddings-inference?tab=readme-ov-file#docker-images).
 Next, install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html). NVIDIA drivers on your device need to be compatible with CUDA version 12.2 or higher.
 
 ## Deploy
