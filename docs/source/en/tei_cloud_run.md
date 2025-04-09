@@ -80,7 +80,7 @@ The command needs you to specify the following parameters:
 - `--no-cpu-throttling`: Disables CPU throttling, which is required for using the GPU.
 - `--gpu` and `--gpu-type`: The number of GPUs and the GPU type to use. Needs to be set to 1 and `nvidia-l4`, respectively; as at the time of writing this tutorial, those are the only available options as Cloud Run on GPUs.
 - `--max-instances`: The maximum number of instances to run, set to 3, but default maximum value is 7. Alternatively, one could set it to 1 too, but that could eventually lead to downtime during infrastructure migrations, so anything above 1 is recommended.
-- `--concurrency`: the maximum number of concurrent requests per instance, set to 64. Note that this value is also aligned with the [`--max-concurrent-requests`](cli_arguments) argument in TEI.
+- `--concurrency`: the maximum number of concurrent requests per instance, set to 64. Note that this value is also aligned with the [`--max-concurrent-requests`](https://huggingface.co/docs/text-embeddings-inference/cli_arguments) argument in TEI.
 - `--region`: The region to deploy the Cloud Run service.
 - `--no-allow-unauthenticated`: Disables unauthenticated access to the service, which is a good practice as adds an authentication layer managed by Google Cloud IAM.
 
