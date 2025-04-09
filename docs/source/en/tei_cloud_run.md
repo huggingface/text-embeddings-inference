@@ -42,10 +42,13 @@ Optionally, to ease the usage of the commands within this tutorial, you need to 
 export PROJECT_ID=your-project-id
 export LOCATION=europe-west1  # or any location you prefer: https://cloud.google.com/run/docs/locations
 export CONTAINER_URI="gcr.io/deeplearning-platform-release/huggingface-text-embeddings-inference-cpu.1-6"
-export SERVICE_NAME=gemma2-tgi
+export SERVICE_NAME="text-embedding-server" # choose a name for your service
+export MODEL_ID="ibm-granite/granite-embedding-278m-multilingual" # choose any embedding model
 ```
 
-We provide the official Docker image URI based on the [README](https://github.com/huggingface/Google-Cloud-Containers/blob/main/containers/tei/README.md).
+Some clarifications:
+- We provide the latest official Docker image URI based on the [README](https://github.com/huggingface/Google-Cloud-Containers/blob/main/containers/tei/README.md).
+- We choose to deploy the [IBM granite](https://huggingface.co/ibm-granite/granite-embedding-278m-multilingual) embedding model given its strong multilingual capabilities. One can of course choose any other embedding model from the hub. It's recommended to look for models tagged with either `feature-extraction`, `sentence-similarity` or `text-ranking`.
 
 Then you need to login into your Google Cloud account and set the project ID you want to use to deploy Cloud Run.
 
@@ -55,7 +58,7 @@ gcloud auth application-default login  # For local development
 gcloud config set project $PROJECT_ID
 ```
 
-Once you are logged in, you need to enable the Cloud Run API, which is required for the Hugging Face DLC for TGI deployment on Cloud Run.
+Once you are logged in, you need to enable the Cloud Run API, which is required for the Hugging Face DLC for TEI deployment on Cloud Run.
 
 ```bash
 gcloud services enable run.googleapis.com
@@ -68,16 +71,16 @@ Once you are all set, you can call the `gcloud run deploy` command to deploy the
 The command needs you to specify the following parameters:
 
 - `--image`: The container image URI to deploy.
-- `--args`: The arguments to pass to the container entrypoint, being `text-embedding-launcher` for the Hugging Face DLC for TEI. Read more about the supported arguments in [Text-generation-launcher arguments](https://huggingface.co/docs/text-generation-inference/en/basic_tutorials/launcher).
-  - `--model-id`: The model ID to use, in this case, [`hugging-quants/gemma-2-9b-it-AWQ-INT4`](https://huggingface.co/hugging-quants/gemma-2-9b-it-AWQ-INT4).
-  - `--quantize`: The quantization method to use, in this case, `awq`. If not specified, it will be retrieved from the `quantization_config->quant_method` in the `config.json` file.
+- `--args`: The arguments to pass to the container entrypoint, being `text-embeddings-inference` for the Hugging Face DLC for TEI. Read more about the supported arguments [here](cli_arguments).
+  - `--model-id`: The model ID to use, in this case, [`ibm-granite/granite-embedding-278m-multilingual`](https://huggingface.co/ibm-granite/granite-embedding-278m-multilingual).
+  - `--quantize`: The quantization method to use. If not specified, it will be retrieved from the `quantization_config->quant_method` in the `config.json` file.
   - `--max-concurrent-requests`: The maximum amount of concurrent requests for this particular deployment. Having a low limit will refuse clients requests instead of having them wait for too long and is usually good to handle back pressure correctly. Set to 64, but default is 128.
 - `--port`: The port the container listens to.
 - `--cpu` and `--memory`: The number of CPUs and amount of memory to allocate to the container. Needs to be set to 4 and 16Gi (16 GiB), respectively; as that's the minimum requirement for using the GPU.
 - `--no-cpu-throttling`: Disables CPU throttling, which is required for using the GPU.
 - `--gpu` and `--gpu-type`: The number of GPUs and the GPU type to use. Needs to be set to 1 and `nvidia-l4`, respectively; as at the time of writing this tutorial, those are the only available options as Cloud Run on GPUs.
 - `--max-instances`: The maximum number of instances to run, set to 3, but default maximum value is 7. Alternatively, one could set it to 1 too, but that could eventually lead to downtime during infrastructure migrations, so anything above 1 is recommended.
-- `--concurrency`: the maximum number of concurrent requests per instance, set to 64. The value is not arbitrary, but determined after running and evaluating the results of [`text-generation-benchmark`](https://github.com/huggingface/text-generation-inference/tree/main/benchmark), as the most optimal balance between throughput and latency; where the current default for TGI being 128 is a bit too much. Note that this value is also aligned with the [`--max-concurrent-requests`](https://huggingface.co/docs/text-generation-inference/en/basic_tutorials/launcher#maxconcurrentrequests) argument in TGI.
+- `--concurrency`: the maximum number of concurrent requests per instance, set to 64. Note that this value is also aligned with the [`--max-concurrent-requests`](cli_arguments) argument in TEI.
 - `--region`: The region to deploy the Cloud Run service.
 - `--no-allow-unauthenticated`: Disables unauthenticated access to the service, which is a good practice as adds an authentication layer managed by Google Cloud IAM.
 
@@ -92,9 +95,6 @@ The command needs you to specify the following parameters:
 Finally, you can run the `gcloud run deploy` command to deploy TEI on Cloud Run as:
 
 ```bash
-export SERVICE_NAME="text-embedding-server" # choose a name for your service
-export MODEL_ID="ibm-granite/granite-embedding-278m-multilingual" # choose any embedding model
-
 gcloud run deploy $SERVICE_NAME \
     --image=$CONTAINER_URI \
     --args="--model-id=$MODEL_ID,--max-concurrent-requests=64" \
@@ -273,7 +273,7 @@ The recommended approach is to use a Service Account (SA), as the access can be 
 * Set the SERVICE_ACCOUNT_NAME environment variable for convenience:
 
 ```bash
-export SERVICE_ACCOUNT_NAME=tgi-invoker
+export SERVICE_ACCOUNT_NAME=tei-invoker
 ```
 
 * Create the Service Account:
@@ -303,7 +303,7 @@ Now you can already dive into the different alternatives for sending the request
 
 #### cURL
 
-To send a POST request to the TGI service using cURL, you can run the following command:
+To send a POST request to the TEI service using cURL, you can run the following command:
 
 ```bash
 curl $SERVICE_URL/v1/embeddigs \
@@ -361,7 +361,7 @@ print(response)
 
 ## Resource clean up
 
-Finally, once you are done using TGI on the Cloud Run Service, you can safely delete it to avoid incurring in unnecessary costs e.g. if the Cloud Run services are inadvertently invoked more times than your monthly Cloud Run invoke allocation in the free tier.
+Finally, once you are done using TEI on the Cloud Run Service, you can safely delete it to avoid incurring in unnecessary costs e.g. if the Cloud Run services are inadvertently invoked more times than your monthly Cloud Run invoke allocation in the free tier.
 
 To delete the Cloud Run Service you can either go to the Google Cloud Console at https://console.cloud.google.com/run and delete it manually; or use the Google Cloud SDK via gcloud as follows:
 
