@@ -1,4 +1,4 @@
-<!--Copyright 2023 The HuggingFace Team. All rights reserved.
+<!--Copyright 2025 The HuggingFace Team. All rights reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with
 the License. You may obtain a copy of the License at
@@ -16,18 +16,18 @@ rendered properly in your Markdown viewer.
 
 # Quick Tour
 
-## Text Embeddings
+## Set up
 
 The easiest way to get started with TEI is to use one of the official Docker containers
 (see [Supported models and hardware](supported_models) to choose the right container).
 
-After making sure that your hardware is supported, install the
-[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) if you
-plan on utilizing GPUs. NVIDIA drivers on your device need to be compatible with CUDA version 12.2 or higher.
+Hence one needs to install Docker following their [installation instructions](https://docs.docker.com/get-docker/).
 
-Next, install Docker following their [installation instructions](https://docs.docker.com/get-docker/).
+TEI supports inference both on GPU and CPU. If you plan on using a GPU, make sure to check that your hardware is supported. Next, install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html). NVIDIA drivers on your device need to be compatible with CUDA version 12.2 or higher.
 
-Finally, deploy your model. Let's say you want to use `BAAI/bge-large-en-v1.5`. Here's how you can do this:
+## Deploy
+
+Next it's time to deploy your model. Let's say you want to use [`BAAI/bge-large-en-v1.5`](https://huggingface.co/BAAI/bge-large-en-v1.5). Here's how you can do this:
 
 ```shell
 model=BAAI/bge-large-en-v1.5
@@ -42,7 +42,13 @@ We also recommend sharing a volume with the Docker container (`volume=$PWD/data`
 
 </Tip>
 
-Once you have deployed a model, you can use the `embed` endpoint by sending requests:
+## Inference
+
+Inference can be performed in 3 ways: using cURL, or via the `InferenceClient` or `OpenAI` Python SDKs.
+
+#### cURL
+
+To send a POST request to the TEI endpoint using cURL, you can run the following command:
 
 ```bash
 curl 127.0.0.1:8080/embed \
@@ -51,16 +57,53 @@ curl 127.0.0.1:8080/embed \
     -H 'Content-Type: application/json'
 ```
 
-## Re-rankers
+#### Python
 
-Re-rankers models are Sequence Classification cross-encoders models with a single class that scores the similarity
-between a query and a text.
+To run inference using Python, you can either use the [`huggingface_hub`](https://huggingface.co/docs/huggingface_hub/en/index) Python SDK (recommended) or the `openai` Python SDK.
 
-See [this blogpost](https://blog.llamaindex.ai/boosting-rag-picking-the-best-embedding-reranker-models-42d079022e83) by
+##### huggingface_hub
+
+You can install it via pip as `pip install --upgrade --quiet huggingface_hub`, and then run:
+
+```python
+from huggingface_hub import InferenceClient
+
+client = InferenceClient()
+
+embedding = client.feature_extraction("What is deep learning?",
+                                      model="http://localhost:8080/embed")
+print(len(embedding[0]))
+```
+
+#### OpenAI
+
+You can install it via pip as `pip install --upgrade openai`, and then run:
+
+```python
+import os
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:8080/embed")
+
+response = client.embeddings.create(
+  model="tei",
+  input="What is deep learning?"
+)
+
+print(response)
+```
+
+## Re-rankers and sequence classification
+
+TEI also supports re-ranker and classic sequence classification models.
+
+### Re-rankers
+
+Rerankers, also called cross-encoders, are sequence classification models with a single class that score the similarity between a query and a text. See [this blogpost](https://blog.llamaindex.ai/boosting-rag-picking-the-best-embedding-reranker-models-42d079022e83) by
 the LlamaIndex team to understand how you can use re-rankers models in your RAG pipeline to improve
 downstream performance.
 
-Let's say you want to use `BAAI/bge-reranker-large`:
+Let's say you want to use [`BAAI/bge-reranker-large`](https://huggingface.co/BAAI/bge-reranker-large). First, you can deploy it like so:
 
 ```shell
 model=BAAI/bge-reranker-large
@@ -69,8 +112,7 @@ volume=$PWD/data
 docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id $model
 ```
 
-Once you have deployed a model, you can use the `rerank` endpoint to rank the similarity between a query and a list
-of texts:
+Once you have deployed a model, you can use the `rerank` endpoint to rank the similarity between a query and a list of texts. With `cURL` this can be done like so:
 
 ```bash
 curl 127.0.0.1:8080/rerank \
@@ -79,9 +121,20 @@ curl 127.0.0.1:8080/rerank \
     -H 'Content-Type: application/json'
 ```
 
-## Sequence Classification
+Alternatively, one can perform inference using the `huggingface_hub` Python SDK. You can install it via pip as `pip install --upgrade --quiet huggingface_hub`, and then run:
 
-You can also use classic Sequence Classification models like `SamLowe/roberta-base-go_emotions`:
+```python
+from huggingface_hub import InferenceClient
+
+client = InferenceClient()
+embedding = client.feature_extraction("What is deep learning?",
+                                      model="http://localhost:8080/rerank")
+print(len(embedding[0]))
+```
+
+### Sequence classification models
+
+You can also use classic Sequence Classification models like [`SamLowe/roberta-base-go_emotions`](https://huggingface.co/SamLowe/roberta-base-go_emotions):
 
 ```shell
 model=SamLowe/roberta-base-go_emotions
@@ -99,9 +152,20 @@ curl 127.0.0.1:8080/predict \
     -H 'Content-Type: application/json'
 ```
 
+Alternatively, one can perform inference using the `huggingface_hub` Python SDK. You can install it via pip as `pip install --upgrade --quiet huggingface_hub`, and then run:
+
+```python
+from huggingface_hub import InferenceClient
+
+client = InferenceClient()
+embedding = client.feature_extraction("What is deep learning?",
+                                      model="http://localhost:8080/predict")
+print(len(embedding[0]))
+```
+
 ## Batching
 
-You can send multiple inputs in a batch. For example, for embeddings
+You can send multiple inputs in a batch. For example, for embeddings:
 
 ```bash
 curl 127.0.0.1:8080/embed \
