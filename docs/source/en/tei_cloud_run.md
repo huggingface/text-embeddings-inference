@@ -71,7 +71,7 @@ Once you are all set, you can call the `gcloud run deploy` command to deploy the
 The command needs you to specify the following parameters:
 
 - `--image`: The container image URI to deploy.
-- `--args`: The arguments to pass to the container entrypoint, being `text-embeddings-inference` for the Hugging Face DLC for TEI. Read more about the supported arguments [here](cli_arguments).
+- `--args`: The arguments to pass to the container entrypoint, being `text-embeddings-inference` for the Hugging Face DLC for TEI. Read more about the supported arguments [here](https://huggingface.co/docs/text-embeddings-inference/cli_arguments).
   - `--model-id`: The model ID to use, in this case, [`ibm-granite/granite-embedding-278m-multilingual`](https://huggingface.co/ibm-granite/granite-embedding-278m-multilingual).
   - `--quantize`: The quantization method to use. If not specified, it will be retrieved from the `quantization_config->quant_method` in the `config.json` file.
   - `--max-concurrent-requests`: The maximum amount of concurrent requests for this particular deployment. Having a low limit will refuse clients requests instead of having them wait for too long and is usually good to handle back pressure correctly. Set to 64, but default is 128.
