@@ -83,7 +83,7 @@ You can install it via pip as `pip install --upgrade openai`, and then run:
 import os
 from openai import OpenAI
 
-client = OpenAI(base_url="http://localhost:8080/embed")
+client = OpenAI(base_url="http://localhost:8080/v1/embeddings")
 
 response = client.embeddings.create(
   model="tei",
@@ -121,17 +121,6 @@ curl 127.0.0.1:8080/rerank \
     -H 'Content-Type: application/json'
 ```
 
-Alternatively, one can perform inference using the `huggingface_hub` Python SDK. You can install it via pip as `pip install --upgrade --quiet huggingface_hub`, and then run:
-
-```python
-from huggingface_hub import InferenceClient
-
-client = InferenceClient()
-embedding = client.feature_extraction("What is deep learning?",
-                                      model="http://localhost:8080/rerank")
-print(len(embedding[0]))
-```
-
 ### Sequence classification models
 
 You can also use classic Sequence Classification models like [`SamLowe/roberta-base-go_emotions`](https://huggingface.co/SamLowe/roberta-base-go_emotions):
@@ -150,17 +139,6 @@ curl 127.0.0.1:8080/predict \
     -X POST \
     -d '{"inputs":"I like you."}' \
     -H 'Content-Type: application/json'
-```
-
-Alternatively, one can perform inference using the `huggingface_hub` Python SDK. You can install it via pip as `pip install --upgrade --quiet huggingface_hub`, and then run:
-
-```python
-from huggingface_hub import InferenceClient
-
-client = InferenceClient()
-embedding = client.feature_extraction("What is deep learning?",
-                                      model="http://localhost:8080/predict")
-print(len(embedding[0]))
 ```
 
 ## Batching
