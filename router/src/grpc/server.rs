@@ -342,7 +342,7 @@ impl TextEmbeddingsService {
             .map_err(ErrorResponse::from)?;
         let inputs = encoded_inputs.unwrap_or(inputs);
 
-        let tokens: Vec<SimpleToken> = into_tokens(encoding, &input)
+        let tokens: Vec<SimpleToken> = into_tokens(encoding, &inputs)
             .into_iter()
             .map(|t| {
                 let CoreSimpleToken {
