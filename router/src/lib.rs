@@ -52,6 +52,7 @@ pub async fn run(
     max_batch_requests: Option<usize>,
     max_client_batch_size: usize,
     auto_truncate: bool,
+    warmup_model: bool,
     default_prompt: Option<String>,
     default_prompt_name: Option<String>,
     hf_token: Option<String>,
@@ -248,7 +249,7 @@ pub async fn run(
         .await
         .context("Model backend is not healthy")?;
 
-    if !backend.padded_model {
+    if !backend.padded_model || warmup_model {
         tracing::info!("Warming up model");
         backend
             .warmup(max_input_length, max_batch_tokens, max_batch_requests)
@@ -288,6 +289,7 @@ pub async fn run(
         max_batch_requests,
         max_client_batch_size,
         auto_truncate,
+        warmup_model,
         version: env!("CARGO_PKG_VERSION"),
         sha: option_env!("VERGEN_GIT_SHA"),
         docker_label: option_env!("DOCKER_LABEL"),
@@ -510,6 +512,7 @@ pub struct Info {
     #[cfg_attr(feature = "http", schema(example = "32"))]
     pub max_client_batch_size: usize,
     pub auto_truncate: bool,
+    pub warmup_model: bool,
     #[cfg_attr(feature = "http", schema(example = "4"))]
     pub tokenization_workers: usize,
     /// Router Info

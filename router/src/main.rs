@@ -79,6 +79,11 @@ struct Args {
     #[clap(long, env)]
     auto_truncate: bool,
 
+    /// Send a dummy request to the model before server start-up
+    ///
+    #[clap(long, env)]
+    warmup_model: bool,
+
     /// The name of the prompt that should be used by default for encoding. If not set, no prompt
     /// will be applied.
     ///
@@ -216,6 +221,7 @@ async fn main() -> Result<()> {
         args.max_batch_requests,
         args.max_client_batch_size,
         args.auto_truncate,
+        args.warmup_model,
         args.default_prompt,
         args.default_prompt_name,
         token,

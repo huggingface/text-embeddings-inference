@@ -1058,6 +1058,7 @@
           "max_batch_tokens",
           "max_client_batch_size",
           "auto_truncate",
+          "warmup_model",
           "tokenization_workers",
           "version"
         ],
@@ -1129,6 +1130,9 @@
             "type": "string",
             "description": "Router Info",
             "example": "0.5.0"
+          },
+          "warmup_model": {
+            "type": "boolean"
           }
         }
       },

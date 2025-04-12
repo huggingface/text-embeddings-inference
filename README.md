@@ -215,6 +215,11 @@ Options:
           Unused for gRPC servers
 
           [env: AUTO_TRUNCATE=]
+      
+      --warmup-model
+          Send a dummy request to the model before server start-up
+
+          [env: WARMUP_MODEL=]
 
       --default-prompt-name <DEFAULT_PROMPT_NAME>
           The name of the prompt that should be used by default for encoding. If not set, no prompt will be applied.
