@@ -21,8 +21,7 @@ impl OrtBackend {
         model_type: ModelType,
     ) -> Result<Self, BackendError> {
         // Check dtype
-        if dtype == "float32" {
-        } else {
+        if dtype != "float32" {
             return Err(BackendError::Start(format!(
                 "DType {dtype} is not supported"
             )));
