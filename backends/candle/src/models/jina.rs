@@ -367,9 +367,7 @@ impl JinaBertModel {
         };
 
         let pool = match model_type {
-            ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for Jina")
-            }
+            ModelType::Classifier => Pool::Cls,
             ModelType::Embedding(pool) => {
                 if pool == Pool::Splade {
                     candle::bail!("`splade` is not supported for Jina")
