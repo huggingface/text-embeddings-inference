@@ -356,7 +356,9 @@ impl JinaCodeBertModel {
         };
 
         let pool = match model_type {
-            ModelType::Classifier => Pool::Cls,
+            ModelType::Classifier => {
+                candle::bail!("`classifier` model type is not supported for JinaCode")
+            }
             ModelType::Embedding(pool) => {
                 if pool == Pool::Splade {
                     candle::bail!("`splade` is not supported for JinaCode")
@@ -654,6 +656,7 @@ impl Model for JinaCodeBertModel {
     fn is_padded(&self) -> bool {
         true
     }
+
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
     }
