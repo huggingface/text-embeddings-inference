@@ -167,8 +167,8 @@ impl Backend for OrtBackend {
 
         // Run model
         let outputs = self.session.run(inputs).e()?;
-        // Get last_hidden_state ndarray
 
+        // Get last_hidden_state ndarray
         let outputs = outputs
             .get("last_hidden_state")
             .or(outputs.get("token_embeddings"))
@@ -362,6 +362,7 @@ impl Backend for OrtBackend {
 
         // Run model
         let outputs = self.session.run(inputs).e()?;
+
         // Get last_hidden_state ndarray
         let outputs = outputs["logits"]
             .try_extract_tensor::<f32>()
