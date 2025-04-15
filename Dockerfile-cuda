@@ -73,7 +73,6 @@ RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
         cargo chef cook --release --features candle-cuda --features static-linking --no-default-features --recipe-path recipe.json && sccache -s; \
     fi;
 
-COPY candle-extensions candle-extensions
 COPY backends backends
 COPY core core
 COPY router router
