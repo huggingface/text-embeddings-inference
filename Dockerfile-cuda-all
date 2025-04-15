@@ -23,7 +23,6 @@ FROM base-builder AS planner
 
 WORKDIR /usr/src
 
-COPY candle-extensions candle-extensions
 COPY backends backends
 COPY core core
 COPY router router
