@@ -6,10 +6,6 @@ members = [
     "backends/core",
     "backends/python",
     "backends/grpc-client",
-    "candle-extensions/candle-cublaslt",
-    "candle-extensions/candle-flash-attn-v1",
-    "candle-extensions/candle-layer-norm",
-    "candle-extensions/candle-rotary",
     "core",
     "router",
 ]
@@ -49,17 +45,21 @@ serial_test = "2.0.0"
 cudarc = { version = "0.13" , features =["cuda-12020"], default-features = false}
 intel-mkl-src = { version = "0.8"}
 candle = { version = "0.8", package = "candle-core" }
-candle-nn = { version = "0.8", package = "candle-nn" }
-candle-transformers = { version = "0.8", package = "candle-transformers" }
-candle-flash-attn = { version = "0.8", package = "candle-flash-attn" }
+candle-nn = { version = "0.8"  }
+candle-transformers = { version = "0.8" }
+candle-flash-attn = { version = "0.8" }
+candle-cublaslt= { version = "0.0.1" }
+candle-layer-norm = { version = "0.0.1" }
+candle-rotary = { version = "0.0.1" }
+candle-flash-attn-v1 = { version = "0.0.1" }
 half = { version = "2.3.1", features = ["num-traits"] }
 
 [patch.crates-io]
 cudarc = { git = "https://github.com/Narsil/cudarc" , rev = "8b4f18b4bcd5e4b1a9daf40abc3a2e27f83f06e9"}
-candle = { git = "https://github.com/huggingface/candle", rev = "ec6d7ca7738f4052b6613edc8f4d2bb6866a7539", package = "candle-core" }
-candle-nn = { git = "https://github.com/huggingface/candle", rev = "ec6d7ca7738f4052b6613edc8f4d2bb6866a7539", package = "candle-nn" }
-candle-transformers = { git = "https://github.com/huggingface/candle", rev = "ec6d7ca7738f4052b6613edc8f4d2bb6866a7539", package = "candle-transformers" }
-candle-flash-attn = { git = "https://github.com/huggingface/candle", rev = "ec6d7ca7738f4052b6613edc8f4d2bb6866a7539", package = "candle-flash-attn" }
+candle = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-core" }
+candle-nn = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-nn" }
+candle-transformers = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-transformers" }
+candle-flash-attn = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-flash-attn" }
 
 [profile.release]
 debug = 0
