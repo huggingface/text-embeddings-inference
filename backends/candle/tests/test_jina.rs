@@ -52,7 +52,7 @@ fn test_jina_small() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_jina_rerank() -> Result<()> {
-    let model_root = download_artifacts("jinaai/jina-reranker-v1-turbo-en", Some("refs/pr/13"))?;
+    let model_root = download_artifacts("jinaai/jina-reranker-v1-tiny-en", Some("refs/pr/11"))?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(&model_root, "float32".to_string(), ModelType::Classifier)?;
