@@ -14,9 +14,12 @@ gen-server:
 	touch text_embeddings_server/pb/__init__.py
 
 install: gen-server
-	pip install pip --upgrade
-	pip install --no-deps -r requirements.txt
-	pip install -e .
+	pip install pip poetry --upgrade
+	poetry install
+
+install-intel: gen-server
+	pip install pip poetry --upgrade
+	poetry install --without cuda
 
 run-dev:
 	python text_embeddings_server/cli.py serve BAAI/bge-small-en
