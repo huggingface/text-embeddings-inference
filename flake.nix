@@ -151,7 +151,7 @@
         mkl2024 = import ./nix/mkl.nix;
 
         onnxruntimeGcc13 = pkgs.onnxruntime.override {
-          stdenv = pkgs.cudaPackages.backendStdenv;
+          stdenv = pkgs.cudaPackages_12_4.backendStdenv;
         };
 
       in
@@ -200,7 +200,7 @@
         devShells.default =
           pkgs.mkShell.override
             {
-              stdenv = pkgs.cudaPackages.backendStdenv;
+              stdenv = pkgs.cudaPackages_12_4.backendStdenv;
             }
             {
 
@@ -210,7 +210,7 @@
                 rustup
                 openssl
                 pkg-config
-                cudaPackages.cudatoolkit
+                cudaPackages_12_4.cudatoolkit
                 python3Packages.python
                 python3Packages.venvShellHook
                 onnxruntimeGcc13
@@ -219,8 +219,11 @@
               venvDir = "./.venv";
               LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib:/run/opengl-driver/lib";
               LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib:/run/opengl-driver/lib";
-              CUDA_ROOT = "${pkgs.cudaPackages.cudatoolkit}";
+              CUDA_ROOT = "${pkgs.cudaPackages_12_4.cudatoolkit}";
               CANDLE_FLASH_ATTN_BUILD_DIR = "./kernels";
+              CANDLE_FLASH_ATTN_v1_BUILD_DIR = "./kernels";
+              CANDLE_ROTARY_BUILD_DIR = "./kernels";
+              CANDLE_CUBLASLT_BUILD_DIR = "./kernels";
               CANDLE_LAYER_NORM_BUILD_DIR = "./kernels";
             };
       }
