@@ -13,10 +13,10 @@ candle = { workspace = true }
 candle-nn = { workspace = true }
 candle-transformers = { workspace = true }
 candle-flash-attn = { workspace = true, optional = true}
-candle-flash-attn-v1 = { path = "../../candle-extensions/candle-flash-attn-v1", optional = true }
-candle-cublaslt = { path = "../../candle-extensions/candle-cublaslt", optional = true }
-candle-layer-norm = { path = "../../candle-extensions/candle-layer-norm", optional = true }
-candle-rotary = { path = "../../candle-extensions/candle-rotary", optional = true }
+candle-flash-attn-v1 = { workspace = true, optional = true }
+candle-cublaslt = { workspace = true, optional = true }
+candle-layer-norm = { workspace = true, optional = true }
+candle-rotary = { workspace = true, optional = true }
 nohash-hasher = { workspace = true }
 text-embeddings-backend-core = { path = "../core" }
 tracing = { workspace = true }
