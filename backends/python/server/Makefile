@@ -14,12 +14,24 @@ gen-server:
 	touch text_embeddings_server/pb/__init__.py
 
 install: gen-server
-	pip install pip poetry --upgrade
-	poetry install
+	pip install pip uv --upgrade
+	uv sync
 
-install-intel: gen-server
-	pip install pip poetry --upgrade
-	poetry install --without cuda
+install-cpu: gen-server
+	pip install pip uv --upgrade
+	uv sync --extra cpu
+
+install-xpu: gen-server
+	pip install pip uv --upgrade
+	uv sync --extra xpu
+
+install-gpu: gen-server
+	pip install pip uv --upgrade
+	uv sync --extra gpu
+
+install-hpu: gen-server
+	pip install pip uv --upgrade
+	uv sync --extra hpu --inexact
 
 run-dev:
 	python text_embeddings_server/cli.py serve BAAI/bge-small-en
