@@ -97,7 +97,7 @@ COPY backends/python/server/text_embeddings_server/models/__init__.py backends/p
 COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
 
 RUN cd backends/python/server && \
-    pip install -U pip uv && \ 
+    pip install -U pip uv && \
     uv venv && \
     cp -r /usr/local/lib/python3.10/dist-packages/* /usr/src/backends/python/server/.venv/lib/python3.10/site-packages/ && \
     make install-hpu
