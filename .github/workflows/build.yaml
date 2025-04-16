@@ -134,7 +134,7 @@ jobs:
             DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
             ${{matrix.extraBuildArgs}}
           secrets: |
-            actions_cache_url=${{ env.ACTIONS_RESULTS_URL }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
             actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -176,7 +176,7 @@ jobs:
             DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
             ${{matrix.extraBuildArgs}}
           secrets: |
-            actions_cache_url=${{ env.ACTIONS_RESULTS_URL }}
+            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
             actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
           tags: ${{ steps.meta-grpc.outputs.tags }}
           labels: ${{ steps.meta-grpc.outputs.labels }}
