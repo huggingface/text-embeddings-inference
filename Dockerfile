@@ -41,7 +41,7 @@ RUN echo "int mkl_serv_intel_cpu_true() {return 1;}" > fakeintel.c && \
 
 COPY --from=planner /usr/src/recipe.json recipe.json
 
-RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     cargo chef cook --release --features ort,candle,mkl --no-default-features --recipe-path recipe.json && sccache -s
 
@@ -53,7 +53,7 @@ COPY Cargo.lock ./
 
 FROM builder AS http-builder
 
-RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     cargo build --release --bin text-embeddings-router --features ort,candle,mkl,http --no-default-features && sccache -s
 
@@ -67,7 +67,7 @@ RUN PROTOC_ZIP=protoc-21.12-linux-x86_64.zip && \
 
 COPY proto proto
 
-RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     cargo build --release --bin text-embeddings-router --features ort,candle,mkl,grpc --no-default-features && sccache -s
 

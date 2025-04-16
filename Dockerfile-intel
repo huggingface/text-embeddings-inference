@@ -29,7 +29,7 @@ ARG SCCACHE_GHA_ENABLED
 
 COPY --from=planner /usr/src/recipe.json recipe.json
 
-RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     cargo chef cook --release --features python --no-default-features --recipe-path recipe.json && sccache -s
 
@@ -47,7 +47,7 @@ RUN PROTOC_ZIP=protoc-21.12-linux-x86_64.zip && \
 
 FROM builder AS http-builder
 
-RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     cargo build --release --bin text-embeddings-router -F python -F http --no-default-features && sccache -s
 
@@ -55,7 +55,7 @@ FROM builder AS grpc-builder
 
 COPY proto proto
 
-RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     cargo build --release --bin text-embeddings-router -F grpc -F python --no-default-features && sccache -s
 

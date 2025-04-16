@@ -49,7 +49,7 @@ WORKDIR /usr/src
 
 COPY --from=planner /usr/src/recipe.json recipe.json
 
-RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     if [ $VERTEX = "true" ]; \
     then \
@@ -58,7 +58,7 @@ RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
       cargo chef cook --release --recipe-path recipe.json && sccache -s; \
     fi;
 
-RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     if [ $VERTEX = "true" ]; \
     then \
@@ -67,7 +67,7 @@ RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
       CUDA_COMPUTE_CAP=75 cargo chef cook --release --features candle-cuda-turing --recipe-path recipe.json && sccache -s; \
     fi;
 
-RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     if [ $VERTEX = "true" ]; \
     then \
@@ -76,7 +76,7 @@ RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
       CUDA_COMPUTE_CAP=80 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s; \
     fi;
 
-RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     if [ $VERTEX = "true" ]; \
     then \
@@ -91,7 +91,7 @@ COPY router router
 COPY Cargo.toml ./
 COPY Cargo.lock ./
 
-RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     if [ $VERTEX = "true" ]; \
     then \
@@ -102,7 +102,7 @@ RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
 
 RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-75
 
-RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     if [ $VERTEX = "true" ]; \
     then \
@@ -113,7 +113,7 @@ RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
 
 RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-80
 
-RUN --mount=type=secret,id=actions_cache_url,env=ACTIONS_CACHE_URL \
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     if [ $VERTEX = "true" ]; \
     then \
