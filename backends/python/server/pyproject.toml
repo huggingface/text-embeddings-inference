@@ -41,6 +41,8 @@ xpu = [
 hpu = [
 	# Hpu brings its own dependencies within docker
 	# "torch",
+    "optimum",
+    "optimum-habana"
 ]
 gpu = ["torch"]
 
