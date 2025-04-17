@@ -63,7 +63,8 @@ override-dependencies = [
    # This line should force uv to ignore installing torch, but it doesn't
    # seem to work. Therefore there is still an override within Dockerfile-intel
    # More info: https://github.com/astral-sh/uv/issues/9174
-   # "torch; sys_platform == 'never' and extra == 'hpu'",
+   "torch; sys_platform == 'never' and extra == 'hpu'",
+   "torchvision; sys_platform == 'never' and extra == 'hpu'",
 ]
 constraint-dependencies = [
 	"torch==2.5.1; extra == 'hpu'",
