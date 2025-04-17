@@ -75,6 +75,7 @@ WORKDIR /usr/src
 COPY backends backends
 COPY backends/python/server/text_embeddings_server/models/__init__.py backends/python/server/text_embeddings_server/models/__init__.py
 COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
+COPY backends/python/server/requirements-intel.txt backends/python/server/requirements.txt
 
 RUN python -m pip install torch==2.6.0 torchvision torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu --no-cache-dir
 
@@ -97,6 +98,7 @@ WORKDIR /usr/src
 COPY backends backends
 COPY backends/python/server/text_embeddings_server/models/__init__.py backends/python/server/text_embeddings_server/models/__init__.py
 COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
+COPY backends/python/server/requirements-hpu.txt backends/python/server/requirements.txt
 
 RUN cd backends/python/server && \
     make install
@@ -131,6 +133,7 @@ ENV CPATH=/opt/intel/oneapi/mpi/latest/include:/opt/intel/oneapi/ccl/latest/incl
 COPY backends backends
 COPY backends/python/server/text_embeddings_server/models/__init__.py backends/python/server/text_embeddings_server/models/__init__.py
 COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
+COPY backends/python/server/requirements-intel.txt backends/python/server/requirements.txt
 RUN cd backends/python/server && \
     make install
 
