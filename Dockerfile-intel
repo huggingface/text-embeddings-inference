@@ -76,10 +76,8 @@ COPY backends backends
 COPY backends/python/server/text_embeddings_server/models/__init__.py backends/python/server/text_embeddings_server/models/__init__.py
 COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
 
-RUN python -m pip install torch==2.6.0 torchvision torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu --no-cache-dir
-
 RUN cd backends/python/server && \
-    make install
+    make install-cpu
 
 FROM vault.habana.ai/gaudi-docker/1.19.0/ubuntu22.04/habanalabs/pytorch-installer-2.5.1:latest AS hpu
 ENV HUGGINGFACE_HUB_CACHE=/data \
@@ -98,8 +96,13 @@ COPY backends backends
 COPY backends/python/server/text_embeddings_server/models/__init__.py backends/python/server/text_embeddings_server/models/__init__.py
 COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
 
+# Re-override some deps uv cannot handle them because they are
+# git compiled versions.
 RUN cd backends/python/server && \
-    make install
+    pip install -U pip uv && \
+    uv venv && \
+    cp -r /usr/local/lib/python3.10/dist-packages/* /usr/src/backends/python/server/.venv/lib/python3.10/site-packages/ && \
+    make install-hpu
 
 FROM intel/intel-extension-for-pytorch:2.6.10-xpu AS xpu
 
@@ -115,9 +118,6 @@ RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRO
 
 RUN apt-get update && apt install -y intel-basekit cmake python3-dev ninja-build pciutils
 WORKDIR /usr/src
-RUN pip install torch==2.6.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/xpu --no-cache-dir
-RUN pip install intel-extension-for-pytorch==2.6.10+xpu oneccl_bind_pt==2.6.0+xpu --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ --no-cache-dir
-
 ENV CCL_ROOT=/opt/intel/oneapi/ccl/latest
 ENV I_MPI_ROOT=/opt/intel/oneapi/mpi/latest
 ENV FI_PROVIDER_PATH=/opt/intel/oneapi/mpi/latest/opt/mpi/libfabric/lib/prov:/usr/lib/x86_64-linux-gnu/libfabric
@@ -132,7 +132,7 @@ COPY backends backends
 COPY backends/python/server/text_embeddings_server/models/__init__.py backends/python/server/text_embeddings_server/models/__init__.py
 COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
 RUN cd backends/python/server && \
-    make install
+    make install-xpu
 
 FROM ${PLATFORM} AS grpc
 
@@ -144,6 +144,8 @@ CMD ["--json-output"]
 FROM ${PLATFORM}
 
 COPY --from=http-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
+ENV VIRTUAL_ENV=/usr/src/backends/python/server/.venv
+ENV PATH=$VIRTUAL_ENV/bin/:$PATH
 
 ENTRYPOINT ["text-embeddings-router"]
 CMD ["--json-output"]

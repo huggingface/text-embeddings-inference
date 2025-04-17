@@ -1,2 +1,4 @@
 .idea
 target
+.venv
+backends/python/server/.venv

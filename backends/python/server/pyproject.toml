@@ -1,37 +1,124 @@
-[tool.poetry]
+[project]
 name = "text-embeddings-server"
 version = "0.1.0"
 description = "Text Embeddings Python gRPC Server"
-authors = ["Olivier Dehaene <olivier@huggingface.co>"]
+authors = [{ name = "Olivier Dehaene" , email = "olivier@huggingface.co" }]
+requires-python = ">= 3.9"
+dependencies = [
+	"protobuf>=4.25.3,<6",
+    # grpcio is capped because of the HPU dependency override
+    # which is done with 1.68
+	"grpcio>=1.51.1,<=1.68",
+	"grpcio-status>=1.51.1",
+	"grpcio-reflection>=1.51.1",
+	"grpc-interceptor>=0.15.0",
+	"typer>=0.6.1",
+	"safetensors>=0.4",
+	"loguru>=0.6.0",
+	"opentelemetry-api>=1.25.0",
+	"opentelemetry-exporter-otlp>=1.25.0",
+	"opentelemetry-instrumentation-grpc>=0.46b0",
+	"sentence-transformers>=3.3.1",
+    "numpy",
+]
 
-[tool.poetry.scripts]
+[project.scripts]
 python-text-embeddings-server = 'text_embeddings_server.cli:app'
 
-[tool.poetry.dependencies]
-python = ">=3.9,<3.13"
-protobuf = ">=4.25.3,<6"
-grpcio = "^1.51.1"
-grpcio-status = "^1.51.1"
-grpcio-reflection = "^1.51.1"
-grpc-interceptor = "^0.15.0"
-typer = "^0.6.1"
-safetensors = "^0.4"
-loguru = "^0.6.0"
-opentelemetry-api = "^1.25.0"
-opentelemetry-exporter-otlp = "^1.25.0"
-opentelemetry-instrumentation-grpc = "^0.46b0"
-sentence-transformers = "^3.3.1"
+[dependency-groups]
+dev = [
+ "grpcio-tools>=1.51.1",
+ "pytest>=7.3.0"
+]
 
-[tool.poetry.extras]
 
-[tool.poetry.group.dev.dependencies]
-grpcio-tools = "^1.51.1"
-pytest = "^7.3.0"
+[project.optional-dependencies]
+cpu = ["torch"]
+xpu = [
+	"torch",
+	"intel-extension-for-pytorch==2.6.10+xpu",
+	"oneccl_bind_pt==2.6.0+xpu",
 
-[[tool.poetry.source]]
-name = "pytorch-gpu-src"
+]
+hpu = [
+	# Hpu brings its own dependencies within docker
+	# "torch",
+    "optimum",
+    "optimum-habana"
+]
+gpu = ["torch"]
+
+[tool.uv]
+conflicts = [
+    [
+      { extra = "cpu" },
+      { extra = "gpu" },
+      { extra = "xpu" },
+      { extra = "hpu" },
+    ],
+]
+override-dependencies = [
+    "intel-sycl-rt==2025.0.4; extra == 'xpu'",
+    "intel-openmp==2025.0.4; extra == 'xpu'",
+   # "torch; sys_platform == 'never' and extra == 'hpu'",
+   # "torchvision; sys_platform == 'never' and extra == 'hpu'",
+   # "numpy==1.26.4; extra == 'hpu'",
+]
+constraint-dependencies = [
+	"torch==2.6.0; extra == 'cpu'",
+	"torch==2.6.0; extra == 'gpu'",
+
+	"torch==2.6.0+xpu; extra == 'xpu'",
+    "intel-sycl-rt==2025.0.4; extra == 'xpu'",
+    "intel-openmp==2025.0.4; extra == 'xpu'",
+    "numpy<2.0; extra == 'xpu'",
+    # Prebuilt on hpu container
+    # torch on hpu is installed from the docker image
+    # which has a git tag handle, and cannot be seen
+    # by uv therefore by the lock.
+    # This line should force uv to ignore installing torch, but it doesn't
+    # seem to work. Therefore there is still an override within Dockerfile-intel
+    # More info: https://github.com/astral-sh/uv/issues/9174
+    "torch; sys_platform == 'never' and extra == 'hpu'",
+    "torchvision; sys_platform == 'never' and extra == 'hpu'",
+    "numpy==1.26.4; extra == 'hpu'",
+]
+
+[tool.uv.sources]
+torch = [
+  { index = "torch-cpu", extra = "cpu" },
+  { index = "torch-gpu", extra = "gpu" },
+  { index = "torch-xpu", extra = "xpu" },
+  # Add a proper index when available
+  # { index = "torch-cpu", extra = "hpu" },
+]
+intel-extension-for-pytorch = [ {index = "xpu" }]
+oneccl_bind_pt = [ {index = "xpu" }]
+mkl = [ {index = "pypi" }]
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+
+
+[[tool.uv.index]]
+name = "torch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "torch-gpu"
 url = "https://download.pytorch.org/whl/cu118"
-priority = "explicit"
+explicit = true
+
+[[tool.uv.index]]
+name = "xpu"
+url = "https://pytorch-extension.intel.com/release-whl/stable/xpu/us/"
+
+
+[[tool.uv.index]]
+name = "torch-xpu"
+url = "https://download.pytorch.org/whl/xpu"
 
 [tool.pytest.ini_options]
 markers = ["private: marks tests as requiring an admin hf token (deselect with '-m \"not private\"')"]
