@@ -63,6 +63,7 @@ pub async fn run(
     api_key: Option<String>,
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
+    prometheus_port: u16,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
     let model_id_path = Path::new(&model_id);
@@ -314,7 +315,7 @@ pub async fn run(
         }
     };
 
-    let prom_builder = prometheus::prometheus_builer(info.max_input_length)?;
+    let prom_builder = prometheus::prometheus_builer(addr, prometheus_port, info.max_input_length)?;
 
     #[cfg(all(feature = "grpc", feature = "http"))]
     compile_error!("Features `http` and `grpc` cannot be enabled at the same time.");

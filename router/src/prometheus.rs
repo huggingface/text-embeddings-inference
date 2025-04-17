@@ -1,6 +1,15 @@
+use std::net::SocketAddr;
+
 use metrics_exporter_prometheus::{BuildError, Matcher, PrometheusBuilder};
 
-pub(crate) fn prometheus_builer(max_input_length: usize) -> Result<PrometheusBuilder, BuildError> {
+pub(crate) fn prometheus_builer(
+    addr: SocketAddr,
+    port: u16,
+    max_input_length: usize,
+) -> Result<PrometheusBuilder, BuildError> {
+    let mut addr = addr;
+    addr.set_port(port);
+
     // Duration buckets
     let duration_matcher = Matcher::Suffix(String::from("duration"));
     let n_duration_buckets = 35;
@@ -30,6 +39,7 @@ pub(crate) fn prometheus_builer(max_input_length: usize) -> Result<PrometheusBui
 
     // Prometheus handler
     PrometheusBuilder::new()
+        .with_http_listener(addr)
         .set_buckets_for_metric(duration_matcher, &duration_buckets)?
         .set_buckets_for_metric(input_length_matcher, &input_length_buckets)?
         .set_buckets_for_metric(batch_size_matcher, &batch_size_buckets)?
