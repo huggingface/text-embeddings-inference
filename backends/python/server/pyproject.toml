@@ -6,7 +6,9 @@ authors = [{ name = "Olivier Dehaene" , email = "olivier@huggingface.co" }]
 requires-python = ">= 3.9"
 dependencies = [
 	"protobuf>=4.25.3,<6",
-	"grpcio>=1.51.1",
+    # grpcio is capped because of the HPU dependency override
+    # which is done with 1.68
+	"grpcio>=1.51.1,<=1.68",
 	"grpcio-status>=1.51.1",
 	"grpcio-reflection>=1.51.1",
 	"grpc-interceptor>=0.15.0",
