@@ -96,11 +96,17 @@ COPY backends backends
 COPY backends/python/server/text_embeddings_server/models/__init__.py backends/python/server/text_embeddings_server/models/__init__.py
 COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
 
+# Re-override some deps uv cannot handle them because they are
+# git compiled versions.
+# uninstall torchvision because sentence-transformers forces the reinstall
+# which would crash transformers
 RUN cd backends/python/server && \
     pip install -U pip uv && \
     uv venv && \
     cp -r /usr/local/lib/python3.10/dist-packages/* /usr/src/backends/python/server/.venv/lib/python3.10/site-packages/ && \
-    make install-hpu
+    make install-hpu && \
+    cp -r /usr/local/lib/python3.10/dist-packages/torch /usr/src/backends/python/server/.venv/lib/python3.10/site-packages/ && \
+    uv pip uninstall torchvision
 
 FROM intel/intel-extension-for-pytorch:2.6.10-xpu AS xpu
 

@@ -55,13 +55,22 @@ conflicts = [
 override-dependencies = [
    "intel-sycl-rt==2025.0.4; extra == 'xpu'",
    "intel-openmp==2025.0.4; extra == 'xpu'",
+   # Prebuilt on hpu container
+   "numpy<2.0; extra == 'xpu'",
+   # torch on hpu is installed from the docker image
+   # which has a git tag handle, and cannot be seen
+   # by uv therefore by the lock.
+   # This line should force uv to ignore installing torch, but it doesn't
+   # seem to work. Therefore there is still an override within Dockerfile-intel
+   # More info: https://github.com/astral-sh/uv/issues/9174
+   # "torch; sys_platform == 'never' and extra == 'hpu'",
 ]
 constraint-dependencies = [
 	"torch==2.5.1; extra == 'hpu'",
+    "numpy<2.0; extra == 'xpu'",
 	"torch==2.6.0; extra == 'cpu'",
 	"torch==2.6.0; extra == 'gpu'",
 	"torch==2.6.0+xpu; extra == 'xpu'",
-        # "torch; extra == 'hpu'",
 ]
 
 [tool.uv.sources]
@@ -69,6 +78,8 @@ torch = [
   { index = "torch-cpu", extra = "cpu" },
   { index = "torch-gpu", extra = "gpu" },
   { index = "torch-xpu", extra = "xpu" },
+  # Add a proper index when available
+  # { index = "torch-cpu", extra = "hpu" },
 ]
 intel-extension-for-pytorch = [ {index = "xpu" }]
 oneccl_bind_pt = [ {index = "xpu" }]
