@@ -17,6 +17,7 @@ dependencies = [
 	"opentelemetry-exporter-otlp>=1.25.0",
 	"opentelemetry-instrumentation-grpc>=0.46b0",
 	"sentence-transformers>=3.3.1",
+    "numpy",
 ]
 
 [project.scripts]
@@ -53,25 +54,30 @@ conflicts = [
     ],
 ]
 override-dependencies = [
-   "intel-sycl-rt==2025.0.4; extra == 'xpu'",
-   "intel-openmp==2025.0.4; extra == 'xpu'",
-   # Prebuilt on hpu container
-   "numpy<2.0; extra == 'xpu'",
-   # torch on hpu is installed from the docker image
-   # which has a git tag handle, and cannot be seen
-   # by uv therefore by the lock.
-   # This line should force uv to ignore installing torch, but it doesn't
-   # seem to work. Therefore there is still an override within Dockerfile-intel
-   # More info: https://github.com/astral-sh/uv/issues/9174
-   "torch; sys_platform == 'never' and extra == 'hpu'",
-   "torchvision; sys_platform == 'never' and extra == 'hpu'",
+    "intel-sycl-rt==2025.0.4; extra == 'xpu'",
+    "intel-openmp==2025.0.4; extra == 'xpu'",
+   # "torch; sys_platform == 'never' and extra == 'hpu'",
+   # "torchvision; sys_platform == 'never' and extra == 'hpu'",
+   # "numpy==1.26.4; extra == 'hpu'",
 ]
 constraint-dependencies = [
-	"torch==2.5.1; extra == 'hpu'",
-    "numpy<2.0; extra == 'xpu'",
 	"torch==2.6.0; extra == 'cpu'",
 	"torch==2.6.0; extra == 'gpu'",
+
 	"torch==2.6.0+xpu; extra == 'xpu'",
+    "intel-sycl-rt==2025.0.4; extra == 'xpu'",
+    "intel-openmp==2025.0.4; extra == 'xpu'",
+    "numpy<2.0; extra == 'xpu'",
+    # Prebuilt on hpu container
+    # torch on hpu is installed from the docker image
+    # which has a git tag handle, and cannot be seen
+    # by uv therefore by the lock.
+    # This line should force uv to ignore installing torch, but it doesn't
+    # seem to work. Therefore there is still an override within Dockerfile-intel
+    # More info: https://github.com/astral-sh/uv/issues/9174
+    "torch; sys_platform == 'never' and extra == 'hpu'",
+    "torchvision; sys_platform == 'never' and extra == 'hpu'",
+    "numpy==1.26.4; extra == 'hpu'",
 ]
 
 [tool.uv.sources]
