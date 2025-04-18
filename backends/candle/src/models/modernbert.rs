@@ -412,24 +412,27 @@ pub struct ModernBertClassificationHead {
 impl ModernBertClassificationHead {
     pub(crate) fn load(vb: VarBuilder, config: &ModernBertConfig) -> Result<Self> {
         let dense_weight = vb
-            .pp("dense")
+            .pp("head.dense")
             .get((config.hidden_size, config.hidden_size), "weight")?;
-        let dense_bias = vb.pp("dense").get(config.hidden_size, "bias").ok();
+        let dense_bias = vb.pp("head.dense").get(config.hidden_size, "bias").ok();
         let dense = Linear::new(
             dense_weight,
             dense_bias,
             Some(config.classifier_activation.clone()),
         );
 
-        let norm =
-            LayerNormNoBias::load(vb.pp("norm"), config.hidden_size, config.norm_eps as f32)?;
+        let norm = LayerNormNoBias::load(
+            vb.pp("head.norm"),
+            config.hidden_size,
+            config.norm_eps as f32,
+        )?;
 
-        let classifier_weight = vb.pp("dense").get(
+        let classifier_weight = vb.pp("classifier").get(
             (config.num_labels.unwrap_or(1), config.hidden_size),
             "weight",
         )?;
         let classifier_bias = vb
-            .pp("dense")
+            .pp("classifier")
             .get(config.num_labels.unwrap_or(1), "bias")
             .ok();
         let classifier = Linear::new(classifier_weight, classifier_bias, None);
