@@ -148,13 +148,7 @@ fn test_modernbert_classification() -> Result<()> {
 
     let input_single = batch(
         vec![tokenizer
-            .encode(
-                (
-                    "PrimeTime is a timing signoff tool",
-                    "PrimeTime can perform most accurate timing analysis",
-                ),
-                true,
-            )
+            .encode(("What is Deep Learning?", "Deep Learning is not..."), true)
             .unwrap()],
         [0].to_vec(),
         vec![],
