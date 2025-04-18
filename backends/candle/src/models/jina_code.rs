@@ -656,6 +656,7 @@ impl Model for JinaCodeBertModel {
     fn is_padded(&self) -> bool {
         true
     }
+
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
     }
