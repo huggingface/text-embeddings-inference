@@ -414,10 +414,9 @@ impl ModernBertClassificationHead {
         let dense_weight = vb
             .pp("head.dense")
             .get((config.hidden_size, config.hidden_size), "weight")?;
-        let dense_bias = vb.pp("head.dense").get(config.hidden_size, "bias").ok();
         let dense = Linear::new(
             dense_weight,
-            dense_bias,
+            None,
             Some(config.classifier_activation.clone()),
         );
 
@@ -433,9 +432,8 @@ impl ModernBertClassificationHead {
         )?;
         let classifier_bias = vb
             .pp("classifier")
-            .get(config.num_labels.unwrap_or(1), "bias")
-            .ok();
-        let classifier = Linear::new(classifier_weight, classifier_bias, None);
+            .get(config.num_labels.unwrap_or(1), "bias")?;
+        let classifier = Linear::new(classifier_weight, Some(classifier_bias), None);
 
         Ok(Self {
             dense,
