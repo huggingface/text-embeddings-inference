@@ -307,6 +307,12 @@ Options:
           [env: OTLP_SERVICE_NAME=]
           [default: text-embeddings-inference.server]
 
+      --prometheus-port <PORT>
+          The Prometheus metrics port to listen on
+
+          [env: PROMETHEUS_PORT=]
+          [default: 9000]
+
       --cors-allow-origin <CORS_ALLOW_ORIGIN>
           Unused for gRPC servers
 

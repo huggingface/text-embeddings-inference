@@ -164,6 +164,10 @@ struct Args {
     #[clap(default_value = "text-embeddings-inference.server", long, env)]
     otlp_service_name: String,
 
+    /// The Prometheus port to listen on.
+    #[clap(default_value = "9000", long, short, env)]
+    prometheus_port: u16,
+
     /// Unused for gRPC servers
     #[clap(long, env)]
     cors_allow_origin: Option<Vec<String>>,
@@ -227,6 +231,7 @@ async fn main() -> Result<()> {
         args.api_key,
         args.otlp_endpoint,
         args.otlp_service_name,
+        args.prometheus_port,
         args.cors_allow_origin,
     )
     .await?;
