@@ -2,7 +2,9 @@ mod common;
 
 use crate::common::{sort_embeddings, SnapshotEmbeddings};
 use anyhow::Result;
-use common::{batch, cosine_matcher, download_artifacts, load_tokenizer};
+use common::{
+    batch, cosine_matcher, download_artifacts, load_tokenizer, relative_matcher, SnapshotScores,
+};
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
@@ -132,6 +134,45 @@ fn test_mini_pooled_raw() -> Result<()> {
     assert_eq!(raw_embeddings_batch[0], embeddings_single[0]);
     assert_eq!(raw_embeddings_batch[13], embeddings_single[0]);
     assert_eq!(embeddings_single.len(), 7);
+
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn test_modernbert_classification() -> Result<()> {
+    let model_root = download_artifacts("Alibaba-NLP/gte-reranker-modernbert-base", None).unwrap();
+    let tokenizer = load_tokenizer(&model_root)?;
+
+    let backend = CandleBackend::new(&model_root, "float32".to_string(), ModelType::Classifier)?;
+
+    let input_single = batch(
+        vec![tokenizer
+            .encode(
+                (
+                    "PrimeTime is a timing signoff tool",
+                    "PrimeTime can perform most accurate timing analysis",
+                ),
+                true,
+            )
+            .unwrap()],
+        [0].to_vec(),
+        vec![],
+    );
+
+    let predictions: Vec<Vec<f32>> = backend
+        .predict(input_single)?
+        .into_iter()
+        .map(|(_, v)| v)
+        .collect();
+    let predictions_single = SnapshotScores::from(predictions);
+
+    let matcher = relative_matcher();
+    insta::assert_yaml_snapshot!(
+        "modernbert_classification_single",
+        predictions_single,
+        &matcher
+    );
 
     Ok(())
 }
