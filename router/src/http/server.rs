@@ -1833,7 +1833,9 @@ pub async fn run(
         .layer(Extension(info))
         .layer(Extension(prom_handle.clone()))
         .layer(OtelAxumLayer::default())
-        .layer(axum::middleware::from_fn(logging::trace_context_middleware))
+        .layer(axum::middleware::from_fn(
+            logging::http::trace_context_middleware,
+        ))
         .layer(DefaultBodyLimit::max(payload_limit))
         .layer(cors_layer);
 
