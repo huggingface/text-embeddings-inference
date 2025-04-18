@@ -78,7 +78,9 @@ def hpu_attn(
     if is_causal:
         attn_mask = None
 
-    out_ = FusedSDPA.apply(q, k, v, attn_mask, 0.0, is_causal, softmax_scale, "fast", False)
+    out_ = FusedSDPA.apply(
+        q, k, v, attn_mask, 0.0, is_causal, softmax_scale, "fast", False
+    )
     out_ = out_.transpose(1, 2)
     out.copy_(out_)
     return out
@@ -119,7 +121,7 @@ def attention(
                 max_s,
                 max_s,
                 softmax_scale,
-                is_causal=False,
+                is_causal,
             )
 
         else:
