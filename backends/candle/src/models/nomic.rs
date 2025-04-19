@@ -4,7 +4,7 @@ use crate::layers::{
 use crate::models::Model;
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{Embedding, VarBuilder};
-use candle_transformers::models::deepseek2::{NonZeroOp, TopKLastDimOp};
+use candle_transformers::models::deepseek2::{BincountOp, NonZeroOp, TopKLastDimOp, TopKOutput};
 use serde::Deserialize;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
@@ -44,29 +44,11 @@ fn default_max_trained_positions() -> usize {
     2048
 }
 
-fn one_hot(indices: &Tensor, num_classes: usize, device: &Device) -> Result<Tensor> {
-    let (bs, dim) = indices.dims2()?;
-
-    let indices_vec = indices.to_vec2::<u32>()?;
-    let mut data = vec![0f32; bs * dim * num_classes];
-    for i in 0..bs {
-        for j in 0..dim {
-            let idx = indices_vec[i][j];
-            if idx < num_classes as u32 {
-                data[(i * dim + j) * num_classes + idx as usize] = 1.0;
-            }
-        }
-    }
-
-    Tensor::from_vec(data, (bs, dim, num_classes), device).to_dtype(indices.dtype()?)
-}
-
 impl NomicConfig {
     // For now, we only support these parameters
     pub fn valid(&self) -> bool {
         !self.prenorm
             && self.rotary_emb_fraction == 1.0
-            && !self.qkv_proj_bias
             && !self.rotary_emb_interleaved
             && self.type_vocab_size > 0
     }
@@ -77,6 +59,7 @@ pub struct NomicBertEmbeddings {
     word_embeddings: Embedding,
     token_type_embeddings: Embedding,
     layer_norm: LayerNorm,
+
     span: tracing::Span,
 }
 
@@ -254,20 +237,18 @@ impl NomicRouter {
         })
     }
 
-    pub fn forward(&self, hidden_states: &Tensor) -> Result<(Tensor, Tensor, Tensor)> {
+    pub fn forward(&self, hidden_states: &Tensor) -> Result<(Tensor, Tensor)> {
         let _enter = self.span.enter();
 
-        let weights = hidden_states.flatten_from(D::Minus2)?;
-        let weights = self.layer.forward(&weights)?;
-        let weights = candle_nn::ops::softmax_last_dim(&weights)?.to_dtype(DType::F32)?;
+        let weights = hidden_states.reshape(((), hidden_states.dim(D::Minus1)?))?;
+        let weights = self.layer.forward(&weights)?.to_dtype(DType::F32)?;
+        let weights = candle_nn::ops::softmax_last_dim(&weights)?;
 
-        let topk = weights.topk(self.moe_top_k)?;
+        let TopKOutput { values, indices } = weights.topk(self.moe_top_k)?;
 
-        let weights = weights.to_dtype(hidden_states.dtype())?;
-        let top_weights = topk.values.to_dtype(hidden_states.dtype())?;
-        let top_experts = topk.indices;
+        let values = values.to_dtype(hidden_states.dtype())?;
 
-        Ok((weights, top_weights, top_experts))
+        Ok((values, indices))
     }
 }
 
@@ -287,10 +268,10 @@ impl NomicExpertMLP {
         let activation = config.activation_function.clone();
 
         let w1 = vb
-            .get((hidden_size, moe_num_experts * ffn_hidden_size), "w1")?
+            .get((moe_num_experts * ffn_hidden_size, hidden_size), "w1")?
             .reshape((moe_num_experts, ffn_hidden_size, hidden_size))?;
         let w2 = vb
-            .get((hidden_size, moe_num_experts * ffn_hidden_size), "w2")?
+            .get((moe_num_experts * ffn_hidden_size, hidden_size), "w2")?
             .reshape((moe_num_experts, ffn_hidden_size, hidden_size))?;
 
         Ok(Self {
@@ -307,7 +288,7 @@ impl NomicExpertMLP {
         let expert_w1 = self.w1.narrow(0, expert_idx, 1)?.squeeze(0)?.t()?;
         let expert_w2 = self.w2.narrow(0, expert_idx, 1)?.squeeze(0)?;
 
-        let hidden_states = hidden_states.matmul(&expert_w1)?;
+        let hidden_states = hidden_states.broadcast_matmul(&expert_w1)?;
 
         let hidden_states = match self.activation {
             HiddenAct::Gelu => hidden_states.gelu()?,
@@ -315,12 +296,13 @@ impl NomicExpertMLP {
             _ => candle_nn::ops::sigmoid(&hidden_states)?,
         };
 
-        hidden_states.matmul(&expert_w2)
+        hidden_states.broadcast_matmul(&expert_w2)
     }
 }
 
 pub struct NomicExperts {
     moe_num_experts: usize,
+    mlp: NomicExpertMLP,
     bias: Tensor,
 
     span: tracing::Span,
@@ -336,6 +318,7 @@ impl NomicExperts {
 
         Ok(Self {
             moe_num_experts,
+            mlp,
             bias,
             span: tracing::span!(tracing::Level::TRACE, "experts"),
         })
@@ -344,7 +327,6 @@ impl NomicExperts {
     pub fn forward(
         &self,
         hidden_states: &Tensor,
-        weights: &Tensor,
         top_weights: &Tensor,
         top_experts: &Tensor,
     ) -> Result<Tensor> {
@@ -352,14 +334,37 @@ impl NomicExperts {
 
         let (bs, seq_len, hidden_size) = hidden_states.dims3()?;
 
-        let hidden_states = hidden_states.flatten_from(D::Minus2)?;
+        let hidden_states = hidden_states.reshape(((), hidden_size))?;
 
         let mut out = Tensor::zeros_like(&hidden_states)?;
 
-        let expert_mask = one_hot(&top_experts, self.moe_num_experts, top_experts.device())?;
-        let expert_mask = expert_mask.permute((2, 1, 0))?;
+        let counts = top_experts
+            .flatten_all()?
+            .bincount(self.moe_num_experts as u32)?;
 
-        for expert_idx in 0..self.moe_num_experts {}
+        for (expert_idx, &count) in counts.iter().enumerate().take(self.moe_num_experts) {
+            if count == 0u32 {
+                continue;
+            }
+
+            let idx_top = top_experts.eq(expert_idx as f64)?.nonzero()?.t()?;
+            let idx = &idx_top.i(0)?.contiguous()?;
+            let top = &idx_top.i(1)?.contiguous()?;
+
+            let expert_out = self
+                .mlp
+                .forward(&hidden_states.index_select(idx, 0)?, expert_idx)?
+                .broadcast_mul(
+                    &top_weights
+                        .index_select(idx, 0)?
+                        .gather(&top.unsqueeze(1)?, 1)?
+                        .squeeze(1)?
+                        .unsqueeze(D::Minus1)?
+                        .to_dtype(hidden_states.dtype())?,
+                )?;
+
+            out = out.index_add(idx, &expert_out, 0)?;
+        }
 
         let out = out.reshape((bs, seq_len, hidden_size))?;
 
@@ -389,9 +394,10 @@ impl NomicMoELayer {
     pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let (weights, top_weights, top_experts) = self.router.forward(hidden_states)?;
+        let (top_weights, top_experts) = self.router.forward(hidden_states)?;
+
         self.experts
-            .forward(hidden_states, &weights, &top_weights, &top_experts)
+            .forward(hidden_states, &top_weights, &top_experts)
     }
 }
 
@@ -435,16 +441,25 @@ impl NomicAttention {
         let attention_head_size = config.n_embd / config.n_head;
         let hidden_size = config.n_embd;
 
-        let qkv_weight = vb.pp("Wqkv").get(
-            (3 * num_attention_heads * attention_head_size, hidden_size),
-            "weight",
-        )?;
-        let qkv_linear = Linear::new(qkv_weight, None, None);
+        let qkv_dim = 3 * num_attention_heads * attention_head_size;
+
+        let qkv_weight = vb.pp("Wqkv").get((qkv_dim, hidden_size), "weight")?;
+        let qkv_bias = if config.qkv_proj_bias {
+            Some(vb.pp("Wqkv").get((qkv_dim,), "bias")?)
+        } else {
+            None
+        };
+        let qkv_linear = Linear::new(qkv_weight, qkv_bias, None);
 
         let out_proj_weight = vb
             .pp("out_proj")
             .get((hidden_size, hidden_size), "weight")?;
-        let out_proj = Linear::new(out_proj_weight, None, None);
+        let out_proj_bias = if config.qkv_proj_bias {
+            Some(vb.pp("out_proj").get((hidden_size,), "bias")?)
+        } else {
+            None
+        };
+        let out_proj = Linear::new(out_proj_weight, out_proj_bias, None);
 
         let softmax_scale = 1. / (attention_head_size as f64).sqrt();
 
@@ -571,9 +586,10 @@ struct NomicBertBlock {
 
 impl NomicBertBlock {
     pub fn load(vb: VarBuilder, index: usize, config: &NomicConfig) -> Result<Self> {
+        let attention = NomicAttention::load(vb.pp("attn"), config)?;
+
         let use_moe = matches!(config.moe_every_n_layers, Some(n) if n > 0 && index % n == 1);
 
-        let attention = NomicAttention::load(vb.pp("attn"), config)?;
         let mlp: Box<dyn NomicMLP> = if use_moe {
             Box::new(NomicMoELayer::load(vb.pp("mlp"), config)?)
         } else if config.activation_function == HiddenAct::Gelu {
@@ -608,6 +624,7 @@ impl NomicBertBlock {
         let attn_output = self
             .attention
             .forward(hidden_states, attention_bias, cos, sin)?;
+
         let hidden_states = self
             .post_attention_layer_norm
             .forward(hidden_states, Some(&attn_output))?;
@@ -646,7 +663,6 @@ impl NomicBertEncoder {
 
         let mut hidden_states = hidden_states.clone();
 
-        // Use a loop rather than a fold as it's easier to modify when adding debug/...
         for layer in self.layers.iter() {
             hidden_states = layer.forward(&hidden_states, attention_bias, cos, sin)?
         }
@@ -733,6 +749,7 @@ impl NomicBertModel {
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
     }
+
     pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         let _enter = self.span.enter();
 
