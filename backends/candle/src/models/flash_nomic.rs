@@ -104,7 +104,7 @@ impl NomicAttention {
 
 struct NomicBertBlock {
     attention: NomicAttention,
-    mlp: Box<dyn NomicMLP>,
+    mlp: NomicMLP,
     post_attention_layer_norm: LayerNorm,
     output_layer_norm: LayerNorm,
 
@@ -115,15 +115,7 @@ impl NomicBertBlock {
     pub fn load(vb: VarBuilder, index: usize, config: &NomicConfig) -> Result<Self> {
         let attention = NomicAttention::load(vb.pp("attn"), config)?;
 
-        let use_moe = matches!(config.moe_every_n_layers, Some(n) if n > 0 && index % n == 1);
-
-        let mlp: Box<dyn NomicMLP> = if use_moe {
-            Box::new(NomicMoELayer::load(vb.pp("mlp"), config)?)
-        } else if config.activation_function == HiddenAct::Gelu {
-            Box::new(NomicBertMLP::load(vb.pp("mlp"), config)?)
-        } else {
-            Box::new(NomicBertGatedMLP::load(vb.pp("mlp"), config)?)
-        };
+        let mlp = NomicMLP::load(vb.pp("mlp"), index, config)?;
 
         let post_attention_layer_norm =
             LayerNorm::load(vb.pp("norm1"), config.n_embd, config.layer_norm_epsilon)?;

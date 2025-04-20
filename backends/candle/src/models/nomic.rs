@@ -25,7 +25,6 @@ pub struct NomicConfig {
     pub moe_normalize_expert_weights: Option<bool>,
     pub moe_top_k: Option<usize>,
     pub num_experts: Option<usize>,
-    pub num_shared_experts: Option<usize>,
 
     pub n_embd: usize,
     pub n_head: usize,
@@ -401,25 +400,31 @@ impl NomicMoELayer {
     }
 }
 
-trait NomicMLP: Send + Sync {
-    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
+enum NomicMLP {
+    MoE(NomicMoELayer),
+    GatedMLP(NomicBertGatedMLP),
+    Mlp(NomicBertMLP),
 }
 
-impl NomicMLP for NomicMoELayer {
-    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
-        self.forward(hidden_states)
+impl NomicMLP {
+    pub fn load(vb: VarBuilder, index: usize, config: &NomicConfig) -> Result<Self> {
+        let use_moe = matches!(config.moe_every_n_layers, Some(n) if n > 0 && index % n == 1);
+
+        match () {
+            _ if use_moe => Ok(Self::MoE(NomicMoELayer::load(vb, config)?)),
+            _ if config.activation_function == HiddenAct::Gelu => {
+                Ok(Self::Mlp(NomicBertMLP::load(vb, config)?))
+            }
+            _ => Ok(Self::GatedMLP(NomicBertGatedMLP::load(vb, config)?)),
+        }
     }
-}
 
-impl NomicMLP for NomicBertGatedMLP {
-    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
-        self.forward(hidden_states)
-    }
-}
-
-impl NomicMLP for NomicBertMLP {
-    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
-        self.forward(hidden_states)
+    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        match self {
+            Self::MoE(layer) => layer.forward(hidden_states),
+            Self::GatedMLP(layer) => layer.forward(hidden_states),
+            Self::Mlp(layer) => layer.forward(hidden_states),
+        }
     }
 }
 
@@ -577,7 +582,7 @@ impl NomicAttention {
 
 struct NomicBertBlock {
     attention: NomicAttention,
-    mlp: Box<dyn NomicMLP>,
+    mlp: NomicMLP,
     post_attention_layer_norm: LayerNorm,
     output_layer_norm: LayerNorm,
 
@@ -588,15 +593,7 @@ impl NomicBertBlock {
     pub fn load(vb: VarBuilder, index: usize, config: &NomicConfig) -> Result<Self> {
         let attention = NomicAttention::load(vb.pp("attn"), config)?;
 
-        let use_moe = matches!(config.moe_every_n_layers, Some(n) if n > 0 && index % n == 1);
-
-        let mlp: Box<dyn NomicMLP> = if use_moe {
-            Box::new(NomicMoELayer::load(vb.pp("mlp"), config)?)
-        } else if config.activation_function == HiddenAct::Gelu {
-            Box::new(NomicBertMLP::load(vb.pp("mlp"), config)?)
-        } else {
-            Box::new(NomicBertGatedMLP::load(vb.pp("mlp"), config)?)
-        };
+        let mlp = NomicMLP::load(vb.pp("mlp"), index, config)?;
 
         let post_attention_layer_norm =
             LayerNorm::load(vb.pp("norm1"), config.n_embd, config.layer_norm_epsilon)?;
