@@ -99,59 +99,6 @@ class MistralRMSNorm:
                 variance + self.variance_epsilon
             )
             return self.weight * hidden_states.to(input_dtype)
-        
-class GaudiLlamaRotaryEmbedding(torch.nn.Module):
-    def __init__(self, config: LlamaConfig, device=None):
-        super().__init__()
-
-        # BC: "rope_type" was originally "type"
-        if hasattr(config, "rope_scaling") and config.rope_scaling is not None:
-            self.rope_type = config.rope_scaling.get("rope_type", config.rope_scaling.get("type"))
-        else:
-            self.rope_type = "default"
-        self.max_seq_len_cached = config.max_position_embeddings
-        self.original_max_seq_len = config.max_position_embeddings
-
-        if self.rope_type == "linear":
-            self.scaling_factor = config.rope_scaling["factor"]
-        elif self.rope_type == "dynamic":
-            self.scaling_factor = config.rope_scaling["factor"]
-            self.base = config.rope_theta
-            partial_rotary_factor = config.partial_rotary_factor if hasattr(config, "partial_rotary_factor") else 1.0
-            head_dim = getattr(config, "head_dim", config.hidden_size // config.num_attention_heads)
-            self.dim = int(head_dim * partial_rotary_factor)
-
-        self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
-
-        inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self.original_inv_freq = self.inv_freq
-
-        # Build here to make `torch.jit.trace` work.
-        self._set_cos_sin_cache(
-            seq_len=self.max_seq_len_cached, device=self.inv_freq.device, dtype=torch.get_default_dtype()
-        )
-
-    def forward(self, x, seq_len=None):
-        # x: [bs, num_attention_heads, seq_len, head_size]
-
-        if "dynamic" in self.rope_type:
-            self._dynamic_frequency_update(seq_len, device=x.device)
-
-        if seq_len > self.max_seq_len_cached:
-            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
-
-        if self.attention_scaling == 1.0:
-            return (
-                self._cos_cached[:seq_len].to(dtype=x.dtype),
-                self._sin_cached[:seq_len].to(dtype=x.dtype),
-            )
-        else:
-            return (
-                self._cos_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-                self._sin_cached[:seq_len].to(dtype=x.dtype) * self.attention_scaling,
-            )
 
 
 class MistralRotaryEmbedding(nn.Module):
