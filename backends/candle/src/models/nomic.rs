@@ -108,8 +108,12 @@ impl NomicBertGatedMLP {
         let intermediate_size = config.n_inner;
         let activation = config.activation_function.clone();
 
-        let fc11_weight = vb.pp("fc11").get((intermediate_size, config.n_embd), "weight")?;
-        let fc12_weight = vb.pp("fc12").get((intermediate_size, config.n_embd), "weight")?;
+        let fc11_weight = vb
+            .pp("fc11")
+            .get((intermediate_size, config.n_embd), "weight")?;
+        let fc12_weight = vb
+            .pp("fc12")
+            .get((intermediate_size, config.n_embd), "weight")?;
         let fc1_weight = Tensor::cat(&[fc11_weight, fc12_weight], 0)?;
 
         let fc1_bias = if config.mlp_fc1_bias {
@@ -149,11 +153,7 @@ impl NomicBertGatedMLP {
         let y = hidden_states.narrow(2, 0, self.intermediate_size)?;
         let gate = hidden_states.narrow(2, self.intermediate_size, self.intermediate_size)?;
 
-        let activated_gate = match self.activation {
-            HiddenAct::Gelu => gate.gelu()?,
-            HiddenAct::Swiglu => gate.silu()?,
-            _ => panic!(),
-        };
+        let activated_gate = self.activation.forward(&gate)?;
         let y = y.mul(&activated_gate)?;
 
         self.fc2.forward(&y)
@@ -284,12 +284,7 @@ impl NomicExpertMLP {
         let expert_w2 = self.w2.narrow(0, expert_idx, 1)?.squeeze(0)?;
 
         let hidden_states = hidden_states.broadcast_matmul(&expert_w1)?;
-
-        let hidden_states = match self.activation {
-            HiddenAct::Gelu => hidden_states.gelu()?,
-            HiddenAct::Swiglu => hidden_states.silu()?,
-            _ => panic!(),
-        };
+        let hidden_states = self.activation.forward(&hidden_states)?;
 
         hidden_states.broadcast_matmul(&expert_w2)
     }

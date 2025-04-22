@@ -11,6 +11,16 @@ pub enum HiddenAct {
     Swiglu,
 }
 
+impl HiddenAct {
+    pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
+        match self {
+            Self::Gelu => x.gelu(),
+            Self::Relu => x.relu(),
+            Self::Swiglu => candle_nn::ops::swiglu(x),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Linear {
     weight: Tensor,
