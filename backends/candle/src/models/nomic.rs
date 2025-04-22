@@ -95,10 +95,10 @@ impl NomicBertEmbeddings {
 }
 
 pub struct NomicBertGatedMLP {
-    fc11: Linear,
-    fc12: Linear,
+    fc1: Linear,
     fc2: Linear,
     activation: HiddenAct,
+    intermediate_size: usize,
 
     span: tracing::Span,
 }
@@ -108,25 +108,19 @@ impl NomicBertGatedMLP {
         let intermediate_size = config.n_inner;
         let activation = config.activation_function.clone();
 
-        let fc11_weight = vb
-            .pp("fc11")
-            .get((intermediate_size, config.n_embd), "weight")?;
-        let fc11_bias = if config.mlp_fc1_bias {
-            Some(vb.pp("fc11").get((intermediate_size,), "bias")?)
-        } else {
-            None
-        };
-        let fc11 = Linear::new(fc11_weight, fc11_bias, None);
+        let fc11_weight = vb.pp("fc11").get((intermediate_size, config.n_embd), "weight")?;
+        let fc12_weight = vb.pp("fc12").get((intermediate_size, config.n_embd), "weight")?;
+        let fc1_weight = Tensor::cat(&[fc11_weight, fc12_weight], 0)?;
 
-        let fc12_weight = vb
-            .pp("fc12")
-            .get((intermediate_size, config.n_embd), "weight")?;
-        let fc12_bias = if config.mlp_fc1_bias {
-            Some(vb.pp("fc12").get((intermediate_size,), "bias")?)
+        let fc1_bias = if config.mlp_fc1_bias {
+            let fc11_bias = vb.pp("fc11").get((intermediate_size,), "bias")?;
+            let fc12_bias = vb.pp("fc12").get((intermediate_size,), "bias")?;
+            Some(Tensor::cat(&[fc11_bias, fc12_bias], 0)?)
         } else {
             None
         };
-        let fc12 = Linear::new(fc12_weight, fc12_bias, None);
+
+        let fc1 = Linear::new(fc1_weight, fc1_bias, None);
 
         let fc2_weight = vb
             .pp("fc2")
@@ -139,10 +133,10 @@ impl NomicBertGatedMLP {
         let fc2 = Linear::new(fc2_weight, fc2_bias, None);
 
         Ok(Self {
-            fc11,
-            fc12,
+            fc1,
             fc2,
             activation,
+            intermediate_size,
             span: tracing::span!(tracing::Level::TRACE, "gated_mlp"),
         })
     }
@@ -150,13 +144,15 @@ impl NomicBertGatedMLP {
     pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let y = self.fc11.forward(hidden_states)?;
-        let gate = self.fc12.forward(hidden_states)?;
+        let hidden_states = self.fc1.forward(hidden_states)?;
+
+        let y = hidden_states.narrow(2, 0, self.intermediate_size)?;
+        let gate = hidden_states.narrow(2, self.intermediate_size, self.intermediate_size)?;
 
         let activated_gate = match self.activation {
             HiddenAct::Gelu => gate.gelu()?,
             HiddenAct::Swiglu => gate.silu()?,
-            _ => candle_nn::ops::sigmoid(&gate)?,
+            _ => panic!(),
         };
         let y = y.mul(&activated_gate)?;
 
@@ -292,7 +288,7 @@ impl NomicExpertMLP {
         let hidden_states = match self.activation {
             HiddenAct::Gelu => hidden_states.gelu()?,
             HiddenAct::Swiglu => hidden_states.silu()?,
-            _ => candle_nn::ops::sigmoid(&hidden_states)?,
+            _ => panic!(),
         };
 
         hidden_states.broadcast_matmul(&expert_w2)
@@ -410,12 +406,12 @@ impl NomicMLP {
     pub fn load(vb: VarBuilder, index: usize, config: &NomicConfig) -> Result<Self> {
         let use_moe = matches!(config.moe_every_n_layers, Some(n) if n > 0 && index % n == 1);
 
-        match () {
-            _ if use_moe => Ok(Self::MoE(NomicMoELayer::load(vb, config)?)),
-            _ if config.activation_function == HiddenAct::Gelu => {
-                Ok(Self::Mlp(NomicBertMLP::load(vb, config)?))
-            }
-            _ => Ok(Self::GatedMLP(NomicBertGatedMLP::load(vb, config)?)),
+        if use_moe {
+            Ok(Self::MoE(NomicMoELayer::load(vb, config)?))
+        } else if config.activation_function == HiddenAct::Gelu {
+            Ok(Self::Mlp(NomicBertMLP::load(vb, config)?))
+        } else {
+            Ok(Self::GatedMLP(NomicBertGatedMLP::load(vb, config)?))
         }
     }
 
