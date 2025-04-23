@@ -322,7 +322,14 @@ impl NomicExperts {
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let (bs, seq_len, hidden_size) = hidden_states.dims3()?;
+        let dims = hidden_states.dims();
+        let ndim = dims.len();
+
+        let (bs, seq_len, hidden_size) = match ndim {
+            3 => (dims[0], dims[1], dims[2]),
+            2 => (1, dims[0], dims[1]),
+            _ => unreachable!(),
+        };
 
         let hidden_states = hidden_states.reshape(((), hidden_size))?;
 
@@ -356,7 +363,9 @@ impl NomicExperts {
             out = out.index_add(idx, &expert_out, 0)?;
         }
 
-        let out = out.reshape((bs, seq_len, hidden_size))?;
+        if ndim == 3 {
+            out = out.reshape((bs, seq_len, hidden_size))?;
+        }
 
         out.broadcast_add(&self.bias)
     }
