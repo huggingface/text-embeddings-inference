@@ -109,11 +109,7 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
     else:
         if device.type == "hpu":
             from habana_frameworks.torch.hpu import wrap_in_hpu_graph
-            from optimum.habana.transformers.modeling_utils import (
-                adapt_transformers_to_gaudi,
-            )
 
-            adapt_transformers_to_gaudi()
             if config.architectures[0].endswith("Classification"):
                 model_handle = ClassificationModel(
                     model_path,
