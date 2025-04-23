@@ -391,7 +391,7 @@ impl NomicMoELayer {
     }
 }
 
-enum NomicMLP {
+pub enum NomicMLP {
     MoE(NomicMoELayer),
     GatedMLP(NomicBertGatedMLP),
     Mlp(NomicBertMLP),
