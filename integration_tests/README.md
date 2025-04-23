@@ -15,4 +15,3 @@ Then you can run the tests.
 ```bash
 make -C integration_tests run-integration-tests-hpu
 ```
-

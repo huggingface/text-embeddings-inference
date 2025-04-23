@@ -72,7 +72,7 @@ async def test_model_single_request(
     response = await tei_client.generate(
         input,
     )
-    
+
     response_array = np.array(response)
     expected_array = np.array(eval(expected_outputs["expected_output"]))
 
