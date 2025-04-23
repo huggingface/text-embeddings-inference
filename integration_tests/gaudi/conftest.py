@@ -179,14 +179,14 @@ def gaudi_launcher(event_loop):
             logger.error(f"Error handling existing container: {str(e)}")
 
         tei_args = TEST_CONFIGS[test_name]["args"].copy()
-        
+
         # add model_id to tei args
         tei_args.append("--model-id")
         tei_args.append(model_id)
 
         env = BASE_ENV.copy()
         env["HF_TOKEN"] = os.getenv("HF_TOKEN")
-        
+
         # Add env config that is definied in the fixture parameter
         if "env_config" in TEST_CONFIGS[test_name]:
             env.update(TEST_CONFIGS[test_name]["env_config"].copy())
