@@ -97,8 +97,6 @@ impl NomicBertEmbeddings {
 pub struct NomicBertGatedMLP {
     fc1: Linear,
     fc2: Linear,
-    activation: HiddenAct,
-    intermediate_size: usize,
 
     span: tracing::Span,
 }
@@ -106,7 +104,6 @@ pub struct NomicBertGatedMLP {
 impl NomicBertGatedMLP {
     pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
         let intermediate_size = config.n_inner;
-        let activation = config.activation_function.clone();
 
         let fc11_weight = vb
             .pp("fc11")
@@ -124,7 +121,11 @@ impl NomicBertGatedMLP {
             None
         };
 
-        let fc1 = Linear::new(fc1_weight, fc1_bias, None);
+        let fc1 = Linear::new(
+            fc1_weight,
+            fc1_bias,
+            Some(config.activation_function.clone()),
+        );
 
         let fc2_weight = vb
             .pp("fc2")
@@ -139,8 +140,6 @@ impl NomicBertGatedMLP {
         Ok(Self {
             fc1,
             fc2,
-            activation,
-            intermediate_size,
             span: tracing::span!(tracing::Level::TRACE, "gated_mlp"),
         })
     }
@@ -148,15 +147,8 @@ impl NomicBertGatedMLP {
     pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let hidden_states = self.fc1.forward(hidden_states)?;
-
-        let y = hidden_states.narrow(2, 0, self.intermediate_size)?;
-        let gate = hidden_states.narrow(2, self.intermediate_size, self.intermediate_size)?;
-
-        let activated_gate = self.activation.forward(&gate)?;
-        let y = y.mul(&activated_gate)?;
-
-        self.fc2.forward(&y)
+        let gate_up_states = self.fc1.forward(hidden_states)?;
+        self.fc2.forward(&gate_up_states)
     }
 }
 
