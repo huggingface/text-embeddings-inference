@@ -111,12 +111,12 @@ impl NomicBertGatedMLP {
         let fc12_weight = vb
             .pp("fc12")
             .get((intermediate_size, config.n_embd), "weight")?;
-        let fc1_weight = Tensor::cat(&[fc11_weight, fc12_weight], 0)?;
+        let fc1_weight = Tensor::cat(&[fc12_weight, fc11_weight], 0)?;
 
         let fc1_bias = if config.mlp_fc1_bias {
             let fc11_bias = vb.pp("fc11").get((intermediate_size,), "bias")?;
             let fc12_bias = vb.pp("fc12").get((intermediate_size,), "bias")?;
-            Some(Tensor::cat(&[fc11_bias, fc12_bias], 0)?)
+            Some(Tensor::cat(&[fc12_bias, fc11_bias], 0)?)
         } else {
             None
         };
