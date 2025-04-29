@@ -1,8 +1,8 @@
 mod common;
 
-use crate::common::{sort_embeddings, SnapshotEmbeddings};
+use crate::common::{sort_embeddings, SnapshotEmbeddings, SnapshotScores};
 use anyhow::Result;
-use common::{batch, cosine_matcher, download_artifacts, load_tokenizer};
+use common::{batch, cosine_matcher, download_artifacts, load_tokenizer, relative_matcher};
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
@@ -45,6 +45,32 @@ fn test_jina_small() -> Result<()> {
     insta::assert_yaml_snapshot!("jina_single", embeddings_single, &matcher);
     assert_eq!(embeddings_batch[0], embeddings_single[0]);
     assert_eq!(embeddings_batch[2], embeddings_single[0]);
+
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn test_jina_rerank() -> Result<()> {
+    let model_root = download_artifacts("jinaai/jina-reranker-v1-tiny-en", Some("refs/pr/11"))?;
+    let tokenizer = load_tokenizer(&model_root)?;
+
+    let backend = CandleBackend::new(&model_root, "float32".to_string(), ModelType::Classifier)?;
+
+    let input_single = batch(
+        vec![tokenizer.encode("What is Deep Learning?", true).unwrap()],
+        [0].to_vec(),
+        vec![],
+    );
+
+    let predictions: Vec<Vec<f32>> = backend
+        .predict(input_single)?
+        .into_iter()
+        .map(|(_, v)| v)
+        .collect();
+
+    let predictions = SnapshotScores::from(predictions);
+    insta::assert_yaml_snapshot!("jinabert_reranker_single", predictions, &relative_matcher());
 
     Ok(())
 }

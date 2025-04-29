@@ -92,6 +92,6 @@ pub(crate) trait Model {
     }
 
     fn predict(&self, _batch: Batch) -> Result<Tensor> {
-        candle::bail!("`predict is not implemented for this model");
+        candle::bail!("`predict` is not implemented for this model");
     }
 }
