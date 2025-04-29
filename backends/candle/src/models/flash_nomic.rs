@@ -1,6 +1,6 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{get_cos_sin, get_inv_freqs, LayerNorm, Linear};
-use crate::models::nomic::{NomicBertEmbeddings, NomicBertGatedMLP};
+use crate::models::nomic::{NomicBertEmbeddings, NomicMLP};
 use crate::models::{Model, NomicConfig};
 use candle::{DType, Device, IndexOp, Result, Tensor, D};
 use candle_nn::VarBuilder;
@@ -25,16 +25,25 @@ impl NomicAttention {
         let attention_head_size = config.n_embd / config.n_head;
         let hidden_size = config.n_embd;
 
-        let qkv_weight = vb.pp("Wqkv").get(
-            (3 * num_attention_heads * attention_head_size, hidden_size),
-            "weight",
-        )?;
-        let qkv_linear = Linear::new(qkv_weight, None, None);
+        let qkv_dim = 3 * num_attention_heads * attention_head_size;
+
+        let qkv_weight = vb.pp("Wqkv").get((qkv_dim, hidden_size), "weight")?;
+        let qkv_bias = if config.qkv_proj_bias {
+            Some(vb.pp("Wqkv").get((qkv_dim,), "bias")?)
+        } else {
+            None
+        };
+        let qkv_linear = Linear::new(qkv_weight, qkv_bias, None);
 
         let out_proj_weight = vb
             .pp("out_proj")
             .get((hidden_size, hidden_size), "weight")?;
-        let out_proj = Linear::new(out_proj_weight, None, None);
+        let out_proj_bias = if config.qkv_proj_bias {
+            Some(vb.pp("out_proj").get((hidden_size,), "bias")?)
+        } else {
+            None
+        };
+        let out_proj = Linear::new(out_proj_weight, out_proj_bias, None);
 
         let softmax_scale = (1. / (attention_head_size as f64).sqrt()) as f32;
 
@@ -93,7 +102,7 @@ impl NomicAttention {
 
 struct NomicBertBlock {
     attention: NomicAttention,
-    mlp: NomicBertGatedMLP,
+    mlp: NomicMLP,
     post_attention_layer_norm: LayerNorm,
     output_layer_norm: LayerNorm,
 
@@ -101,9 +110,10 @@ struct NomicBertBlock {
 }
 
 impl NomicBertBlock {
-    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
+    pub fn load(vb: VarBuilder, index: usize, config: &NomicConfig) -> Result<Self> {
         let attention = NomicAttention::load(vb.pp("attn"), config)?;
-        let mlp = NomicBertGatedMLP::load(vb.pp("mlp"), config)?;
+
+        let mlp = NomicMLP::load(vb.pp("mlp"), index, config)?;
 
         let post_attention_layer_norm =
             LayerNorm::load(vb.pp("norm1"), config.n_embd, config.layer_norm_epsilon)?;
@@ -132,6 +142,7 @@ impl NomicBertBlock {
         let attn_output = self
             .attention
             .forward(&hidden_states, cu_seqlens, cos, sin, max_s)?;
+
         let hidden_states = self
             .post_attention_layer_norm
             .forward(&hidden_states, Some(&attn_output))?;
@@ -145,13 +156,14 @@ impl NomicBertBlock {
 
 struct NomicBertEncoder {
     layers: Vec<NomicBertBlock>,
+
     span: tracing::Span,
 }
 
 impl NomicBertEncoder {
     pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
         let layers = (0..config.n_layer)
-            .map(|index| NomicBertBlock::load(vb.pp(format!("layers.{index}")), config))
+            .map(|index| NomicBertBlock::load(vb.pp(format!("layers.{index}")), index, config))
             .collect::<Result<Vec<_>>>()?;
 
         let span = tracing::span!(tracing::Level::TRACE, "encoder");
@@ -170,7 +182,6 @@ impl NomicBertEncoder {
 
         let mut hidden_states = hidden_states.clone();
 
-        // Use a loop rather than a fold as it's easier to modify when adding debug/...
         for layer in self.layers.iter() {
             hidden_states = layer.forward(&hidden_states, cu_seqlens, cos, sin, max_s)?
         }
@@ -419,6 +430,7 @@ impl Model for FlashNomicBertModel {
     fn is_padded(&self) -> bool {
         false
     }
+
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
     }
