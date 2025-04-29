@@ -34,7 +34,11 @@ fn test_modernbert() -> Result<()> {
 
     let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_batch)?);
     let embeddings_batch = SnapshotEmbeddings::from(pooled_embeddings);
-    insta::assert_yaml_snapshot!("modernbert_batch", embeddings_batch, &matcher);
+    if cfg!(all(feature = "cuda", feature = "flash-attn")) {
+        insta::assert_yaml_snapshot!("modernbert_batch_flash", embeddings_batch, &matcher);
+    } else {
+        insta::assert_yaml_snapshot!("modernbert_batch", embeddings_batch, &matcher);
+    }
 
     let input_single = batch(
         vec![tokenizer.encode("What is Deep Learning?", true).unwrap()],
@@ -45,7 +49,11 @@ fn test_modernbert() -> Result<()> {
     let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_single)?);
     let embeddings_single = SnapshotEmbeddings::from(pooled_embeddings);
 
-    insta::assert_yaml_snapshot!("modernbert_single", embeddings_single, &matcher);
+    if cfg!(all(feature = "cuda", feature = "flash-attn")) {
+        insta::assert_yaml_snapshot!("modernbert_single_flash", embeddings_single, &matcher);
+    } else {
+        insta::assert_yaml_snapshot!("modernbert_single", embeddings_single, &matcher);
+    }
     assert_eq!(embeddings_batch[0], embeddings_single[0]);
     assert_eq!(embeddings_batch[2], embeddings_single[0]);
 
@@ -97,10 +105,22 @@ fn test_modernbert_pooled_raw() -> Result<()> {
 
     let (pooled_embeddings, raw_embeddings) = sort_embeddings(backend.embed(input_batch)?);
     let pooled_embeddings_batch = SnapshotEmbeddings::from(pooled_embeddings);
-    insta::assert_yaml_snapshot!("modernbert_batch_pooled", pooled_embeddings_batch, &matcher);
+    if cfg!(all(feature = "cuda", feature = "flash-attn")) {
+        insta::assert_yaml_snapshot!(
+            "modernbert_batch_pooled_flash",
+            pooled_embeddings_batch,
+            &matcher
+        );
+    } else {
+        insta::assert_yaml_snapshot!("modernbert_batch_pooled", pooled_embeddings_batch, &matcher);
+    }
 
     let raw_embeddings_batch = SnapshotEmbeddings::from(raw_embeddings);
-    insta::assert_yaml_snapshot!("modernbert_batch_raw", raw_embeddings_batch, &matcher);
+    if cfg!(all(feature = "cuda", feature = "flash-attn")) {
+        insta::assert_yaml_snapshot!("modernbert_batch_raw_flash", raw_embeddings_batch, &matcher);
+    } else {
+        insta::assert_yaml_snapshot!("modernbert_batch_raw", raw_embeddings_batch, &matcher);
+    }
 
     // Check that the first token of each raw embeddings member is the same as the cls pooling ones
     assert_eq!(pooled_embeddings_batch[0], raw_embeddings_batch[0]);
@@ -116,7 +136,15 @@ fn test_modernbert_pooled_raw() -> Result<()> {
 
     let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_single)?);
     let embeddings_single = SnapshotEmbeddings::from(pooled_embeddings);
-    insta::assert_yaml_snapshot!("modernbert_single_pooled", embeddings_single, &matcher);
+    if cfg!(all(feature = "cuda", feature = "flash-attn")) {
+        insta::assert_yaml_snapshot!(
+            "modernbert_single_pooled_flash",
+            embeddings_single,
+            &matcher
+        );
+    } else {
+        insta::assert_yaml_snapshot!("modernbert_single_pooled", embeddings_single, &matcher);
+    }
 
     assert_eq!(pooled_embeddings_batch[0], embeddings_single[0]);
     assert_eq!(pooled_embeddings_batch[2], embeddings_single[0]);
@@ -129,7 +157,11 @@ fn test_modernbert_pooled_raw() -> Result<()> {
 
     let (_, raw_embeddings) = sort_embeddings(backend.embed(input_single)?);
     let embeddings_single = SnapshotEmbeddings::from(raw_embeddings);
-    insta::assert_yaml_snapshot!("modernbert_single_raw", embeddings_single, &matcher);
+    if cfg!(all(feature = "cuda", feature = "flash-attn")) {
+        insta::assert_yaml_snapshot!("modernbert_single_raw_flash", embeddings_single, &matcher);
+    } else {
+        insta::assert_yaml_snapshot!("modernbert_single_raw", embeddings_single, &matcher);
+    }
 
     assert_eq!(raw_embeddings_batch[0], embeddings_single[0]);
     assert_eq!(raw_embeddings_batch[13], embeddings_single[0]);
