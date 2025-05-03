@@ -193,7 +193,6 @@ impl GTEMLP {
         let up_gate_proj_weight = vb
             .pp("up_gate_proj")
             .get((intermediate_size * 2, config.hidden_size), "weight")?;
-
         let up_gate_proj = Linear::new(up_gate_proj_weight, None, None);
 
         let down_proj_weight = vb
@@ -216,16 +215,12 @@ impl GTEMLP {
 
         let up_gate_states = self.up_gate_proj.forward(hidden_states)?;
         let up_states = up_gate_states.narrow(D::Minus1, 0, self.intermediate_size)?;
-        let gate_states =
+
+        let gate =
             up_gate_states.narrow(D::Minus1, self.intermediate_size, self.intermediate_size)?;
+        let gate = self.act.forward(&gate)?;
 
-        let gate_states = match self.act {
-            HiddenAct::Gelu => gate_states.gelu(),
-            HiddenAct::Relu => gate_states.relu(),
-            HiddenAct::Swiglu => gate_states.silu(),
-        }?;
-
-        self.down_proj.forward(&(gate_states * up_states)?)
+        self.down_proj.forward(&(gate * up_states)?)
     }
 }
 
@@ -282,28 +277,23 @@ impl GTELayer {
 }
 
 pub struct GTEClassificationHead {
-    pooler: Option<Linear>,
+    pooler: Linear,
     classifier: Linear,
     span: tracing::Span,
 }
 
 impl GTEClassificationHead {
-    #[allow(dead_code)]
     pub(crate) fn load(vb: VarBuilder, config: &GTEConfig) -> Result<Self> {
         let n_classes = match &config.id2label {
             None => candle::bail!("`id2label` must be set for classifier models"),
             Some(id2label) => id2label.len(),
         };
 
-        let pooler = if let Ok(pooler_weight) = vb
-            .pp("pooler.dense")
-            .get((config.hidden_size, config.hidden_size), "weight")
-        {
-            let pooler_bias = vb.pp("pooler.dense").get(config.hidden_size, "bias")?;
-            Some(Linear::new(pooler_weight, Some(pooler_bias), None))
-        } else {
-            None
-        };
+        let pooler_weight = vb
+            .pp("new.pooler.dense")
+            .get((config.hidden_size, config.hidden_size), "weight")?;
+        let pooler_bias = vb.pp("new.pooler.dense").get(config.hidden_size, "bias")?;
+        let pooler = Linear::new(pooler_weight, Some(pooler_bias), None);
 
         let classifier_weight = vb
             .pp("classifier")
@@ -321,14 +311,14 @@ impl GTEClassificationHead {
     pub(crate) fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let mut hidden_states = hidden_states.unsqueeze(1)?;
-        if let Some(pooler) = self.pooler.as_ref() {
-            hidden_states = pooler.forward(&hidden_states)?;
-            hidden_states = hidden_states.tanh()?;
-        }
+        let hidden_states = hidden_states.unsqueeze(1)?;
+
+        let hidden_states = self.pooler.forward(&hidden_states)?;
+        let hidden_states = hidden_states.tanh()?;
 
         let hidden_states = self.classifier.forward(&hidden_states)?;
         let hidden_states = hidden_states.squeeze(1)?;
+
         Ok(hidden_states)
     }
 }
