@@ -283,18 +283,15 @@ pub struct GTEClassificationHead {
 }
 
 impl GTEClassificationHead {
-    fn inner_load(vb: VarBuilder, config: &GTEConfig) -> Result<Option<Linear>> {
-        let pooler = if let Ok(pooler_weight) = vb
+    fn inner_load(vb: VarBuilder, config: &GTEConfig) -> Option<Linear> {
+        let pooler_weight = vb
             .pp("pooler.dense")
             .get((config.hidden_size, config.hidden_size), "weight")
-        {
-            let pooler_bias = vb.pp("pooler.dense").get(config.hidden_size, "bias")?;
-            Some(Linear::new(pooler_weight, Some(pooler_bias), None))
-        } else {
-            None
-        };
+            .ok()?;
+        let pooler_bias = vb.pp("pooler.dense").get(config.hidden_size, "bias").ok()?;
+        let pooler = Linear::new(pooler_weight, Some(pooler_bias), None);
 
-        Ok(pooler)
+        Some(pooler)
     }
 
     pub(crate) fn load(vb: VarBuilder, config: &GTEConfig) -> Result<Self> {
@@ -303,8 +300,8 @@ impl GTEClassificationHead {
             Some(id2label) => id2label.len(),
         };
 
-        let pooler = Self::inner_load(vb.pp("new"), config)
-            .or_else(|_| Self::inner_load(vb.clone(), config))?;
+        let pooler =
+            Self::inner_load(vb.pp("new"), config).or_else(|| Self::inner_load(vb.clone(), config));
 
         let classifier_weight = vb
             .pp("classifier")
