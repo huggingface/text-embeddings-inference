@@ -277,23 +277,34 @@ impl GTELayer {
 }
 
 pub struct GTEClassificationHead {
-    pooler: Linear,
+    pooler: Option<Linear>,
     classifier: Linear,
     span: tracing::Span,
 }
 
 impl GTEClassificationHead {
+    fn inner_load(vb: VarBuilder, config: &GTEConfig) -> Result<Option<Linear>> {
+        let pooler = if let Ok(pooler_weight) = vb
+            .pp("pooler.dense")
+            .get((config.hidden_size, config.hidden_size), "weight")
+        {
+            let pooler_bias = vb.pp("pooler.dense").get(config.hidden_size, "bias")?;
+            Some(Linear::new(pooler_weight, Some(pooler_bias), None))
+        } else {
+            None
+        };
+
+        Ok(pooler)
+    }
+
     pub(crate) fn load(vb: VarBuilder, config: &GTEConfig) -> Result<Self> {
         let n_classes = match &config.id2label {
             None => candle::bail!("`id2label` must be set for classifier models"),
             Some(id2label) => id2label.len(),
         };
 
-        let pooler_weight = vb
-            .pp("new.pooler.dense")
-            .get((config.hidden_size, config.hidden_size), "weight")?;
-        let pooler_bias = vb.pp("new.pooler.dense").get(config.hidden_size, "bias")?;
-        let pooler = Linear::new(pooler_weight, Some(pooler_bias), None);
+        let pooler = Self::inner_load(vb.pp("new"), config)
+            .or_else(|_| Self::inner_load(vb.clone(), config))?;
 
         let classifier_weight = vb
             .pp("classifier")
@@ -311,10 +322,12 @@ impl GTEClassificationHead {
     pub(crate) fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let hidden_states = hidden_states.unsqueeze(1)?;
+        let mut hidden_states = hidden_states.unsqueeze(1)?;
 
-        let hidden_states = self.pooler.forward(&hidden_states)?;
-        let hidden_states = hidden_states.tanh()?;
+        if let Some(pooler) = self.pooler.as_ref() {
+            hidden_states = pooler.forward(&hidden_states)?;
+            hidden_states = hidden_states.tanh()?;
+        }
 
         let hidden_states = self.classifier.forward(&hidden_states)?;
         let hidden_states = hidden_states.squeeze(1)?;
