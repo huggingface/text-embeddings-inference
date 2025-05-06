@@ -235,6 +235,7 @@ pub async fn run(
     tracing::info!("Starting model backend");
     let backend = text_embeddings_backend::Backend::new(
         model_root,
+        model_id.clone(),
         api_repo,
         dtype.clone(),
         backend_model_type,
@@ -276,7 +277,7 @@ pub async fn run(
 
     // Endpoint info
     let info = Info {
-        model_id,
+        model_id: model_id,
         model_sha: revision,
         model_dtype: dtype.to_string(),
         model_type,
