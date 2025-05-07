@@ -66,6 +66,9 @@ docker run -p 8080:80 -v $volume:/data --device=/dev/dri -v /dev/dri/by-path:/de
 
 ## HPU
 
+> [!WARNING]
+> TEI is supported only on Gaudi 2 and Gaudi 3. Gaudi 1 is **not** supported.
+
 ### Build Docker Image
 
 To build a container optimized for Intel® HPUs (Gaudi), run the following command:
@@ -104,6 +107,10 @@ docker pull ghcr.io/huggingface/text-embeddings-inference:xpu-ipex-latest
 ```
 
 ### HPU
+
+> [!WARNING]
+> TEI is supported only on Gaudi 2 and Gaudi 3. Gaudi 1 is **not** supported.
+
 To use the prebuilt image optimized for Intel® HPUs (Gaudi), run:
 ```shell
 docker pull ghcr.io/huggingface/text-embeddings-inference:hpu-latest
