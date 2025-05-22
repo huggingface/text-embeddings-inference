@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.2.0-devel-ubuntu22.04 AS base-builder
+FROM nvidia/cuda:12.8.0-devel-ubuntu24.04 AS base-builder
 
 ENV SCCACHE=0.10.0
 ENV RUSTC_WRAPPER=/usr/local/bin/sccache
@@ -124,7 +124,7 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
 
 RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-90
 
-FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04 AS base
+FROM nvidia/cuda:12.8.0-runtime-ubuntu24.04 AS base
 
 ARG DEFAULT_USE_FLASH_ATTENTION=True
 
