@@ -108,7 +108,7 @@ class JinaBertEmbeddings:
             self.layernorm_weight.shape,
             self.layernorm_weight,
             self.layernorm_bias,
-            eps=self.config.layer_norm_eps
+            eps=self.config.layer_norm_eps,
         )
         embeddings = self.dropout(embeddings)
         return embeddings
@@ -174,11 +174,12 @@ class JinaBertSelfAttention:
             self.layer_norm_q_weight.shape,
             self.layer_norm_q_weight,
             self.layer_norm_q_bias,
-            eps=self.config.layer_norm_eps,)
+            eps=self.config.layer_norm_eps,
+        )
 
         k_hidden_states = F.linear(hidden_states, self.key_weight, self.key_bias)
         key_layer = self.transpose_for_scores(
-            F.layer_norm(   
+            F.layer_norm(
                 k_hidden_states,
                 self.layer_norm_k_weight.shape,
                 self.layer_norm_k_weight,
@@ -237,7 +238,7 @@ class JinaBertSelfOutput:
         hidden_states = F.linear(hidden_states, self.dense_weight, self.dense_bias)
         hidden_states = self.dropout(hidden_states)
         hidden_states = F.layer_norm(
-            hidden_states+input_tensor,
+            hidden_states + input_tensor,
             self.layerNorm_weight.shape,
             self.layerNorm_weight,
             self.layerNorm_bias,
@@ -453,10 +454,28 @@ class JinaBertEncoder:
         return hidden_states
 
 
+class JinaBertPooler:
+    def __init__(self, handle, device, dtype, config):
+        self.dense_weight = (
+            handle.get_tensor(f"pooler.dense.weight").to(dtype).to(device)
+        )
+        self.dense_bias = handle.get_tensor(f"pooler.dense.bias").to(dtype).to(device)
+        self.activation = nn.Tanh()
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        # We "pool" the model by simply taking the hidden state corresponding
+        # to the first token.
+        first_token_tensor = hidden_states[:, 0]
+        pooled_output = F.linear(first_token_tensor, self.dense_weight, self.dense_bias)
+        pooled_output = self.activation(pooled_output)
+        return pooled_output
+
+
 class FlashJinaBertModel:
     def __init__(self, handle, device, dtype, config: AutoConfig):
         self.embeddings = JinaBertEmbeddings(handle, device, dtype, config)
         self.encoder = JinaBertEncoder(handle, device, dtype, config)
+        self.pooler = JinaBertPooler(handle, device, dtype, config)
 
     def forward(
         self,
@@ -467,7 +486,8 @@ class FlashJinaBertModel:
     ):
         embeddings = self.embeddings.forward(input_ids, token_type_ids, position_ids)
         encoder_outputs = self.encoder.forward(embeddings, attn_mask)
-        return encoder_outputs[0]
+        pooled_output = self.pooler(encoder_outputs)
+        return pooled_output
 
 
 class FlashJinaBert(Model):
@@ -507,9 +527,7 @@ class FlashJinaBert(Model):
         kwargs = {"input_ids": batch.input_ids, "attn_mask": batch.attention_mask}
         kwargs["token_type_ids"] = batch.token_type_ids
         kwargs["position_ids"] = batch.position_ids
-        output = self.model.forward(**kwargs)
-
-        embedding = self.pooling.forward(output, batch.attention_mask)
+        embedding = self.model.forward(**kwargs)
 
         cpu_results = embedding.view(-1).tolist()
 
