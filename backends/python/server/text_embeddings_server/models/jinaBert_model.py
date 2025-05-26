@@ -61,7 +61,6 @@ class JinaBertConfig(PretrainedConfig):
         self.classifier_dropout = classifier_dropout
         self.feed_forward_type = feed_forward_type
         self.emb_pooler = emb_pooler
-        self.attn_implementation = attn_implementation
 
 
 class JinaBertEmbeddings:
@@ -87,6 +86,7 @@ class JinaBertEmbeddings:
         self.position_embedding_type = getattr(
             config, "position_embedding_type", "absolute"
         )
+        self.config = config
 
     def forward(
         self,
@@ -103,7 +103,13 @@ class JinaBertEmbeddings:
         if self.position_embedding_type == "absolute":
             position_embeddings = self.position_embeddings(position_ids)
             embeddings += position_embeddings
-        embeddings = F.linear(embeddings, self.layernorm_weight, self.layernorm_bias)
+        embeddings = F.layer_norm(
+            embeddings,
+            self.layernorm_weight.shape,
+            self.layernorm_weight,
+            self.layernorm_bias,
+            eps=self.config.layer_norm_eps
+        )
         embeddings = self.dropout(embeddings)
         return embeddings
 
@@ -118,7 +124,7 @@ class JinaBertSelfAttention:
                 f"heads ({config.num_attention_heads})"
             )
 
-        self.attn_implementation = config.attn_implementation
+        self.config = config
         self.num_attention_heads = config.num_attention_heads
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
@@ -163,16 +169,21 @@ class JinaBertSelfAttention:
         bias: Optional[torch.FloatTensor] = None,
     ) -> Tuple[torch.Tensor]:
         q_hidden_states = F.linear(hidden_states, self.query_weight, self.query_bias)
-        mixed_query_layer = F.linear(
-            q_hidden_states, self.layer_norm_q_weight, self.layer_norm_q_bias
-        )
+        mixed_query_layer = F.layer_norm(
+            q_hidden_states,
+            self.layer_norm_q_weight.shape,
+            self.layer_norm_q_weight,
+            self.layer_norm_q_bias,
+            eps=self.config.layer_norm_eps,)
 
         k_hidden_states = F.linear(hidden_states, self.key_weight, self.key_bias)
         key_layer = self.transpose_for_scores(
-            F.linear(
+            F.layer_norm(   
                 k_hidden_states,
+                self.layer_norm_k_weight.shape,
                 self.layer_norm_k_weight,
                 self.layer_norm_k_bias,
+                eps=self.config.layer_norm_eps,
             )
         )
 
@@ -206,6 +217,7 @@ class JinaBertSelfAttention:
 
 class JinaBertSelfOutput:
     def __init__(self, prefix, handle, device, dtype, config):
+        self.config = config
         self.dense_weight = (
             handle.get_tensor(f"{prefix}.dense.weight").to(dtype).to(device)
         )
@@ -224,9 +236,16 @@ class JinaBertSelfOutput:
     ) -> torch.Tensor:
         hidden_states = F.linear(hidden_states, self.dense_weight, self.dense_bias)
         hidden_states = self.dropout(hidden_states)
-        hidden_states = F.linear(
-            hidden_states, self.layerNorm_weight, self.layerNorm_bias
+        hidden_states = F.layer_norm(
+            hidden_states+input_tensor,
+            self.layerNorm_weight.shape,
+            self.layerNorm_weight,
+            self.layerNorm_bias,
+            eps=self.config.layer_norm_eps,
         )
+        # hidden_states = F.linear(
+        #     hidden_states, self.layerNorm_weight, self.layerNorm_bias
+        # )
         return hidden_states
 
 
@@ -243,21 +262,11 @@ class JinaBertAttention:
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_value: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        output_attentions: Optional[bool] = False,
         bias: Optional[torch.FloatTensor] = None,
     ) -> Tuple[torch.Tensor]:
         self_outputs = self.self.forward(
             hidden_states,
             attention_mask,
-            head_mask,
-            encoder_hidden_states,
-            encoder_attention_mask,
-            past_key_value,
-            output_attentions,
             bias,
         )
         attention_output = self.output.forward(self_outputs[0], hidden_states)
@@ -330,7 +339,6 @@ class JinaBertLayer:
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
         bias: Optional[torch.FloatTensor] = None,
     ) -> Tuple[torch.Tensor]:
         # Pre-Norm
@@ -340,7 +348,6 @@ class JinaBertLayer:
         self_attention_outputs = self.attention.forward(
             hidden_states,
             attention_mask,
-            head_mask,
             bias=bias,
         )
         attention_output = self_attention_outputs[0]
@@ -427,9 +434,6 @@ class JinaBertEncoder:
         self,
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
         # Add alibi matrix to extended_attention_mask
         _, seqlen, _ = hidden_states.size()
@@ -437,15 +441,10 @@ class JinaBertEncoder:
             size=seqlen, device=hidden_states.device
         ).to(hidden_states.dtype)
 
-        for i, layer_module in enumerate(self.layer):
-            layer_head_mask = head_mask[i] if head_mask is not None else None
-
-            layer_outputs = layer_module(
+        for i, layer_module in enumerate(self.layers):
+            layer_outputs = layer_module.forward(
                 hidden_states,
                 attention_mask,
-                layer_head_mask,
-                encoder_hidden_states,
-                encoder_attention_mask,
                 alibi_bias,
             )
 
@@ -464,17 +463,11 @@ class FlashJinaBertModel:
         input_ids,
         token_type_ids,
         position_ids,
-        cu_seqlens,
-        max_s,
-        mask=None,
         attn_mask=None,
     ):
         embeddings = self.embeddings.forward(input_ids, token_type_ids, position_ids)
-        encoder_outputs = self.encoder.forward(embeddings, cu_seqlens, max_s, attn_mask)
-        if mask is not None:
-            outputs = encoder_outputs[mask]
-            return outputs[cu_seqlens[:-1]]
-        return encoder_outputs[cu_seqlens[:-1]]
+        encoder_outputs = self.encoder.forward(embeddings, attn_mask)
+        return encoder_outputs[0]
 
 
 class FlashJinaBert(Model):
@@ -511,12 +504,10 @@ class FlashJinaBert(Model):
 
     @tracer.start_as_current_span("embed")
     def embed(self, batch: PaddedBatch) -> List[Embedding]:
-        kwargs = {"input_ids": batch.input_ids, "attention_mask": batch.attention_mask}
-        if self.has_token_type_ids:
-            kwargs["token_type_ids"] = batch.token_type_ids
-        if self.has_position_ids:
-            kwargs["position_ids"] = batch.position_ids
-        output = self.model(**kwargs)
+        kwargs = {"input_ids": batch.input_ids, "attn_mask": batch.attention_mask}
+        kwargs["token_type_ids"] = batch.token_type_ids
+        kwargs["position_ids"] = batch.position_ids
+        output = self.model.forward(**kwargs)
 
         embedding = self.pooling.forward(output, batch.attention_mask)
 

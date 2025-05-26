@@ -11,7 +11,7 @@ from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.masked_model import MaskedLanguageModel
 from text_embeddings_server.models.default_model import DefaultModel
 from text_embeddings_server.models.classification_model import ClassificationModel
-from text_embeddings_server.models.jina_bert import FlashJinaBert
+from text_embeddings_server.models.jinaBert_model import FlashJinaBert
 from text_embeddings_server.models.flash_mistral import FlashMistral
 from text_embeddings_server.utils.device import get_device, use_ipex
 
