@@ -454,28 +454,10 @@ class JinaBertEncoder:
         return hidden_states
 
 
-class JinaBertPooler:
-    def __init__(self, handle, device, dtype, config):
-        self.dense_weight = (
-            handle.get_tensor(f"pooler.dense.weight").to(dtype).to(device)
-        )
-        self.dense_bias = handle.get_tensor(f"pooler.dense.bias").to(dtype).to(device)
-        self.activation = nn.Tanh()
-
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        # We "pool" the model by simply taking the hidden state corresponding
-        # to the first token.
-        first_token_tensor = hidden_states[:, 0]
-        pooled_output = F.linear(first_token_tensor, self.dense_weight, self.dense_bias)
-        pooled_output = self.activation(pooled_output)
-        return pooled_output
-
-
 class FlashJinaBertModel:
     def __init__(self, handle, device, dtype, config: AutoConfig):
         self.embeddings = JinaBertEmbeddings(handle, device, dtype, config)
         self.encoder = JinaBertEncoder(handle, device, dtype, config)
-        self.pooler = JinaBertPooler(handle, device, dtype, config)
 
     def forward(
         self,
@@ -486,8 +468,7 @@ class FlashJinaBertModel:
     ):
         embeddings = self.embeddings.forward(input_ids, token_type_ids, position_ids)
         encoder_outputs = self.encoder.forward(embeddings, attn_mask)
-        pooled_output = self.pooler(encoder_outputs)
-        return pooled_output
+        return encoder_outputs
 
 
 class FlashJinaBert(Model):
@@ -522,13 +503,24 @@ class FlashJinaBert(Model):
     def batch_type(self) -> Type[PaddedBatch]:
         return PaddedBatch
 
+    def mean_pooling(
+        self, token_embeddings: torch.Tensor, attention_mask: torch.Tensor
+    ):
+        input_mask_expanded = (
+            attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        )
+        return torch.sum(token_embeddings * input_mask_expanded, 1) / torch.clamp(
+            input_mask_expanded.sum(1), min=1e-9
+        )
+
     @tracer.start_as_current_span("embed")
     def embed(self, batch: PaddedBatch) -> List[Embedding]:
-        kwargs = {"input_ids": batch.input_ids, "attn_mask": batch.attention_mask}
+        kwargs = {"input_ids": batch.input_ids}
         kwargs["token_type_ids"] = batch.token_type_ids
         kwargs["position_ids"] = batch.position_ids
-        embedding = self.model.forward(**kwargs)
+        outputs = self.model.forward(**kwargs)
 
+        embedding = self.mean_pooling(outputs, batch.attention_mask)
         cpu_results = embedding.view(-1).tolist()
 
         return [
