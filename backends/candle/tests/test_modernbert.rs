@@ -202,3 +202,61 @@ fn test_modernbert_classification() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+#[serial_test::serial]
+fn test_modernbert_classifier_pooling_strategy() -> Result<()> {
+    let model_root = download_artifacts("Alibaba-NLP/gte-reranker-modernbert-base", None)?;
+    let tokenizer = load_tokenizer(&model_root)?;
+
+    let config_path = model_root.join("config.json");
+    let original_config: serde_json::Value = {
+        let config_content = fs::read_to_string(&config_path)?;
+        serde_json::from_str(&config_content)?
+    };
+
+    assert_eq!(original_config["classifier_pooling"], "mean");
+
+    let input_single = batch(
+        vec![tokenizer
+            .encode(("What is Deep Learning?", "Deep Learning is not..."), true)
+            .unwrap()],
+        [0].to_vec(),
+        vec![],
+    );
+
+    let backend_mean = CandleBackend::new(&model_root, "float32".to_string(), ModelType::Classifier)?;
+    let predictions_mean: Vec<Vec<f32>> = backend_mean
+        .predict(input_single.clone())?
+        .into_iter()
+        .map(|(_, v)| v)
+        .collect();
+
+    let mut config = original_config.clone();
+    config["classifier_pooling"] = json!("cls");
+    fs::write(&config_path, serde_json::to_string_pretty(&config)?)?;
+
+    let backend_cls = CandleBackend::new(&model_root, "float32".to_string(), ModelType::Classifier)?;
+    let predictions_cls: Vec<Vec<f32>> = backend_cls
+        .predict(input_single)?
+        .into_iter()
+        .map(|(_, v)| v)
+        .collect();
+
+    fs::write(&config_path, serde_json::to_string_pretty(&original_config)?)?;
+
+    assert_ne!(
+        predictions_mean[0], predictions_cls[0],
+        "Mean and CLS pooling should produce different predictions"
+    );
+
+    let matcher = relative_matcher();
+    let predictions_snapshot = SnapshotScores::from(predictions_mean);
+    insta::assert_yaml_snapshot!(
+        "modernbert_classifier_mean_pooling",
+        predictions_snapshot,
+        &matcher
+    );
+
+    Ok(())
+}

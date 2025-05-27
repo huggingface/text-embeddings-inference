@@ -484,7 +484,15 @@ impl ModernBertModel {
     pub fn load(vb: VarBuilder, config: &ModernBertConfig, model_type: ModelType) -> Result<Self> {
         let (pool, classifier) = match model_type {
             ModelType::Classifier => {
-                let pool = Pool::Cls;
+                let pool = if let Some(pooling) = &config.classifier_pooling {
+                    match pooling.as_str() {
+                        "cls" => Pool::Cls,
+                        "mean" => Pool::Mean,
+                        _ => Pool::Cls,
+                    }
+                } else {
+                    Pool::Cls
+                };
 
                 let classifier: Box<dyn ClassificationHead + Send> =
                     Box::new(ModernBertClassificationHead::load(vb.clone(), config)?);
