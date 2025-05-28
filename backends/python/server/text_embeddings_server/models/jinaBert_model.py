@@ -91,8 +91,8 @@ class JinaBertEmbeddings:
         token_type_ids: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
-        inputs_embeds = nn.functional.embedding(input_ids, self.word_embeddings_weight)
-        token_type_embeddings = nn.functional.embedding(
+        inputs_embeds = F.embedding(input_ids, self.word_embeddings_weight)
+        token_type_embeddings = F.embedding(
             token_type_ids, self.token_type_embeddings_weight
         )
 
@@ -198,7 +198,7 @@ class JinaBertSelfAttention:
             attention_scores = attention_scores + attention_mask
 
         # Normalize the attention scores to probabilities.
-        attention_probs = nn.functional.softmax(attention_scores + bias, dim=-1)
+        attention_probs = F.softmax(attention_scores + bias, dim=-1)
 
         attention_probs = self.dropout(attention_probs)
 
@@ -428,19 +428,27 @@ class JinaBertEncoder:
     def forward(
         self,
         hidden_states: torch.Tensor,
+        max_len: int,
         attention_mask: Optional[torch.FloatTensor] = None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
         # Add alibi matrix to extended_attention_mask
-        _, seqlen, _ = hidden_states.size()
+        bs, seqlen, _ = hidden_states.size()
         alibi_bias = self.rebuild_alibi_tensor(
-            size=seqlen, device=hidden_states.device
+            size=max_len, device=hidden_states.device
         ).to(hidden_states.dtype)
+        full_alibi_bias = torch.full(
+            (bs, self.num_attention_heads, seqlen, seqlen),
+            fill_value=torch.finfo(hidden_states.dtype).min,
+            dtype=hidden_states.dtype,
+            device=hidden_states.device,
+        )
+        full_alibi_bias[:, :, :max_len, :max_len] = alibi_bias
 
         for i, layer_module in enumerate(self.layers):
             layer_outputs = layer_module.forward(
                 hidden_states,
                 attention_mask,
-                alibi_bias,
+                full_alibi_bias,
             )
 
             hidden_states = layer_outputs[0]
@@ -458,10 +466,11 @@ class FlashJinaBertModel:
         input_ids,
         token_type_ids,
         position_ids,
+        max_len,
         attn_mask=None,
     ):
         embeddings = self.embeddings.forward(input_ids, token_type_ids, position_ids)
-        encoder_outputs = self.encoder.forward(embeddings, attn_mask)
+        encoder_outputs = self.encoder.forward(embeddings, max_len, attn_mask)
         return encoder_outputs
 
 
@@ -512,6 +521,9 @@ class FlashJinaBert(Model):
         kwargs = {"input_ids": batch.input_ids}
         kwargs["token_type_ids"] = batch.token_type_ids
         kwargs["position_ids"] = batch.position_ids
+        input_lens = batch.attention_mask.cumsum(-1)[:, -1].to(torch.int32)
+        max_input_lens = input_lens.max().item()
+        kwargs["max_len"] = max_input_lens
         outputs = self.model.forward(**kwargs)
 
         embedding = self.mean_pooling(outputs, batch.attention_mask)
