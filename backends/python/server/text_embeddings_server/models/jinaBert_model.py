@@ -2,11 +2,9 @@ import torch
 import math
 from torch import nn
 import torch.nn.functional as F
-from torch.nn.functional import scaled_dot_product_attention
 from pathlib import Path
 from typing import Type, List, Optional, Union, Tuple
 from transformers import AutoConfig, PretrainedConfig
-from transformers.activations import ACT2FN
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 from opentelemetry import trace
 from safetensors import safe_open
@@ -39,7 +37,6 @@ class JinaBertConfig(PretrainedConfig):
         classifier_dropout=None,
         feed_forward_type="original",
         emb_pooler=None,
-        attn_implementation=None,
         **kwargs,
     ):
         super().__init__(pad_token_id=pad_token_id, **kwargs)
@@ -244,9 +241,6 @@ class JinaBertSelfOutput:
             self.layerNorm_bias,
             eps=self.config.layer_norm_eps,
         )
-        # hidden_states = F.linear(
-        #     hidden_states, self.layerNorm_weight, self.layerNorm_bias
-        # )
         return hidden_states
 
 
