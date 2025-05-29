@@ -205,7 +205,7 @@ fn test_modernbert_classification() -> Result<()> {
 
 #[test]
 #[serial_test::serial]
-fn test_modernbert_classifier_mean_pooling() -> Result<()> {
+fn test_modernbert_classification_mean_pooling() -> Result<()> {
     let model_root = download_artifacts("tomaarsen/reranker-ModernBERT-large-gooaq-bce", None)?;
     let tokenizer = load_tokenizer(&model_root)?;
     let backend = CandleBackend::new(&model_root, "float32".to_string(), ModelType::Classifier)?;
@@ -227,7 +227,7 @@ fn test_modernbert_classifier_mean_pooling() -> Result<()> {
 
     let matcher = relative_matcher();
     insta::assert_yaml_snapshot!(
-        "modernbert_classifier_mean_pooling",
+        "modernbert_classification_mean_pooling",
         predictions_single,
         &matcher
     );

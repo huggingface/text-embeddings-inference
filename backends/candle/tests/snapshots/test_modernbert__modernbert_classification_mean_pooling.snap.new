@@ -1,0 +1,7 @@
+---
+source: backends/candle/tests/test_modernbert.rs
+assertion_line: 229
+expression: predictions_single
+---
+- - -0.30617672
+
