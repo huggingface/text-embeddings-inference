@@ -2,7 +2,6 @@
 use clap::ValueEnum;
 use nohash_hasher::IntMap;
 use std::fmt;
-use std::str::FromStr;
 use thiserror::Error;
 
 #[derive(Debug)]
