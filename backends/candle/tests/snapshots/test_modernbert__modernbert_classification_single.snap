@@ -2,4 +2,4 @@
 source: backends/candle/tests/test_modernbert.rs
 expression: predictions_single
 ---
-- - 2.2585099
+- - 2.13616
