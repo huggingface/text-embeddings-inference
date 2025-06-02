@@ -260,7 +260,7 @@ impl FlashModernBertModel {
 
         let (pool, classifier) = match model_type {
             ModelType::Classifier => {
-                let pool: Pool = config.classifier_pooling.unwrap_or(Pool::Cls);
+                let pool: Pool = config.classifier_pooling.clone().unwrap_or(Pool::Cls);
 
                 let classifier: Box<dyn ClassificationHead + Send> =
                     Box::new(ModernBertClassificationHead::load(vb.clone(), config)?);
