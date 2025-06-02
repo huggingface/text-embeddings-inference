@@ -213,6 +213,11 @@ impl FlashDistilBertModel {
                     DistilBertEncoder::load(vb.pp("distilbert.transformer"), config),
                 ) {
                     (embeddings, encoder)
+                } else if let (Ok(embeddings), Ok(encoder)) = (
+                    DistilBertEmbeddings::load(vb.pp("embeddings"), config),
+                    DistilBertEncoder::load(vb.pp("transformer"), config),
+                ) {
+                    (embeddings, encoder)
                 } else {
                     return Err(err);
                 }
