@@ -4494,6 +4494,7 @@ version = "1.7.0"
 dependencies = [
  "clap",
  "nohash-hasher",
+ "serde",
  "thiserror 1.0.69",
 ]
 

@@ -7,7 +7,6 @@ use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{Embedding, VarBuilder};
 use serde::Deserialize;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
-use std::str::FromStr;
 
 // https://github.com/huggingface/transformers/blob/main/src/transformers/models/modernbert/configuration_modernbert.py
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -38,7 +37,7 @@ pub struct ModernBertConfig {
     pub mlp_bias: Option<bool>,
     pub mlp_dropout: Option<f64>,
     pub decoder_bias: Option<bool>,
-    pub classifier_pooling: Option<String>,
+    pub classifier_pooling: Option<Pool>,
     pub classifier_dropout: Option<f64>,
     pub classifier_bias: Option<bool>,
     pub classifier_activation: HiddenAct,
@@ -485,11 +484,7 @@ impl ModernBertModel {
     pub fn load(vb: VarBuilder, config: &ModernBertConfig, model_type: ModelType) -> Result<Self> {
         let (pool, classifier) = match model_type {
             ModelType::Classifier => {
-                let pool: Pool = config
-                    .classifier_pooling
-                    .as_deref()
-                    .and_then(|s| Pool::from_str(s).ok())
-                    .unwrap_or(Pool::Cls);
+                let pool: Pool = config.classifier_pooling.clone().unwrap_or(Pool::Cls);
 
                 let classifier: Box<dyn ClassificationHead + Send> =
                     Box::new(ModernBertClassificationHead::load(vb.clone(), config)?);
