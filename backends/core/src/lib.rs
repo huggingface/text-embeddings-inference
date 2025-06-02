@@ -78,6 +78,23 @@ impl fmt::Display for Pool {
     }
 }
 
+impl std::str::FromStr for Pool {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "cls" => Ok(Pool::Cls),
+            "mean" => Ok(Pool::Mean),
+            "splade" => Ok(Pool::Splade),
+            "last_token" => Ok(Pool::LastToken),
+            _ => Err(format!(
+                "Invalid pooling method '{}'. Valid options: cls, mean, splade, last_token", 
+                s
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Error, Clone)]
 pub enum BackendError {
     #[error("No backend found")]

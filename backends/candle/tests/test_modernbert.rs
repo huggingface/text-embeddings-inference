@@ -202,3 +202,35 @@ fn test_modernbert_classification() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+#[serial_test::serial]
+fn test_modernbert_classification_mean_pooling() -> Result<()> {
+    let model_root = download_artifacts("tomaarsen/reranker-ModernBERT-large-gooaq-bce", None)?;
+    let tokenizer = load_tokenizer(&model_root)?;
+    let backend = CandleBackend::new(&model_root, "float32".to_string(), ModelType::Classifier)?;
+
+    let input_single = batch(
+        vec![tokenizer
+            .encode(("What is Deep Learning?", "Deep Learning is not..."), true)
+            .unwrap()],
+        [0].to_vec(),
+        vec![],
+    );
+
+    let predictions: Vec<Vec<f32>> = backend
+        .predict(input_single)?
+        .into_iter()
+        .map(|(_, v)| v)
+        .collect();
+    let predictions_single = SnapshotScores::from(predictions);
+
+    let matcher = relative_matcher();
+    insta::assert_yaml_snapshot!(
+        "modernbert_classification_mean_pooling",
+        predictions_single,
+        &matcher
+    );
+
+    Ok(())
+}
