@@ -11,6 +11,7 @@ from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.masked_model import MaskedLanguageModel
 from text_embeddings_server.models.default_model import DefaultModel
 from text_embeddings_server.models.classification_model import ClassificationModel
+from text_embeddings_server.models.jinaBert_model import FlashJinaBert
 from text_embeddings_server.models.flash_mistral import FlashMistral
 from text_embeddings_server.utils.device import get_device, use_ipex
 
@@ -45,7 +46,16 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
     logger.info(f"backend device: {device}")
 
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
-    if config.model_type == "bert":
+    if (
+        hasattr(config, "auto_map")
+        and isinstance(config.auto_map, dict)
+        and "AutoModel" in config.auto_map
+        and config.auto_map["AutoModel"]
+        == "jinaai/jina-bert-v2-qk-post-norm--modeling_bert.JinaBertModel"
+    ):
+        # Add specific offline modeling for model "jinaai/jina-embeddings-v2-base-code" which uses "autoMap" to reference code in other repository
+        return FlashJinaBert(model_path, config, device, datatype, pool)
+    elif config.model_type == "bert":
         config: BertConfig
         if (
             use_ipex()
