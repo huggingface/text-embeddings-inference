@@ -1,6 +1,7 @@
 #[cfg(feature = "clap")]
 use clap::ValueEnum;
 use nohash_hasher::IntMap;
+use serde::Deserialize;
 use std::fmt;
 use thiserror::Error;
 
@@ -52,8 +53,9 @@ pub enum ModelType {
     Embedding(Pool),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Deserialize)]
 #[cfg_attr(feature = "clap", derive(ValueEnum))]
+#[serde(rename_all = "snake_case")]
 pub enum Pool {
     /// Select the CLS token as embedding
     Cls,
@@ -74,23 +76,6 @@ impl fmt::Display for Pool {
             Pool::Mean => write!(f, "mean"),
             Pool::Splade => write!(f, "splade"),
             Pool::LastToken => write!(f, "last_token"),
-        }
-    }
-}
-
-impl std::str::FromStr for Pool {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_lowercase().as_str() {
-            "cls" => Ok(Pool::Cls),
-            "mean" => Ok(Pool::Mean),
-            "splade" => Ok(Pool::Splade),
-            "last_token" => Ok(Pool::LastToken),
-            _ => Err(format!(
-                "Invalid pooling method '{}'. Valid options: cls, mean, splade, last_token", 
-                s
-            )),
         }
     }
 }

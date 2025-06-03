@@ -9,6 +9,7 @@ homepage.workspace = true
 thiserror = { workspace = true }
 clap = { workspace = true, optional = true }
 nohash-hasher = { workspace = true }
+serde = { workspace = true }
 
 [features]
 clap = ["dep:clap"]
