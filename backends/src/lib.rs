@@ -343,7 +343,7 @@ async fn init_backend(
                     .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
                 match model_files.is_empty() {
                     true => {
-                        tracing::error!("Model ONNX files not found in the repository. You can easily create ONNX files using the following scripts: https://gist.github.com/tomaarsen/4b00b0e3be8884efa64cfab9230b161f, or use a space for that:https://huggingface.co/spaces/sentence-transformers/backend-export")
+                        tracing::error!("Model ONNX files not found in the repository. You can easily create ONNX files using the following scripts: https://gist.github.com/tomaarsen/4b00b0e3be8884efa64cfab9230b161f, or use this Space: https://huggingface.co/spaces/sentence-transformers/backend-export")
                     }
                     false => {
                         tracing::info!("Model ONNX weights downloaded in {:?}", start.elapsed())
