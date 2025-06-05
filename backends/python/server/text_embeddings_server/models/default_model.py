@@ -19,7 +19,7 @@ class DefaultModel(Model):
         model_path: Path,
         device: torch.device,
         dtype: torch.dtype,
-        pool: str,
+        pool: str = "cls",
         trust_remote: bool = False,
     ):
         model = (
