@@ -364,7 +364,12 @@ class FlashMistralModel:
 
 class FlashMistral(Model):
     def __init__(
-        self, model_path: Path, device: torch.device, dtype: torch.dtype, pool: str
+        self,
+        model_path: Path,
+        device: torch.device,
+        dtype: torch.dtype,
+        pool: str = "cls",
+        trust_remote: bool = False,
     ):
         config = MistralConfig.from_pretrained(model_path)
 

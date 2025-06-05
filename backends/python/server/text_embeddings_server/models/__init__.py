@@ -18,6 +18,10 @@ from text_embeddings_server.utils.device import get_device, use_ipex
 __all__ = ["Model"]
 
 TRUST_REMOTE_CODE = os.getenv("TRUST_REMOTE_CODE", "false").lower() in ["true", "1"]
+DISABLE_TENSOR_CACHE = os.getenv("DISABLE_TENSOR_CACHE", "false").lower() in [
+    "true",
+    "1",
+]
 # Disable gradients
 torch.set_grad_enabled(False)
 
@@ -37,20 +41,20 @@ def wrap_model_if_hpu(model_handle, device):
     if device.type == "hpu":
         from habana_frameworks.torch.hpu import wrap_in_hpu_graph
 
-        model_handle.model = wrap_in_hpu_graph(model_handle.model)
+        model_handle.model = wrap_in_hpu_graph(
+            model_handle.model, disable_tensor_cache=DISABLE_TENSOR_CACHE
+        )
     return model_handle
 
 
-def create_model(
-    model_class, model_path, device, datatype, pool=None, trust_remote=TRUST_REMOTE_CODE
-):
+def create_model(model_class, model_path, device, datatype, pool="cls"):
     """Create a model instance and wrap it if needed."""
     model_handle = model_class(
         model_path,
         device,
         datatype,
         pool,
-        trust_remote=trust_remote,
+        trust_remote=TRUST_REMOTE_CODE,
     )
     return wrap_model_if_hpu(model_handle, device)
 
@@ -77,7 +81,8 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
         and config.auto_map["AutoModel"]
         == "jinaai/jina-bert-v2-qk-post-norm--modeling_bert.JinaBertModel"
     ):
-        return create_model(FlashJinaBert, model_path, device, datatype, pool)
+        # Add specific offline modeling for model "jinaai/jina-embeddings-v2-base-code" which uses "autoMap" to reference code in other repository
+        return create_model(FlashJinaBert, model_path, device, datatype)
 
     if config.model_type == "bert":
         config: BertConfig
@@ -90,7 +95,9 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
         ):
             if pool != "cls":
                 if config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
-                    return create_model(MaskedLanguageModel, model_path, device, datatype)
+                    return create_model(
+                        MaskedLanguageModel, model_path, device, datatype, pool
+                    )
                 return create_model(DefaultModel, model_path, device, datatype, pool)
 
             try:

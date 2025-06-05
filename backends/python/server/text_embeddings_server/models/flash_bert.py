@@ -294,7 +294,14 @@ class FlashBertModel:
 
 
 class FlashBert(Model):
-    def __init__(self, model_path: Path, device: torch.device, dtype: torch.dtype):
+    def __init__(
+        self,
+        model_path: Path,
+        device: torch.device,
+        dtype: torch.dtype,
+        pool: str = "cls",
+        trust_remote: bool = False,
+    ):
         config = BertConfig.from_pretrained(model_path)
 
         if hasattr(config, "max_seq_length"):
