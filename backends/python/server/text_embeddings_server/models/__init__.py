@@ -54,7 +54,12 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
         == "jinaai/jina-bert-v2-qk-post-norm--modeling_bert.JinaBertModel"
     ):
         # Add specific offline modeling for model "jinaai/jina-embeddings-v2-base-code" which uses "autoMap" to reference code in other repository
-        return FlashJinaBert(model_path, config, device, datatype, pool)
+        model_handle = FlashJinaBert(model_path, config, device, datatype, pool)
+        if device.type == "hpu":
+            from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+
+            model_handle.model = wrap_in_hpu_graph(model_handle.model)
+        return model_handle
     elif config.model_type == "bert":
         config: BertConfig
         if (
@@ -66,56 +71,100 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
         ):
             if pool != "cls":
                 if config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
-                    return MaskedLanguageModel(
+                    model_handle = MaskedLanguageModel(
                         model_path,
                         device,
                         datatype,
                         trust_remote=TRUST_REMOTE_CODE,
                     )
-                return DefaultModel(
+                    if device.type == "hpu":
+                        from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+
+                        model_handle.model = wrap_in_hpu_graph(model_handle.model)
+                    return model_handle
+                model_handle = DefaultModel(
                     model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
                 )
+                if device.type == "hpu":
+                    from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+
+                    model_handle.model = wrap_in_hpu_graph(model_handle.model)
+                return model_handle
             try:
-                return FlashBert(model_path, device, datatype)
+                model_handle = FlashBert(model_path, device, datatype)
+                if device.type == "hpu":
+                    from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+
+                    model_handle.model = wrap_in_hpu_graph(model_handle.model)
+                return model_handle
             except FileNotFoundError as e:
                 logger.info(
                     "Do not have safetensors file for this model, use default transformers model path instead"
                 )
-                return DefaultModel(
+                model_handle = DefaultModel(
                     model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
                 )
+                if device.type == "hpu":
+                    from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+
+                    model_handle.model = wrap_in_hpu_graph(model_handle.model)
+                return model_handle
         if config.architectures[0].endswith("Classification"):
-            return ClassificationModel(
+            model_handle = ClassificationModel(
                 model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
             )
+            if device.type == "hpu":
+                from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+
+                model_handle.model = wrap_in_hpu_graph(model_handle.model)
+            return model_handle
         elif config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
-            return MaskedLanguageModel(
+            model_handle = MaskedLanguageModel(
                 model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
             )
+            if device.type == "hpu":
+                from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+
+                model_handle.model = wrap_in_hpu_graph(model_handle.model)
+            return model_handle
         else:
-            return DefaultModel(
+            model_handle = DefaultModel(
                 model_path,
                 device,
                 datatype,
                 pool,
                 trust_remote=TRUST_REMOTE_CODE,
             )
+            if device.type == "hpu":
+                from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+
+                model_handle.model = wrap_in_hpu_graph(model_handle.model)
+            return model_handle
     elif config.model_type == "mistral" and device.type == "hpu":
         try:
-            return FlashMistral(
+            model_handle = FlashMistral(
                 model_path,
                 device,
                 datatype,
                 pool,
             )
+            from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+
+            model_handle.model = wrap_in_hpu_graph(model_handle.model)
+            return model_handle
         except FileNotFoundError as e:
-            return DefaultModel(
+            model_handle = DefaultModel(
                 model_path,
                 device,
                 datatype,
                 pool,
                 trust_remote=TRUST_REMOTE_CODE,
             )
+            if device.type == "hpu":
+                from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+
+                model_handle.model = wrap_in_hpu_graph(model_handle.model)
+            return model_handle
     else:
         if device.type == "hpu":
             from habana_frameworks.torch.hpu import wrap_in_hpu_graph

@@ -494,10 +494,6 @@ class FlashJinaBert(Model):
         self.pooling = DefaultPooling(self.hidden_size, pooling_mode=pool)
         self.device = device
         self.dtype = dtype
-        if device.type == "hpu":
-            from habana_frameworks.torch.hpu import wrap_in_hpu_graph
-
-            model = wrap_in_hpu_graph(model, disable_tensor_cache=False)
         self.hidden_size = config.hidden_size
 
         super(FlashJinaBert, self).__init__(model=model, dtype=dtype, device=device)
