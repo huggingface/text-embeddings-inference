@@ -77,7 +77,7 @@ impl Qwen3Attention {
         let v_proj = Linear::new(value_weight, value_bias, None);
 
         let o_proj_weight = vb.pp("o_proj").get(
-            (num_attention_heads * attention_head_size, hidden_size),
+            (hidden_size, num_attention_heads * attention_head_size),
             "weight",
         )?;
         let o_proj = Linear::new(o_proj_weight, None, None);
