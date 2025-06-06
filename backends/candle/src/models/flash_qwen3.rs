@@ -146,11 +146,6 @@ impl Qwen3Attention {
         let (q, _res) = self.q_norm.forward(&q, None)?;
         let (k, _res) = self.k_norm.forward(&k, None)?;
 
-        // Transpose to [batch, heads, seq_len, head_dim]
-        let q = q.transpose(1, 2)?;
-        let k = k.transpose(1, 2)?;
-        let v = v.transpose(1, 2)?;
-
         apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
 
         let attention = flash_attn_varlen(
