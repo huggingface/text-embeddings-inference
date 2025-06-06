@@ -12,6 +12,9 @@ struct Qwen3Attention {
     v_proj: Linear,
     o_proj: Linear,
 
+    q_norm: RMSNorm,
+    k_norm: RMSNorm,
+
     num_attention_heads: usize,
     num_key_value_heads: usize,
     attention_head_size: usize,
@@ -68,6 +71,8 @@ impl Qwen3Attention {
             k_proj,
             v_proj,
             o_proj,
+            q_norm,
+            k_norm,
             num_attention_heads,
             num_key_value_heads,
             attention_head_size,
@@ -94,13 +99,31 @@ impl Qwen3Attention {
         let input_dims = hidden_states.dims();
         let input_shape = &input_dims[..input_dims.len() - 1];
 
-        let q = q.reshape([input_shape, &[self.num_attention_heads, self.head_dim]].concat())?;
-        let k = k.reshape([input_shape, &[self.num_key_value_heads, self.head_dim]].concat())?;
-        let v = v.reshape([input_shape, &[self.num_key_value_heads, self.head_dim]].concat())?;
+        let q = q.reshape(
+            [
+                input_shape,
+                &[self.num_attention_heads, self.attention_head_size],
+            ]
+            .concat(),
+        )?;
+        let k = k.reshape(
+            [
+                input_shape,
+                &[self.num_key_value_heads, self.attention_head_size],
+            ]
+            .concat(),
+        )?;
+        let v = v.reshape(
+            [
+                input_shape,
+                &[self.num_key_value_heads, self.attention_head_size],
+            ]
+            .concat(),
+        )?;
 
         // Apply normalization layers
-        let q = self.q_norm.forward(q)?;
-        let k = self.k_norm.forward(k)?;
+        let (q, _res) = self.q_norm.forward(&q, None)?;
+        let (k, _res) = self.k_norm.forward(&k, None)?;
 
         // Transpose to [batch, heads, seq_len, head_dim]
         let q = q.transpose(1, 2)?;
