@@ -4,6 +4,7 @@ use serde::Deserialize;
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Qwen3Config {
     pub vocab_size: usize,
+    pub head_dim: Option<usize>,
     pub hidden_size: usize,
     pub intermediate_size: usize,
     pub num_hidden_layers: usize,

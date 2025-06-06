@@ -31,11 +31,16 @@ impl Qwen3Attention {
         }
 
         let num_attention_heads = config.num_attention_heads;
-        let attention_head_size = config.hidden_size / config.num_attention_heads;
+        let attention_head_size = config
+            .head_dim
+            .unwrap_or(config.hidden_size / config.num_attention_heads);
         let num_key_value_heads = config.num_key_value_heads;
         let hidden_size = config.hidden_size;
 
-        let query_weight = vb.pp("q_proj").get((hidden_size, hidden_size), "weight")?;
+        let query_weight = vb.pp("q_proj").get(
+            (num_attention_heads * attention_head_size, hidden_size),
+            "weight",
+        )?;
         let query_bias = vb.pp("q_proj").get(hidden_size, "bias")?;
         let q_proj = Linear::new(query_weight, Some(query_bias), None);
 
@@ -57,8 +62,10 @@ impl Qwen3Attention {
             .get(num_key_value_heads * attention_head_size, "bias")?;
         let v_proj = Linear::new(value_weight, Some(value_bias), None);
 
-        let o_proj_weight = vb.pp("o_proj").get((hidden_size, hidden_size), "weight")?;
-
+        let o_proj_weight = vb.pp("o_proj").get(
+            (num_attention_heads * attention_head_size, hidden_size),
+            "weight",
+        )?;
         let o_proj = Linear::new(o_proj_weight, None, None);
 
         let q_norm = RMSNorm::load(vb.pp("q_norm"), attention_head_size, config.rms_norm_eps)?;
