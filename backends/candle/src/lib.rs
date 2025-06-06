@@ -103,6 +103,8 @@ enum Config {
     Gte(GTEConfig),
     #[allow(dead_code)]
     Qwen2(Qwen2Config),
+    #[allow(dead_code)]
+    Qwen3(Qwen3Config),
     #[serde(rename = "mpnet")]
     MPNet(MPNetConfig),
     #[serde(rename(deserialize = "modernbert"))]
@@ -271,6 +273,10 @@ impl CandleBackend {
             }
             (Config::Qwen2(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
                 "Qwen2 is only supported on Cuda devices in fp16 with flash attention enabled"
+                    .to_string(),
+            )),
+            (Config::Qwen3(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
+                "Qwen3 is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
             )),
             (Config::MPNet(config), _) => {
