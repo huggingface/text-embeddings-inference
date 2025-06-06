@@ -41,26 +41,40 @@ impl Qwen3Attention {
             (num_attention_heads * attention_head_size, hidden_size),
             "weight",
         )?;
-        let query_bias = vb.pp("q_proj").get(hidden_size, "bias")?;
-        let q_proj = Linear::new(query_weight, Some(query_bias), None);
+        let query_bias = if config.attention_bias {
+            Some(vb.pp("q_proj").get(hidden_size, "bias")?)
+        } else {
+            None
+        };
+        let q_proj = Linear::new(query_weight, query_bias, None);
 
         let key_weight = vb.pp("k_proj").get(
             (num_key_value_heads * attention_head_size, hidden_size),
             "weight",
         )?;
-        let key_bias = vb
-            .pp("k_proj")
-            .get(num_key_value_heads * attention_head_size, "bias")?;
-        let k_proj = Linear::new(key_weight, Some(key_bias), None);
+        let key_bias = if config.attention_bias {
+            Some(
+                vb.pp("k_proj")
+                    .get(num_key_value_heads * attention_head_size, "bias")?,
+            )
+        } else {
+            None
+        };
+        let k_proj = Linear::new(key_weight, key_bias, None);
 
         let value_weight = vb.pp("v_proj").get(
             (num_key_value_heads * attention_head_size, hidden_size),
             "weight",
         )?;
-        let value_bias = vb
-            .pp("v_proj")
-            .get(num_key_value_heads * attention_head_size, "bias")?;
-        let v_proj = Linear::new(value_weight, Some(value_bias), None);
+        let value_bias = if config.attention_bias {
+            Some(
+                vb.pp("v_proj")
+                    .get(num_key_value_heads * attention_head_size, "bias")?,
+            )
+        } else {
+            None
+        };
+        let v_proj = Linear::new(value_weight, value_bias, None);
 
         let o_proj_weight = vb.pp("o_proj").get(
             (num_attention_heads * attention_head_size, hidden_size),
