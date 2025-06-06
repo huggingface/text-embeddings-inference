@@ -37,11 +37,15 @@ mod flash_mistral;
 mod flash_qwen2;
 
 #[cfg(feature = "cuda")]
+mod flash_qwen3;
+
+#[cfg(feature = "cuda")]
 mod flash_modernbert;
 
 mod gte;
 mod mpnet;
 mod qwen2;
+mod qwen3;
 
 pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
 use candle::{Result, Tensor};
@@ -55,6 +59,7 @@ pub use modernbert::{ModernBertConfig, ModernBertModel};
 pub use mpnet::{MPNetConfig, MPNetModel};
 pub use nomic::{NomicBertModel, NomicConfig};
 pub use qwen2::Qwen2Config;
+pub use qwen3::Qwen3Config;
 use text_embeddings_backend_core::Batch;
 
 #[cfg(feature = "cuda")]
@@ -80,6 +85,9 @@ pub use flash_gte::FlashGTEModel;
 
 #[cfg(feature = "cuda")]
 pub use flash_qwen2::FlashQwen2Model;
+
+#[cfg(feature = "cuda")]
+pub use flash_qwen3::FlashQwen3Model;
 
 #[cfg(feature = "cuda")]
 pub use flash_modernbert::FlashModernBertModel;

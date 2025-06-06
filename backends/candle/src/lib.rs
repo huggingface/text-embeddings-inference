@@ -13,13 +13,13 @@ use crate::compute_cap::{
 use crate::models::{
     BertConfig, BertModel, DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, JinaBertModel,
     JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig, Model, ModernBertConfig,
-    ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config,
+    ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config, Qwen3Config,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
     FlashBertModel, FlashDistilBertModel, FlashGTEModel, FlashJinaBertModel,
     FlashJinaCodeBertModel, FlashMistralModel, FlashModernBertModel, FlashNomicBertModel,
-    FlashQwen2Model,
+    FlashQwen2Model, FlashQwen3Model,
 };
 use anyhow::Context;
 use candle::{DType, Device};
@@ -103,6 +103,8 @@ enum Config {
     Gte(GTEConfig),
     #[allow(dead_code)]
     Qwen2(Qwen2Config),
+    #[allow(dead_code)]
+    Qwen3(Qwen3Config),
     #[serde(rename = "mpnet")]
     MPNet(MPNetConfig),
     #[serde(rename(deserialize = "modernbert"))]
@@ -271,6 +273,10 @@ impl CandleBackend {
             }
             (Config::Qwen2(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
                 "Qwen2 is only supported on Cuda devices in fp16 with flash attention enabled"
+                    .to_string(),
+            )),
+            (Config::Qwen3(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
+                "Qwen3 is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
             )),
             (Config::MPNet(config), _) => {
@@ -444,6 +450,18 @@ impl CandleBackend {
                 tracing::info!("Starting FlashQwen2 model on {:?}", device);
                 Ok(Box::new(
                     FlashQwen2Model::load(vb, &config, model_type).s()?,
+                ))
+            }
+            #[cfg(feature = "cuda")]
+            (Config::Qwen3(config), Device::Cuda(_)) => {
+                if dtype != DType::F16
+                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                {
+                    return Err(BackendError::Start("Qwen3 is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
+                }
+                tracing::info!("Starting FlashQwen3 model on {:?}", device);
+                Ok(Box::new(
+                    FlashQwen3Model::load(vb, &config, model_type).s()?,
                 ))
             }
         };
