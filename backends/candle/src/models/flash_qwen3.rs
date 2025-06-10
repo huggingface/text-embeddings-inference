@@ -308,6 +308,14 @@ impl FlashQwen3Model {
             ModelType::Embedding(pool) => pool,
         };
 
+        // The Qwen3-Reranker models contain the `model` key
+        // https://huggingface.co/collections/Qwen/qwen3-reranker-6841b22d0192d7ade9cdefea
+        let vb = if vb.contains_tensor("model.embed_tokens.weight") {
+            vb.pp("model")
+        } else {
+            vb
+        };
+
         let embeddings = Embedding::new(
             vb.pp("embed_tokens")
                 .get((config.vocab_size, config.hidden_size), "weight")?,
@@ -497,6 +505,7 @@ impl Model for FlashQwen3Model {
     fn is_padded(&self) -> bool {
         false
     }
+
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
     }
