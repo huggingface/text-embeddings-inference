@@ -214,11 +214,7 @@ impl Qwen3MLP {
         let gate_states = gate_up_states.narrow(1, 0, self.intermediate_size)?;
         let up_states = gate_up_states.narrow(1, self.intermediate_size, self.intermediate_size)?;
 
-        let gate_states = match self.act {
-            HiddenAct::Gelu => gate_states.gelu(),
-            HiddenAct::Relu => gate_states.relu(),
-            HiddenAct::Swiglu => gate_states.silu(),
-        }?;
+        let gate_states = self.act.forward(&gate_states)?;
         let r = self.down_proj.forward(&(gate_states * up_states)?);
         r
     }
