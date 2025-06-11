@@ -294,11 +294,7 @@ impl JinaBertLayer {
 
         let hidden_states = self.gated.forward(&hidden_states)?;
         let gated = hidden_states.i((.., .., 0..self.intermediate_size))?;
-        let gated = match self.act {
-            HiddenAct::Gelu => gated.gelu(),
-            HiddenAct::Relu => gated.relu(),
-            HiddenAct::Swiglu => gated.silu(),
-        }?;
+        let gated = self.act.forward(&gated)?;
 
         let non_gated = hidden_states.i((.., .., self.intermediate_size..))?;
         let hidden_states = (gated * non_gated)?;

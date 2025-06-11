@@ -120,11 +120,7 @@ impl ModernBertMLP {
             hidden_states.narrow(D::Minus1, self.intermediate_size, self.intermediate_size)?;
 
         let input = if let Some(activation) = &self.activation {
-            match activation {
-                HiddenAct::Gelu => input.gelu(),
-                HiddenAct::Relu => input.relu(),
-                HiddenAct::Swiglu => input.silu(),
-            }
+            activation.forward(&input)
         } else {
             Ok(input)
         };
