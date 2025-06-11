@@ -17,7 +17,7 @@ impl HiddenAct {
             Self::Gelu => x.gelu(),
             Self::Relu => x.relu(),
             Self::Silu => x.silu(),
-            Self::Swiglu => candle_nn::ops::swiglu(&x),
+            Self::Swiglu => candle_nn::ops::swiglu(x),
         }
     }
 }
