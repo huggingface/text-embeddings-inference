@@ -13,7 +13,7 @@ use crate::compute_cap::{
 use crate::models::{
     BertConfig, BertModel, DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, JinaBertModel,
     JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig, Model, ModernBertConfig,
-    ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config, Qwen3Config,
+    ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -275,10 +275,10 @@ impl CandleBackend {
                 "Qwen2 is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
             )),
-            (Config::Qwen3(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
-                "Qwen3 is only supported on Cuda devices in fp16 with flash attention enabled"
-                    .to_string(),
-            )),
+            (Config::Qwen3(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting Qwen3 model on {:?}", device);
+                Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
+            },
             (Config::MPNet(config), _) => {
                 tracing::info!("Starting MPNet model on {:?}", device);
                 Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
