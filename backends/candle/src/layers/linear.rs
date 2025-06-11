@@ -16,7 +16,9 @@ impl HiddenAct {
         match self {
             Self::Gelu => x.gelu(),
             Self::Relu => x.relu(),
-            Self::Swiglu => candle_nn::ops::swiglu(x),
+            // NOTE: use SiLU instead candle's SwiGLU, as SwiGLU is SiLU + down projection
+            // to half size since we split on intermediate dimension
+            Self::Swiglu => x.silu(),
         }
     }
 }
@@ -80,7 +82,9 @@ impl Linear {
                 match act {
                     HiddenAct::Gelu => x.gelu(),
                     HiddenAct::Relu => x.relu(),
-                    HiddenAct::Swiglu => candle_nn::ops::swiglu(&x),
+                    // NOTE: use SiLU instead candle's SwiGLU, as SwiGLU is SiLU + down projection
+                    // to half size since we split on intermediate dimension
+                    HiddenAct::Swiglu => x.silu(),
                 }
             } else {
                 Ok(x)
