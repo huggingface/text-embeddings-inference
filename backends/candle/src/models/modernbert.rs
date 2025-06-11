@@ -120,7 +120,7 @@ impl ModernBertMLP {
             hidden_states.narrow(D::Minus1, self.intermediate_size, self.intermediate_size)?;
 
         let input = if let Some(activation) = &self.activation {
-            activation.forward(&input)?
+            activation.forward(&input)
         } else {
             Ok(input)
         };
