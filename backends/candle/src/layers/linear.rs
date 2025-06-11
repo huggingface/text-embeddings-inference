@@ -7,7 +7,7 @@ use serde::Deserialize;
 pub enum HiddenAct {
     Gelu,
     Relu,
-    #[serde(alias = "silu")]
+    Silu,
     Swiglu,
 }
 
@@ -16,9 +16,8 @@ impl HiddenAct {
         match self {
             Self::Gelu => x.gelu(),
             Self::Relu => x.relu(),
-            // NOTE: use SiLU instead candle's SwiGLU, as SwiGLU is SiLU + down projection
-            // to half size since we split on intermediate dimension
-            Self::Swiglu => x.silu(),
+            Self::Silu => x.silu(),
+            Self::Swiglu => candle_nn::ops::swiglu(&x),
         }
     }
 }
@@ -82,9 +81,8 @@ impl Linear {
                 match act {
                     HiddenAct::Gelu => x.gelu(),
                     HiddenAct::Relu => x.relu(),
-                    // NOTE: use SiLU instead candle's SwiGLU, as SwiGLU is SiLU + down projection
-                    // to half size since we split on intermediate dimension
-                    HiddenAct::Swiglu => x.silu(),
+                    HiddenAct::Silu => x.silu(),
+                    HiddenAct::Swiglu => candle_nn::ops::swiglu(&x),
                 }
             } else {
                 Ok(x)
