@@ -459,11 +459,12 @@ impl CandleBackend {
                 {
                     tracing::info!("Starting Qwen3 model on {:?}", device);
                     Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
+                } else {
+                    tracing::info!("Starting FlashQwen3 model on {:?}", device);
+                    Ok(Box::new(
+                        FlashQwen3Model::load(vb, &config, model_type).s()?,
+                    ))
                 }
-                tracing::info!("Starting FlashQwen3 model on {:?}", device);
-                Ok(Box::new(
-                    FlashQwen3Model::load(vb, &config, model_type).s()?,
-                ))
             }
         };
 
