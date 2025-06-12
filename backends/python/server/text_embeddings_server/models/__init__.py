@@ -18,6 +18,10 @@ from text_embeddings_server.utils.device import get_device, use_ipex
 __all__ = ["Model"]
 
 TRUST_REMOTE_CODE = os.getenv("TRUST_REMOTE_CODE", "false").lower() in ["true", "1"]
+DISABLE_TENSOR_CACHE = os.getenv("DISABLE_TENSOR_CACHE", "false").lower() in [
+    "true",
+    "1",
+]
 # Disable gradients
 torch.set_grad_enabled(False)
 
@@ -30,6 +34,29 @@ except ImportError as e:
 
 if FLASH_ATTENTION:
     __all__.append(FlashBert)
+
+
+def wrap_model_if_hpu(model_handle, device):
+    """Wrap the model in HPU graph if the device is HPU."""
+    if device.type == "hpu":
+        from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+
+        model_handle.model = wrap_in_hpu_graph(
+            model_handle.model, disable_tensor_cache=DISABLE_TENSOR_CACHE
+        )
+    return model_handle
+
+
+def create_model(model_class, model_path, device, datatype, pool="cls"):
+    """Create a model instance and wrap it if needed."""
+    model_handle = model_class(
+        model_path,
+        device,
+        datatype,
+        pool,
+        trust_remote=TRUST_REMOTE_CODE,
+    )
+    return wrap_model_if_hpu(model_handle, device)
 
 
 def get_model(model_path: Path, dtype: Optional[str], pool: str):
@@ -46,6 +73,7 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
     logger.info(f"backend device: {device}")
 
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
+
     if (
         hasattr(config, "auto_map")
         and isinstance(config.auto_map, dict)
@@ -54,8 +82,9 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
         == "jinaai/jina-bert-v2-qk-post-norm--modeling_bert.JinaBertModel"
     ):
         # Add specific offline modeling for model "jinaai/jina-embeddings-v2-base-code" which uses "autoMap" to reference code in other repository
-        return FlashJinaBert(model_path, config, device, datatype, pool)
-    elif config.model_type == "bert":
+        return create_model(FlashJinaBert, model_path, device, datatype)
+
+    if config.model_type == "bert":
         config: BertConfig
         if (
             use_ipex()
@@ -66,98 +95,36 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
         ):
             if pool != "cls":
                 if config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
-                    return MaskedLanguageModel(
-                        model_path,
-                        device,
-                        datatype,
-                        trust_remote=TRUST_REMOTE_CODE,
+                    return create_model(
+                        MaskedLanguageModel, model_path, device, datatype, pool
                     )
-                return DefaultModel(
-                    model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
-                )
+                return create_model(DefaultModel, model_path, device, datatype, pool)
+
             try:
-                return FlashBert(model_path, device, datatype)
-            except FileNotFoundError as e:
+                return create_model(FlashBert, model_path, device, datatype)
+            except FileNotFoundError:
                 logger.info(
                     "Do not have safetensors file for this model, use default transformers model path instead"
                 )
-                return DefaultModel(
-                    model_path, device, datatype, pool, trust_remote=TRUST_REMOTE_CODE
-                )
-        if config.architectures[0].endswith("Classification"):
-            return ClassificationModel(
-                model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
-            )
-        elif config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
-            return MaskedLanguageModel(
-                model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
-            )
-        else:
-            return DefaultModel(
-                model_path,
-                device,
-                datatype,
-                pool,
-                trust_remote=TRUST_REMOTE_CODE,
-            )
-    elif config.model_type == "mistral" and device.type == "hpu":
-        try:
-            return FlashMistral(
-                model_path,
-                device,
-                datatype,
-                pool,
-            )
-        except FileNotFoundError as e:
-            return DefaultModel(
-                model_path,
-                device,
-                datatype,
-                pool,
-                trust_remote=TRUST_REMOTE_CODE,
-            )
-    else:
-        if device.type == "hpu":
-            from habana_frameworks.torch.hpu import wrap_in_hpu_graph
+                return create_model(DefaultModel, model_path, device, datatype, pool)
 
-            if config.architectures[0].endswith("Classification"):
-                model_handle = ClassificationModel(
-                    model_path,
-                    device,
-                    datatype,
-                    trust_remote=TRUST_REMOTE_CODE,
-                )
-            elif config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
-                model_handle = MaskedLanguageModel(
-                    model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
-                )
-            else:
-                model_handle = DefaultModel(
-                    model_path,
-                    device,
-                    datatype,
-                    pool,
-                    trust_remote=TRUST_REMOTE_CODE,
-                )
-            model_handle.model = wrap_in_hpu_graph(model_handle.model)
-            return model_handle
-        elif use_ipex():
-            if config.architectures[0].endswith("Classification"):
-                return ClassificationModel(
-                    model_path,
-                    device,
-                    datatype,
-                    trust_remote=TRUST_REMOTE_CODE,
-                )
-            elif config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
-                return MaskedLanguageModel(
-                    model_path, device, datatype, trust_remote=TRUST_REMOTE_CODE
-                )
-            else:
-                return DefaultModel(
-                    model_path,
-                    device,
-                    datatype,
-                    pool,
-                    trust_remote=TRUST_REMOTE_CODE,
-                )
+        if config.architectures[0].endswith("Classification"):
+            return create_model(ClassificationModel, model_path, device, datatype)
+        elif config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
+            return create_model(MaskedLanguageModel, model_path, device, datatype)
+        else:
+            return create_model(DefaultModel, model_path, device, datatype, pool)
+
+    if config.model_type == "mistral" and device.type == "hpu":
+        try:
+            return create_model(FlashMistral, model_path, device, datatype, pool)
+        except FileNotFoundError:
+            return create_model(DefaultModel, model_path, device, datatype, pool)
+
+    # Default case
+    if config.architectures[0].endswith("Classification"):
+        return create_model(ClassificationModel, model_path, device, datatype)
+    elif config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
+        return create_model(MaskedLanguageModel, model_path, device, datatype)
+    else:
+        return create_model(DefaultModel, model_path, device, datatype, pool)
