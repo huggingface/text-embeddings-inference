@@ -48,4 +48,4 @@ fn test_qwen3() -> Result<()> {
     assert_eq!(embeddings_batch[2], embeddings_single[0]);
 
     Ok(())
-} 
+}
