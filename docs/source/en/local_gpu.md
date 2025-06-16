@@ -58,8 +58,7 @@ cargo install --path router -F candle-cuda -F http --no-default-features
 You can now launch Text Embeddings Inference on GPU with:
 
 ```shell
-model=BAAI/bge-large-en-v1.5
-revision=refs/pr/5
+model=Qwen/Qwen3-Embedding-0.6B
 
-text-embeddings-router --model-id $model --revision $revision --port 8080
+text-embeddings-router --model-id $model --dtype float16 --port 8080
 ```

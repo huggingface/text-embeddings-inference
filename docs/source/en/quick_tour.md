@@ -28,10 +28,10 @@ Next, install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/
 
 ## Deploy
 
-Next it's time to deploy your model. Let's say you want to use [`BAAI/bge-large-en-v1.5`](https://huggingface.co/BAAI/bge-large-en-v1.5). Here's how you can do this:
+Next it's time to deploy your model. Let's say you want to use [`Qwen/Qwen3-Embedding-0.6B`](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B). Here's how you can do this:
 
 ```shell
-model=BAAI/bge-large-en-v1.5
+model=Qwen/Qwen3-Embedding-0.6B
 volume=$PWD/data
 
 docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id $model
