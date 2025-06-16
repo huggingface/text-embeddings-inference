@@ -47,10 +47,9 @@ cargo install --path router -F metal
 Once the installation is successfully complete, you can launch Text Embeddings Inference on CPU with the following command:
 
 ```shell
-model=BAAI/bge-large-en-v1.5
-revision=refs/pr/5
+model=Qwen/Qwen3-Embedding-0.6B
 
-text-embeddings-router --model-id $model --revision $revision --port 8080
+text-embeddings-router --model-id $model --port 8080
 ```
 
 <Tip>

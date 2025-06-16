@@ -35,7 +35,7 @@ docker build . -f Dockerfile-intel --build-arg PLATFORM=$platform -t tei_cpu_ipe
 To deploy your model on an Intel® CPU, use the following command:
 
 ```shell
-model='BAAI/bge-large-en-v1.5'
+model='Qwen/Qwen3-Embedding-0.6B'
 volume=$PWD/data
 
 docker run -p 8080:80 -v $volume:/data tei_cpu_ipex --model-id $model
@@ -58,7 +58,7 @@ docker build . -f Dockerfile-intel --build-arg PLATFORM=$platform -t tei_xpu_ipe
 To deploy your model on an Intel® XPU, use the following command:
 
 ```shell
-model='BAAI/bge-large-en-v1.5'
+model='Qwen/Qwen3-Embedding-0.6B'
 volume=$PWD/data
 
 docker run -p 8080:80 -v $volume:/data --device=/dev/dri -v /dev/dri/by-path:/dev/dri/by-path tei_xpu_ipex --model-id $model --dtype float16
@@ -81,7 +81,7 @@ docker build . -f Dockerfile-intel --build-arg PLATFORM=$platform -t tei_hpu
 To deploy your model on an Intel® HPU (Gaudi), use the following command:
 
 ```shell
-model='BAAI/bge-large-en-v1.5'
+model='Qwen/Qwen3-Embedding-0.6B'
 volume=$PWD/data
 
 docker run -p 8080:80 -v $volume:/data --runtime=habana -e HABANA_VISIBLE_DEVICES=all -e MAX_WARMUP_SEQUENCE_LENGTH=512 tei_hpu --model-id $model --dtype bfloat16

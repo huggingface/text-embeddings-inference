@@ -110,7 +110,7 @@ Below are some examples of the currently supported models:
 ### Docker
 
 ```shell
-model=BAAI/bge-large-en-v1.5
+model=Qwen/Qwen3-Embedding-0.6B
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
 docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id $model
@@ -369,13 +369,13 @@ cd models
 
 # Make sure you have git-lfs installed (https://git-lfs.com)
 git lfs install
-git clone https://huggingface.co/Alibaba-NLP/gte-base-en-v1.5
+git clone https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
 
 # Set the models directory as the volume path
 volume=$PWD
 
 # Mount the models directory inside the container with a volume and set the model ID
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id /data/gte-base-en-v1.5
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id /data/Qwen3-Embedding-0.6B
 ```
 
 ### Using Re-rankers models
@@ -458,7 +458,7 @@ found [here](https://github.com/huggingface/text-embeddings-inference/blob/main/
 You can use the gRPC API by adding the `-grpc` tag to any TEI Docker image. For example:
 
 ```shell
-model=BAAI/bge-large-en-v1.5
+model=Qwen/Qwen3-Embedding-0.6B
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
 docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7-grpc --model-id $model
@@ -494,7 +494,7 @@ cargo install --path router -F metal
 You can now launch Text Embeddings Inference on CPU with:
 
 ```shell
-model=BAAI/bge-large-en-v1.5
+model=Qwen/Qwen3-Embedding-0.6B
 
 text-embeddings-router --model-id $model --port 8080
 ```
@@ -532,7 +532,7 @@ cargo install --path router -F candle-cuda -F http --no-default-features
 You can now launch Text Embeddings Inference on GPU with:
 
 ```shell
-model=BAAI/bge-large-en-v1.5
+model=Qwen/Qwen3-Embedding-0.6B
 
 text-embeddings-router --model-id $model --port 8080
 ```
