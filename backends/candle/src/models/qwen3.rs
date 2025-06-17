@@ -473,10 +473,10 @@ impl Qwen3Model {
                     if padding > 0 {
                         masking = true;
                         for _ in 0..padding {
-                            input_ids.insert(0, self.pad_token_id);
-                            position_ids.insert(0, 0);
-                            attention_mask.insert(0, 0.0_f32);
-                            attention_bias.insert(0, f32::NEG_INFINITY);
+                            input_ids.insert(start, self.pad_token_id);
+                            position_ids.insert(start, 0);
+                            attention_mask.insert(start, 0.0_f32);
+                            attention_bias.insert(start, f32::NEG_INFINITY);
                         }
                     }
                 }
