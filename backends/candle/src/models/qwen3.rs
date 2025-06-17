@@ -23,6 +23,7 @@ pub struct Qwen3Config {
     pub rope_theta: f32,
     pub sliding_window: Option<usize>,
     pub use_sliding_window: bool,
+    pub eos_token_id: usize,
 }
 
 struct Qwen3Attention {
@@ -378,6 +379,7 @@ pub struct Qwen3Model {
     pool: Pool,
     pub device: Device,
     num_attention_heads: usize,
+    pad_token_id: u32,
 
     span: tracing::Span,
 }
@@ -427,6 +429,7 @@ impl Qwen3Model {
             rotary_cache,
             rotary_dim,
             pool,
+            pad_token_id: config.eos_token_id as u32,
             device: vb.device().clone(),
             num_attention_heads: config.num_attention_heads,
             span: tracing::span!(tracing::Level::TRACE, "model"),
@@ -459,7 +462,6 @@ impl Qwen3Model {
                     let seq_length = end - start;
                     input_lengths.push(seq_length);
 
-                    // Input ids
                     for j in start..end {
                         input_ids.push(batch.input_ids[j]);
                         position_ids.push(batch.position_ids[j]);
@@ -467,13 +469,15 @@ impl Qwen3Model {
                         attention_bias.push(0.0);
                     }
 
-                    // Pad to max_length
-                    for _ in seq_length..max_length {
-                        input_ids.push(0);
-                        position_ids.push(0);
-                        attention_mask.push(0.0_f32);
-                        attention_bias.push(f32::NEG_INFINITY);
+                    let padding = max_length - seq_length;
+                    if padding > 0 {
                         masking = true;
+                        for _ in 0..padding {
+                            input_ids.insert(0, self.pad_token_id);
+                            position_ids.insert(0, 0);
+                            attention_mask.insert(0, 0.0_f32);
+                            attention_bias.insert(0, f32::NEG_INFINITY);
+                        }
                     }
                 }
 
