@@ -597,7 +597,7 @@ impl Qwen3Model {
                             .iter()
                             .map(|&i| {
                                 let i = i as usize;
-                                let last_token_idx = input_lengths[i] - 1;
+                                let last_token_idx = max_length - 1;
                                 outputs.i((i, last_token_idx))?.unsqueeze(0)
                             })
                             .collect();
