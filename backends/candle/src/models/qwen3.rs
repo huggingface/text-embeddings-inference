@@ -617,7 +617,8 @@ impl Qwen3Model {
 
                         Some(Tensor::cat(&results?, 0)?)
                     } else {
-                        let last_idx = input_lengths[0] - 1;
+                        // For single inference, use the actual last token position from cumulative_seq_lengths
+                        let last_idx = batch.cumulative_seq_lengths[1] as usize - 1;
                         Some(outputs.i((0, last_idx))?.unsqueeze(0)?)
                     }
                 }
@@ -629,8 +630,10 @@ impl Qwen3Model {
                             .map(|&i| {
                                 let i = i as usize;
                                 let length = input_lengths[i];
-
-                                let embeddings = outputs.i((i, ..length))?;
+                                
+                                // With left padding, actual tokens are at the end
+                                let padding = max_length - length;
+                                let embeddings = outputs.i((i, padding..))?;
                                 let sum = embeddings.sum_keepdim(0)?;
                                 sum / (length as f64)
                             })
