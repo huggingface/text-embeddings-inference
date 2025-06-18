@@ -534,16 +534,13 @@ impl Qwen3Model {
                 &self.device,
             )?;
             let input_lengths = vec![batch.input_ids.len()];
-            
+
             let seq_len = batch.input_ids.len();
             // Create attention bias for causal masking even for single sequences
-            let attention_bias = Tensor::zeros(
-                (1, 1, 1, seq_len),
-                candle::DType::F32,
-                &self.device,
-            )?
-            .broadcast_as((1, self.num_attention_heads, seq_len, seq_len))?
-            .contiguous()?;
+            let attention_bias =
+                Tensor::zeros((1, 1, 1, seq_len), candle::DType::F32, &self.device)?
+                    .broadcast_as((1, self.num_attention_heads, seq_len, seq_len))?
+                    .contiguous()?;
 
             (input_ids, position_ids, input_lengths, Some(attention_bias))
         };
@@ -630,7 +627,7 @@ impl Qwen3Model {
                             .map(|&i| {
                                 let i = i as usize;
                                 let length = input_lengths[i];
-                                
+
                                 // With left padding, actual tokens are at the end
                                 let padding = max_length - length;
                                 let embeddings = outputs.i((i, padding..))?;
