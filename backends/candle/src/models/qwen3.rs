@@ -487,20 +487,22 @@ impl Qwen3Model {
                 let seq_length = end - start;
                 input_lengths.push(seq_length);
 
-                for j in start..end {
-                    input_ids.push(batch.input_ids[j]);
-                    position_ids.push(batch.position_ids[j]);
-                    attention_bias.push(0.0);
-                }
-
+                // Left padding for Qwen3-Embedding (pad at the beginning)
                 let padding = max_length - seq_length;
                 if padding > 0 {
                     masking = true;
                     for _ in 0..padding {
-                        input_ids.insert(start, self.pad_token_id);
-                        position_ids.insert(start, 0);
-                        attention_bias.insert(start, f32::MIN);
+                        input_ids.push(self.pad_token_id);
+                        position_ids.push(0);
+                        attention_bias.push(f32::MIN);
                     }
+                }
+
+                // Then add the actual sequence
+                for j in start..end {
+                    input_ids.push(batch.input_ids[j]);
+                    position_ids.push(batch.position_ids[j]);
+                    attention_bias.push(0.0);
                 }
             }
 
@@ -532,8 +534,18 @@ impl Qwen3Model {
                 &self.device,
             )?;
             let input_lengths = vec![batch.input_ids.len()];
+            
+            let seq_len = batch.input_ids.len();
+            // Create attention bias for causal masking even for single sequences
+            let attention_bias = Tensor::zeros(
+                (1, 1, 1, seq_len),
+                candle::DType::F32,
+                &self.device,
+            )?
+            .broadcast_as((1, self.num_attention_heads, seq_len, seq_len))?
+            .contiguous()?;
 
-            (input_ids, position_ids, input_lengths, None)
+            (input_ids, position_ids, input_lengths, Some(attention_bias))
         };
 
         let attention_bias = if let Some(attn_bias) = attention_bias {
@@ -597,6 +609,7 @@ impl Qwen3Model {
                             .iter()
                             .map(|&i| {
                                 let i = i as usize;
+                                // With left padding, the last token is always at max_length - 1
                                 let last_token_idx = max_length - 1;
                                 outputs.i((i, last_token_idx))?.unsqueeze(0)
                             })
