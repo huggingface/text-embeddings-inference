@@ -538,9 +538,7 @@ impl Qwen3Model {
             let seq_len = batch.input_ids.len();
             // Create attention bias for causal masking even for single sequences
             let attention_bias =
-                Tensor::zeros((1, 1, 1, seq_len), candle::DType::F32, &self.device)?
-                    .broadcast_as((1, self.num_attention_heads, seq_len, seq_len))?
-                    .contiguous()?;
+                Tensor::zeros((1, self.num_attention_heads, seq_len, seq_len), candle::DType::F32, &self.device)?;
 
             (input_ids, position_ids, input_lengths, Some(attention_bias))
         };
