@@ -1,2 +1,4 @@
 .idea
 target
+data/
+__pycache__/
