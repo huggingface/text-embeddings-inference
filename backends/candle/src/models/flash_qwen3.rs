@@ -27,7 +27,7 @@ struct Qwen3Attention {
 impl Qwen3Attention {
     pub fn load(vb: VarBuilder, config: &Qwen3Config) -> Result<Self> {
         if config.use_sliding_window {
-            candle::bail!("Sliding window is not supported for Qwen3",);
+            candle::bail!("Sliding window is not supported for Qwen3");
         }
 
         let num_attention_heads = config.num_attention_heads;
@@ -143,8 +143,8 @@ impl Qwen3Attention {
         )?;
 
         // Apply normalization layers
-        let (q, _res) = self.q_norm.forward(&q, None)?;
-        let (k, _res) = self.k_norm.forward(&k, None)?;
+        let (q, _) = self.q_norm.forward(&q, None)?;
+        let (k, _) = self.k_norm.forward(&k, None)?;
 
         apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
 
@@ -158,7 +158,7 @@ impl Qwen3Attention {
             max_s,
             max_s,
             self.softmax_scale,
-            false,
+            true,
             None,
             None,
         )?;
@@ -215,8 +215,8 @@ impl Qwen3MLP {
         let up_states = gate_up_states.narrow(1, self.intermediate_size, self.intermediate_size)?;
 
         let gate_states = self.act.forward(&gate_states)?;
-        let r = self.down_proj.forward(&(gate_states * up_states)?);
-        r
+
+        self.down_proj.forward(&(gate_states * up_states)?)
     }
 }
 
@@ -266,12 +266,15 @@ impl Qwen3Layer {
         let _enter = self.span.enter();
 
         let (normed_hidden_states, res) = self.input_layer_norm.forward(hidden_states, residual)?;
+
         let attn_output =
             self.attention
                 .forward(&normed_hidden_states, cu_seqlens, cos, sin, max_s)?;
+
         let (normed_attn_res_output, attn_res) = self
             .post_attention_layer_norm
             .forward(&attn_output, Some(&res))?;
+
         let mlp_output = self.mlp.forward(&normed_attn_res_output)?;
 
         Ok((mlp_output, attn_res))
