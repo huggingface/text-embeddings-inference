@@ -35,10 +35,10 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
-      # - name: Build Docker image for HPU
-      #   run: |
-      #     platform="hpu"
-      #     docker build . -f Dockerfile-intel --build-arg PLATFORM=$platform -t tei_hpu
+      - name: Build Docker image for HPU
+        run: |
+          platform="hpu"
+          docker build . -f Dockerfile-intel --build-arg PLATFORM=$platform -t tei_hpu
 
       - name: Run integration tests
         working-directory: integration_tests
