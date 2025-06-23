@@ -40,6 +40,9 @@ jobs:
       - name: Create data directory
         run: mkdir -p data
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
       - name: Run integration tests
         env:
           DOCKER_VOLUME: ${{ github.workspace }}/data
