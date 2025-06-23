@@ -43,4 +43,5 @@ jobs:
       - name: Run integration tests
         working-directory: integration_tests
         run: |
+          uv sync --locked --all-extras --dev
           uv run pytest --durations=0 -sv .
