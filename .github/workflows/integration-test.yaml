@@ -36,6 +36,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install the project
+        working-directory: integration_tests
         run: uv sync --locked --all-extras --dev
 
       # - name: Build Docker image for HPU
