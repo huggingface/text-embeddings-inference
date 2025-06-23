@@ -11,7 +11,7 @@ jobs:
       group: ${{ github.workflow }}-${{ github.job }}-${{ github.head_ref || github.run_id }}
       cancel-in-progress: true
     runs-on:
-      group: itac-bm-emr-gaudi3-dell-8gaudi
+      group: itac-bm-emr-gaudi3-dell-1gaudi
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
