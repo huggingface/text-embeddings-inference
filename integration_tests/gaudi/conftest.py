@@ -12,7 +12,7 @@ import docker
 import pytest
 from docker.errors import NotFound
 import logging
-from gaudi.test_embed import TEST_CONFIGS
+from test_embed import TEST_CONFIGS
 import aiohttp
 
 logging.basicConfig(

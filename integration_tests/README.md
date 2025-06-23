@@ -13,5 +13,5 @@ docker build . -f Dockerfile-intel --build-arg PLATFORM=$platform -t tei_hpu
 
 Then you can run the tests.
 ```bash
-make -C integration_tests run-integration-tests-hpu
+uv run pytest --durations=0 -sv .
 ```

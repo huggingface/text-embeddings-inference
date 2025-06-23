@@ -44,8 +44,5 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Run integration tests
-        env:
-          DOCKER_VOLUME: ${{ github.workspace }}/data
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          make -C integration_tests run-integration-tests-hpu
+          uv run pytest --durations=0 -sv .
