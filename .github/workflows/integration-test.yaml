@@ -1,0 +1,48 @@
+name: Run integration tests
+
+on:
+  push:
+  # workflow_dispatch:
+  # push:
+  #   branches:
+  #     - 'main'
+  # pull_request:
+  #   paths:
+  #     - ".github/workflows/build.yaml"
+  #     - ".github/workflows/matrix.json"
+  #     - "integration-tests/**"
+  #     - "backends/**"
+  #     - "core/**"
+  #     - "router/**"
+  #     - "Cargo.lock"
+  #     - "rust-toolchain.toml"
+  #     - "Dockerfile"
+  #     - "Dockerfile-intel"
+  #   branches:
+  #     - 'main'
+
+jobs:
+  tests:
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.job }}-${{ github.head_ref || github.run_id }}
+      cancel-in-progress: true
+    runs-on:
+      group: itac-bm-emr-gaudi3-dell-8gaudi
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image for HPU
+        run: |
+          platform="hpu"
+          docker build . -f Dockerfile-intel --build-arg PLATFORM=$platform -t tei_hpu
+
+      - name: Create data directory
+        run: mkdir -p data
+
+      - name: Run integration tests
+        env:
+          DOCKER_VOLUME: ${{ github.workspace }}/data
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          make -C integration_tests run-integration-tests-hpu
