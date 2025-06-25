@@ -1,0 +1,31 @@
+name: Run integration tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'  # Run the workflow nightly to check Gaudi integration is working
+
+jobs:
+  tests:
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.job }}-${{ github.head_ref || github.run_id }}
+      cancel-in-progress: true
+    runs-on:
+      group: itac-bm-emr-gaudi3-dell-1gaudi
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build Docker image for HPU
+        run: |
+          platform="hpu"
+          docker build . -f Dockerfile-intel --build-arg PLATFORM=$platform -t tei_hpu
+
+      - name: Run integration tests
+        working-directory: integration_tests
+        run: |
+          uv sync --locked --all-extras --dev
+          uv run pytest --durations=0 -sv .
