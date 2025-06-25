@@ -451,16 +451,17 @@ impl Qwen3Model {
             .flat_map(|i| (0..seq_len).map(move |j| (j > i) as u8))
             .collect();
 
-        let causal_mask = Tensor::from_slice(&mask, (seq_len, seq_len), &Device::Cpu)?;
+        let device = attention_bias.device();
+        let causal_mask = Tensor::from_slice(&mask, (seq_len, seq_len), device)?;
         let causal_mask = causal_mask.expand(&[bs, dim, seq_len, seq_len])?;
 
         let negatives =
-            Tensor::full(f32::MIN, attention_bias.shape(), &Device::Cpu)?.to_dtype(self.dtype)?;
+            Tensor::full(f32::MIN, attention_bias.shape(), device)?.to_dtype(self.dtype)?;
         let zeros = Tensor::zeros_like(&attention_bias)?.to_dtype(self.dtype)?;
 
         let causal_mask = causal_mask
             .where_cond(&negatives, &zeros)?
-            .to_device(&self.device)?;
+            .to_device(device)?;
 
         attention_bias.broadcast_add(&causal_mask)
     }
