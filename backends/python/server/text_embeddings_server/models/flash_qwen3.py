@@ -6,9 +6,11 @@ import torch.nn.functional as F
 from typing import List, Union, Optional
 from safetensors import safe_open
 from transformers.activations import ACT2FN
+from transformers.modeling_outputs import BaseModelOutputWithPast
 from transformers.models.qwen3 import Qwen3Config
 from opentelemetry import trace
 from text_embeddings_server.models import Model
+from text_embeddings_server.models.pooling import DefaultPooling
 from text_embeddings_server.models.types import FlashBatch, Embedding, PaddedBatch
 from text_embeddings_server.utils.flash_attn import attention
 
@@ -167,8 +169,12 @@ class Qwen3Attention:
         input_shape = hidden_states.shape[:-1]
         hidden_shape = (*input_shape, -1, self.head_dim)
 
-        q = self.q_norm(F.linear(hidden_states, self.q_proj_weight).view(hidden_shape))
-        k = self.k_norm(F.linear(hidden_states, self.k_proj_weight).view(hidden_shape))
+        q = self.q_norm.forward(
+            F.linear(hidden_states, self.q_proj_weight).view(hidden_shape)
+        )
+        k = self.k_norm.forward(
+            F.linear(hidden_states, self.k_proj_weight).view(hidden_shape)
+        )
         v = F.linear(hidden_states, self.v_proj_weight).view(hidden_shape)
         cos, sin = position_embeddings
         q, k = apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim=2)
@@ -370,10 +376,7 @@ class FlashQwen3Model:
                 hidden_states, position_embeddings, cu_seqlens, max_s, attn_mask
             )
         hidden_states = self.norm.forward(hidden_states)
-        if mask is not None:
-            outputs = hidden_states[mask]
-            return outputs[cu_seqlens[:-1]]
-        return hidden_states[cu_seqlens[:-1]]
+        return BaseModelOutputWithPast(last_hidden_state=hidden_states)
 
 
 class FlashQwen3(Model):
@@ -396,9 +399,10 @@ class FlashQwen3(Model):
             index_data = json.load(f)
 
         model = FlashQwen3Model(model_path, index_data, device, dtype, config)
+        self.hidden_size = config.hidden_size
+        self.pooling = DefaultPooling(self.hidden_size, pooling_mode=pool)
         self.device = device
         self.dtype = dtype
-        self.hidden_size = config.hidden_size
 
         super(FlashQwen3, self).__init__(model=model, dtype=dtype, device=device)
 
@@ -432,7 +436,7 @@ class FlashQwen3(Model):
             attn_mask = None
             max_input_lens = batch.max_s
 
-        embedding = self.model.forward(
+        output = self.model.forward(
             input_ids=batch.input_ids,
             position_ids=batch.position_ids,
             cu_seqlens=cu_seqlens,
@@ -440,6 +444,7 @@ class FlashQwen3(Model):
             mask=mask,
             attn_mask=attn_mask,
         )
+        embedding = self.pooling.forward(output, batch.attention_mask)
         cpu_results = embedding.view(-1).tolist()
 
         return [

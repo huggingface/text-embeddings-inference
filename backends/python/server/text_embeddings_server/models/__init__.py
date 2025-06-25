@@ -122,7 +122,7 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
         except FileNotFoundError:
             return create_model(DefaultModel, model_path, device, datatype, pool)
 
-    if config.model_type == "Qwen3ForCausalLM" and device.type == "hpu":
+    if config.model_type == "qwen3" and device.type == "hpu":
         try:
             return create_model(FlashQwen3, model_path, device, datatype, pool)
         except FileNotFoundError:
