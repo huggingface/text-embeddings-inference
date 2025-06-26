@@ -11,10 +11,12 @@ from text_embeddings_server.pb.embed_pb2 import Embedding, Score
 
 tracer = trace.get_tracer(__name__)
 PAD_SEQUENCE_TO_MULTIPLE_OF = int(os.environ.get("PAD_SEQUENCE_TO_MULTIPLE_OF", 128))
+SEQ_LEN_EXPONENT_BASE = int(os.environ.get("SEQ_LEN_EXPONENT_BASE", 2))
 
 
-def round_up(number, k):
-    return (number + k - 1) // k * k
+def round_up_seq(number, k, base):
+    exponent = max(0, math.ceil(math.log(number / k, base)))
+    return int(k * (base**exponent))
 
 
 class Batch(ABC):
@@ -46,7 +48,9 @@ class PaddedBatch(Batch):
         batch_size = len(pb.cu_seq_lengths) - 1
         if device.type == "hpu":
             # To better utilize HPU, we need to do batch/seq_len bucketing
-            max_length = round_up(pb.max_length, PAD_SEQUENCE_TO_MULTIPLE_OF)
+            max_length = round_up_seq(
+                pb.max_length, PAD_SEQUENCE_TO_MULTIPLE_OF, SEQ_LEN_EXPONENT_BASE
+            )
             max_length = min(max_length, max_input_length)
             new_bs = 2 ** math.ceil(math.log2(batch_size))
         else:

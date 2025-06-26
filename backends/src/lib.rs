@@ -39,6 +39,21 @@ fn powers_of_two(max_value: usize) -> Vec<usize> {
     result
 }
 
+fn generate_bucket_sizes(bucket_size: usize, max_s: usize, base_exp: usize) -> Vec<usize> {
+    let mut sizes = Vec::new();
+    let mut current = bucket_size;
+
+    while current <= max_s {
+        sizes.push(current);
+        match current.checked_mul(base_exp) {
+            Some(next) => current = next,
+            None => break,
+        }
+    }
+
+    sizes
+}
+
 fn is_hpu() -> bool {
     match Command::new("hl-smi")
         .args(["-Q", "name", "-f", "csv"])
@@ -114,7 +129,7 @@ impl Backend {
         };
         let seq_bucket_size: usize = read_env_var("PAD_SEQUENCE_TO_MULTIPLE_OF", 128);
         let max_warmup_length: usize = read_env_var("MAX_WARMUP_SEQUENCE_LENGTH", 1024);
-
+        let seq_len_exp_base: usize = read_env_var("SEQ_LEN_EXPONENT_BASE", 2);
         let max_batch_size = max_bs.unwrap_or_else(|| read_env_var("MAX_WARMUP_BATCH_SIZE", 8));
 
         let mut batch_sizes: Vec<usize> = powers_of_two(max_batch_size);
@@ -135,9 +150,11 @@ impl Backend {
         }
 
         max_input_length = std::cmp::min(max_input_length, max_warmup_length);
-        let mut seq_lengths: Vec<usize> = (seq_bucket_size..=max_input_length)
-            .step_by(seq_bucket_size)
-            .collect();
+        let mut seq_lengths: Vec<usize> = generate_bucket_sizes(
+            seq_bucket_size,
+            max_input_length,
+            seq_len_exp_base,
+        );
         if let Some(&last) = seq_lengths.last() {
             if last < max_input_length {
                 seq_lengths.push(max_input_length);
