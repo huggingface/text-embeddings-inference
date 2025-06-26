@@ -405,6 +405,7 @@ fn get_backend_model_type(
             }
         }
     };
+
     Ok(text_embeddings_backend::ModelType::Embedding(pool))
 }
 
