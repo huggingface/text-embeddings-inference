@@ -150,11 +150,8 @@ impl Backend {
         }
 
         max_input_length = std::cmp::min(max_input_length, max_warmup_length);
-        let mut seq_lengths: Vec<usize> = generate_bucket_sizes(
-            seq_bucket_size,
-            max_input_length,
-            seq_len_exp_base,
-        );
+        let mut seq_lengths: Vec<usize> =
+            generate_bucket_sizes(seq_bucket_size, max_input_length, seq_len_exp_base);
         if let Some(&last) = seq_lengths.last() {
             if last < max_input_length {
                 seq_lengths.push(max_input_length);

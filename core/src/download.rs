@@ -38,7 +38,7 @@ pub async fn download_artifacts(api: &ApiRepo, pool_config: bool) -> Result<Path
     });
 
     // Try to download the `2_Dense/config.json`
-    if let Ok(_) = download_dense_config(api).await {
+    if download_dense_config(api).await.is_ok() {
         // If `2_Dense/config.json` is there, then try to download the `model.safetensors`
         if let Err(err) = download_dense_safetensors(api).await {
             tracing::warn!("Failed to download dense safetensors: {err}");
