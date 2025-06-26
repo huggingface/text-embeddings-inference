@@ -470,19 +470,19 @@ impl CandleBackend {
             }
         };
 
-        // If `2_Dense/model.safetensors` is amongst the downloaded artifacts, then create a Linear
-        // layer from the VarBuilder using `candle` to provide it as an extra `Dense` layer to the
-        // `CandleBackend`, otherwise leave it as None
+        // If `2_Dense/model.safetensors` is amongst the downloaded artifacts, then create a Dense
+        // block and provide it to the `CandleBackend`, otherwise, None
         let dense = if model_path.join("2_Dense/model.safetensors").exists() {
             let dense_config_path = model_path.join("2_Dense/config.json");
 
-            // Load dense config
             let dense_config_str = std::fs::read_to_string(&dense_config_path).map_err(|err| {
-                BackendError::Start(format!("Unable to read dense config file: {err:?}"))
+                BackendError::Start(format!(
+                    "Unable to read `2_Dense/config.json` file: {err:?}"
+                ))
             })?;
             let dense_config: DenseConfig =
                 serde_json::from_str(&dense_config_str).map_err(|err| {
-                    BackendError::Start(format!("Unable to parse dense config: {err:?}"))
+                    BackendError::Start(format!("Unable to parse `2_Dense/config.json`: {err:?}"))
                 })?;
 
             let dense_path = model_path.join("2_Dense/model.safetensors");
@@ -498,7 +498,7 @@ impl CandleBackend {
         Ok(Self {
             device,
             model: model?,
-            dense: dense,
+            dense,
         })
     }
 }
