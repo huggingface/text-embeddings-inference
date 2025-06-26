@@ -37,6 +37,14 @@ pub async fn download_artifacts(api: &ApiRepo, pool_config: bool) -> Result<Path
         err
     });
 
+    // Try to download the `2_Dense/config.json`
+    if let Ok(_) = download_dense_config(api).await {
+        // If `2_Dense/config.json` is there, then try to download the `model.safetensors`
+        if let Err(err) = download_dense_safetensors(api).await {
+            tracing::warn!("Failed to download dense safetensors: {err}");
+        }
+    }
+
     tracing::info!("Downloading `config.json`");
     api.get("config.json").await?;
 
@@ -53,6 +61,20 @@ pub async fn download_pool_config(api: &ApiRepo) -> Result<PathBuf, ApiError> {
     tracing::info!("Downloading `1_Pooling/config.json`");
     let pool_config_path = api.get("1_Pooling/config.json").await?;
     Ok(pool_config_path)
+}
+
+#[instrument(skip_all)]
+pub async fn download_dense_config(api: &ApiRepo) -> Result<PathBuf, ApiError> {
+    tracing::info!("Downloading `2_Dense/config.json`");
+    let dense_config_path = api.get("2_Dense/config.json").await?;
+    Ok(dense_config_path)
+}
+
+#[instrument(skip_all)]
+pub async fn download_dense_safetensors(api: &ApiRepo) -> Result<PathBuf, ApiError> {
+    tracing::info!("Downloading `2_Dense/model.safetensors`");
+    let dense_safetensors_path = api.get("2_Dense/model.safetensors").await?;
+    Ok(dense_safetensors_path)
 }
 
 #[instrument(skip_all)]

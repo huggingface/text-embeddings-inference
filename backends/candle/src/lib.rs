@@ -11,9 +11,10 @@ use crate::compute_cap::{
     compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
 };
 use crate::models::{
-    BertConfig, BertModel, DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, JinaBertModel,
-    JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig, Model, ModernBertConfig,
-    ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model,
+    BertConfig, BertModel, Dense, DenseConfig, DenseLayer, DistilBertConfig, DistilBertModel,
+    GTEConfig, GTEModel, JinaBertModel, JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig,
+    Model, ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config,
+    Qwen3Config, Qwen3Model,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -114,6 +115,7 @@ enum Config {
 pub struct CandleBackend {
     device: Device,
     model: Box<dyn Model + Send>,
+    dense: Option<Box<dyn DenseLayer + Send>>,
 }
 
 impl CandleBackend {
@@ -468,9 +470,35 @@ impl CandleBackend {
             }
         };
 
+        // If `2_Dense/model.safetensors` is amongst the downloaded artifacts, then create a Linear
+        // layer from the VarBuilder using `candle` to provide it as an extra `Dense` layer to the
+        // `CandleBackend`, otherwise leave it as None
+        let dense = if model_path.join("2_Dense/model.safetensors").exists() {
+            let dense_config_path = model_path.join("2_Dense/config.json");
+
+            // Load dense config
+            let dense_config_str = std::fs::read_to_string(&dense_config_path).map_err(|err| {
+                BackendError::Start(format!("Unable to read dense config file: {err:?}"))
+            })?;
+            let dense_config: DenseConfig =
+                serde_json::from_str(&dense_config_str).map_err(|err| {
+                    BackendError::Start(format!("Unable to parse dense config: {err:?}"))
+                })?;
+
+            let dense_path = model_path.join("2_Dense/model.safetensors");
+            let dense_vb =
+                unsafe { VarBuilder::from_mmaped_safetensors(&[dense_path], dtype, &device) }
+                    .s()?;
+
+            Some(Box::new(Dense::load(dense_vb, &dense_config).s()?) as Box<dyn DenseLayer + Send>)
+        } else {
+            None
+        };
+
         Ok(Self {
             device,
             model: model?,
+            dense: dense,
         })
     }
 }
@@ -507,6 +535,19 @@ impl Backend for CandleBackend {
         // Run forward
         let (pooled_embeddings, raw_embeddings) = self.model.embed(batch).e()?;
 
+        // Apply dense layer if available
+        let pooled_embeddings = match pooled_embeddings {
+            None => None,
+            Some(pooled_embeddings) => {
+                let pooled_embeddings = if let Some(ref dense) = self.dense {
+                    dense.forward(&pooled_embeddings).e()?
+                } else {
+                    pooled_embeddings
+                };
+                Some(pooled_embeddings)
+            }
+        };
+
         // Device => Host data transfer
         let pooled_embeddings = match pooled_embeddings {
             None => vec![],
@@ -540,6 +581,7 @@ impl Backend for CandleBackend {
         let batch_size = batch.len();
 
         let results = self.model.predict(batch).e()?;
+
         let results = results.to_dtype(DType::F32).e()?.to_vec2().e()?;
 
         let mut predictions =
