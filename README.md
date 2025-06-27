@@ -375,7 +375,7 @@ git clone https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
 volume=$PWD
 
 # Mount the models directory inside the container with a volume and set the model ID
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id /data/Qwen3-Embedding-0.6B
+docker run --gpus all -p 8080:80 -v $volume:/data --dtype float16 --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id /data/Qwen3-Embedding-0.6B
 ```
 
 ### Using Re-rankers models
