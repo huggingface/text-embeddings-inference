@@ -455,8 +455,13 @@ impl Qwen3Model {
         let causal_mask = Tensor::from_slice(&mask, (seq_len, seq_len), device)?;
         let causal_mask = causal_mask.expand(&[bs, dim, seq_len, seq_len])?;
 
+        let min_value = match self.dtype {
+            DType::F32 => f32::MIN,
+            _ => -65504.0, // f16 minimum value
+        };
+
         let negatives =
-            Tensor::full(f32::MIN, attention_bias.shape(), device)?.to_dtype(self.dtype)?;
+            Tensor::full(min_value, attention_bias.shape(), device)?.to_dtype(self.dtype)?;
         let zeros = Tensor::zeros_like(&attention_bias)?.to_dtype(self.dtype)?;
 
         let causal_mask = causal_mask
