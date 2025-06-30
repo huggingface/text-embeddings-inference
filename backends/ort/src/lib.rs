@@ -204,7 +204,6 @@ impl Backend for OrtBackend {
             let pooled_embeddings = match self.pool {
                 // CLS pooling
                 Pool::Cls => outputs.slice(s![.., 0, ..]).into_owned().into_dyn(),
-                // Last token pooling is not supported for this model
                 Pool::LastToken => {
                     let axis_len = outputs.len_of(Axis(1));
                     outputs.slice(s![.., axis_len - 1, ..]).into_owned().into_dyn()
