@@ -48,10 +48,10 @@ pub async fn download_artifacts(
     {
         // If dense config is there, try to download the model.safetensors first
         if let Err(err) = download_dense_safetensors(api, dense_path.as_deref()).await {
-            tracing::warn!("Failed to download dense safetensors: {err}");
+            tracing::warn!("Failed to download `{dense_path:?}/model.safetensors` file: {err}");
             // Fallback to pytorch_model.bin
             if let Err(err) = download_dense_pytorch_model(api, dense_path.as_deref()).await {
-                tracing::warn!("Failed to download dense pytorch model: {err}");
+                tracing::warn!("Failed to download `{dense_path:?}/pytorch_model.bin` file: {err}");
             }
         }
     }

@@ -483,15 +483,13 @@ impl CandleBackend {
                 let dense_config_str =
                     std::fs::read_to_string(&dense_config_path).map_err(|err| {
                         BackendError::Start(format!(
-                            "Unable to read `{}/config.json` file: {err:?}",
-                            dense_path.display()
+                            "Unable to read `{dense_path:?}/config.json` file: {err:?}",
                         ))
                     })?;
                 let dense_config: DenseConfig =
                     serde_json::from_str(&dense_config_str).map_err(|err| {
                         BackendError::Start(format!(
-                            "Unable to parse `{}/config.json`: {err:?}",
-                            dense_path.display()
+                            "Unable to parse `{dense_path:?}/config.json`: {err:?}",
                         ))
                     })?;
 
