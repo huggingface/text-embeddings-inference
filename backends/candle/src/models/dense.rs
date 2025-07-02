@@ -4,10 +4,13 @@ use candle_nn::VarBuilder;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]
+/// The activation functions in `2_Dense/config.json` are defined as PyTorch imports
 pub enum DenseActivation {
     #[serde(rename = "torch.nn.modules.activation.Tanh")]
+    /// e.g. https://huggingface.co/sentence-transformers/LaBSE/blob/main/2_Dense/config.json
     Tanh,
     #[serde(rename = "torch.nn.modules.linear.Identity")]
+    /// e.g. https://huggingface.co/NovaSearch/stella_en_400M_v5/blob/main/2_Dense/config.json
     Identity,
 }
 
