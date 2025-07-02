@@ -3,9 +3,11 @@ use candle::{Result, Tensor};
 use candle_nn::VarBuilder;
 use serde::Deserialize;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 pub enum DenseActivation {
+    #[serde(rename = "torch.nn.modules.activation.Tanh")]
     Tanh,
+    #[serde(rename = "torch.nn.modules.linear.Identity")]
     Identity,
 }
 
@@ -23,7 +25,7 @@ pub struct DenseConfig {
     in_features: usize,
     out_features: usize,
     bias: bool,
-    activation_function: Option<String>,
+    activation_function: Option<DenseActivation>,
 }
 
 pub trait DenseLayer {
@@ -45,20 +47,12 @@ impl Dense {
         } else {
             None
         };
-
-        // Here we cannot leverage HiddenAct, since the activation functions for the
-        // 2_Dense/config.json are defined as PyTorch imports instead, so the deserialization would
-        // be different, as well as the range of commonly used activation functions (mainly tanh
-        // and identity)
-        let activation = match config.activation_function {
-            // e.g. https://huggingface.co/sentence-transformers/LaBSE/blob/main/2_Dense/config.json
-            Some(ref act) if act == "torch.nn.modules.activation.Tanh" => DenseActivation::Tanh,
-            // e.g. https://huggingface.co/NovaSearch/stella_en_400M_v5/blob/main/2_Dense/config.json
-            Some(ref act) if act == "torch.nn.modules.linear.Identity" => DenseActivation::Identity,
-            _ => DenseActivation::Identity,
-        };
-
         let linear = Linear::new(weight, bias, None);
+
+        let activation = config
+            .activation_function
+            .clone()
+            .unwrap_or(DenseActivation::Identity);
 
         Ok(Self {
             linear,
