@@ -519,7 +519,8 @@ impl Qwen3Model {
 
             let attention_bias = if masking {
                 let attention_bias =
-                    Tensor::from_vec(attention_bias, (batch_size, 1, 1, max_length), &self.device)?.to_dtype(self.dtype)?;
+                    Tensor::from_vec(attention_bias, (batch_size, 1, 1, max_length), &self.device)?
+                        .to_dtype(self.dtype)?;
                 // Broadcast once instead of at every layer
                 let attention_bias = attention_bias
                     .broadcast_as((batch_size, self.num_attention_heads, max_length, max_length))?
