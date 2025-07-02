@@ -18,6 +18,7 @@ fn test_modernbert() -> Result<()> {
         &model_root,
         "float32".to_string(),
         ModelType::Embedding(Pool::Mean),
+        None,
     )?;
 
     let input_batch = batch(
@@ -86,6 +87,7 @@ fn test_modernbert_pooled_raw() -> Result<()> {
         &model_root,
         "float32".to_string(),
         ModelType::Embedding(Pool::Cls),
+        None,
     )?;
 
     let input_batch = batch(
@@ -176,7 +178,12 @@ fn test_modernbert_classification() -> Result<()> {
     let model_root = download_artifacts("Alibaba-NLP/gte-reranker-modernbert-base", None).unwrap();
     let tokenizer = load_tokenizer(&model_root)?;
 
-    let backend = CandleBackend::new(&model_root, "float32".to_string(), ModelType::Classifier)?;
+    let backend = CandleBackend::new(
+        &model_root,
+        "float32".to_string(),
+        ModelType::Classifier,
+        None,
+    )?;
 
     let input_single = batch(
         vec![tokenizer
@@ -208,7 +215,12 @@ fn test_modernbert_classification() -> Result<()> {
 fn test_modernbert_classification_mean_pooling() -> Result<()> {
     let model_root = download_artifacts("tomaarsen/reranker-ModernBERT-large-gooaq-bce", None)?;
     let tokenizer = load_tokenizer(&model_root)?;
-    let backend = CandleBackend::new(&model_root, "float32".to_string(), ModelType::Classifier)?;
+    let backend = CandleBackend::new(
+        &model_root,
+        "float32".to_string(),
+        ModelType::Classifier,
+        None,
+    )?;
 
     let input_single = batch(
         vec![tokenizer

@@ -18,6 +18,7 @@ fn test_flash_gte() -> Result<()> {
         &model_root,
         "float16".to_string(),
         ModelType::Embedding(Pool::Cls),
+        None,
     )?;
 
     let input_batch = batch(
@@ -62,7 +63,12 @@ fn test_flash_gte_classification() -> Result<()> {
     let model_root = download_artifacts("Alibaba-NLP/gte-multilingual-reranker-base", None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
-    let backend = CandleBackend::new(&model_root, "float16".to_string(), ModelType::Classifier)?;
+    let backend = CandleBackend::new(
+        &model_root,
+        "float16".to_string(),
+        ModelType::Classifier,
+        None,
+    )?;
 
     let input_single = batch(
         vec![tokenizer

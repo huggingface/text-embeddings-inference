@@ -16,6 +16,7 @@ fn test_qwen3() -> Result<()> {
         &model_root,
         "float32".to_string(),
         ModelType::Embedding(Pool::LastToken),
+        None,
     )?;
 
     let input_batch = batch(

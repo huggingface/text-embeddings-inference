@@ -18,6 +18,7 @@ fn test_flash_nomic_small() -> Result<()> {
         &model_root,
         "float16".to_string(),
         ModelType::Embedding(Pool::Mean),
+        None,
     )?;
 
     let input_batch = batch(
@@ -63,6 +64,7 @@ fn test_flash_nomic_moe() -> Result<()> {
         &model_root,
         "float16".to_string(),
         ModelType::Embedding(Pool::Mean),
+        None,
     )?;
 
     let input_batch = batch(

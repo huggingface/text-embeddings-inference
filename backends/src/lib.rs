@@ -77,11 +77,13 @@ pub struct Backend {
 }
 
 impl Backend {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         model_path: PathBuf,
         api_repo: Option<ApiRepo>,
         dtype: DType,
         model_type: ModelType,
+        dense_path: Option<PathBuf>,
         uds_path: String,
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
@@ -93,6 +95,7 @@ impl Backend {
             api_repo,
             dtype,
             model_type.clone(),
+            dense_path,
             uds_path,
             otlp_endpoint,
             otlp_service_name,
@@ -335,12 +338,13 @@ impl Backend {
     }
 }
 
-#[allow(unused)]
+#[allow(unused, clippy::too_many_arguments)]
 async fn init_backend(
     model_path: PathBuf,
     api_repo: Option<ApiRepo>,
     dtype: DType,
     model_type: ModelType,
+    dense_path: Option<PathBuf>,
     uds_path: String,
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
@@ -395,7 +399,12 @@ async fn init_backend(
     if cfg!(feature = "candle") {
         #[cfg(feature = "candle")]
         {
-            let backend = CandleBackend::new(&model_path, dtype.to_string(), model_type.clone());
+            let backend = CandleBackend::new(
+                &model_path,
+                dtype.to_string(),
+                model_type.clone(),
+                dense_path.as_deref(),
+            );
             match backend {
                 Ok(b) => return Ok(Box::new(b)),
                 Err(err) => {

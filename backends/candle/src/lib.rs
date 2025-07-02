@@ -123,6 +123,7 @@ impl CandleBackend {
         model_path: &Path,
         dtype: String,
         model_type: ModelType,
+        dense_path: Option<&Path>,
     ) -> Result<Self, BackendError> {
         // Default files
         let default_safetensors = model_path.join("model.safetensors");
@@ -470,27 +471,44 @@ impl CandleBackend {
             }
         };
 
-        // If `2_Dense/model.safetensors` is amongst the downloaded artifacts, then create a Dense
+        // If `2_Dense/model.safetensors` or `2_Dense/pytorch_model.bin` is amongst the downloaded artifacts, then create a Dense
         // block and provide it to the `CandleBackend`, otherwise, None
-        let dense = if model_path.join("2_Dense/model.safetensors").exists() {
-            let dense_config_path = model_path.join("2_Dense/config.json");
+        let dense = if let Some(dense_path) = dense_path {
+            let dense_safetensors = dense_path.join("model.safetensors");
+            let dense_pytorch = dense_path.join("pytorch_model.bin");
 
-            let dense_config_str = std::fs::read_to_string(&dense_config_path).map_err(|err| {
-                BackendError::Start(format!(
-                    "Unable to read `2_Dense/config.json` file: {err:?}"
-                ))
-            })?;
-            let dense_config: DenseConfig =
-                serde_json::from_str(&dense_config_str).map_err(|err| {
-                    BackendError::Start(format!("Unable to parse `2_Dense/config.json`: {err:?}"))
-                })?;
+            if dense_safetensors.exists() || dense_pytorch.exists() {
+                let dense_config_path = dense_path.join("config.json");
 
-            let dense_path = model_path.join("2_Dense/model.safetensors");
-            let dense_vb =
-                unsafe { VarBuilder::from_mmaped_safetensors(&[dense_path], dtype, &device) }
-                    .s()?;
+                let dense_config_str =
+                    std::fs::read_to_string(&dense_config_path).map_err(|err| {
+                        BackendError::Start(format!(
+                            "Unable to read `{}/config.json` file: {err:?}",
+                            dense_path.display()
+                        ))
+                    })?;
+                let dense_config: DenseConfig =
+                    serde_json::from_str(&dense_config_str).map_err(|err| {
+                        BackendError::Start(format!(
+                            "Unable to parse `{}/config.json`: {err:?}",
+                            dense_path.display()
+                        ))
+                    })?;
 
-            Some(Box::new(Dense::load(dense_vb, &dense_config).s()?) as Box<dyn DenseLayer + Send>)
+                let dense_vb = if dense_safetensors.exists() {
+                    unsafe {
+                        VarBuilder::from_mmaped_safetensors(&[dense_safetensors], dtype, &device)
+                    }
+                    .s()?
+                } else {
+                    VarBuilder::from_pth(&dense_pytorch, dtype, &device).s()?
+                };
+
+                Some(Box::new(Dense::load(dense_vb, &dense_config).s()?)
+                    as Box<dyn DenseLayer + Send>)
+            } else {
+                None
+            }
         } else {
             None
         };

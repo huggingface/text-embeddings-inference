@@ -14,7 +14,11 @@ pub const ST_CONFIG_NAMES: [&str; 7] = [
 ];
 
 #[instrument(skip_all)]
-pub async fn download_artifacts(api: &ApiRepo, pool_config: bool) -> Result<PathBuf, ApiError> {
+pub async fn download_artifacts(
+    api: &ApiRepo,
+    pool_config: bool,
+    dense_path: Option<String>,
+) -> Result<PathBuf, ApiError> {
     let start = std::time::Instant::now();
 
     tracing::info!("Starting download");
@@ -37,11 +41,18 @@ pub async fn download_artifacts(api: &ApiRepo, pool_config: bool) -> Result<Path
         err
     });
 
-    // Try to download the `2_Dense/config.json`
-    if download_dense_config(api).await.is_ok() {
-        // If `2_Dense/config.json` is there, then try to download the `model.safetensors`
-        if let Err(err) = download_dense_safetensors(api).await {
+    // Try to download the dense layer config
+    if download_dense_config(api, dense_path.as_deref())
+        .await
+        .is_ok()
+    {
+        // If dense config is there, try to download the model.safetensors first
+        if let Err(err) = download_dense_safetensors(api, dense_path.as_deref()).await {
             tracing::warn!("Failed to download dense safetensors: {err}");
+            // Fallback to pytorch_model.bin
+            if let Err(err) = download_dense_pytorch_model(api, dense_path.as_deref()).await {
+                tracing::warn!("Failed to download dense pytorch model: {err}");
+            }
         }
     }
 
@@ -64,17 +75,39 @@ pub async fn download_pool_config(api: &ApiRepo) -> Result<PathBuf, ApiError> {
 }
 
 #[instrument(skip_all)]
-pub async fn download_dense_config(api: &ApiRepo) -> Result<PathBuf, ApiError> {
-    tracing::info!("Downloading `2_Dense/config.json`");
-    let dense_config_path = api.get("2_Dense/config.json").await?;
+pub async fn download_dense_config(
+    api: &ApiRepo,
+    dense_path: Option<&str>,
+) -> Result<PathBuf, ApiError> {
+    let path = dense_path.unwrap_or("2_Dense");
+    let config_file = format!("{}/config.json", path);
+    tracing::info!("Downloading `{}`", config_file);
+    let dense_config_path = api.get(&config_file).await?;
     Ok(dense_config_path)
 }
 
 #[instrument(skip_all)]
-pub async fn download_dense_safetensors(api: &ApiRepo) -> Result<PathBuf, ApiError> {
-    tracing::info!("Downloading `2_Dense/model.safetensors`");
-    let dense_safetensors_path = api.get("2_Dense/model.safetensors").await?;
+pub async fn download_dense_safetensors(
+    api: &ApiRepo,
+    dense_path: Option<&str>,
+) -> Result<PathBuf, ApiError> {
+    let path = dense_path.unwrap_or("2_Dense");
+    let safetensors_file = format!("{}/model.safetensors", path);
+    tracing::info!("Downloading `{}`", safetensors_file);
+    let dense_safetensors_path = api.get(&safetensors_file).await?;
     Ok(dense_safetensors_path)
+}
+
+#[instrument(skip_all)]
+pub async fn download_dense_pytorch_model(
+    api: &ApiRepo,
+    dense_path: Option<&str>,
+) -> Result<PathBuf, ApiError> {
+    let path = dense_path.unwrap_or("2_Dense");
+    let pytorch_file = format!("{}/pytorch_model.bin", path);
+    tracing::info!("Downloading `{}`", pytorch_file);
+    let dense_pytorch_path = api.get(&pytorch_file).await?;
+    Ok(dense_pytorch_path)
 }
 
 #[instrument(skip_all)]

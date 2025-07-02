@@ -16,6 +16,7 @@ fn test_mpnet() -> Result<()> {
         &model_root,
         "float32".to_string(),
         ModelType::Embedding(Pool::Mean),
+        None,
     )?;
 
     let input_batch = batch(
@@ -76,6 +77,7 @@ fn test_mpnet_pooled_raw() -> Result<()> {
         &model_root,
         "float32".to_string(),
         ModelType::Embedding(Pool::Cls),
+        None,
     )?;
 
     let input_batch = batch(
