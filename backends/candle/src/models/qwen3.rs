@@ -455,8 +455,13 @@ impl Qwen3Model {
         let causal_mask = Tensor::from_slice(&mask, (seq_len, seq_len), device)?;
         let causal_mask = causal_mask.expand(&[bs, dim, seq_len, seq_len])?;
 
+        let min_value = match self.dtype {
+            DType::F32 => f32::MIN,
+            _ => -65504.0, // f16 minimum value
+        };
+
         let negatives =
-            Tensor::full(f32::MIN, attention_bias.shape(), device)?.to_dtype(self.dtype)?;
+            Tensor::full(min_value, attention_bias.shape(), device)?.to_dtype(self.dtype)?;
         let zeros = Tensor::zeros_like(&attention_bias)?.to_dtype(self.dtype)?;
 
         let causal_mask = causal_mask
@@ -514,7 +519,8 @@ impl Qwen3Model {
 
             let attention_bias = if masking {
                 let attention_bias =
-                    Tensor::from_vec(attention_bias, (batch_size, 1, 1, max_length), &self.device)?;
+                    Tensor::from_vec(attention_bias, (batch_size, 1, 1, max_length), &self.device)?
+                        .to_dtype(self.dtype)?;
                 // Broadcast once instead of at every layer
                 let attention_bias = attention_bias
                     .broadcast_as((batch_size, self.num_attention_heads, max_length, max_length))?
