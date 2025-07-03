@@ -5,6 +5,7 @@ extern crate intel_mkl_src;
 extern crate accelerate_src;
 
 mod bert;
+mod dense;
 mod distilbert;
 mod jina;
 mod jina_code;
@@ -49,6 +50,7 @@ mod qwen3;
 
 pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
 use candle::{Result, Tensor};
+pub use dense::{Dense, DenseConfig, DenseLayer};
 pub use distilbert::{DistilBertConfig, DistilBertModel};
 #[allow(unused_imports)]
 pub use gte::{GTEClassificationHead, GTEConfig, GTEModel, GTEMLP};

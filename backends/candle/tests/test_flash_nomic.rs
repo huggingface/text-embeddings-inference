@@ -11,13 +11,14 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
 #[serial_test::serial]
 #[cfg(all(feature = "cuda", feature = "flash-attn"))]
 fn test_flash_nomic_small() -> Result<()> {
-    let model_root = download_artifacts("nomic-ai/nomic-embed-text-v1.5", None)?;
+    let model_root = download_artifacts("nomic-ai/nomic-embed-text-v1.5", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
         &model_root,
         "float16".to_string(),
         ModelType::Embedding(Pool::Mean),
+        None,
     )?;
 
     let input_batch = batch(
@@ -56,13 +57,14 @@ fn test_flash_nomic_small() -> Result<()> {
 #[serial_test::serial]
 #[cfg(all(feature = "cuda", feature = "flash-attn"))]
 fn test_flash_nomic_moe() -> Result<()> {
-    let model_root = download_artifacts("nomic-ai/nomic-embed-text-v2-moe", None)?;
+    let model_root = download_artifacts("nomic-ai/nomic-embed-text-v2-moe", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
         &model_root,
         "float16".to_string(),
         ModelType::Embedding(Pool::Mean),
+        None,
     )?;
 
     let input_batch = batch(
