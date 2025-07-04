@@ -80,6 +80,7 @@ message EmbedRequest {
     bool normalize = 3;
     TruncationDirection truncation_direction = 4;
     optional string prompt_name = 5;
+    optional uint32 dimensions = 6;
 }
 
 message EmbedResponse {
