@@ -433,6 +433,8 @@ pub(crate) struct EmbedRequest {
     #[schema(default = "true", example = "true")]
     pub normalize: bool,
 
+    /// The number of dimensions the resulting output embeddings should have. If not set, the orignal
+    /// shape of the representation will be returned.
     #[schema(default = "null", example = "null", nullable = true)]
     pub dimensions: Option<usize>,
 }

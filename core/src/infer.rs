@@ -151,20 +151,16 @@ impl Infer {
             panic!("unexpected enum variant")
         };
 
-        // Timings
         let total_time = start_time.elapsed();
 
-        // Metrics
-        let counter = metrics::counter!("te_embed_success");
-        counter.increment(1);
-        let histogram = metrics::histogram!("te_embed_duration");
-        histogram.record(total_time.as_secs_f64());
-        let histogram = metrics::histogram!("te_embed_tokenization_duration");
-        histogram.record(response.metadata.tokenization.as_secs_f64());
-        let histogram = metrics::histogram!("te_embed_queue_duration");
-        histogram.record(response.metadata.queue.as_secs_f64());
-        let histogram = metrics::histogram!("te_embed_inference_duration");
-        histogram.record(response.metadata.inference.as_secs_f64());
+        metrics::counter!("te_embed_success").increment(1);
+        metrics::histogram!("te_embed_duration").record(total_time.as_secs_f64());
+        metrics::histogram!("te_embed_tokenization_duration")
+            .record(response.metadata.tokenization.as_secs_f64());
+        metrics::histogram!("te_embed_queue_duration")
+            .record(response.metadata.queue.as_secs_f64());
+        metrics::histogram!("te_embed_inference_duration")
+            .record(response.metadata.inference.as_secs_f64());
 
         Ok(response)
     }
@@ -250,7 +246,7 @@ impl Infer {
         if let Some(dimensions) = dimensions {
             if dimensions == 0 {
                 metrics::counter!("te_request_failure", "err" => "validation").increment(1);
-                let message = "`dimensions` should be always positive".to_string();
+                let message = "`dimensions` should be positive".to_string();
                 tracing::error!("{message}");
                 return Err(TextEmbeddingsError::Validation(message));
             }
