@@ -1691,11 +1691,12 @@ pub async fn run(
     });
 
     // See: https://github.com/metrics-rs/metrics/issues/467#issuecomment-2022755151
-    let (recorder, _) = prom_builder
+    let (recorder, exporter) = prom_builder
         .build()
         .context("failed to build prometheus recorder")?;
     let prom_handle = recorder.handle();
     metrics::set_global_recorder(recorder).context("Failed to set global recorder")?;
+    tokio::runtime::Handle::current().spawn(exporter);
 
     // CORS layer
     let allow_origin = allow_origin.unwrap_or(AllowOrigin::any());
