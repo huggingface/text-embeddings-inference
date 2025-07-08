@@ -28,6 +28,7 @@ fn compute_cap_matching(runtime_compute_cap: usize, compile_compute_cap: usize) 
         (75, 75) => true,
         (80..=89, 80) => true,
         (86..=89, 80..=86) => true,
+        (87, 87) => true, // 新增 87 的支持
         (89, 89) => true,
         (90, 90) => true,
         (_, _) => false,
@@ -58,6 +59,7 @@ mod tests {
         assert!(compute_cap_matching(86, 80));
         assert!(compute_cap_matching(89, 80));
         assert!(compute_cap_matching(89, 86));
+        assert!(compute_cap_matching(87, 87)); // 新增 87 的测试用例
 
         assert!(!compute_cap_matching(75, 80));
         assert!(!compute_cap_matching(75, 86));
@@ -80,5 +82,11 @@ mod tests {
         assert!(!compute_cap_matching(90, 80));
         assert!(!compute_cap_matching(90, 86));
         assert!(!compute_cap_matching(90, 89));
+
+        assert!(!compute_cap_matching(87, 75)); // 新增 87 的测试用例
+        assert!(!compute_cap_matching(87, 80));
+        assert!(!compute_cap_matching(87, 86));
+        assert!(!compute_cap_matching(87, 89));
+        assert!(!compute_cap_matching(87, 90));
     }
 }
