@@ -1148,76 +1148,9 @@ impl DebertaV2Model {
 }
 
 #[derive(Debug)]
-pub struct NERItem {
-    pub entity: String,
-    pub word: String,
-    pub score: f32,
-    pub start: usize,
-    pub end: usize,
-    pub index: usize,
-}
-
-#[derive(Debug)]
 pub struct TextClassificationItem {
     pub label: String,
     pub score: f32,
-}
-
-pub struct DebertaV2NERModel {
-    pub device: Device,
-    deberta: DebertaV2Model,
-    dropout: candle_nn::Dropout,
-    classifier: candle_nn::Linear,
-}
-
-fn id2label_len(config: &DebertaV2Config, id2label: Option<HashMap<u32, String>>) -> Result<usize> {
-    let id2label_len = match (&config.id2label, id2label) {
-        (None, None) => bail!("Id2Label is either not present in the model configuration or not passed into DebertaV2NERModel::load as a parameter"),
-        (None, Some(id2label_p)) => id2label_p.len(),
-        (Some(id2label_c), None) => id2label_c.len(),
-        (Some(id2label_c), Some(id2label_p)) => {
-            if *id2label_c == id2label_p {
-                id2label_c.len()
-            } else {
-                bail!("Id2Label is both present in the model configuration and provided as a parameter, and they are different.")
-            }
-        }
-    };
-    Ok(id2label_len)
-}
-
-impl DebertaV2NERModel {
-    pub fn load(vb: VarBuilder, config: &DebertaV2Config, id2label: Option<Id2Label>) -> Result<Self> {
-        let id2label_len = id2label_len(config, id2label)?;
-
-        let deberta = DebertaV2Model::load(vb.clone(), config)?;
-        let dropout = candle_nn::Dropout::new(config.hidden_dropout_prob as f32);
-        let classifier: candle_nn::Linear = candle_nn::linear_no_bias(
-            config.hidden_size,
-            id2label_len,
-            vb.root().pp("classifier"),
-        )?;
-
-        Ok(Self {
-            device: vb.device().clone(),
-            deberta,
-            dropout,
-            classifier,
-        })
-    }
-
-    pub fn forward(
-        &self,
-        input_ids: &Tensor,
-        token_type_ids: Option<Tensor>,
-        attention_mask: Option<Tensor>,
-    ) -> Result<Tensor> {
-        let output = self
-            .deberta
-            .forward(input_ids, token_type_ids, attention_mask)?;
-        let output = self.dropout.forward(&output, false)?;
-        self.classifier.forward(&output)
-    }
 }
 
 pub struct DebertaV2SeqClassificationModel {
@@ -1228,8 +1161,11 @@ pub struct DebertaV2SeqClassificationModel {
 }
 
 impl DebertaV2SeqClassificationModel {
-    pub fn load(vb: VarBuilder, config: &DebertaV2Config, id2label: Option<Id2Label>) -> Result<Self> {
-        let id2label_len = id2label_len(config, id2label)?;
+    pub fn load(vb: VarBuilder, config: &DebertaV2Config) -> Result<Self> {
+        let id2label_len = match &config.id2label {
+            None => candle::bail!("`id2label` must be set for classifier models"),
+            Some(id2label) => id2label.len(),
+        };
         let deberta = DebertaV2Model::load(vb.clone(), config)?;
         let pooler = DebertaV2ContextPooler::load(vb.clone(), config)?;
         let output_dim = pooler.output_dim()?;
