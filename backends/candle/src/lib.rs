@@ -11,7 +11,7 @@ use crate::compute_cap::{
     compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
 };
 use crate::models::{
-    BertConfig, BertModel, DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, JinaBertModel,
+    BertConfig, BertModel, DebertaV2Config, DebertaV2Model, DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, JinaBertModel,
     JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig, Model, ModernBertConfig,
     ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model,
 };
@@ -90,6 +90,8 @@ impl<'de> Deserialize<'de> for BertConfigWrapper {
 #[serde(tag = "model_type", rename_all = "kebab-case")]
 enum Config {
     Bert(BertConfigWrapper),
+    #[serde(rename(deserialize = "deberta-v2"))]
+    DebertaV2(DebertaV2Config),
     XlmRoberta(BertConfig),
     Camembert(BertConfig),
     Roberta(BertConfig),
@@ -243,6 +245,10 @@ impl CandleBackend {
                     tracing::info!("Starting Bert model on {:?}", device);
                     Ok(Box::new(BertModel::load(vb, &config, model_type).s()?))
                 }
+            },
+            (Config::DebertaV2(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting DebertaV2 model on {:?}", device);
+                Ok(Box::new(DebertaV2Model::load(vb, &config, model_type).s()?))
             },
             (
                 Config::XlmRoberta(config) | Config::Camembert(config) | Config::Roberta(config),
