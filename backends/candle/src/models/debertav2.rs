@@ -5,6 +5,7 @@ use candle_nn::{
     conv1d, embedding, layer_norm, Conv1d, Conv1dConfig, Embedding, LayerNorm, VarBuilder,
 };
 use serde::{Deserialize, Deserializer};
+use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 pub const DTYPE: DType = DType::F32;
 
@@ -160,7 +161,7 @@ impl DebertaV2Embeddings {
             config.layer_norm_eps,
             vb.pp("LayerNorm"),
         )?;
-        
+
         let position_ids =
             Tensor::arange(0, config.max_position_embeddings as u32, &device)?.unsqueeze(0)?;
 
@@ -343,7 +344,7 @@ impl DebertaV2DisentangledSelfAttention {
             if position_buckets > 0 {
                 pos_ebd_size = position_buckets
             }
-            
+
             if !share_att_key {
                 if config.pos_att_type.iter().any(|s| s == "c2p") {
                     pos_key_proj = Some(candle_nn::linear(
@@ -447,7 +448,7 @@ impl DebertaV2DisentangledSelfAttention {
 
         let mut attention_probs =
             XSoftmax::apply(&attention_scores, attention_mask, D::Minus1, &self.device)?;
-        
+
         let mut context_layer = attention_probs
             .reshape((
                 (),
@@ -561,7 +562,7 @@ impl DebertaV2DisentangledSelfAttention {
                             )?
                             .forward(&rel_embeddings)?,
                     )?
-                        .repeat(repeat_with)?,
+                    .repeat(repeat_with)?,
                 )
             }
             if self.config.pos_att_type.iter().any(|s| s == "p2c") {
@@ -582,7 +583,7 @@ impl DebertaV2DisentangledSelfAttention {
                 &[(pos_key_layer.dim(D::Minus1)? * scale_factor) as f32],
                 &self.device,
             )?
-                .sqrt()?;
+            .sqrt()?;
 
             let mut c2p_att = query_layer.matmul(&pos_key_layer.t()?)?;
 
@@ -614,7 +615,7 @@ impl DebertaV2DisentangledSelfAttention {
                 &[(pos_query_layer.dim(D::Minus1)? * scale_factor) as f32],
                 &self.device,
             )?
-                .sqrt()?;
+            .sqrt()?;
 
             let r_pos = {
                 if key_layer.dim(D::Minus2)? != query_layer.dim(D::Minus2)? {
@@ -625,7 +626,7 @@ impl DebertaV2DisentangledSelfAttention {
                         Some(self.position_buckets),
                         Some(self.max_relative_positions),
                     )?
-                        .unsqueeze(0)?
+                    .unsqueeze(0)?
                 } else {
                     relative_pos
                 }
@@ -709,10 +710,7 @@ impl DebertaV2SelfOutput {
             config.layer_norm_eps,
             vb.pp("LayerNorm"),
         )?;
-        Ok(Self {
-            dense,
-            layer_norm,
-        })
+        Ok(Self { dense, layer_norm })
     }
 
     pub fn forward(&self, hidden_states: &Tensor, input_tensor: &Tensor) -> Result<Tensor> {
@@ -766,10 +764,7 @@ impl DebertaV2Output {
             config.layer_norm_eps,
             vb.pp("output.LayerNorm"),
         )?;
-        Ok(Self {
-            dense,
-            layer_norm,
-        })
+        Ok(Self { dense, layer_norm })
     }
 
     pub fn forward(&self, hidden_states: &Tensor, input_tensor: &Tensor) -> Result<Tensor> {
@@ -862,7 +857,6 @@ impl ConvLayer {
             config.layer_norm_eps,
             vb.pp("LayerNorm"),
         )?;
-
 
         Ok(Self {
             _conv_act: conv_act,
@@ -1090,21 +1084,32 @@ impl DebertaV2Encoder {
 pub struct DebertaV2Model {
     embeddings: DebertaV2Embeddings,
     encoder: DebertaV2Encoder,
-    z_steps: usize,
+    classifier: Option<DebertaV2SeqClassificationHead>,
+    
     pub device: Device,
 }
 
 impl DebertaV2Model {
-    pub fn load(vb: VarBuilder, config: &DebertaV2Config) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &DebertaV2Config, model_type: ModelType) -> Result<Self> {
         let vb = vb.clone();
+        let classifier = match model_type {
+            ModelType::Classifier => {
+
+                let classifier = DebertaV2SeqClassificationHead::load(vb.clone(), config)?;
+
+                Some(classifier)
+            }
+            ModelType::Embedding(pool) => {
+                None
+            }
+        };
         let embeddings = DebertaV2Embeddings::load(vb.pp("embeddings"), config)?;
         let encoder = DebertaV2Encoder::load(vb.pp("encoder"), config)?;
-        let z_steps: usize = 0;
 
         Ok(Self {
             embeddings,
             encoder,
-            z_steps,
+            classifier,
             device: vb.device().clone(),
         })
     }
@@ -1139,56 +1144,35 @@ impl DebertaV2Model {
             self.encoder
                 .forward(&embedding_output, &attention_mask, None, None)?;
 
-        if self.z_steps > 1 {
-            todo!("Complete DebertaV2Model forward() when z_steps > 1 -- Needs a model to test this situation.")
-        }
-
         Ok(encoder_output)
     }
 }
 
-#[derive(Debug)]
-pub struct TextClassificationItem {
-    pub label: String,
-    pub score: f32,
-}
-
-pub struct DebertaV2SeqClassificationModel {
+pub struct DebertaV2SeqClassificationHead {
     pub device: Device,
-    deberta: DebertaV2Model,
     pooler: DebertaV2ContextPooler,
     classifier: candle_nn::Linear,
 }
 
-impl DebertaV2SeqClassificationModel {
+impl DebertaV2SeqClassificationHead {
     pub fn load(vb: VarBuilder, config: &DebertaV2Config) -> Result<Self> {
         let id2label_len = match &config.id2label {
             None => candle::bail!("`id2label` must be set for classifier models"),
             Some(id2label) => id2label.len(),
         };
-        let deberta = DebertaV2Model::load(vb.clone(), config)?;
         let pooler = DebertaV2ContextPooler::load(vb.clone(), config)?;
         let output_dim = pooler.output_dim()?;
         let classifier = candle_nn::linear(output_dim, id2label_len, vb.root().pp("classifier"))?;
 
         Ok(Self {
             device: vb.device().clone(),
-            deberta,
             pooler,
             classifier,
         })
     }
 
-    pub fn forward(
-        &self,
-        input_ids: &Tensor,
-        token_type_ids: Option<Tensor>,
-        attention_mask: Option<Tensor>,
-    ) -> Result<Tensor> {
-        let encoder_layer = self
-            .deberta
-            .forward(input_ids, token_type_ids, attention_mask)?;
-        let pooled_output = self.pooler.forward(&encoder_layer)?;
+    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let pooled_output = self.pooler.forward(&hidden_states)?;
         self.classifier.forward(&pooled_output)
     }
 }
@@ -1205,16 +1189,11 @@ impl DebertaV2ContextPooler {
             .pooler_hidden_size
             .context("config.pooler_hidden_size is required for DebertaV2ContextPooler")?;
 
-        let pooler_dropout = config
-            .pooler_dropout
-            .context("config.pooler_dropout is required for DebertaV2ContextPooler")?;
-
         let dense = candle_nn::linear(
             pooler_hidden_size,
             pooler_hidden_size,
             vb.root().pp("pooler.dense"),
         )?;
-
 
         Ok(Self {
             dense,
