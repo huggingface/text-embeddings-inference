@@ -1480,10 +1480,10 @@ impl Model for DebertaV2Model {
         match &self.classifier {
             None => candle::bail!("`predict` is not implemented for this model"),
             Some(classifier) => {
-                let (_pooled_embeddings, raw_embeddings) = self.forward(batch)?;
-                let raw_embeddings =
-                    raw_embeddings.expect("raw_embeddings is empty. This is a bug.");
-                classifier.forward(&raw_embeddings)
+                let (pooled_embeddings, _raw_embeddings) = self.forward(batch)?;
+                let pooled_embeddings =
+                    pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
+                classifier.forward(&pooled_embeddings)
             }
         }
     }
