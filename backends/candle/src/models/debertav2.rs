@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use candle::{bail, Context, DType, Device, Module, Result, Tensor, D};
+use candle::{bail, Context, DType, Device, IndexOp, Module, Result, Tensor, D};
+use crate::models::Model;
 use candle_nn::{
     conv1d, embedding, layer_norm, Conv1d, Conv1dConfig, Embedding, LayerNorm, VarBuilder,
 };
@@ -47,7 +48,7 @@ enum PositionEmbeddingType {
     Absolute,
 }
 
-pub type Id2Label = HashMap<u32, String>;
+pub type Id2Label = HashMap<String, String>;
 pub type Label2Id = HashMap<String, u32>;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -399,8 +400,6 @@ impl DebertaV2DisentangledSelfAttention {
         let key_layer = self.transpose_for_scores(&self.key_proj.forward(query_states)?)?;
         let value_layer = self.transpose_for_scores(&self.value_proj.forward(query_states)?)?;
 
-        let mut rel_att: Option<Tensor> = None;
-
         let mut scale_factor: usize = 1;
 
         if self.config.pos_att_type.iter().any(|s| s == "c2p") {
@@ -423,17 +422,21 @@ impl DebertaV2DisentangledSelfAttention {
             query_layer.matmul(&div)?
         };
 
-        if self.relative_attention {
+        let rel_att = if self.relative_attention {
             if let Some(rel_embeddings) = rel_embeddings {
-                let rel_att = Some(self.disentangled_attention_bias(
+                Some(self.disentangled_attention_bias(
                     query_layer,
                     key_layer,
                     relative_pos,
                     rel_embeddings.clone(),
                     scale_factor,
-                )?);
+                )?)
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
         if let Some(rel_att) = rel_att {
             attention_scores = attention_scores.broadcast_add(&rel_att)?;
@@ -446,7 +449,7 @@ impl DebertaV2DisentangledSelfAttention {
             attention_scores.dim(D::Minus1)?,
         ))?;
 
-        let mut attention_probs =
+        let attention_probs =
             XSoftmax::apply(&attention_scores, attention_mask, D::Minus1, &self.device)?;
 
         let mut context_layer = attention_probs
@@ -714,7 +717,7 @@ impl DebertaV2SelfOutput {
     }
 
     pub fn forward(&self, hidden_states: &Tensor, input_tensor: &Tensor) -> Result<Tensor> {
-        let mut hidden_states = self.dense.forward(hidden_states)?;
+        let hidden_states = self.dense.forward(hidden_states)?;
         self.layer_norm
             .forward(&hidden_states.broadcast_add(input_tensor)?)
     }
@@ -1085,66 +1088,224 @@ pub struct DebertaV2Model {
     embeddings: DebertaV2Embeddings,
     encoder: DebertaV2Encoder,
     classifier: Option<DebertaV2SeqClassificationHead>,
-    
+    pool: Option<Pool>,
     pub device: Device,
+    pub dtype: DType,
+    span: tracing::Span,
 }
 
 impl DebertaV2Model {
     pub fn load(vb: VarBuilder, config: &DebertaV2Config, model_type: ModelType) -> Result<Self> {
         let vb = vb.clone();
-        let classifier = match model_type {
+        let (classifier, pool) = match model_type {
             ModelType::Classifier => {
-
                 let classifier = DebertaV2SeqClassificationHead::load(vb.clone(), config)?;
-
-                Some(classifier)
+                (Some(classifier), None)
             }
             ModelType::Embedding(pool) => {
-                None
+                (None, Some(pool))
             }
         };
-        let embeddings = DebertaV2Embeddings::load(vb.pp("embeddings"), config)?;
-        let encoder = DebertaV2Encoder::load(vb.pp("encoder"), config)?;
+        
+        // Try loading embeddings from "embeddings" first, then "deberta.embeddings"
+        let embeddings = match DebertaV2Embeddings::load(vb.pp("embeddings"), config) {
+            Ok(embeddings) => embeddings,
+            Err(_) => DebertaV2Embeddings::load(vb.pp("deberta.embeddings"), config)?,
+        };
+        
+        // Try loading encoder from "encoder" first, then "deberta.encoder"
+        let encoder = match DebertaV2Encoder::load(vb.pp("encoder"), config) {
+            Ok(encoder) => encoder,
+            Err(_) => DebertaV2Encoder::load(vb.pp("deberta.encoder"), config)?,
+        };
 
         Ok(Self {
             embeddings,
             encoder,
             classifier,
+            pool,
             device: vb.device().clone(),
+            dtype: vb.dtype(),
+            span: tracing::span!(tracing::Level::TRACE, "model"),
         })
     }
 
-    pub fn forward(
-        &self,
-        input_ids: &Tensor,
-        token_type_ids: Option<Tensor>,
-        attention_mask: Option<Tensor>,
-    ) -> Result<Tensor> {
-        let input_ids_shape = input_ids.shape();
+    pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
+        let _enter = self.span.enter();
 
-        let attention_mask = match attention_mask {
-            Some(mask) => mask,
-            None => Tensor::ones(input_ids_shape, DType::I64, &self.device)?,
+        let batch_size = batch.len();
+        let max_length = batch.max_length as usize;
+
+        let shape = (batch_size, max_length);
+
+        let (input_ids, token_type_ids, position_ids, input_lengths, attention_mask) = if batch_size > 1 {
+            // Prepare padded batch
+            let elems = batch_size * max_length;
+
+            let mut input_ids = Vec::with_capacity(elems);
+            let mut token_type_ids = Vec::with_capacity(elems);
+            let mut position_ids = Vec::with_capacity(elems);
+            let mut attention_mask = Vec::with_capacity(elems);
+            let mut input_lengths = Vec::with_capacity(batch_size);
+            // Bool to know if we need to use the attention mask
+            let mut masking = false;
+
+            for i in 0..batch_size {
+                let start = batch.cumulative_seq_lengths[i] as usize;
+                let end = batch.cumulative_seq_lengths[i + 1] as usize;
+                let seq_length = (end - start) as u32;
+                input_lengths.push(seq_length as f32);
+
+                // Copy values
+                for j in start..end {
+                    input_ids.push(batch.input_ids[j]);
+                    token_type_ids.push(batch.token_type_ids[j]);
+                    position_ids.push(batch.position_ids[j]);
+                    attention_mask.push(1.0_f32);
+                }
+
+                // Add padding if needed
+                let padding = batch.max_length - seq_length;
+                if padding > 0 {
+                    // Set bool to use attention mask
+                    masking = true;
+                    for _ in 0..padding {
+                        input_ids.push(0);
+                        token_type_ids.push(0);
+                        position_ids.push(0);
+                        attention_mask.push(0.0_f32);
+                    }
+                }
+            }
+
+            let attention_mask = match masking {
+                true => {
+                    let attention_mask = Tensor::from_vec(
+                        attention_mask,
+                        (batch_size, max_length, 1),
+                        &self.device,
+                    )?
+                    .to_dtype(self.dtype)?;
+
+                    Some(attention_mask)
+                }
+                false => None,
+            };
+
+            (input_ids, token_type_ids, position_ids, input_lengths, attention_mask)
+        } else {
+            (
+                batch.input_ids,
+                batch.token_type_ids,
+                batch.position_ids,
+                vec![batch.max_length as f32],
+                None,
+            )
         };
 
-        let token_type_ids = match token_type_ids {
-            Some(ids) => ids,
-            None => Tensor::zeros(input_ids_shape, DType::U32, &self.device)?,
-        };
+        let input_ids = Tensor::from_vec(input_ids, shape, &self.device)?;
+        let token_type_ids = Tensor::from_vec(token_type_ids, shape, &self.device)?;
+        let position_ids = Tensor::from_vec(position_ids, shape, &self.device)?;
+        let mut input_lengths =
+            Tensor::from_vec(input_lengths, (batch_size, 1), &self.device)?.to_dtype(self.dtype)?;
 
         let embedding_output = self.embeddings.forward(
-            Some(input_ids),
+            Some(&input_ids),
             Some(&token_type_ids),
-            None,
-            Some(&attention_mask),
+            Some(&position_ids),
+            attention_mask.as_ref(),
             None,
         )?;
 
-        let encoder_output =
-            self.encoder
-                .forward(&embedding_output, &attention_mask, None, None)?;
+        let encoder_attention_mask = attention_mask.as_ref().cloned().unwrap_or_else(|| Tensor::ones(shape, DType::I64, &self.device).unwrap());
+        let encoder_output = self.encoder.forward(&embedding_output, &encoder_attention_mask, None, None)?;
 
-        Ok(encoder_output)
+        let has_pooling_requests = !batch.pooled_indices.is_empty();
+        let has_raw_requests = !batch.raw_indices.is_empty();
+
+        let pooled_embeddings = if has_pooling_requests {
+            let pooled_indices_length = batch.pooled_indices.len();
+            let mut outputs = encoder_output.clone();
+
+            // Only use pooled_indices if at least one member of the batch ask for raw embeddings
+            let pooled_indices = if has_raw_requests {
+                let pooled_indices =
+                    Tensor::from_vec(batch.pooled_indices, pooled_indices_length, &self.device)?;
+
+                // Select values in the batch
+                outputs = outputs.index_select(&pooled_indices, 0)?;
+                Some(pooled_indices)
+            } else {
+                None
+            };
+
+            let pooled_embeddings = match self.pool {
+                // CLS pooling
+                Some(Pool::Cls) => outputs.i((.., 0))?,
+                // Last token pooling is not supported for this model
+                Some(Pool::LastToken) => unreachable!(),
+                // Mean pooling
+                Some(Pool::Mean) => {
+                    if let Some(ref attention_mask) = attention_mask {
+                        let mut attention_mask = attention_mask.clone();
+
+                        if let Some(pooled_indices) = pooled_indices {
+                            // Select values in the batch
+                            attention_mask = attention_mask.index_select(&pooled_indices, 0)?;
+                            input_lengths = input_lengths.index_select(&pooled_indices, 0)?;
+                        };
+
+                        // Mask padded values
+                        outputs = outputs.broadcast_mul(&attention_mask)?;
+                    }
+
+                    (outputs.sum(1)?.broadcast_div(&input_lengths))?
+                }
+                Some(Pool::Splade) => unreachable!(),
+                None => outputs,
+            };
+            Some(pooled_embeddings)
+        } else {
+            None
+        };
+
+        let raw_embeddings = if has_raw_requests {
+            // Reshape outputs
+            let (b, l, h) = encoder_output.shape().dims3()?;
+            let outputs = encoder_output.reshape((b * l, h))?;
+
+            // We need to remove the padding tokens only if batch_size > 1 and there are some
+            // member of the batch that require pooling
+            // or if batch_size > 1 and the members of the batch have different lengths
+            if (attention_mask.is_some() || has_pooling_requests) && batch_size > 1 {
+                let mut final_indices: Vec<u32> = Vec::with_capacity(batch_size * max_length);
+
+                for i in batch.raw_indices.into_iter() {
+                    let start = i * batch.max_length;
+                    let i = i as usize;
+                    let length =
+                        batch.cumulative_seq_lengths[i + 1] - batch.cumulative_seq_lengths[i];
+
+                    for j in start..start + length {
+                        // Add indices for the tokens of this specific member of the batch
+                        final_indices.push(j);
+                    }
+                }
+
+                let final_indices_length = final_indices.len();
+                let final_indices =
+                    Tensor::from_vec(final_indices, final_indices_length, &self.device)?;
+
+                // Select the tokens with final indices
+                Some(outputs.index_select(&final_indices, 0)?)
+            } else {
+                Some(outputs)
+            }
+        } else {
+            None
+        };
+
+        Ok((pooled_embeddings, raw_embeddings))
     }
 }
 
@@ -1162,7 +1323,12 @@ impl DebertaV2SeqClassificationHead {
         };
         let pooler = DebertaV2ContextPooler::load(vb.clone(), config)?;
         let output_dim = pooler.output_dim()?;
-        let classifier = candle_nn::linear(output_dim, id2label_len, vb.root().pp("classifier"))?;
+        
+        // Try loading classifier from "classifier" first, then "deberta.classifier"
+        let classifier = match candle_nn::linear(output_dim, id2label_len, vb.root().pp("classifier")) {
+            Ok(classifier) => classifier,
+            Err(_) => candle_nn::linear(output_dim, id2label_len, vb.root().pp("deberta.classifier"))?,
+        };
 
         Ok(Self {
             device: vb.device().clone(),
@@ -1299,4 +1465,26 @@ pub(crate) fn make_log_bucket_position(
         let log_pos_mul_sign = log_pos.broadcast_mul(&sign.to_dtype(DType::F32)?)?;
         abs_pos_lte_mid.where_cond(&relative_pos.to_dtype(DType::F32)?, &log_pos_mul_sign)?
     })
+}
+
+impl Model for DebertaV2Model {
+    fn is_padded(&self) -> bool {
+        true
+    }
+
+    fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
+        self.forward(batch)
+    }
+
+    fn predict(&self, batch: Batch) -> Result<Tensor> {
+        match &self.classifier {
+            None => candle::bail!("`predict` is not implemented for this model"),
+            Some(classifier) => {
+                let (_pooled_embeddings, raw_embeddings) = self.forward(batch)?;
+                let raw_embeddings =
+                    raw_embeddings.expect("raw_embeddings is empty. This is a bug.");
+                classifier.forward(&raw_embeddings)
+            }
+        }
+    }
 }
