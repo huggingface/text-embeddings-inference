@@ -271,7 +271,17 @@ impl Infer {
         };
 
         if let Some(mrl_dimensions) = dimensions {
-            let mrl_dimensions = mrl_dimensions.min(response.results.len());
+            if mrl_dimensions > response.results.len() {
+                metrics::counter!("te_request_failure", "err" => "validation").increment(1);
+
+                let message =
+                    "`dimensions` should be smaller than the maximum embedding dimension."
+                        .to_string();
+                tracing::error!("{message}");
+
+                return Err(TextEmbeddingsError::Validation(message));
+            }
+
             response.results.truncate(mrl_dimensions);
         }
 
