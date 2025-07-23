@@ -235,7 +235,9 @@ impl Infer {
         let start_time = Instant::now();
 
         if self.is_splade() && normalize {
-            metrics::counter!("te_request_failure", "err" => "model_type").increment(1);
+            let counter = metrics::counter!("te_request_failure", "err" => "model_type");
+            counter.increment(1);
+
             let message = "`normalize` is not available for SPLADE models".to_string();
             tracing::error!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
@@ -294,14 +296,16 @@ impl Infer {
         let total_time = start_time.elapsed();
 
         // Metrics
-        metrics::counter!("te_embed_success").increment(1);
-        metrics::histogram!("te_embed_duration").record(total_time.as_secs_f64());
-        metrics::histogram!("te_embed_tokenization_duration")
-            .record(response.metadata.tokenization.as_secs_f64());
-        metrics::histogram!("te_embed_queue_duration")
-            .record(response.metadata.queue.as_secs_f64());
-        metrics::histogram!("te_embed_inference_duration")
-            .record(response.metadata.inference.as_secs_f64());
+        let counter = metrics::counter!("te_embed_success");
+        counter.increment(1);
+        let histogram = metrics::histogram!("te_embed_duration");
+        histogram.record(total_time.as_secs_f64());
+        let histogram = metrics::histogram!("te_embed_tokenization_duration");
+        histogram.record(response.metadata.tokenization.as_secs_f64());
+        let histogram = metrics::histogram!("te_embed_queue_duration");
+        histogram.record(response.metadata.queue.as_secs_f64());
+        let histogram = metrics::histogram!("te_embed_inference_duration");
+        histogram.record(response.metadata.inference.as_secs_f64());
 
         Ok(response)
     }
