@@ -46,6 +46,11 @@ Options:
 
           [env: DTYPE=]
           [possible values: float16, float32]
+      
+      --served-model-name <SERVED_MODEL_NAME>
+          The name of the model that is returned when serving OpenAI requests. If not specified, defaults to value in model-id.
+
+          [env: SERVED_MODEL_NAME=]
 
       --pooling <POOLING>
           Optionally control the pooling method for embedding models.

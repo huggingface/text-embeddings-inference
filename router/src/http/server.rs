@@ -1287,7 +1287,7 @@ async fn openai_embed(
     let response = OpenAICompatResponse {
         object: "list",
         data: embeddings,
-        model: info.model_id.clone(),
+        model: info.served_model_name.clone().unwrap_or_else(|| info.model_id.clone()),
         usage: OpenAICompatUsage {
             prompt_tokens: compute_tokens,
             total_tokens: compute_tokens,

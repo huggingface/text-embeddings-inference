@@ -36,6 +36,11 @@ struct Args {
     #[clap(long, env, value_enum)]
     dtype: Option<DType>,
 
+    /// The name of the model that is being served. If not specified, defaults to
+    /// model-id. 
+    #[clap(long, env)]
+    served_model_name: Option<String>,
+
     /// Optionally control the pooling method for embedding models.
     ///
     /// If `pooling` is not set, the pooling configuration will be parsed from the
@@ -214,6 +219,7 @@ async fn main() -> Result<()> {
         args.revision,
         args.tokenization_workers,
         args.dtype,
+        args.served_model_name,
         args.pooling,
         args.max_concurrent_requests,
         args.max_batch_tokens,
