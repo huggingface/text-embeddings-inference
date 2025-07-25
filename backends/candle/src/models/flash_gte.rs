@@ -1,6 +1,8 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{get_cos_sin, get_inv_freqs, LayerNorm, Linear};
-use crate::models::{GTEClassificationHead, GTEConfig, Model, PositionEmbeddingType, GTEMLP};
+use crate::models::gte::{GTEClassificationHead, GTEConfig, GTEMLP};
+use crate::models::{Model, PositionEmbeddingType};
+
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
 use candle_rotary::apply_rotary_inplace;

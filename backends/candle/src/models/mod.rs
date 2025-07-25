@@ -53,7 +53,7 @@ use candle::{Result, Tensor};
 pub use dense::{Dense, DenseConfig, DenseLayer};
 pub use distilbert::{DistilBertConfig, DistilBertModel};
 #[allow(unused_imports)]
-pub use gte::{GTEClassificationHead, GTEConfig, GTEModel, GTEMLP};
+pub use gte::{GTEConfig, GTEModel};
 pub use jina::JinaBertModel;
 pub use jina_code::JinaCodeBertModel;
 pub use mistral::MistralConfig;
