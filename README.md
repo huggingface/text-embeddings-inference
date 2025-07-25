@@ -113,7 +113,7 @@ Below are some examples of the currently supported models:
 model=Qwen/Qwen3-Embedding-0.6B
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id $model
 ```
 
 And then you can make requests like
@@ -327,13 +327,13 @@ Text Embeddings Inference ships with multiple Docker images that you can use to 
 
 | Architecture                        | Image                                                                   |
 |-------------------------------------|-------------------------------------------------------------------------|
-| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-1.7                   |
+| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-1.8                   |
 | Volta                               | NOT SUPPORTED                                                           |
-| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-1.7 (experimental) |
-| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:1.7                       |
-| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-1.7                    |
-| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-1.7                    |
-| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-1.7 (experimental) |
+| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-1.8 (experimental) |
+| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:1.8                       |
+| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-1.8                    |
+| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-1.8                    |
+| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-1.8 (experimental) |
 
 **Warning**: Flash Attention is turned off by default for the Turing image as it suffers from precision issues.
 You can turn Flash Attention v1 ON by using the `USE_FLASH_ATTENTION=True` environment variable.
@@ -362,7 +362,7 @@ model=<your private model>
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 token=<your cli READ token>
 
-docker run --gpus all -e HF_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id $model
+docker run --gpus all -e HF_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id $model
 ```
 
 ### Air gapped deployment
@@ -385,7 +385,7 @@ git clone https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
 volume=$PWD
 
 # Mount the models directory inside the container with a volume and set the model ID
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id /data/Qwen3-Embedding-0.6B
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id /data/Qwen3-Embedding-0.6B
 ```
 
 ### Using Re-rankers models
@@ -402,7 +402,7 @@ downstream performance.
 model=BAAI/bge-reranker-large
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id $model
 ```
 
 And then you can rank the similarity between a query and a list of texts with:
@@ -422,7 +422,7 @@ You can also use classic Sequence Classification models like `SamLowe/roberta-ba
 model=SamLowe/roberta-base-go_emotions
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id $model
 ```
 
 Once you have deployed the model you can use the `predict` endpoint to get the emotions most associated with an input:
@@ -442,7 +442,7 @@ You can choose to activate SPLADE pooling for Bert and Distilbert MaskedLM archi
 model=naver/efficient-splade-VI-BT-large-query
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id $model --pooling splade
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id $model --pooling splade
 ```
 
 Once you have deployed the model you can use the `/embed_sparse` endpoint to get the sparse embedding:
@@ -471,7 +471,7 @@ You can use the gRPC API by adding the `-grpc` tag to any TEI Docker image. For 
 model=Qwen/Qwen3-Embedding-0.6B
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7-grpc --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8-grpc --model-id $model
 ```
 
 ```shell
