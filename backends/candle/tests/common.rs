@@ -106,6 +106,7 @@ pub fn sort_embeddings(embeddings: Embeddings) -> (Vec<Vec<f32>>, Vec<Vec<f32>>)
 pub fn download_artifacts(
     model_id: &'static str,
     revision: Option<&'static str>,
+    dense_path: Option<&'static str>,
 ) -> Result<PathBuf> {
     let mut builder = ApiBuilder::from_env().with_progress(false);
 
@@ -140,6 +141,40 @@ pub fn download_artifacts(
             vec![p]
         }
     };
+
+    // Download dense path files if specified
+    if let Some(dense_path) = dense_path {
+        let dense_config_path = format!("{}/config.json", dense_path);
+        match api_repo.get(&dense_config_path) {
+            Ok(_) => tracing::info!("Downloaded dense config: {}", dense_config_path),
+            Err(err) => tracing::warn!(
+                "Could not download dense config {}: {}",
+                dense_config_path,
+                err
+            ),
+        }
+
+        // Try to download dense model files (safetensors first, then pytorch)
+        let dense_safetensors_path = format!("{}/model.safetensors", dense_path);
+        match api_repo.get(&dense_safetensors_path) {
+            Ok(_) => tracing::info!("Downloaded dense safetensors: {}", dense_safetensors_path),
+            Err(_) => {
+                tracing::warn!("Dense safetensors not found. Trying pytorch_model.bin");
+                let dense_pytorch_path = format!("{}/pytorch_model.bin", dense_path);
+                match api_repo.get(&dense_pytorch_path) {
+                    Ok(_) => {
+                        tracing::info!("Downloaded dense pytorch model: {}", dense_pytorch_path)
+                    }
+                    Err(err) => tracing::warn!(
+                        "Could not download dense pytorch model {}: {}",
+                        dense_pytorch_path,
+                        err
+                    ),
+                }
+            }
+        }
+    }
+
     let model_root = model_files[0].parent().unwrap().to_path_buf();
     Ok(model_root)
 }

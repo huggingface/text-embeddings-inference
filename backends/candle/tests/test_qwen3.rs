@@ -9,13 +9,14 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
 #[test]
 #[serial_test::serial]
 fn test_qwen3() -> Result<()> {
-    let model_root = download_artifacts("Qwen/Qwen3-Embedding-0.6B", None)?;
+    let model_root = download_artifacts("Qwen/Qwen3-Embedding-0.6B", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
         &model_root,
         "float32".to_string(),
         ModelType::Embedding(Pool::LastToken),
+        None,
     )?;
 
     let input_batch = batch(
