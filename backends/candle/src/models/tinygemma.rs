@@ -273,7 +273,7 @@ impl TinyGemmaAttention {
         };
 
         let mask: Vec<u8> = if let Some(window_size) = sliding_window {
-            // Bi-directional sliding window causal mask, meaning a token can attend to any
+            // Bi-directional sliding window mask, meaning a token can attend to any
             // other token if their absolute distance is within half the sliding window size
             let half_window = window_size / 2;
             (0..seq_len)
@@ -285,10 +285,8 @@ impl TinyGemmaAttention {
                 })
                 .collect()
         } else {
-            // Lower-diagonal causal mask, meaning a token can only attend to previous tokens
-            (0..seq_len)
-                .flat_map(|i| (0..seq_len).map(move |j| (j <= i) as u8))
-                .collect()
+            // Full attention mask, meaning a token can attend to all tokens
+            vec![1u8; seq_len * seq_len]
         };
 
         let mask_tensor = Tensor::from_slice(&mask, (seq_len, seq_len), device)?;
