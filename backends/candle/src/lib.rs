@@ -23,9 +23,9 @@ use crate::compute_cap::{
 };
 use crate::models::{
     BertConfig, BertModel, Dense, DenseConfig, DenseLayer, DistilBertConfig, DistilBertModel,
-    GTEConfig, GTEModel, Gemma3Config, Gemma3Model, JinaBertModel, JinaCodeBertModel, MPNetConfig,
-    MPNetModel, MistralConfig, Model, ModernBertConfig, ModernBertModel, NomicBertModel,
-    NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model,
+    GTEConfig, GTEModel, JinaBertModel, JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig,
+    Model, ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config,
+    Qwen3Config, Qwen3Model, TinyGemmaConfig, TinyGemmaModel,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -96,7 +96,7 @@ enum Config {
     #[serde(rename(deserialize = "distilbert"))]
     DistilBert(DistilBertConfig),
     #[serde(rename(deserialize = "gemma3_text"))]
-    Gemma3(Gemma3Config),
+    TinyGemma(TinyGemmaConfig),
     #[serde(alias = "new")]
     Gte(GTEConfig),
     #[serde(rename = "mpnet")]
@@ -265,9 +265,9 @@ impl CandleBackend {
                     DistilBertModel::load(vb, &config, model_type).s()?,
                 ))
             }
-            (Config::Gemma3(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting Gemma3 (only text) model on {:?}", device);
-                Ok(Box::new(Gemma3Model::load(vb, &config, model_type).s()?))
+            (Config::TinyGemma(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting TinyGemma model on {:?}", device);
+                Ok(Box::new(TinyGemmaModel::load(vb, &config, model_type).s()?))
             }
             (Config::Gte(config), Device::Cpu | Device::Metal(_)) => {
                 tracing::info!("Starting GTE model on {:?}", device);

@@ -9,7 +9,7 @@ use serde::Deserialize;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct Gemma3Config {
+pub struct TinyGemmaConfig {
     pub attention_bias: bool,
     pub eos_token_id: usize,
     pub head_dim: Option<usize>,
@@ -30,14 +30,14 @@ pub struct Gemma3Config {
 
 // DONE
 #[derive(Debug)]
-pub struct Gemma3RMSNorm {
+pub struct TinyGemmaRMSNorm {
     weight: Tensor,
     epsilon: f32,
     span: tracing::Span,
 }
 
 // DONE
-impl Gemma3RMSNorm {
+impl TinyGemmaRMSNorm {
     pub fn load(vb: VarBuilder, hidden_size: usize, epsilon: f32) -> Result<Self> {
         Ok(Self {
             weight: vb
@@ -81,7 +81,7 @@ impl Gemma3RMSNorm {
                 Ok((
                     hidden_states_normed
                         .to_dtype(hidden_states_dtype)?
-                        // NOTE: Gemma3 multiplies by (1.0 + weight) for scaling after normalization
+                        // NOTE: TinyGemma multiplies by (1.0 + weight) for scaling after normalization
                         .broadcast_mul(&(&self.weight + 1.0)?)?,
                     residual_add,
                 ))
@@ -127,19 +127,19 @@ impl Gemma3RMSNorm {
     }
 }
 
-enum Gemma3AttentionType {
+enum TinyGemmaAttentionType {
     FullAttention,
     SlidingAttention,
 }
 
-struct Gemma3Attention {
+struct TinyGemmaAttention {
     q_proj: Linear,
     k_proj: Linear,
     v_proj: Linear,
     o_proj: Linear,
 
-    q_norm: Gemma3RMSNorm,
-    k_norm: Gemma3RMSNorm,
+    q_norm: TinyGemmaRMSNorm,
+    k_norm: TinyGemmaRMSNorm,
 
     attention_head_size: usize,
     num_attention_heads: usize,
@@ -151,11 +151,11 @@ struct Gemma3Attention {
     span: tracing::Span,
 }
 
-impl Gemma3Attention {
+impl TinyGemmaAttention {
     pub fn load(
         vb: VarBuilder,
-        config: &Gemma3Config,
-        attention_type: Gemma3AttentionType,
+        config: &TinyGemmaConfig,
+        attention_type: TinyGemmaAttentionType,
     ) -> Result<Self> {
         let num_attention_heads = config.num_attention_heads;
         let attention_head_size = config
@@ -218,14 +218,14 @@ impl Gemma3Attention {
         let o_proj = Linear::new(output_weight, output_bias, None);
 
         let q_norm =
-            Gemma3RMSNorm::load(vb.pp("q_norm"), attention_head_size, config.rms_norm_eps)?;
+            TinyGemmaRMSNorm::load(vb.pp("q_norm"), attention_head_size, config.rms_norm_eps)?;
         let k_norm =
-            Gemma3RMSNorm::load(vb.pp("k_norm"), attention_head_size, config.rms_norm_eps)?;
+            TinyGemmaRMSNorm::load(vb.pp("k_norm"), attention_head_size, config.rms_norm_eps)?;
 
         let softmax_scale = 1.0 / (attention_head_size as f64).sqrt();
 
         match attention_type {
-            Gemma3AttentionType::FullAttention => Ok(Self {
+            TinyGemmaAttentionType::FullAttention => Ok(Self {
                 q_proj,
                 k_proj,
                 v_proj,
@@ -239,7 +239,7 @@ impl Gemma3Attention {
                 sliding_window: None,
                 span: tracing::span!(tracing::Level::TRACE, "full_attention"),
             }),
-            Gemma3AttentionType::SlidingAttention => Ok(Self {
+            TinyGemmaAttentionType::SlidingAttention => Ok(Self {
                 q_proj,
                 k_proj,
                 v_proj,
@@ -453,7 +453,7 @@ impl Gemma3Attention {
 }
 
 // DONE
-struct Gemma3MLP {
+struct TinyGemmaMLP {
     gate_up_proj: Linear,
     down_proj: Linear,
     hidden_activation: HiddenAct,
@@ -464,8 +464,8 @@ struct Gemma3MLP {
 }
 
 // DONE
-impl Gemma3MLP {
-    pub fn load(vb: VarBuilder, config: &Gemma3Config) -> Result<Self> {
+impl TinyGemmaMLP {
+    pub fn load(vb: VarBuilder, config: &TinyGemmaConfig) -> Result<Self> {
         let gate_proj_weight = vb
             .pp("gate_proj")
             .get((config.intermediate_size, config.hidden_size), "weight")?;
@@ -507,44 +507,44 @@ impl Gemma3MLP {
 }
 
 // DONE
-struct Gemma3Layer {
-    input_layernorm: Gemma3RMSNorm,
-    self_attn: Gemma3Attention,
-    post_attention_layernorm: Gemma3RMSNorm,
+struct TinyGemmaLayer {
+    input_layernorm: TinyGemmaRMSNorm,
+    self_attn: TinyGemmaAttention,
+    post_attention_layernorm: TinyGemmaRMSNorm,
 
-    pre_feedforward_layernorm: Gemma3RMSNorm,
-    mlp: Gemma3MLP,
-    post_feedforward_layernorm: Gemma3RMSNorm,
+    pre_feedforward_layernorm: TinyGemmaRMSNorm,
+    mlp: TinyGemmaMLP,
+    post_feedforward_layernorm: TinyGemmaRMSNorm,
 
     span: tracing::Span,
 }
 
 // DONE
-impl Gemma3Layer {
+impl TinyGemmaLayer {
     pub fn load(
         vb: VarBuilder,
-        config: &Gemma3Config,
-        attention_type: Gemma3AttentionType,
+        config: &TinyGemmaConfig,
+        attention_type: TinyGemmaAttentionType,
     ) -> Result<Self> {
-        let input_layernorm = Gemma3RMSNorm::load(
+        let input_layernorm = TinyGemmaRMSNorm::load(
             vb.pp("input_layernorm"),
             config.hidden_size,
             config.rms_norm_eps,
         )?;
-        let self_attn = Gemma3Attention::load(vb.pp("self_attn"), config, attention_type)?;
-        let post_attention_layernorm = Gemma3RMSNorm::load(
+        let self_attn = TinyGemmaAttention::load(vb.pp("self_attn"), config, attention_type)?;
+        let post_attention_layernorm = TinyGemmaRMSNorm::load(
             vb.pp("post_attention_layernorm"),
             config.hidden_size,
             config.rms_norm_eps,
         )?;
 
-        let pre_feedforward_layernorm = Gemma3RMSNorm::load(
+        let pre_feedforward_layernorm = TinyGemmaRMSNorm::load(
             vb.pp("pre_feedforward_layernorm"),
             config.hidden_size,
             config.rms_norm_eps,
         )?;
-        let mlp = Gemma3MLP::load(vb.pp("mlp"), config)?;
-        let post_feedforward_layernorm = Gemma3RMSNorm::load(
+        let mlp = TinyGemmaMLP::load(vb.pp("mlp"), config)?;
+        let post_feedforward_layernorm = TinyGemmaRMSNorm::load(
             vb.pp("post_feedforward_layernorm"),
             config.hidden_size,
             config.rms_norm_eps,
@@ -589,7 +589,7 @@ impl Gemma3Layer {
 }
 
 // DONE
-pub struct Gemma3Embedding {
+pub struct TinyGemmaEmbedding {
     embedding: Embedding,
     scale: f64,
 
@@ -597,8 +597,8 @@ pub struct Gemma3Embedding {
 }
 
 // DONE
-impl Gemma3Embedding {
-    pub fn load(vb: VarBuilder, config: &Gemma3Config) -> Result<Self> {
+impl TinyGemmaEmbedding {
+    pub fn load(vb: VarBuilder, config: &TinyGemmaConfig) -> Result<Self> {
         let embedding = Embedding::new(
             vb.get((config.vocab_size, config.hidden_size), "weight")?,
             config.hidden_size,
@@ -620,10 +620,10 @@ impl Gemma3Embedding {
     }
 }
 
-pub struct Gemma3Model {
-    embed_tokens: Gemma3Embedding,
-    layers: Vec<Gemma3Layer>,
-    norm: Gemma3RMSNorm,
+pub struct TinyGemmaModel {
+    embed_tokens: TinyGemmaEmbedding,
+    layers: Vec<TinyGemmaLayer>,
+    norm: TinyGemmaRMSNorm,
 
     rotary_cache: (Tensor, Tensor),
     rotary_dim: usize,
@@ -638,28 +638,28 @@ pub struct Gemma3Model {
     span: tracing::Span,
 }
 
-impl Gemma3Model {
-    pub fn load(vb: VarBuilder, config: &Gemma3Config, model_type: ModelType) -> Result<Self> {
+impl TinyGemmaModel {
+    pub fn load(vb: VarBuilder, config: &TinyGemmaConfig, model_type: ModelType) -> Result<Self> {
         let pool = match model_type {
             ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for Gemma3")
+                candle::bail!("`classifier` model type is not supported for TinyGemma")
             }
             ModelType::Embedding(pool) => pool,
         };
 
-        let embed_tokens = Gemma3Embedding::load(vb.pp("embed_tokens"), config)?;
+        let embed_tokens = TinyGemmaEmbedding::load(vb.pp("embed_tokens"), config)?;
 
         let layers = (0..config.num_hidden_layers)
             .map(|layer_idx| {
                 let attention_type = match (layer_idx + 1) % config.sliding_window_pattern > 0 {
-                    true => Gemma3AttentionType::FullAttention,
-                    false => Gemma3AttentionType::SlidingAttention,
+                    true => TinyGemmaAttentionType::FullAttention,
+                    false => TinyGemmaAttentionType::SlidingAttention,
                 };
-                Gemma3Layer::load(vb.pp(format!("layers.{layer_idx}")), config, attention_type)
+                TinyGemmaLayer::load(vb.pp(format!("layers.{layer_idx}")), config, attention_type)
             })
-            .collect::<Result<Vec<Gemma3Layer>>>()?;
+            .collect::<Result<Vec<TinyGemmaLayer>>>()?;
 
-        let norm = Gemma3RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
+        let norm = TinyGemmaRMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
 
         let rotary_dim = config
             .head_dim
@@ -863,7 +863,7 @@ impl Gemma3Model {
                     }
                 }
                 Pool::Splade => {
-                    unreachable!("Splade is not supported for Gemma3");
+                    unreachable!("Splade is not supported for TinyGemma");
                 }
             }
         } else {
@@ -901,7 +901,7 @@ impl Gemma3Model {
     }
 }
 
-impl Model for Gemma3Model {
+impl Model for TinyGemmaModel {
     fn is_padded(&self) -> bool {
         true
     }
