@@ -25,7 +25,6 @@ pub struct Gemma3Config {
     pub sliding_window: Option<usize>,
     #[serde(rename(deserialize = "_sliding_window_pattern"))]
     pub sliding_window_pattern: usize,
-    pub use_bidirectional_attention: bool,
     pub vocab_size: usize,
 }
 
@@ -147,9 +146,7 @@ struct Gemma3Attention {
     num_key_value_heads: usize,
     softmax_scale: f64,
 
-    // NOTE: required for handling the bidirectional sliding window attention
     sliding_window: Option<usize>,
-    use_bidirectional_attention: bool,
 
     span: tracing::Span,
 }
@@ -240,7 +237,6 @@ impl Gemma3Attention {
                 num_key_value_heads,
                 softmax_scale,
                 sliding_window: None,
-                use_bidirectional_attention: false,
                 span: tracing::span!(tracing::Level::TRACE, "full_attention"),
             }),
             Gemma3AttentionType::SlidingAttention => Ok(Self {
@@ -255,7 +251,6 @@ impl Gemma3Attention {
                 num_key_value_heads,
                 softmax_scale,
                 sliding_window: config.sliding_window,
-                use_bidirectional_attention: config.use_bidirectional_attention,
                 span: tracing::span!(tracing::Level::TRACE, "sliding_attention"),
             }),
         }
@@ -270,7 +265,6 @@ impl Gemma3Attention {
         device: &Device,
         dtype: DType,
         sliding_window: Option<usize>,
-        use_bidirectional_attention: bool,
     ) -> Result<Tensor> {
         let min_value = match dtype {
             DType::F32 => f32::MIN,
@@ -278,29 +272,17 @@ impl Gemma3Attention {
         };
 
         let mask: Vec<u8> = if let Some(window_size) = sliding_window {
-            if use_bidirectional_attention {
-                // Bi-directional sliding window causal mask, meaning a token can attend to any
-                // other token if their absolute distance is within half the sliding window size
-                let half_window = window_size / 2;
-                (0..seq_len)
-                    .flat_map(|i| {
-                        (0..seq_len).map(move |j| {
-                            let distance = if i > j { i - j } else { j - i };
-                            (distance <= half_window) as u8
-                        })
+            // Bi-directional sliding window causal mask, meaning a token can attend to any
+            // other token if their absolute distance is within half the sliding window size
+            let half_window = window_size / 2;
+            (0..seq_len)
+                .flat_map(|i| {
+                    (0..seq_len).map(move |j| {
+                        let distance = if i > j { i - j } else { j - i };
+                        (distance <= half_window) as u8
                     })
-                    .collect()
-            } else {
-                // Sliding window causal mask, meaning a token can attend to previous tokens within
-                // the sliding window size
-                (0..seq_len)
-                    .flat_map(|i| {
-                        (0..seq_len).map(move |j| {
-                            (j <= i && j >= i.saturating_sub(window_size.saturating_sub(1))) as u8
-                        })
-                    })
-                    .collect()
-            }
+                })
+                .collect()
         } else {
             // Lower-diagonal causal mask, meaning a token can only attend to previous tokens
             (0..seq_len)
@@ -397,7 +379,6 @@ impl Gemma3Attention {
                     attention_bias.device(),
                     attention_bias.dtype(),
                     self.sliding_window,
-                    self.use_bidirectional_attention,
                 )?;
                 Some(attention_bias.broadcast_add(&causal_mask)?)
             }
