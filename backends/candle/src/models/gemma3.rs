@@ -261,6 +261,7 @@ impl Gemma3Attention {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_causal_mask(
         &self,
         batch_size: usize,
@@ -393,7 +394,7 @@ impl Gemma3Attention {
                     batch_size,
                     dim,
                     seq_length,
-                    &attention_bias.device(),
+                    attention_bias.device(),
                     attention_bias.dtype(),
                     self.sliding_window,
                     self.use_bidirectional_attention,
