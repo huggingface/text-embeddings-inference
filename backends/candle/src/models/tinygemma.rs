@@ -730,8 +730,8 @@ impl TinyGemmaModel {
         let layers = (0..config.num_hidden_layers)
             .map(|layer_idx| {
                 let attention_type = match (layer_idx + 1) % config.sliding_window_pattern > 0 {
-                    true => TinyGemmaAttentionType::FullAttention,
-                    false => TinyGemmaAttentionType::SlidingAttention,
+                    false => TinyGemmaAttentionType::FullAttention,
+                    true => TinyGemmaAttentionType::SlidingAttention,
                 };
                 TinyGemmaLayer::load(vb.pp(format!("layers.{layer_idx}")), config, attention_type)
             })
