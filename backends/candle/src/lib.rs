@@ -266,8 +266,14 @@ impl CandleBackend {
                 ))
             }
             (Config::TinyGemma(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting TinyGemma model on {:?}", device);
-                Ok(Box::new(TinyGemmaModel::load(vb, &config, model_type).s()?))
+                if dtype != DType::F32 {
+                    Err(BackendError::Start(
+                        "TinyGemma is only supported in fp32 precision".to_string(),
+                    ))
+                } else {
+                    tracing::info!("Starting TinyGemma model on {:?}", device);
+                    Ok(Box::new(TinyGemmaModel::load(vb, &config, model_type).s()?))
+                }
             }
             (Config::Gte(config), Device::Cpu | Device::Metal(_)) => {
                 tracing::info!("Starting GTE model on {:?}", device);
