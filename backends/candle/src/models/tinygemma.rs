@@ -20,6 +20,7 @@ pub struct TinyGemmaConfig {
     pub num_attention_heads: usize,
     pub num_hidden_layers: usize,
     pub num_key_value_heads: usize,
+    pub query_pre_attn_scalar: usize,
     pub rms_norm_eps: f32,
     pub rope_theta: f32,
     pub sliding_window: Option<usize>,
@@ -144,7 +145,7 @@ struct TinyGemmaAttention {
     attention_head_size: usize,
     num_attention_heads: usize,
     num_key_value_heads: usize,
-    softmax_scale: f64,
+    scaling: f64,
 
     sliding_window: Option<usize>,
 
@@ -222,7 +223,7 @@ impl TinyGemmaAttention {
         let k_norm =
             TinyGemmaRMSNorm::load(vb.pp("k_norm"), attention_head_size, config.rms_norm_eps)?;
 
-        let softmax_scale = 1.0 / (attention_head_size as f64).sqrt();
+        let scaling = 1.0 / (config.query_pre_attn_scalar as f64).sqrt();
 
         match attention_type {
             TinyGemmaAttentionType::FullAttention => Ok(Self {
@@ -235,7 +236,7 @@ impl TinyGemmaAttention {
                 attention_head_size,
                 num_attention_heads,
                 num_key_value_heads,
-                softmax_scale,
+                scaling,
                 sliding_window: None,
                 span: tracing::span!(tracing::Level::TRACE, "full_attention"),
             }),
@@ -249,7 +250,7 @@ impl TinyGemmaAttention {
                 attention_head_size,
                 num_attention_heads,
                 num_key_value_heads,
-                softmax_scale,
+                scaling,
                 sliding_window: config.sliding_window,
                 span: tracing::span!(tracing::Level::TRACE, "sliding_attention"),
             }),
@@ -406,7 +407,7 @@ impl TinyGemmaAttention {
                     &k,
                     &q,
                     attention_bias.as_ref(),
-                    Some(self.softmax_scale as f32),
+                    Some(self.scaling as f32),
                     beta,
                     None,
                     None,
@@ -436,7 +437,7 @@ impl TinyGemmaAttention {
             }
         } else {
             let attn_weights = q.matmul(&k.t()?)?;
-            let mut attn_weights = (attn_weights * self.softmax_scale)?;
+            let mut attn_weights = (attn_weights * self.scaling)?;
 
             if let Some(attention_bias) = attention_bias {
                 attn_weights = attn_weights.add(&attention_bias)?;
