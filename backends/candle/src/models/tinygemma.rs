@@ -128,85 +128,6 @@ impl TinyGemmaRMSNorm {
     }
 }
 
-#[derive(Debug)]
-pub struct TinyGemmaLayerNorm {
-    weight: Tensor,
-    epsilon: f32,
-
-    span: tracing::Span,
-}
-
-impl TinyGemmaLayerNorm {
-    pub fn load(vb: VarBuilder, hidden_size: usize, epsilon: f32) -> Result<Self> {
-        Ok(Self {
-            weight: vb
-                .get(hidden_size, "weight")
-                .or_else(|_| vb.get(hidden_size, "gamma"))?,
-            epsilon,
-            span: tracing::span!(tracing::Level::TRACE, "layernorm"),
-        })
-    }
-
-    pub fn forward(&self, hidden_states: &Tensor, residual: Option<&Tensor>) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        match hidden_states.device() {
-            Device::Cpu | Device::Metal(_) => {
-                let mut hidden_states = hidden_states.clone();
-                if let Some(residual) = residual {
-                    hidden_states = hidden_states.add(residual)?;
-                }
-                let hidden_states_dtype = hidden_states.dtype();
-                let internal_dtype = match hidden_states_dtype {
-                    DType::F16 | DType::BF16 => DType::F32,
-                    d => d,
-                };
-                let hidden_size = hidden_states.dim(D::Minus1)?;
-                let hidden_states = hidden_states.to_dtype(internal_dtype)?;
-                let mean_hidden_states =
-                    (hidden_states.sum_keepdim(D::Minus1)? / hidden_size as f64)?;
-                let hidden_states = hidden_states.broadcast_sub(&mean_hidden_states)?;
-                let norm_hidden_states =
-                    (hidden_states.sqr()?.sum_keepdim(D::Minus1)? / hidden_size as f64)?;
-                let hidden_states_normed = hidden_states
-                    .broadcast_div(&(norm_hidden_states + self.epsilon as f64)?.sqrt()?)?;
-                let hidden_states = hidden_states_normed
-                    .to_dtype(hidden_states_dtype)?
-                    .broadcast_mul(&(&self.weight + 1.0)?)?;
-
-                Ok(hidden_states)
-            }
-            Device::Cuda(_) => {
-                #[cfg(feature = "cuda")]
-                {
-                    use candle_layer_norm::{fused_add_layer_norm, layer_norm};
-
-                    let original_shape = hidden_states.shape();
-                    let hidden_states = hidden_states.flatten_to(D::Minus2)?;
-
-                    let result = if let Some(residual) = residual {
-                        let residual = residual.flatten_to(D::Minus2)?;
-
-                        let (result, _) = fused_add_layer_norm(
-                            &hidden_states,
-                            &residual,
-                            &(&self.weight + 1.0)?,
-                            None,
-                            self.epsilon,
-                        )?;
-                        Ok(result)
-                    } else {
-                        layer_norm(&hidden_states, &(&self.weight + 1.0)?, None, self.epsilon)
-                    }?;
-                    result.reshape(original_shape)
-                }
-                #[cfg(not(feature = "cuda"))]
-                candle::bail!("`cuda` feature is not enabled")
-            }
-        }
-    }
-}
-
 enum TinyGemmaAttentionType {
     FullAttention,
     SlidingAttention,
@@ -584,13 +505,13 @@ impl TinyGemmaMLP {
 }
 
 struct TinyGemmaLayer {
-    input_layernorm: TinyGemmaLayerNorm,
+    input_layernorm: TinyGemmaRMSNorm,
     self_attn: TinyGemmaAttention,
-    post_attention_layernorm: TinyGemmaLayerNorm,
+    post_attention_layernorm: TinyGemmaRMSNorm,
 
-    pre_feedforward_layernorm: TinyGemmaLayerNorm,
+    pre_feedforward_layernorm: TinyGemmaRMSNorm,
     mlp: TinyGemmaMLP,
-    post_feedforward_layernorm: TinyGemmaLayerNorm,
+    post_feedforward_layernorm: TinyGemmaRMSNorm,
 
     span: tracing::Span,
 }
@@ -601,25 +522,25 @@ impl TinyGemmaLayer {
         config: &TinyGemmaConfig,
         attention_type: TinyGemmaAttentionType,
     ) -> Result<Self> {
-        let input_layernorm = TinyGemmaLayerNorm::load(
+        let input_layernorm = TinyGemmaRMSNorm::load(
             vb.pp("input_layernorm"),
             config.hidden_size,
             config.rms_norm_eps,
         )?;
         let self_attn = TinyGemmaAttention::load(vb.pp("self_attn"), config, attention_type)?;
-        let post_attention_layernorm = TinyGemmaLayerNorm::load(
+        let post_attention_layernorm = TinyGemmaRMSNorm::load(
             vb.pp("post_attention_layernorm"),
             config.hidden_size,
             config.rms_norm_eps,
         )?;
 
-        let pre_feedforward_layernorm = TinyGemmaLayerNorm::load(
+        let pre_feedforward_layernorm = TinyGemmaRMSNorm::load(
             vb.pp("pre_feedforward_layernorm"),
             config.hidden_size,
             config.rms_norm_eps,
         )?;
         let mlp = TinyGemmaMLP::load(vb.pp("mlp"), config)?;
-        let post_feedforward_layernorm = TinyGemmaLayerNorm::load(
+        let post_feedforward_layernorm = TinyGemmaRMSNorm::load(
             vb.pp("post_feedforward_layernorm"),
             config.hidden_size,
             config.rms_norm_eps,
@@ -646,21 +567,22 @@ impl TinyGemmaLayer {
         let _enter = self.span.enter();
 
         let residual = hidden_states.clone();
-        let hidden_states = self.input_layernorm.forward(hidden_states, None)?;
+
+        let (hidden_states, _) = self.input_layernorm.forward(hidden_states, None)?;
         let hidden_states = self
             .self_attn
             .forward(&hidden_states, attention_bias, cos, sin)?;
-        let hidden_states = self
+        let (hidden_states, _) = self
             .post_attention_layernorm
             .forward(&hidden_states, None)?;
         let hidden_states = residual.broadcast_add(&hidden_states)?;
 
         let residual = hidden_states.clone();
-        let hidden_states = self
+        let (hidden_states, _) = self
             .pre_feedforward_layernorm
             .forward(&hidden_states, None)?;
         let hidden_states = self.mlp.forward(&hidden_states)?;
-        let hidden_states = self
+        let (hidden_states, _) = self
             .post_feedforward_layernorm
             .forward(&hidden_states, None)?;
         residual.broadcast_add(&hidden_states)
