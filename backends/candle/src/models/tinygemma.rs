@@ -519,7 +519,7 @@ impl TinyGemmaAttention {
             let mut attn_weights = (attn_weights * self.scaling)?;
 
             if let Some(attention_bias) = attention_bias {
-                attn_weights = attn_weights.add(&attention_bias)?;
+                attn_weights = attn_weights.broadcast_add(&attention_bias)?;
             }
 
             let attn_weights = candle_nn::ops::softmax_last_dim(&attn_weights)?;
