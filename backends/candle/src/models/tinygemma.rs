@@ -22,6 +22,7 @@ pub struct TinyGemmaConfig {
     pub num_key_value_heads: usize,
     pub query_pre_attn_scalar: usize,
     pub rms_norm_eps: f32,
+    pub rope_local_base_freq: f32,
     pub rope_theta: f32,
     pub sliding_window: Option<usize>,
     #[serde(rename(deserialize = "_sliding_window_pattern"))]
@@ -29,7 +30,6 @@ pub struct TinyGemmaConfig {
     pub vocab_size: usize,
 }
 
-// DONE
 #[derive(Debug)]
 pub struct TinyGemmaRMSNorm {
     weight: Tensor,
@@ -37,7 +37,6 @@ pub struct TinyGemmaRMSNorm {
     span: tracing::Span,
 }
 
-// DONE
 impl TinyGemmaRMSNorm {
     pub fn load(vb: VarBuilder, hidden_size: usize, epsilon: f32) -> Result<Self> {
         Ok(Self {
@@ -453,7 +452,6 @@ impl TinyGemmaAttention {
     }
 }
 
-// DONE
 struct TinyGemmaMLP {
     gate_up_proj: Linear,
     down_proj: Linear,
@@ -464,7 +462,6 @@ struct TinyGemmaMLP {
     span: tracing::Span,
 }
 
-// DONE
 impl TinyGemmaMLP {
     pub fn load(vb: VarBuilder, config: &TinyGemmaConfig) -> Result<Self> {
         let gate_proj_weight = vb
@@ -507,7 +504,6 @@ impl TinyGemmaMLP {
     }
 }
 
-// DONE
 struct TinyGemmaLayer {
     input_layernorm: TinyGemmaRMSNorm,
     self_attn: TinyGemmaAttention,
@@ -520,7 +516,6 @@ struct TinyGemmaLayer {
     span: tracing::Span,
 }
 
-// DONE
 impl TinyGemmaLayer {
     pub fn load(
         vb: VarBuilder,
@@ -589,7 +584,6 @@ impl TinyGemmaLayer {
     }
 }
 
-// DONE
 pub struct TinyGemmaEmbedding {
     embedding: Embedding,
     scale: f64,
@@ -597,7 +591,6 @@ pub struct TinyGemmaEmbedding {
     span: tracing::Span,
 }
 
-// DONE
 impl TinyGemmaEmbedding {
     pub fn load(vb: VarBuilder, config: &TinyGemmaConfig) -> Result<Self> {
         let embedding = Embedding::new(
@@ -627,6 +620,7 @@ pub struct TinyGemmaModel {
     norm: TinyGemmaRMSNorm,
 
     rotary_cache: (Tensor, Tensor),
+    rotary_cache_local_attention: (Tensor, Tensor),
     rotary_dim: usize,
 
     num_attention_heads: usize,
@@ -667,15 +661,24 @@ impl TinyGemmaModel {
             .unwrap_or(config.hidden_size / config.num_attention_heads);
 
         let inv_freqs = get_inv_freqs(rotary_dim, config.rope_theta, vb.device(), None)?;
-
         let rotary_cache =
             get_cos_sin(config.max_position_embeddings, &inv_freqs, vb.dtype(), true)?;
+
+        let inv_freqs_local =
+            get_inv_freqs(rotary_dim, config.rope_local_base_freq, vb.device(), None)?;
+        let rotary_cache_local_attention = get_cos_sin(
+            config.max_position_embeddings,
+            &inv_freqs_local,
+            vb.dtype(),
+            true,
+        )?;
 
         Ok(Self {
             embed_tokens,
             layers,
             norm,
             rotary_cache,
+            rotary_cache_local_attention,
             rotary_dim,
             pool,
             pad_token_id: config.eos_token_id as u32,
@@ -777,16 +780,35 @@ impl TinyGemmaModel {
             .rotary_cache
             .0
             .index_select(&position_ids.flatten_all()?, 0)?;
+        let cos = cos.reshape((batch_size, 1, max_length, self.rotary_dim))?;
         let sin = self
             .rotary_cache
             .1
             .index_select(&position_ids.flatten_all()?, 0)?;
-
-        let cos = cos.reshape((batch_size, 1, max_length, self.rotary_dim))?;
         let sin = sin.reshape((batch_size, 1, max_length, self.rotary_dim))?;
 
+        let cos_local = self
+            .rotary_cache_local_attention
+            .0
+            .index_select(&position_ids.flatten_all()?, 0)?;
+        let cos_local = cos_local.reshape((batch_size, 1, max_length, self.rotary_dim))?;
+        let sin_local = self
+            .rotary_cache_local_attention
+            .1
+            .index_select(&position_ids.flatten_all()?, 0)?;
+        let sin_local = sin_local.reshape((batch_size, 1, max_length, self.rotary_dim))?;
+
         for layer in &self.layers {
-            hidden_states = layer.forward(&hidden_states, attention_bias.as_ref(), &cos, &sin)?;
+            hidden_states = if layer.self_attn.sliding_window.is_some() {
+                layer.forward(
+                    &hidden_states,
+                    attention_bias.as_ref(),
+                    &cos_local,
+                    &sin_local,
+                )?
+            } else {
+                layer.forward(&hidden_states, attention_bias.as_ref(), &cos, &sin)?
+            };
         }
 
         let (outputs, _) = self.norm.forward(&hidden_states, None)?;
