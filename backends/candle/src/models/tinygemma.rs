@@ -11,7 +11,7 @@ use text_embeddings_backend_core::{Batch, ModelType, Pool};
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct TinyGemmaConfig {
     pub attention_bias: bool,
-    pub eos_token_id: usize,
+    pub pad_token_id: u32,
     pub head_dim: Option<usize>,
     pub hidden_activation: HiddenAct,
     pub hidden_size: usize,
@@ -34,6 +34,7 @@ pub struct TinyGemmaConfig {
 pub struct TinyGemmaRMSNorm {
     weight: Tensor,
     epsilon: f32,
+
     span: tracing::Span,
 }
 
@@ -447,7 +448,6 @@ impl TinyGemmaAttention {
         }?;
 
         let context_layer = context_layer.transpose(1, 2)?.flatten_from(D::Minus2)?;
-
         self.o_proj.forward(&context_layer)
     }
 }
@@ -681,7 +681,7 @@ impl TinyGemmaModel {
             rotary_cache_local_attention,
             rotary_dim,
             pool,
-            pad_token_id: config.eos_token_id as u32,
+            pad_token_id: config.pad_token_id,
             num_attention_heads: config.num_attention_heads,
             dtype: vb.dtype(),
             device: vb.device().clone(),
