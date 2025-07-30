@@ -821,48 +821,8 @@ impl TinyGemmaModel {
 
         let pooled_embeddings = if has_pooling_requests {
             match self.pool {
-                Pool::Cls => {
-                    if batch_size > 1 {
-                        let pooled_indices = Tensor::from_vec(
-                            batch.pooled_indices.clone(),
-                            batch.pooled_indices.len(),
-                            &self.device,
-                        )?;
-
-                        let cls_indices = if has_raw_requests {
-                            Tensor::zeros(
-                                batch.pooled_indices.len(),
-                                candle::DType::U32,
-                                &self.device,
-                            )?
-                        } else {
-                            Tensor::arange(0u32, batch_size as u32, &self.device)?
-                        };
-
-                        Some(outputs.i((&pooled_indices, &cls_indices))?)
-                    } else {
-                        Some(outputs.i((0, 0))?.unsqueeze(0)?)
-                    }
-                }
-                Pool::LastToken => {
-                    if batch_size > 1 {
-                        let results: Result<Vec<Tensor>> = batch
-                            .pooled_indices
-                            .iter()
-                            .map(|&i| {
-                                let i = i as usize;
-                                // With left padding, the last token is always at max_length - 1
-                                let last_token_idx = max_length - 1;
-                                outputs.i((i, last_token_idx))?.unsqueeze(0)
-                            })
-                            .collect();
-
-                        Some(Tensor::cat(&results?, 0)?)
-                    } else {
-                        // For single inference, use the actual last token position from cumulative_seq_lengths
-                        let last_idx = batch.cumulative_seq_lengths[1] as usize - 1;
-                        Some(outputs.i((0, last_idx))?.unsqueeze(0)?)
-                    }
+                Pool::Cls | Pool::LastToken | Pool::Splade => {
+                    unreachable!("Only Mean Pooling is supported for TinyGemma, neither CLS, nor Last-Token, nor SPLADE");
                 }
                 Pool::Mean => {
                     if batch_size > 1 {
@@ -887,9 +847,6 @@ impl TinyGemmaModel {
                         let embeddings = outputs.i((0, ..input_lengths[0]))?;
                         Some((embeddings.sum_keepdim(0)? / length)?)
                     }
-                }
-                Pool::Splade => {
-                    unreachable!("Splade is not supported for TinyGemma");
                 }
             }
         } else {
