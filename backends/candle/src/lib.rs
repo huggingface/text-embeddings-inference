@@ -393,6 +393,17 @@ impl CandleBackend {
                 }
             }
             #[cfg(feature = "cuda")]
+            (Config::Gemma3(config), Device::Cuda(_)) => {
+                if dtype != DType::F32 {
+                    Err(BackendError::Start(
+                        "Gemma3 is only supported in fp32 precision".to_string(),
+                    ))
+                } else {
+                    tracing::info!("Starting Gemma3 model on {:?}", device);
+                    Ok(Box::new(Gemma3::load(vb, &config, model_type).s()?))
+                }
+            }
+            #[cfg(feature = "cuda")]
             (Config::Gte(config), Device::Cuda(_)) => {
                 if dtype != DType::F16
                     || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
