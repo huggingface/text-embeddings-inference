@@ -701,7 +701,6 @@ impl TinyGemmaModel {
         let shape = (batch_size, max_length);
 
         let (input_ids, position_ids, input_lengths, attention_bias) = if batch_size > 1 {
-            // Prepare padded batch
             let elems = batch_size * max_length;
 
             let mut input_ids = Vec::with_capacity(elems);
@@ -716,8 +715,12 @@ impl TinyGemmaModel {
                 let seq_length = end - start;
                 input_lengths.push(seq_length);
 
-                // TODO: left padding for the moment, but to be defined later on as we're not sure
-                // if it should be left or right padding
+                for j in start..end {
+                    input_ids.push(batch.input_ids[j]);
+                    position_ids.push(batch.position_ids[j]);
+                    attention_bias.push(0.0);
+                }
+
                 let padding = max_length - seq_length;
                 if padding > 0 {
                     masking = true;
@@ -726,13 +729,6 @@ impl TinyGemmaModel {
                         position_ids.push(0);
                         attention_bias.push(f32::NEG_INFINITY);
                     }
-                }
-
-                // Then add the actual sequence
-                for j in start..end {
-                    input_ids.push(batch.input_ids[j]);
-                    position_ids.push(batch.position_ids[j]);
-                    attention_bias.push(0.0);
                 }
             }
 
@@ -743,7 +739,7 @@ impl TinyGemmaModel {
                 let attention_bias =
                     Tensor::from_vec(attention_bias, (batch_size, 1, 1, max_length), &self.device)?
                         .to_dtype(self.dtype)?;
-                // Broadcast once instead of at every layer
+
                 let attention_bias = attention_bias
                     .broadcast_as((batch_size, self.num_attention_heads, max_length, max_length))?
                     .contiguous()?;
@@ -765,9 +761,8 @@ impl TinyGemmaModel {
                 &self.device,
             )?;
             let input_lengths = vec![batch.input_ids.len()];
-            let seq_len = batch.input_ids.len();
 
-            // Create attention bias for causal masking even for single sequences
+            let seq_len = batch.input_ids.len();
             let attention_bias = Tensor::zeros(
                 (1, self.num_attention_heads, seq_len, seq_len),
                 self.dtype,
@@ -832,20 +827,16 @@ impl TinyGemmaModel {
                             .map(|&i| {
                                 let i = i as usize;
                                 let length = input_lengths[i];
-
-                                // With left padding, actual tokens are at the end
-                                let padding = max_length - length;
-                                let embeddings = outputs.i((i, padding..))?;
-                                let sum = embeddings.sum_keepdim(0)?;
-                                sum / (length as f64)
+                                let embeddings = outputs.i((i, ..length))?;
+                                embeddings.sum_keepdim(0)? / (length as f64)
                             })
                             .collect();
 
                         Some(Tensor::cat(&results?, 0)?)
                     } else {
-                        let length = input_lengths[0] as f64;
-                        let embeddings = outputs.i((0, ..input_lengths[0]))?;
-                        Some((embeddings.sum_keepdim(0)? / length)?)
+                        let length = input_lengths[0];
+                        let embeddings = outputs.i((0, ..length))?;
+                        Some((embeddings.sum_keepdim(0)? / (length as f64))?)
                     }
                 }
             }
