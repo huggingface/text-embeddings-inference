@@ -134,9 +134,7 @@ enum Gemma3AttentionType {
 }
 
 struct Gemma3Attention {
-    q_proj: Linear,
-    k_proj: Linear,
-    v_proj: Linear,
+    qkv_proj: Linear,
     o_proj: Linear,
 
     q_norm: Gemma3RMSNorm,
@@ -169,43 +167,33 @@ impl Gemma3Attention {
             (num_attention_heads * attention_head_size, hidden_size),
             "weight",
         )?;
-        let query_bias = if config.attention_bias {
-            Some(
-                vb.pp("q_proj")
-                    .get(num_attention_heads * attention_head_size, "bias")?,
-            )
-        } else {
-            None
-        };
-        let q_proj = Linear::new(query_weight, query_bias, None);
-
         let key_weight = vb.pp("k_proj").get(
             (num_key_value_heads * attention_head_size, hidden_size),
             "weight",
         )?;
-        let key_bias = if config.attention_bias {
-            Some(
-                vb.pp("k_proj")
-                    .get(num_key_value_heads * attention_head_size, "bias")?,
-            )
-        } else {
-            None
-        };
-        let k_proj = Linear::new(key_weight, key_bias, None);
-
         let value_weight = vb.pp("v_proj").get(
             (num_key_value_heads * attention_head_size, hidden_size),
             "weight",
         )?;
-        let value_bias = if config.attention_bias {
-            Some(
-                vb.pp("v_proj")
-                    .get(num_key_value_heads * attention_head_size, "bias")?,
-            )
+
+        let qkv_weight = Tensor::cat(&[&query_weight, &key_weight, &value_weight], 0)?;
+
+        let qkv_bias = if config.attention_bias {
+            let query_bias = vb
+                .pp("q_proj")
+                .get(num_attention_heads * attention_head_size, "bias")?;
+            let key_bias = vb
+                .pp("k_proj")
+                .get(num_key_value_heads * attention_head_size, "bias")?;
+            let value_bias = vb
+                .pp("v_proj")
+                .get(num_key_value_heads * attention_head_size, "bias")?;
+            Some(Tensor::cat(&[&query_bias, &key_bias, &value_bias], 0)?)
         } else {
             None
         };
-        let v_proj = Linear::new(value_weight, value_bias, None);
+
+        let qkv_proj = Linear::new(qkv_weight, qkv_bias, None);
 
         let output_weight = vb.pp("o_proj").get(
             (hidden_size, num_attention_heads * attention_head_size),
@@ -227,9 +215,7 @@ impl Gemma3Attention {
 
         match attention_type {
             Gemma3AttentionType::FullAttention => Ok(Self {
-                q_proj,
-                k_proj,
-                v_proj,
+                qkv_proj,
                 o_proj,
                 q_norm,
                 k_norm,
@@ -241,9 +227,7 @@ impl Gemma3Attention {
                 span: tracing::span!(tracing::Level::TRACE, "full_attention"),
             }),
             Gemma3AttentionType::SlidingAttention => Ok(Self {
-                q_proj,
-                k_proj,
-                v_proj,
+                qkv_proj,
                 o_proj,
                 q_norm,
                 k_norm,
@@ -310,12 +294,18 @@ impl Gemma3Attention {
 
         let device = hidden_states.device();
 
-        let q = self.q_proj.forward(hidden_states)?;
-        let k = self.k_proj.forward(hidden_states)?;
-        let v = self.v_proj.forward(hidden_states)?;
+        let qkv = self.qkv_proj.forward(hidden_states)?;
 
         let input_dims = hidden_states.dims();
         let input_shape = &input_dims[..input_dims.len() - 1];
+
+        let q_size = self.num_attention_heads * self.attention_head_size;
+        let k_size = self.num_key_value_heads * self.attention_head_size;
+        let v_size = self.num_key_value_heads * self.attention_head_size;
+
+        let q = qkv.narrow(D::Minus1, 0, q_size)?;
+        let k = qkv.narrow(D::Minus1, q_size, k_size)?;
+        let v = qkv.narrow(D::Minus1, q_size + k_size, v_size)?;
 
         let q = q.reshape(
             [
