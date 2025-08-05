@@ -77,13 +77,13 @@ Find the appropriate Docker image for your hardware in the following table:
 
 | Architecture                        | Image                                                                    |
 |-------------------------------------|--------------------------------------------------------------------------|
-| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-1.7                    |
+| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-1.8                    |
 | Volta                               | NOT SUPPORTED                                                            |
-| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-1.7 (experimental)  |
-| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:1.7                        |
-| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-1.7                     |
-| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-1.7                     |
-| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-1.7 (experimental)  |
+| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-1.8 (experimental)  |
+| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:1.8                        |
+| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-1.8                     |
+| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-1.8                     |
+| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-1.8 (experimental)  |
 
 **Warning**: Flash Attention is turned off by default for the Turing image as it suffers from precision issues.
 You can turn Flash Attention v1 ON by using the `USE_FLASH_ATTENTION=True` environment variable.
