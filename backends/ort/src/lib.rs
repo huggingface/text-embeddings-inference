@@ -96,7 +96,7 @@ impl Backend for OrtBackend {
         // Whether a least one of the request in the batch is padded
         let mut masking = false;
 
-        let (input_ids, type_ids, input_lengths, attention_mask) = {
+        let (input_ids, type_ids, input_lengths, attention_mask, position_ids) = {
             let elems = batch_size * max_length;
 
             if batch_size > 1 {
@@ -104,6 +104,7 @@ impl Backend for OrtBackend {
                 let mut input_ids = Vec::with_capacity(elems);
                 let mut type_ids = Vec::with_capacity(elems);
                 let mut attention_mask = Vec::with_capacity(elems);
+                let mut position_ids = Vec::with_capacity(elems);
                 let mut input_lengths = Vec::with_capacity(batch_size);
 
                 for i in 0..batch_size {
@@ -113,10 +114,11 @@ impl Backend for OrtBackend {
                     input_lengths.push(seq_length as f32);
 
                     // Copy values
-                    for j in start..end {
+                    for (pos, j) in (start..end).enumerate() {
                         input_ids.push(batch.input_ids[j] as i64);
                         type_ids.push(batch.token_type_ids[j] as i64);
                         attention_mask.push(1_i64);
+                        position_ids.push(pos as i64);
                     }
 
                     // Add padding if needed
@@ -124,22 +126,31 @@ impl Backend for OrtBackend {
                     if padding > 0 {
                         // Set bool to use attention mask
                         masking = true;
-                        for _ in 0..padding {
+                        for pad_pos in 0..padding {
                             input_ids.push(0);
                             type_ids.push(0);
                             attention_mask.push(0_i64);
+                            position_ids.push((seq_length + pad_pos) as i64);
                         }
                     }
                 }
-                (input_ids, type_ids, input_lengths, attention_mask)
+                (
+                    input_ids,
+                    type_ids,
+                    input_lengths,
+                    attention_mask,
+                    position_ids,
+                )
             } else {
                 let attention_mask = vec![1_i64; elems];
+                let position_ids: Vec<i64> = (0..max_length as i64).collect();
 
                 (
                     batch.input_ids.into_iter().map(|v| v as i64).collect(),
                     batch.token_type_ids.into_iter().map(|v| v as i64).collect(),
                     vec![batch.max_length as f32],
                     attention_mask,
+                    position_ids,
                 )
             }
         };
@@ -148,6 +159,8 @@ impl Backend for OrtBackend {
         let input_ids = ndarray::Array2::from_shape_vec((batch_size, max_length), input_ids).e()?;
         let attention_mask =
             ndarray::Array2::from_shape_vec((batch_size, max_length), attention_mask).e()?;
+        let position_ids =
+            ndarray::Array2::from_shape_vec((batch_size, max_length), position_ids).e()?;
         let input_lengths = ndarray::Array1::from_vec(input_lengths);
 
         // Create onnx inputs
@@ -156,10 +169,10 @@ impl Backend for OrtBackend {
                 // Add type ids to inputs
                 let type_ids =
                     ndarray::Array2::from_shape_vec((batch_size, max_length), type_ids).e()?;
-                ort::inputs!["input_ids" => input_ids, "attention_mask" => attention_mask.clone(), type_id_name => type_ids].e()?
+                ort::inputs!["input_ids" => input_ids, "attention_mask" => attention_mask.clone(), "position_ids" => position_ids, type_id_name => type_ids].e()?
             }
             None => {
-                ort::inputs!["input_ids" => input_ids, "attention_mask" => attention_mask.clone()]
+                ort::inputs!["input_ids" => input_ids, "attention_mask" => attention_mask.clone(), "position_ids" => position_ids]
                     .e()?
             }
         };
