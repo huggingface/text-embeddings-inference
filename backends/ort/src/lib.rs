@@ -12,6 +12,7 @@ pub struct OrtBackend {
     session: Session,
     pool: Pool,
     type_id_name: Option<String>,
+    position_ids: bool,
 }
 
 impl OrtBackend {
@@ -68,10 +69,17 @@ impl OrtBackend {
             }
         }
 
+        // Check if the model requires position_ids
+        let position_ids = session
+            .inputs
+            .iter()
+            .any(|input| input.name == "position_ids");
+
         Ok(Self {
             session,
             pool,
             type_id_name,
+            position_ids,
         })
     }
 }
@@ -164,15 +172,25 @@ impl Backend for OrtBackend {
         let input_lengths = ndarray::Array1::from_vec(input_lengths);
 
         // Create onnx inputs
-        let inputs = match self.type_id_name.as_ref() {
-            Some(type_id_name) => {
-                // Add type ids to inputs
+        let inputs = match (self.type_id_name.as_ref(), self.position_ids) {
+            (Some(type_id_name), true) => {
+                // Add type ids and position ids to inputs
                 let type_ids =
                     ndarray::Array2::from_shape_vec((batch_size, max_length), type_ids).e()?;
                 ort::inputs!["input_ids" => input_ids, "attention_mask" => attention_mask.clone(), "position_ids" => position_ids, type_id_name => type_ids].e()?
             }
-            None => {
+            (Some(type_id_name), false) => {
+                // Add type ids to inputs
+                let type_ids =
+                    ndarray::Array2::from_shape_vec((batch_size, max_length), type_ids).e()?;
+                ort::inputs!["input_ids" => input_ids, "attention_mask" => attention_mask.clone(), type_id_name => type_ids].e()?
+            }
+            (None, true) => {
                 ort::inputs!["input_ids" => input_ids, "attention_mask" => attention_mask.clone(), "position_ids" => position_ids]
+                    .e()?
+            }
+            (None, false) => {
+                ort::inputs!["input_ids" => input_ids, "attention_mask" => attention_mask.clone()]
                     .e()?
             }
         };
