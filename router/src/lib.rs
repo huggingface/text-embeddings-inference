@@ -110,7 +110,7 @@ pub async fn run(
         serde_json::from_str(&config).context("Failed to parse `config.json`")?;
 
     // Set model type from config
-    let backend_model_type = get_backend_model_type(&config, &model_root, pooling)?;
+    let backend_model_type = get_backend_model_type(&config, &model_root, &model_id, pooling)?;
 
     // Info model type
     let model_type = match &backend_model_type {
@@ -355,6 +355,7 @@ pub async fn run(
 fn get_backend_model_type(
     config: &ModelConfig,
     model_root: &Path,
+    model_id: &str,
     pooling: Option<text_embeddings_backend::Pool>,
 ) -> Result<text_embeddings_backend::ModelType> {
     for arch in &config.architectures {
@@ -375,6 +376,29 @@ fn get_backend_model_type(
             if pooling.is_some() {
                 tracing::warn!(
                     "`--pooling` arg is set but model is a classifier. Ignoring `--pooling` arg."
+                );
+            }
+            return Ok(text_embeddings_backend::ModelType::Classifier);
+        }
+    }
+
+    // Qwen3-Reranker detection
+    if config
+        .architectures
+        .iter()
+        .any(|arch| arch == "Qwen3ForCausalLM")
+    {
+        let model_name = model_id
+            .split('/')
+            .last()
+            .unwrap_or(model_id)
+            .to_lowercase();
+
+        if model_name.contains("reranker") {
+            tracing::info!("Detected Qwen3-Reranker model, treating as classifier");
+            if pooling.is_some() {
+                tracing::warn!(
+                    "`--pooling` arg is set but model is a reranker. Ignoring `--pooling` arg."
                 );
             }
             return Ok(text_embeddings_backend::ModelType::Classifier);

@@ -375,6 +375,81 @@ impl Qwen3Layer {
     }
 }
 
+trait ClassificationHead {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
+}
+
+#[derive(Debug)]
+struct Qwen3ClassificationHead {
+    dense: Linear,
+    out_proj: Linear,
+    activation: HiddenAct,
+    span: tracing::Span,
+}
+
+impl Qwen3ClassificationHead {
+    pub fn load(vb: VarBuilder, config: &Qwen3Config) -> Result<Self> {
+        let (dense, out_proj) = if vb.contains_tensor("score.dense.weight") {
+            tracing::info!("Loading Qwen3 classifier with score layers");
+
+            let dense_weight = vb
+                .pp("score.dense")
+                .get((config.hidden_size, config.hidden_size), "weight")?;
+            let dense_bias = vb.pp("score.dense").get(config.hidden_size, "bias")?;
+            let dense = Linear::new(dense_weight, Some(dense_bias), None);
+
+            let out_proj_weight = vb
+                .pp("score.out_proj")
+                .get((1, config.hidden_size), "weight")?;
+            let out_proj_bias = vb.pp("score.out_proj").get(1, "bias")?;
+            let out_proj = Linear::new(out_proj_weight, Some(out_proj_bias), None);
+
+            (dense, out_proj)
+        } else if vb.contains_tensor("classifier.dense.weight") {
+            tracing::info!("Loading Qwen3 classifier with classifier layers");
+
+            let dense_weight = vb
+                .pp("classifier.dense")
+                .get((config.hidden_size, config.hidden_size), "weight")?;
+            let dense_bias = vb.pp("classifier.dense").get(config.hidden_size, "bias")?;
+            let dense = Linear::new(dense_weight, Some(dense_bias), None);
+
+            let out_proj_weight = vb
+                .pp("classifier.out_proj")
+                .get((1, config.hidden_size), "weight")?;
+            let out_proj_bias = vb.pp("classifier.out_proj").get(1, "bias")?;
+            let out_proj = Linear::new(out_proj_weight, Some(out_proj_bias), None);
+
+            (dense, out_proj)
+        } else {
+            candle::bail!(
+                "Classification layers not found in model weights. \
+                Expected 'score.dense.weight' or 'classifier.dense.weight' for reranker models. \
+                This model may not be a trained reranker."
+            );
+        };
+
+        Ok(Self {
+            dense,
+            out_proj,
+            activation: config.hidden_act.clone(),
+            span: tracing::span!(tracing::Level::TRACE, "classifier"),
+        })
+    }
+}
+
+impl ClassificationHead for Qwen3ClassificationHead {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let hidden = self.dense.forward(hidden_states)?;
+        let hidden = self.activation.forward(&hidden)?;
+        let score = self.out_proj.forward(&hidden)?;
+
+        score.squeeze(D::Minus1)
+    }
+}
+
 pub struct Qwen3Model {
     embeddings: Embedding,
     layers: Vec<Qwen3Layer>,
@@ -382,6 +457,7 @@ pub struct Qwen3Model {
     rotary_cache: (Tensor, Tensor),
     rotary_dim: usize,
     pool: Pool,
+    classifier: Option<Box<dyn ClassificationHead + Send>>,
     num_attention_heads: usize,
     pad_token_id: u32,
 
@@ -393,11 +469,19 @@ pub struct Qwen3Model {
 
 impl Qwen3Model {
     pub fn load(vb: VarBuilder, config: &Qwen3Config, model_type: ModelType) -> Result<Self> {
-        let pool = match model_type {
+        let (pool, classifier) = match model_type {
             ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for Qwen3")
+                let pool = Pool::LastToken;
+                let classifier: Box<dyn ClassificationHead + Send> =
+                    Box::new(Qwen3ClassificationHead::load(vb.clone(), config)?);
+                (pool, Some(classifier))
             }
-            ModelType::Embedding(pool) => pool,
+            ModelType::Embedding(pool) => {
+                if pool == Pool::Splade {
+                    candle::bail!("`splade` is not supported for Qwen3")
+                }
+                (pool, None)
+            }
         };
 
         // The Qwen3-Reranker models contain the `model` key
@@ -436,6 +520,7 @@ impl Qwen3Model {
             rotary_cache,
             rotary_dim,
             pool,
+            classifier,
             pad_token_id: config.eos_token_id as u32,
             num_attention_heads: config.num_attention_heads,
             dtype: vb.dtype(),
@@ -699,5 +784,24 @@ impl Model for Qwen3Model {
 
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
+    }
+
+    fn predict(&self, batch: Batch) -> Result<Tensor> {
+        match &self.classifier {
+            None => candle::bail!("`predict` is not implemented for this model"),
+            Some(classifier) => {
+                // Run forward pass to get hidden states
+                let (pooled_embeddings, _) = self.forward(batch)?;
+                match pooled_embeddings {
+                    Some(embeddings) => {
+                        let scores = classifier.forward(&embeddings)?;
+                        // Apply sigmoid to convert logits to probabilities
+                        let probabilities = candle_nn::ops::sigmoid(&scores)?;
+                        Ok(probabilities)
+                    }
+                    None => candle::bail!("No pooled embeddings returned for classification"),
+                }
+            }
+        }
     }
 }
