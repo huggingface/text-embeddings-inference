@@ -597,13 +597,30 @@ impl Backend for CandleBackend {
         let batch_size = batch.len();
 
         let results = self.model.predict(batch).e()?;
-
-        let results = results.to_dtype(DType::F32).e()?.to_vec2().e()?;
+        let results = results.to_dtype(DType::F32).e()?;
 
         let mut predictions =
             HashMap::with_capacity_and_hasher(batch_size, BuildNoHashHasher::default());
-        for (i, r) in results.into_iter().enumerate() {
-            predictions.insert(i, r);
+
+        match results.dims() {
+            [_n] => {
+                let scores = results.to_vec1::<f32>().e()?;
+                for (i, score) in scores.into_iter().enumerate() {
+                    predictions.insert(i, vec![score]);
+                }
+            }
+            [_, _] => {
+                let results = results.to_vec2().e()?;
+                for (i, r) in results.into_iter().enumerate() {
+                    predictions.insert(i, r);
+                }
+            }
+            dims => {
+                return Err(BackendError::Inference(format!(
+                    "Unexpected tensor shape: {:?}",
+                    dims
+                )));
+            }
         }
 
         Ok(predictions)

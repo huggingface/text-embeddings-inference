@@ -138,7 +138,7 @@ async fn predict(
 
         let id2label = match &info.model_type {
             ModelType::Classifier(classifier) => &classifier.id2label,
-            ModelType::Reranker(classifier) => &classifier.id2label,
+            ModelType::ListwiseReranker(classifier) => &classifier.id2label,
             _ => panic!(),
         };
 
@@ -330,7 +330,7 @@ async fn rerank(
     }
 
     match &info.model_type {
-        ModelType::Reranker(_) => Ok(()),
+        ModelType::ListwiseReranker(_) => Ok(()),
         ModelType::Classifier(_) | ModelType::Embedding(_) => {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
             counter.increment(1);
@@ -1551,7 +1551,7 @@ async fn vertex_compatibility(
         }
 
         match info.model_type {
-            ModelType::Classifier(_) | ModelType::Reranker(_) => {
+            ModelType::Classifier(_) | ModelType::ListwiseReranker(_) => {
                 let instance = serde_json::from_value::<PredictRequest>(instance)
                     .map_err(ErrorResponse::from)?;
                 futures
@@ -1782,7 +1782,7 @@ pub async fn run(
                     // AWS Sagemaker route
                     .route("/invocations", post(predict))
             }
-            ModelType::Reranker(_) => {
+            ModelType::ListwiseReranker(_) => {
                 routes
                     .route("/", post(rerank))
                     // AWS Sagemaker route

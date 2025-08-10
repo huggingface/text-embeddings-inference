@@ -364,6 +364,9 @@ impl JinaCodeBertModel {
                 }
                 pool
             }
+            ModelType::ListwiseReranker => {
+                candle::bail!("`reranker` model type is not supported for JinaCode")
+            }
         };
 
         let (embeddings, encoder) = match (

@@ -27,6 +27,7 @@ impl PythonBackend {
         let pool = match model_type {
             ModelType::Classifier => Pool::Cls,
             ModelType::Embedding(pool) => pool,
+            ModelType::ListwiseReranker => Pool::LastToken,
         };
 
         let backend_process = management::BackendProcess::new(

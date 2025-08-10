@@ -283,7 +283,7 @@ impl TextEmbeddingsService {
 
         let id2label = match &self.info.model_type {
             ModelType::Classifier(classifier) => &classifier.id2label,
-            ModelType::Reranker(classifier) => &classifier.id2label,
+            ModelType::ListwiseReranker(classifier) => &classifier.id2label,
             _ => panic!(),
         };
 
@@ -563,7 +563,7 @@ impl grpc::info_server::Info for TextEmbeddingsService {
         let model_type = match self.info.model_type {
             ModelType::Classifier(_) => grpc::ModelType::Classifier,
             ModelType::Embedding(_) => grpc::ModelType::Embedding,
-            ModelType::Reranker(_) => grpc::ModelType::Reranker,
+            ModelType::ListwiseReranker(_) => grpc::ModelType::Reranker,
         };
 
         Ok(Response::new(InfoResponse {
@@ -906,7 +906,7 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
                 tracing::error!("{message}");
                 Err(Status::new(Code::FailedPrecondition, message))
             }
-            ModelType::Reranker(_) => Ok(()),
+            ModelType::ListwiseReranker(_) => Ok(()),
             ModelType::Embedding(_) => {
                 let counter = metrics::counter!("te_request_failure", "err" => "model_type");
                 counter.increment(1);
@@ -1084,7 +1084,7 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
                 tracing::error!("{message}");
                 Err(Status::new(Code::FailedPrecondition, message))
             }
-            ModelType::Reranker(_) => Ok(()),
+            ModelType::ListwiseReranker(_) => Ok(()),
             ModelType::Embedding(_) => {
                 let counter = metrics::counter!("te_request_failure", "err" => "model_type");
                 counter.increment(1);
@@ -1415,7 +1415,7 @@ pub async fn run(
 
             // Match on model type and set the health of the correct service(s)
             //
-            // If Reranker, we have both a predict and rerank service
+            // If ListwiseReranker, we have both a predict and rerank service
             //
             // This logic hints back to the user that if they try using the wrong service
             // given the model type, it will always return an error.
@@ -1440,8 +1440,8 @@ pub async fn run(
                         )
                         .await
                 }
-                ModelType::Reranker(_) => {
-                    // Reranker has both a predict and rerank service
+                ModelType::ListwiseReranker(_) => {
+                    // ListwiseReranker has both a predict and rerank service
                     health_reporter
                         .set_service_status(
                             <grpc::PredictServer<TextEmbeddingsService>>::NAME,

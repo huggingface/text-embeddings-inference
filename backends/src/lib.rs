@@ -170,7 +170,9 @@ impl Backend {
         for shape in shapes.iter() {
             let batch = self.create_warmup_batch(*shape, max_token as u32, seq_bucket_size as u32);
             match &self.model_type {
-                ModelType::Classifier => self.predict(batch).await.map(|_| ()),
+                ModelType::Classifier | ModelType::ListwiseReranker => {
+                    self.predict(batch).await.map(|_| ())
+                }
                 ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
             }?;
             tracing::info!("finish warmup for batch: {}, length: {}", shape.0, shape.1);
@@ -280,7 +282,9 @@ impl Backend {
         };
 
         match &self.model_type {
-            ModelType::Classifier => self.predict(batch).await.map(|_| ()),
+            ModelType::Classifier | ModelType::ListwiseReranker => {
+                self.predict(batch).await.map(|_| ())
+            }
             ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
         }
     }
@@ -313,7 +317,9 @@ impl Backend {
                 raw_indices: vec![],
             };
             match &self.model_type {
-                ModelType::Classifier => self.predict(batch).await.map(|_| ()),
+                ModelType::Classifier | ModelType::ListwiseReranker => {
+                    self.predict(batch).await.map(|_| ())
+                }
                 ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
             }
         }

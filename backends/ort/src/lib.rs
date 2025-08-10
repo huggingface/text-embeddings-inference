@@ -38,6 +38,11 @@ impl OrtBackend {
                 }
                 pool => pool,
             },
+            ModelType::ListwiseReranker => {
+                return Err(BackendError::Start(
+                    "Reranker models are not supported in the ONNX backend".to_string(),
+                ));
+            }
         };
 
         // Get model path

@@ -462,6 +462,9 @@ impl DistilBertModel {
 
                 (pool, None)
             }
+            ModelType::ListwiseReranker => {
+                candle::bail!("`reranker` model type is not supported for DistilBert")
+            }
         };
 
         let (embeddings, encoder) = match (

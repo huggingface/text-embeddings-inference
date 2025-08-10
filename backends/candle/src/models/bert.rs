@@ -597,6 +597,9 @@ impl BertModel {
                 };
                 (pool, None, splade)
             }
+            ModelType::ListwiseReranker => {
+                candle::bail!("`reranker` model type is not supported for Bert")
+            }
         };
 
         let (embeddings, encoder) = match (
@@ -615,7 +618,6 @@ impl BertModel {
                 }
             }
         };
-
         Ok(Self {
             embeddings,
             encoder,
@@ -660,6 +662,9 @@ impl BertModel {
                     None
                 };
                 (pool, None, splade)
+            }
+            ModelType::ListwiseReranker => {
+                candle::bail!("`reranker` model type is not supported for RoBERTa")
             }
         };
 

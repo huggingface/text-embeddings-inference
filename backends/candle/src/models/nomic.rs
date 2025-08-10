@@ -697,6 +697,9 @@ impl NomicBertModel {
                 }
                 pool
             }
+            ModelType::ListwiseReranker => {
+                candle::bail!("`reranker` model type is not supported for Nomic")
+            }
         };
 
         let embeddings = NomicBertEmbeddings::load(vb.clone(), config)?;

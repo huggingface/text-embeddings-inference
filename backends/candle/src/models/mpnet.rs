@@ -450,6 +450,9 @@ impl MPNetModel {
                 }
                 pool
             }
+            ModelType::ListwiseReranker => {
+                candle::bail!("`reranker` model type is not supported for MPNet")
+            }
         };
 
         let (embeddings, encoder) = match (

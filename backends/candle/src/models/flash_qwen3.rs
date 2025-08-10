@@ -42,7 +42,10 @@ impl Qwen3Attention {
             "weight",
         )?;
         let query_bias = if config.attention_bias {
-            Some(vb.pp("q_proj").get(hidden_size, "bias")?)
+            Some(
+                vb.pp("q_proj")
+                    .get(num_attention_heads * attention_head_size, "bias")?,
+            )
         } else {
             None
         };
@@ -85,7 +88,7 @@ impl Qwen3Attention {
         let q_norm = RMSNorm::load(vb.pp("q_norm"), attention_head_size, config.rms_norm_eps)?;
         let k_norm = RMSNorm::load(vb.pp("k_norm"), attention_head_size, config.rms_norm_eps)?;
 
-        let softmax_scale = (1. / (attention_head_size as f64).sqrt()) as f32;
+        let softmax_scale = 1.0 / (attention_head_size as f64).sqrt() as f32;
 
         Ok(Self {
             q_proj,
@@ -147,6 +150,28 @@ impl Qwen3Attention {
         let (k, _) = self.k_norm.forward(&k, None)?;
 
         apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
+
+        let (k, v) = if self.num_key_value_heads != self.num_attention_heads {
+            if self.num_attention_heads % self.num_key_value_heads != 0 {
+                candle::bail!("num_attention_heads must be a multiple of num_key_value_heads");
+            }
+            let repeat = self.num_attention_heads / self.num_key_value_heads;
+
+            let (total_tokens, n_kv_heads, head_dim) = k.dims3()?;
+
+            let k = k
+                .unsqueeze(2)?
+                .expand((total_tokens, n_kv_heads, repeat, head_dim))?
+                .reshape((total_tokens, n_kv_heads * repeat, head_dim))?;
+
+            let v = v
+                .unsqueeze(2)?
+                .expand((total_tokens, n_kv_heads, repeat, head_dim))?
+                .reshape((total_tokens, n_kv_heads * repeat, head_dim))?;
+            (k, v)
+        } else {
+            (k, v)
+        };
 
         let attention = flash_attn_varlen(
             &q,
@@ -277,101 +302,20 @@ impl Qwen3Layer {
 
         let mlp_output = self.mlp.forward(&normed_attn_res_output)?;
 
-        Ok((mlp_output, attn_res))
-    }
-}
-
-// Define ClassificationHead trait locally (following TEI pattern)
-trait ClassificationHead {
-    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
-}
-
-// Qwen3 Classification Head implementation
-#[derive(Debug)]
-struct Qwen3ClassificationHead {
-    dense: Linear,
-    out_proj: Linear,
-    activation: HiddenAct,
-    span: tracing::Span,
-}
-
-impl Qwen3ClassificationHead {
-    pub fn load(vb: VarBuilder, config: &Qwen3Config) -> Result<Self> {
-        let (dense, out_proj) = if vb.contains_tensor("score.dense.weight") {
-            tracing::info!("Loading Qwen3 classifier with score layers");
-
-            let dense_weight = vb
-                .pp("score.dense")
-                .get((config.hidden_size, config.hidden_size), "weight")?;
-            let dense_bias = vb.pp("score.dense").get(config.hidden_size, "bias")?;
-            let dense = Linear::new(dense_weight, Some(dense_bias), None);
-
-            let out_proj_weight = vb
-                .pp("score.out_proj")
-                .get((1, config.hidden_size), "weight")?;
-            let out_proj_bias = vb.pp("score.out_proj").get(1, "bias")?;
-            let out_proj = Linear::new(out_proj_weight, Some(out_proj_bias), None);
-
-            (dense, out_proj)
-        } else if vb.contains_tensor("classifier.dense.weight") {
-            tracing::info!("Loading Qwen3 classifier with classifier layers");
-
-            let dense_weight = vb
-                .pp("classifier.dense")
-                .get((config.hidden_size, config.hidden_size), "weight")?;
-            let dense_bias = vb.pp("classifier.dense").get(config.hidden_size, "bias")?;
-            let dense = Linear::new(dense_weight, Some(dense_bias), None);
-
-            let out_proj_weight = vb
-                .pp("classifier.out_proj")
-                .get((1, config.hidden_size), "weight")?;
-            let out_proj_bias = vb.pp("classifier.out_proj").get(1, "bias")?;
-            let out_proj = Linear::new(out_proj_weight, Some(out_proj_bias), None);
-
-            (dense, out_proj)
-        } else {
-            candle::bail!(
-                "Classification layers not found in model weights. \
-                Expected 'score.dense.weight' or 'classifier.dense.weight' for reranker models. \
-                This model may not be a trained reranker."
-            );
-        };
-
-        Ok(Self {
-            dense,
-            out_proj,
-            activation: config.hidden_act.clone(),
-            span: tracing::span!(tracing::Level::TRACE, "classifier"),
-        })
-    }
-}
-
-impl ClassificationHead for Qwen3ClassificationHead {
-    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        // Input is already pooled
-
-        // Apply dense layer with activation
-        let hidden = self.dense.forward(hidden_states)?;
-        let hidden = self.activation.forward(&hidden)?;
-
-        // Project to single score
-        let score = self.out_proj.forward(&hidden)?;
-
-        // Squeeze to remove the last dimension if it's 1
-        score.squeeze(candle::D::Minus1)
+        let output = (&mlp_output + &attn_res)?;
+        Ok((output, attn_res))
     }
 }
 
 pub struct FlashQwen3Model {
     embeddings: Embedding,
+    lm_head_weight: Tensor,
     layers: Vec<Qwen3Layer>,
     norm: RMSNorm,
     cos_cache: Tensor,
     sin_cache: Tensor,
+    model_type: ModelType,
     pool: Pool,
-    classifier: Option<Box<dyn ClassificationHead + Send>>,
     pub device: Device,
 
     span: tracing::Span,
@@ -388,19 +332,12 @@ impl FlashQwen3Model {
             candle::bail!("FlashQwen3 requires DType::F16")
         }
 
-        let (pool, classifier) = match model_type {
+        let pool = match &model_type {
             ModelType::Classifier => {
-                let pool = Pool::LastToken;
-                let classifier: Box<dyn ClassificationHead + Send> =
-                    Box::new(Qwen3ClassificationHead::load(vb.clone(), config)?);
-                (pool, Some(classifier))
+                candle::bail!("`classifier` model type is not supported for Qwen3")
             }
-            ModelType::Embedding(pool) => {
-                if pool == Pool::Splade {
-                    candle::bail!("`splade` is not supported for Qwen3")
-                }
-                (pool, None)
-            }
+            ModelType::Embedding(pool) => pool.clone(),
+            ModelType::ListwiseReranker => Pool::LastToken,
         };
 
         // The Qwen3-Reranker models contain the `model` key
@@ -411,11 +348,13 @@ impl FlashQwen3Model {
             vb
         };
 
-        let embeddings = Embedding::new(
-            vb.pp("embed_tokens")
-                .get((config.vocab_size, config.hidden_size), "weight")?,
-            config.hidden_size,
-        );
+        let embed_weight = vb
+            .pp("embed_tokens")
+            .get((config.vocab_size, config.hidden_size), "weight")?;
+
+        let embeddings = Embedding::new(embed_weight.clone(), config.hidden_size);
+
+        let lm_head_weight = embed_weight;
 
         let layers = (0..config.num_hidden_layers)
             .map(|index| Qwen3Layer::load(vb.pp(format!("layers.{index}")), config))
@@ -438,12 +377,13 @@ impl FlashQwen3Model {
 
         Ok(Self {
             embeddings,
+            lm_head_weight,
             layers,
             norm,
             cos_cache,
             sin_cache,
+            model_type,
             pool,
-            classifier,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
@@ -469,21 +409,19 @@ impl FlashQwen3Model {
         let cos = self.cos_cache.index_select(&position_ids, 0)?;
         let sin = self.sin_cache.index_select(&position_ids, 0)?;
 
-        let mut residual = None;
         for layer in &self.layers {
-            let (h, r) = layer.forward(
+            let (h, _r) = layer.forward(
                 &hidden_states,
-                residual.as_ref(),
+                None,
                 &cu_seqlens,
                 &cos,
                 &sin,
                 batch.max_length as usize,
             )?;
             hidden_states = h;
-            residual = Some(r);
         }
 
-        let (outputs, _) = self.norm.forward(&hidden_states, residual.as_ref())?;
+        let (outputs, _) = self.norm.forward(&hidden_states, None)?;
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();
@@ -553,7 +491,8 @@ impl FlashQwen3Model {
                         // Concatenate all results
                         Some(Tensor::cat(&results?, 0)?)
                     } else {
-                        Some((outputs.sum_keepdim(0)? / (batch.max_length as f64))?)
+                        let actual_len = batch.cumulative_seq_lengths[1] as f64;
+                        Some((outputs.sum_keepdim(0)? / actual_len)?)
                     }
                 }
                 Pool::Splade => {
@@ -607,21 +546,64 @@ impl Model for FlashQwen3Model {
     }
 
     fn predict(&self, batch: Batch) -> Result<Tensor> {
-        match &self.classifier {
-            None => candle::bail!("`predict` is not implemented for this model"),
-            Some(classifier) => {
-                // Run forward pass to get hidden states
-                let (pooled_embeddings, _) = self.forward(batch)?;
-                match pooled_embeddings {
-                    Some(embeddings) => {
-                        let scores = classifier.forward(&embeddings)?;
-                        // Apply sigmoid to convert logits to probabilities
-                        let probabilities = candle_nn::ops::sigmoid(&scores)?;
-                        Ok(probabilities)
-                    }
-                    None => candle::bail!("No pooled embeddings returned for classification"),
+        match &self.model_type {
+            ModelType::ListwiseReranker => {
+                let _enter = self.span.enter();
+
+                let batch_size = batch.cumulative_seq_lengths.len() - 1;
+                let shape = batch.input_ids.len();
+
+                let input_ids = Tensor::from_vec(batch.input_ids, shape, &self.device)?;
+                let position_ids = Tensor::from_vec(batch.position_ids, shape, &self.device)?;
+                let cu_seqlens = Tensor::from_vec(
+                    batch.cumulative_seq_lengths.clone(),
+                    batch_size + 1,
+                    &self.device,
+                )?;
+
+                let mut hidden_states = self.embeddings.forward(&input_ids)?;
+
+                let cos = self.cos_cache.index_select(&position_ids, 0)?;
+                let sin = self.sin_cache.index_select(&position_ids, 0)?;
+
+                for layer in &self.layers {
+                    let (h, _r) = layer.forward(
+                        &hidden_states,
+                        None,
+                        &cu_seqlens,
+                        &cos,
+                        &sin,
+                        batch.max_length as usize,
+                    )?;
+                    hidden_states = h;
                 }
+
+                let (outputs, _) = self.norm.forward(&hidden_states, None)?;
+
+                let mut last_hidden_states = Vec::with_capacity(batch_size);
+
+                for i in 0..batch_size {
+                    let seq_end = batch.cumulative_seq_lengths[i + 1] as usize;
+                    let last_token_idx = seq_end - 1;
+
+                    let h_last = outputs.i(last_token_idx)?; // [hidden_size]
+                    last_hidden_states.push(h_last);
+                }
+
+                let h_last = Tensor::stack(&last_hidden_states, 0)?; // [bs, hidden_size]
+
+                let true_id = 9693u32;
+                let false_id = 2152u32;
+
+                let ids = Tensor::from_vec(vec![false_id, true_id], 2, &self.device)?;
+                let w = self.lm_head_weight.index_select(&ids, 0)?; // [2, hidden_size]
+                let logits = h_last.matmul(&w.t()?)?; // [bs, 2] (no, yes)
+                let log_probs = candle_nn::ops::log_softmax(&logits, D::Minus1)?;
+                let scores = log_probs.i((.., 1))?.exp()?; // P("yes") ∈ (0,1)
+
+                Ok(scores)
             }
+            _ => candle::bail!("`predict` is only available for ModelType::ListwiseReranker"),
         }
     }
 }

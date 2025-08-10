@@ -375,89 +375,15 @@ impl Qwen3Layer {
     }
 }
 
-trait ClassificationHead {
-    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
-}
-
-#[derive(Debug)]
-struct Qwen3ClassificationHead {
-    dense: Linear,
-    out_proj: Linear,
-    activation: HiddenAct,
-    span: tracing::Span,
-}
-
-impl Qwen3ClassificationHead {
-    pub fn load(vb: VarBuilder, config: &Qwen3Config) -> Result<Self> {
-        let (dense, out_proj) = if vb.contains_tensor("score.dense.weight") {
-            tracing::info!("Loading Qwen3 classifier with score layers");
-
-            let dense_weight = vb
-                .pp("score.dense")
-                .get((config.hidden_size, config.hidden_size), "weight")?;
-            let dense_bias = vb.pp("score.dense").get(config.hidden_size, "bias")?;
-            let dense = Linear::new(dense_weight, Some(dense_bias), None);
-
-            let out_proj_weight = vb
-                .pp("score.out_proj")
-                .get((1, config.hidden_size), "weight")?;
-            let out_proj_bias = vb.pp("score.out_proj").get(1, "bias")?;
-            let out_proj = Linear::new(out_proj_weight, Some(out_proj_bias), None);
-
-            (dense, out_proj)
-        } else if vb.contains_tensor("classifier.dense.weight") {
-            tracing::info!("Loading Qwen3 classifier with classifier layers");
-
-            let dense_weight = vb
-                .pp("classifier.dense")
-                .get((config.hidden_size, config.hidden_size), "weight")?;
-            let dense_bias = vb.pp("classifier.dense").get(config.hidden_size, "bias")?;
-            let dense = Linear::new(dense_weight, Some(dense_bias), None);
-
-            let out_proj_weight = vb
-                .pp("classifier.out_proj")
-                .get((1, config.hidden_size), "weight")?;
-            let out_proj_bias = vb.pp("classifier.out_proj").get(1, "bias")?;
-            let out_proj = Linear::new(out_proj_weight, Some(out_proj_bias), None);
-
-            (dense, out_proj)
-        } else {
-            candle::bail!(
-                "Classification layers not found in model weights. \
-                Expected 'score.dense.weight' or 'classifier.dense.weight' for reranker models. \
-                This model may not be a trained reranker."
-            );
-        };
-
-        Ok(Self {
-            dense,
-            out_proj,
-            activation: config.hidden_act.clone(),
-            span: tracing::span!(tracing::Level::TRACE, "classifier"),
-        })
-    }
-}
-
-impl ClassificationHead for Qwen3ClassificationHead {
-    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let hidden = self.dense.forward(hidden_states)?;
-        let hidden = self.activation.forward(&hidden)?;
-        let score = self.out_proj.forward(&hidden)?;
-
-        score.squeeze(D::Minus1)
-    }
-}
-
 pub struct Qwen3Model {
     embeddings: Embedding,
+    lm_head_weight: Tensor,
     layers: Vec<Qwen3Layer>,
     norm: RMSNorm,
     rotary_cache: (Tensor, Tensor),
     rotary_dim: usize,
+    model_type: ModelType,
     pool: Pool,
-    classifier: Option<Box<dyn ClassificationHead + Send>>,
     num_attention_heads: usize,
     pad_token_id: u32,
 
@@ -469,19 +395,12 @@ pub struct Qwen3Model {
 
 impl Qwen3Model {
     pub fn load(vb: VarBuilder, config: &Qwen3Config, model_type: ModelType) -> Result<Self> {
-        let (pool, classifier) = match model_type {
+        let pool = match &model_type {
             ModelType::Classifier => {
-                let pool = Pool::LastToken;
-                let classifier: Box<dyn ClassificationHead + Send> =
-                    Box::new(Qwen3ClassificationHead::load(vb.clone(), config)?);
-                (pool, Some(classifier))
+                candle::bail!("`classifier` model type is not supported for Qwen3")
             }
-            ModelType::Embedding(pool) => {
-                if pool == Pool::Splade {
-                    candle::bail!("`splade` is not supported for Qwen3")
-                }
-                (pool, None)
-            }
+            ModelType::Embedding(pool) => pool.clone(),
+            ModelType::ListwiseReranker => Pool::LastToken,
         };
 
         // The Qwen3-Reranker models contain the `model` key
@@ -492,11 +411,13 @@ impl Qwen3Model {
             vb
         };
 
-        let embeddings = Embedding::new(
-            vb.pp("embed_tokens")
-                .get((config.vocab_size, config.hidden_size), "weight")?,
-            config.hidden_size,
-        );
+        let embed_weight = vb
+            .pp("embed_tokens")
+            .get((config.vocab_size, config.hidden_size), "weight")?;
+
+        let embeddings = Embedding::new(embed_weight.clone(), config.hidden_size);
+
+        let lm_head_weight = embed_weight;
 
         let layers = (0..config.num_hidden_layers)
             .map(|index| Qwen3Layer::load(vb.pp(format!("layers.{index}")), config))
@@ -515,12 +436,13 @@ impl Qwen3Model {
 
         Ok(Self {
             embeddings,
+            lm_head_weight,
             layers,
             norm,
             rotary_cache,
             rotary_dim,
+            model_type,
             pool,
-            classifier,
             pad_token_id: config.eos_token_id as u32,
             num_attention_heads: config.num_attention_heads,
             dtype: vb.dtype(),
@@ -787,21 +709,143 @@ impl Model for Qwen3Model {
     }
 
     fn predict(&self, batch: Batch) -> Result<Tensor> {
-        match &self.classifier {
-            None => candle::bail!("`predict` is not implemented for this model"),
-            Some(classifier) => {
-                // Run forward pass to get hidden states
-                let (pooled_embeddings, _) = self.forward(batch)?;
-                match pooled_embeddings {
-                    Some(embeddings) => {
-                        let scores = classifier.forward(&embeddings)?;
-                        // Apply sigmoid to convert logits to probabilities
-                        let probabilities = candle_nn::ops::sigmoid(&scores)?;
-                        Ok(probabilities)
+        match &self.model_type {
+            ModelType::ListwiseReranker => {
+                let batch_size = batch.len();
+                let max_length = batch.max_length as usize;
+                let shape = (batch_size, max_length);
+
+                let (input_ids, position_ids, _input_lengths, attention_bias): (
+                    Tensor,
+                    Tensor,
+                    Vec<usize>,
+                    Option<Tensor>,
+                ) = if batch_size > 1 {
+                    let elems = batch_size * max_length;
+                    let mut input_ids = Vec::with_capacity(elems);
+                    let mut position_ids = Vec::with_capacity(elems);
+                    let mut attention_bias = Vec::with_capacity(elems);
+                    let mut masking = false;
+
+                    for i in 0..batch_size {
+                        let start = batch.cumulative_seq_lengths[i] as usize;
+                        let end = batch.cumulative_seq_lengths[i + 1] as usize;
+                        let seq_length = end - start;
+
+                        // Left padding for Qwen3-Embedding (pad at the beginning)
+                        let padding = max_length - seq_length;
+                        if padding > 0 {
+                            masking = true;
+                            for _ in 0..padding {
+                                input_ids.push(self.pad_token_id);
+                                position_ids.push(0);
+                                attention_bias.push(f32::NEG_INFINITY);
+                            }
+                        }
+
+                        // Then add the actual sequence
+                        for j in start..end {
+                            input_ids.push(batch.input_ids[j]);
+                            position_ids.push(batch.position_ids[j]);
+                            attention_bias.push(0.0);
+                        }
                     }
-                    None => candle::bail!("No pooled embeddings returned for classification"),
+
+                    let input_ids = Tensor::from_vec(input_ids, shape, &self.device)?;
+                    let position_ids = Tensor::from_vec(position_ids, shape, &self.device)?;
+
+                    let attention_bias = if masking {
+                        let attention_bias = Tensor::from_vec(
+                            attention_bias,
+                            (batch_size, 1, 1, max_length),
+                            &self.device,
+                        )?
+                        .to_dtype(self.dtype)?;
+                        let attention_bias = attention_bias
+                            .broadcast_as((
+                                batch_size,
+                                self.num_attention_heads,
+                                max_length,
+                                max_length,
+                            ))?
+                            .contiguous()?;
+                        Some(attention_bias)
+                    } else {
+                        None
+                    };
+
+                    (input_ids, position_ids, Vec::<usize>::new(), attention_bias)
+                } else {
+                    let input_ids = Tensor::from_vec(
+                        batch.input_ids.clone(),
+                        (1, batch.input_ids.len()),
+                        &self.device,
+                    )?;
+                    let position_ids = Tensor::from_vec(
+                        batch.position_ids.clone(),
+                        (1, batch.position_ids.len()),
+                        &self.device,
+                    )?;
+
+                    let seq_len = batch.input_ids.len();
+                    let attention_bias = Tensor::zeros(
+                        (1, self.num_attention_heads, seq_len, seq_len),
+                        self.dtype,
+                        &self.device,
+                    )?;
+
+                    (
+                        input_ids,
+                        position_ids,
+                        vec![batch.input_ids.len()],
+                        Some(attention_bias),
+                    )
+                };
+
+                let attention_bias = if let Some(attn_bias) = attention_bias {
+                    Some(self.get_causal_attention_bias(attn_bias)?)
+                } else {
+                    None
+                };
+
+                let mut hidden_states = self.embeddings.forward(&input_ids)?;
+
+                let cos = self
+                    .rotary_cache
+                    .0
+                    .index_select(&position_ids.flatten_all()?, 0)?;
+                let sin = self
+                    .rotary_cache
+                    .1
+                    .index_select(&position_ids.flatten_all()?, 0)?;
+
+                let cos = cos.reshape((batch_size, 1, max_length, self.rotary_dim))?;
+                let sin = sin.reshape((batch_size, 1, max_length, self.rotary_dim))?;
+
+                for layer in &self.layers {
+                    hidden_states =
+                        layer.forward(&hidden_states, attention_bias.as_ref(), &cos, &sin)?;
                 }
+
+                let (outputs, _) = self.norm.forward(&hidden_states, None)?;
+
+                let last_idx = max_length - 1;
+                let h_last = outputs.i((.., last_idx, ..))?; // [bs, hidden_size]
+
+                let true_id = 9693u32; // "yes" token
+                let false_id = 2152u32; // "no" token
+
+                tracing::debug!("Using Qwen3 token IDs - yes: {}, no: {}", true_id, false_id);
+
+                let ids = Tensor::from_vec(vec![false_id, true_id], 2, &self.device)?;
+                let w = self.lm_head_weight.index_select(&ids, 0)?; // [2, hidden_size]g
+                let logits = h_last.matmul(&w.t()?)?; // [bs, 2] (no, yes)
+                let log_probs = candle_nn::ops::log_softmax(&logits, D::Minus1)?;
+                let scores = log_probs.i((.., 1))?.exp()?; // P("yes") ∈ (0,1)
+
+                Ok(scores)
             }
+            _ => candle::bail!("`predict` is only available for ModelType::ListwiseReranker"),
         }
     }
 }
