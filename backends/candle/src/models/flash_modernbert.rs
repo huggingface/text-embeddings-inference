@@ -274,6 +274,7 @@ impl FlashModernBertModel {
 
                 (pool, None)
             }
+            ModelType::ListwiseReranker => todo!(),
         };
 
         let embeddings = ModernBertEmbeddings::load(vb.pp("model.embeddings"), config)

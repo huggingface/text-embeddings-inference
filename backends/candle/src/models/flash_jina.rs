@@ -267,6 +267,7 @@ impl FlashJinaBertModel {
                 }
                 (pool, None)
             }
+            ModelType::ListwiseReranker => todo!(),
         };
 
         let (embeddings, encoder) = match (

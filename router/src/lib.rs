@@ -26,6 +26,7 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
+use serde_json::json;
 use text_embeddings_backend::{DType, Pool};
 use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use text_embeddings_core::infer::Infer;
@@ -240,6 +241,7 @@ pub async fn run(
         position_offset,
         default_prompt,
         prompts,
+        backend_model_type.clone(),
     );
 
     // Get dtype
@@ -418,6 +420,13 @@ fn get_backend_model_type(
             return Ok(text_embeddings_backend::ModelType::Embedding(
                 text_embeddings_backend::Pool::Splade,
             ));
+        } else if arch == "Qwen3ForSequenceClassification" {
+            if pooling.is_some() {
+                tracing::warn!(
+                    "`--pooling` arg is set but model is a reranker. Ignoring `--pooling` arg."
+                );
+            }
+            return Ok(text_embeddings_backend::ModelType::ListwiseReranker);
         } else if arch.ends_with("Classification") {
             if pooling.is_some() {
                 tracing::warn!(

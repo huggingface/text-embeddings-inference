@@ -314,6 +314,7 @@ impl FlashJinaCodeBertModel {
                 }
                 pool
             }
+            ModelType::ListwiseReranker => todo!(),
         };
 
         let (embeddings, encoder) = match (

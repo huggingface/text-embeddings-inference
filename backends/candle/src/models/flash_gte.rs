@@ -191,6 +191,7 @@ impl FlashGTEModel {
                 (pool, Some(classifier))
             }
             ModelType::Embedding(pool) => (pool, None),
+            ModelType::ListwiseReranker => todo!(),
         };
 
         let (word_embeddings, token_type_embeddings, layers, embeddings_norm) =

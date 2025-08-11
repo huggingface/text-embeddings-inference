@@ -24,9 +24,6 @@ use text_embeddings_backend_candle::CandleBackend;
 #[cfg(feature = "ort")]
 use text_embeddings_backend_ort::OrtBackend;
 
-#[cfg(feature = "python")]
-use text_embeddings_backend_python::PythonBackend;
-
 fn powers_of_two(max_value: usize) -> Vec<usize> {
     let mut result = Vec::new();
     let mut power: usize = 1;
@@ -398,7 +395,7 @@ async fn init_backend(
     }
 
     if let Some(api_repo) = api_repo.as_ref() {
-        if cfg!(feature = "python") || cfg!(feature = "candle") {
+        if cfg!(feature = "candle") {
             let start = std::time::Instant::now();
             if download_safetensors(api_repo).await.is_err() {
                 tracing::warn!("safetensors weights not found. Using `pytorch_model.bin` instead. Model loading will be significantly slower.");
@@ -426,32 +423,6 @@ async fn init_backend(
                 Ok(b) => return Ok(Box::new(b)),
                 Err(err) => {
                     tracing::error!("Could not start Candle backend: {err}");
-                    backend_start_failed = true;
-                }
-            }
-        }
-    }
-
-    if cfg!(feature = "python") {
-        #[cfg(feature = "python")]
-        {
-            let backend = std::thread::spawn(move || {
-                PythonBackend::new(
-                    model_path.to_str().unwrap().to_string(),
-                    dtype.to_string(),
-                    model_type,
-                    uds_path,
-                    otlp_endpoint,
-                    otlp_service_name,
-                )
-            })
-            .join()
-            .expect("Python Backend management thread failed");
-
-            match backend {
-                Ok(b) => return Ok(Box::new(b)),
-                Err(err) => {
-                    tracing::error!("Could not start Python backend: {err}");
                     backend_start_failed = true;
                 }
             }

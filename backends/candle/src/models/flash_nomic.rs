@@ -228,6 +228,7 @@ impl FlashNomicBertModel {
                 }
                 pool
             }
+            ModelType::ListwiseReranker => todo!(),
         };
 
         let embeddings = NomicBertEmbeddings::load(vb.clone(), config)?;

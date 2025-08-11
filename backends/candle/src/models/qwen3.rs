@@ -711,137 +711,55 @@ impl Model for Qwen3Model {
     fn predict(&self, batch: Batch) -> Result<Tensor> {
         match &self.model_type {
             ModelType::ListwiseReranker => {
+                // Extract needed values before moving batch
                 let batch_size = batch.len();
                 let max_length = batch.max_length as usize;
-                let shape = (batch_size, max_length);
 
-                let (input_ids, position_ids, _input_lengths, attention_bias): (
-                    Tensor,
-                    Tensor,
-                    Vec<usize>,
-                    Option<Tensor>,
-                ) = if batch_size > 1 {
-                    let elems = batch_size * max_length;
-                    let mut input_ids = Vec::with_capacity(elems);
-                    let mut position_ids = Vec::with_capacity(elems);
-                    let mut attention_bias = Vec::with_capacity(elems);
-                    let mut masking = false;
+                // Use the existing forward method to get hidden states
+                let (_, raw_embeddings) = self.forward(batch)?;
 
-                    for i in 0..batch_size {
-                        let start = batch.cumulative_seq_lengths[i] as usize;
-                        let end = batch.cumulative_seq_lengths[i + 1] as usize;
-                        let seq_length = end - start;
-
-                        // Left padding for Qwen3-Embedding (pad at the beginning)
-                        let padding = max_length - seq_length;
-                        if padding > 0 {
-                            masking = true;
-                            for _ in 0..padding {
-                                input_ids.push(self.pad_token_id);
-                                position_ids.push(0);
-                                attention_bias.push(f32::NEG_INFINITY);
-                            }
-                        }
-
-                        // Then add the actual sequence
-                        for j in start..end {
-                            input_ids.push(batch.input_ids[j]);
-                            position_ids.push(batch.position_ids[j]);
-                            attention_bias.push(0.0);
-                        }
-                    }
-
-                    let input_ids = Tensor::from_vec(input_ids, shape, &self.device)?;
-                    let position_ids = Tensor::from_vec(position_ids, shape, &self.device)?;
-
-                    let attention_bias = if masking {
-                        let attention_bias = Tensor::from_vec(
-                            attention_bias,
-                            (batch_size, 1, 1, max_length),
-                            &self.device,
-                        )?
-                        .to_dtype(self.dtype)?;
-                        let attention_bias = attention_bias
-                            .broadcast_as((
-                                batch_size,
-                                self.num_attention_heads,
-                                max_length,
-                                max_length,
-                            ))?
-                            .contiguous()?;
-                        Some(attention_bias)
-                    } else {
-                        None
-                    };
-
-                    (input_ids, position_ids, Vec::<usize>::new(), attention_bias)
-                } else {
-                    let input_ids = Tensor::from_vec(
-                        batch.input_ids.clone(),
-                        (1, batch.input_ids.len()),
-                        &self.device,
-                    )?;
-                    let position_ids = Tensor::from_vec(
-                        batch.position_ids.clone(),
-                        (1, batch.position_ids.len()),
-                        &self.device,
-                    )?;
-
-                    let seq_len = batch.input_ids.len();
-                    let attention_bias = Tensor::zeros(
-                        (1, self.num_attention_heads, seq_len, seq_len),
-                        self.dtype,
-                        &self.device,
-                    )?;
-
-                    (
-                        input_ids,
-                        position_ids,
-                        vec![batch.input_ids.len()],
-                        Some(attention_bias),
-                    )
+                let hidden_states = match raw_embeddings {
+                    Some(embeddings) => embeddings,
+                    None => candle::bail!("No hidden states returned from forward pass"),
                 };
 
-                let attention_bias = if let Some(attn_bias) = attention_bias {
-                    Some(self.get_causal_attention_bias(attn_bias)?)
-                } else {
-                    None
-                };
+                // Project through LM head to get logits
+                let logits = hidden_states.matmul(&self.lm_head_weight.t()?)?;
 
-                let mut hidden_states = self.embeddings.forward(&input_ids)?;
+                // Correct token IDs for Qwen3 (verified from tokenizer)
+                let yes_id = 9454u32; // "yes" token ID
+                let no_id = 2901u32; // "no" token ID
 
-                let cos = self
-                    .rotary_cache
-                    .0
-                    .index_select(&position_ids.flatten_all()?, 0)?;
-                let sin = self
-                    .rotary_cache
-                    .1
-                    .index_select(&position_ids.flatten_all()?, 0)?;
+                tracing::debug!("Using Qwen3 token IDs - yes: {}, no: {}", yes_id, no_id);
 
-                let cos = cos.reshape((batch_size, 1, max_length, self.rotary_dim))?;
-                let sin = sin.reshape((batch_size, 1, max_length, self.rotary_dim))?;
+                // Extract logits for last position of each sequence
+                let mut scores_vec = Vec::with_capacity(batch_size);
 
-                for layer in &self.layers {
-                    hidden_states =
-                        layer.forward(&hidden_states, attention_bias.as_ref(), &cos, &sin)?;
+                for i in 0..batch_size {
+                    // For left-padded sequences, the last position contains the actual output
+                    let last_pos = max_length - 1;
+
+                    // Get logits for the last position
+                    let last_logits = logits.i((i, last_pos, ..))?;
+
+                    // Extract yes/no logits directly
+                    let yes_logit = last_logits.i(yes_id as usize)?;
+                    let no_logit = last_logits.i(no_id as usize)?;
+
+                    // Stack [no, yes] and apply log_softmax
+                    let logit_pair = Tensor::stack(&[&no_logit, &yes_logit], 0)?;
+                    let log_probs =
+                        candle_nn::ops::log_softmax(&logit_pair.unsqueeze(0)?, D::Minus1)?;
+
+                    // Extract yes probability (index 1) and exp
+                    let yes_log_prob = log_probs.i((0, 1))?;
+                    let score = yes_log_prob.exp()?.to_scalar::<f32>()?;
+
+                    scores_vec.push(score);
                 }
 
-                let (outputs, _) = self.norm.forward(&hidden_states, None)?;
-
-                let last_idx = max_length - 1;
-                let h_last = outputs.i((.., last_idx, ..))?; // [bs, hidden_size]
-
-                let true_id = 9693u32; // "yes" token
-                let false_id = 2152u32; // "no" token
-
-                tracing::debug!("Using Qwen3 token IDs - yes: {}, no: {}", true_id, false_id);
-
-                let ids = Tensor::from_vec(vec![false_id, true_id], 2, &self.device)?;
-                let w = self.lm_head_weight.index_select(&ids, 0)?; // [2, hidden_size]g
-                let logits = h_last.matmul(&w.t()?)?; // [bs, 2] (no, yes)
-                let log_probs = candle_nn::ops::log_softmax(&logits, D::Minus1)?;
-                let scores = log_probs.i((.., 1))?.exp()?; // P("yes") ∈ (0,1)
+                // Convert to tensor
+                let scores = Tensor::from_vec(scores_vec, batch_size, &self.device)?;
 
                 Ok(scores)
             }

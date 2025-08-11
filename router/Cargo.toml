@@ -85,7 +85,6 @@ grpc = ["metrics-exporter-prometheus/http-listener", "dep:prost", "dep:tonic", "
 metal = ["text-embeddings-backend/metal"]
 mkl = ["text-embeddings-backend/mkl"]
 accelerate = ["text-embeddings-backend/accelerate"]
-python = ["text-embeddings-backend/python"]
 ort = ["text-embeddings-backend/ort"]
 candle = ["text-embeddings-backend/candle"]
 candle-cuda = ["candle", "text-embeddings-backend/flash-attn", "dep:cudarc"]

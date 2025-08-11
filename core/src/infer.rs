@@ -499,7 +499,10 @@ impl Infer {
 
     #[instrument(skip(self))]
     pub fn is_classifier(&self) -> bool {
-        matches!(self.backend.model_type, ModelType::Classifier)
+        matches!(
+            self.backend.model_type,
+            ModelType::Classifier | ModelType::ListwiseReranker
+        )
     }
 
     #[instrument(skip(self))]

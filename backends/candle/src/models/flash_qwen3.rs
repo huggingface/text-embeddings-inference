@@ -1,7 +1,7 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{get_cos_sin, get_inv_freqs, HiddenAct, Linear, RMSNorm};
 use crate::models::{Model, Qwen3Config};
-use candle::{DType, Device, IndexOp, Result, Tensor};
+use candle::{DType, Device, IndexOp, Result, Tensor, D};
 use candle_nn::{Embedding, Module, VarBuilder};
 use candle_rotary::apply_rotary_inplace;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
@@ -592,10 +592,13 @@ impl Model for FlashQwen3Model {
 
                 let h_last = Tensor::stack(&last_hidden_states, 0)?; // [bs, hidden_size]
 
-                let true_id = 9693u32;
-                let false_id = 2152u32;
+                // Correct token IDs for Qwen3 (verified from tokenizer)
+                let yes_id = 9454u32; // "yes" token ID
+                let no_id = 2901u32; // "no" token ID
 
-                let ids = Tensor::from_vec(vec![false_id, true_id], 2, &self.device)?;
+                tracing::debug!("Using Qwen3 token IDs - yes: {}, no: {}", yes_id, no_id);
+
+                let ids = Tensor::from_vec(vec![no_id, yes_id], 2, &self.device)?;
                 let w = self.lm_head_weight.index_select(&ids, 0)?; // [2, hidden_size]
                 let logits = h_last.matmul(&w.t()?)?; // [bs, 2] (no, yes)
                 let log_probs = candle_nn::ops::log_softmax(&logits, D::Minus1)?;

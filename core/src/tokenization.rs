@@ -1,6 +1,7 @@
 /// Payload tokenization logic
 use crate::TextEmbeddingsError;
 use std::collections::HashMap;
+use text_embeddings_backend::ModelType;
 use tokenizers::tokenizer::Tokenizer;
 pub use tokenizers::Encoding as RawEncoding;
 use tokenizers::{TruncationDirection, TruncationParams, TruncationStrategy};
@@ -34,6 +35,7 @@ impl Tokenization {
         position_offset: usize,
         default_prompt: Option<String>,
         prompts: Option<HashMap<String, String>>,
+        model_type: ModelType,
     ) -> Self {
         tracing::info!("Starting {workers} tokenization workers");
 
@@ -46,6 +48,7 @@ impl Tokenization {
             let receiver_clone = receiver.clone();
             let default_prompt_clone = default_prompt.clone();
             let prompts_clone = prompts.clone();
+            let model_type_clone = model_type.clone();
             // Spawn worker
             std::thread::spawn(move || {
                 tokenizer_worker(
@@ -54,6 +57,7 @@ impl Tokenization {
                     position_offset,
                     default_prompt_clone,
                     prompts_clone,
+                    model_type_clone,
                     receiver_clone,
                 )
             });
@@ -172,6 +176,7 @@ fn tokenizer_worker(
     position_offset: usize,
     default_prompt: Option<String>,
     prompts: Option<HashMap<String, String>>,
+    model_type: ModelType,
     receiver: async_channel::Receiver<TokenizerRequest>,
 ) {
     // Loop over requests
@@ -203,6 +208,7 @@ fn tokenizer_worker(
                             default_prompt_clone,
                             prompt_name,
                             prompts.as_ref(),
+                            &model_type,
                             &mut tokenizer,
                         ));
                     }
@@ -232,6 +238,7 @@ fn tokenizer_worker(
                             default_prompt_clone,
                             prompt_name,
                             prompts.as_ref(),
+                            &model_type,
                             &mut tokenizer,
                         ));
                     }
@@ -259,6 +266,81 @@ fn decode_ids(
     Ok(tokenizer
         .with_truncation(None)?
         .decode(&ids, skip_special_tokens)?)
+}
+
+/// Format input for Qwen3 reranker models
+fn format_qwen3_reranker_input(
+    inputs: EncodingInput,
+) -> Result<EncodingInput, TextEmbeddingsError> {
+    // The Qwen3 reranker expects a specific prompt format
+    match inputs {
+        EncodingInput::Single(text) => {
+            // For reranking, we expect the input to contain both query and document
+            // They should be separated by a delimiter like "||"
+            let parts: Vec<&str> = text.split("||").collect();
+            if parts.len() != 2 {
+                return Err(TextEmbeddingsError::Validation(
+                    "Qwen3 reranker expects input format: 'query||document'".to_string(),
+                ));
+            }
+
+            let query = parts[0].trim();
+            let document = parts[1].trim();
+            let instruction =
+                "Given a web search query, retrieve relevant passages that answer the query";
+
+            let formatted = format!(
+                r#"<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".
+<|im_end|>
+<|im_start|>user
+<Instruct>: {}
+<Query>: {}
+<Document>: {}
+<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+"#,
+                instruction, query, document
+            );
+
+            Ok(EncodingInput::Single(formatted))
+        }
+        EncodingInput::Dual(query, document) => {
+            // If we already have query and document separated, format them directly
+            let instruction =
+                "Given a web search query, retrieve relevant passages that answer the query";
+
+            let formatted = format!(
+                r#"<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".
+<|im_end|>
+<|im_start|>user
+<Instruct>: {}
+<Query>: {}
+<Document>: {}
+<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+"#,
+                instruction, query, document
+            );
+
+            Ok(EncodingInput::Single(formatted))
+        }
+        EncodingInput::Ids(_) => {
+            // If already tokenized, we can't format it
+            Err(TextEmbeddingsError::Validation(
+                "Cannot format pre-tokenized input for Qwen3 reranker".to_string(),
+            ))
+        }
+    }
 }
 
 fn prepare_pre_prompt(
@@ -291,8 +373,21 @@ fn tokenize_input(
     default_prompt: Option<String>,
     prompt_name: Option<String>,
     prompts: Option<&HashMap<String, String>>,
+    model_type: &ModelType,
     tokenizer: &mut Tokenizer,
 ) -> Result<(Option<String>, RawEncoding), TextEmbeddingsError> {
+    // Check if this is a Qwen3 reranker and apply special formatting
+    if matches!(model_type, ModelType::ListwiseReranker) {
+        tracing::debug!("Applying Qwen3 reranker formatting to input");
+        // For Qwen3 reranker, we need to format the input with the special template
+        inputs = format_qwen3_reranker_input(inputs)?;
+
+        // Debug log the formatted input
+        if let EncodingInput::Single(ref text) = inputs {
+            tracing::debug!("Formatted Qwen3 input: {}", text);
+        }
+    }
+
     let pre_prompt = prepare_pre_prompt(default_prompt, prompt_name, prompts)?;
 
     let input_chars = inputs.count_chars();
@@ -372,6 +467,7 @@ fn encode_input(
     default_prompt: Option<String>,
     prompt_name: Option<String>,
     prompts: Option<&HashMap<String, String>>,
+    model_type: &ModelType,
     tokenizer: &mut Tokenizer,
 ) -> Result<ValidEncoding, TextEmbeddingsError> {
     // Default truncation params
@@ -390,6 +486,7 @@ fn encode_input(
         default_prompt,
         prompt_name,
         prompts,
+        model_type,
         tokenizer,
     )?;
     let seq_len = encoding.len();
