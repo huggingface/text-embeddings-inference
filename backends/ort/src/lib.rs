@@ -1,6 +1,7 @@
 use ndarray::{s, Axis};
 use nohash_hasher::BuildNoHashHasher;
 use ort::session::{builder::GraphOptimizationLevel, Session};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::ops::{Div, Mul};
 use std::path::Path;
@@ -8,10 +9,31 @@ use text_embeddings_backend_core::{
     Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool, Predictions,
 };
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ModelConfig {
+    pub vocab_size: usize,
+    pub hidden_size: usize,
+    pub num_hidden_layers: usize,
+    pub num_key_value_heads: usize,
+    #[allow(unused)]
+    pub eos_token_id: Option<usize>,
+    #[allow(unused)]
+    pub pad_token_id: Option<usize>,
+}
+
 pub struct OrtBackend {
     session: Session,
+    // NOTE: only required for handling the `past_key_values` parsing, and eventually for re-using
+    // the EOS and PAD tokens if needed
+    config: ModelConfig,
+
+    token_type_ids: bool,
+    // NOTE: required since the key can either be `token_type_ids` or `input_type`
+    token_type_ids_key: String,
+    position_ids: bool,
+    past_key_values: bool,
+
     pool: Pool,
-    type_id_name: Option<String>,
 }
 
 impl OrtBackend {
@@ -20,27 +42,24 @@ impl OrtBackend {
         dtype: String,
         model_type: ModelType,
     ) -> Result<Self, BackendError> {
-        // Check dtype
         if dtype != "float32" {
             return Err(BackendError::Start(format!(
-                "DType {dtype} is not supported"
+                "Dtype {dtype} is not supported for `ort`, only float32."
             )));
         };
 
-        // Check model type
         let pool = match model_type {
             ModelType::Classifier => Pool::Cls,
             ModelType::Embedding(pool) => match pool {
                 Pool::Splade => {
                     return Err(BackendError::Start(format!(
-                        "Pooling {pool} is not supported for this backend. Use `candle` backend instead."
+                        "Pooling {pool} is not supported for `ort`, use `candle` instead."
                     )));
                 }
-                pool => pool,
+                _ => pool,
             },
         };
 
-        // Get model path
         let onnx_path = {
             let default_path = model_path.join("model.onnx");
             match default_path.exists() {
@@ -49,7 +68,20 @@ impl OrtBackend {
             }
         };
 
-        // Start onnx session
+        let config = {
+            let config_path = model_path.join("config.json");
+            if !config_path.exists() {
+                return Err(BackendError::Start(format!(
+                    "config.json not found at {:?}",
+                    config_path
+                )));
+            }
+            let config_content = std::fs::read_to_string(config_path)
+                .map_err(|e| BackendError::Start(format!("Failed to read config.json: {}", e)))?;
+            serde_json::from_str::<ModelConfig>(&config_content)
+                .map_err(|e| BackendError::Start(format!("Failed to parse config.json: {}", e)))?
+        };
+
         let session = Session::builder()
             .s()?
             .with_intra_threads(num_cpus::get())
@@ -59,19 +91,37 @@ impl OrtBackend {
             .commit_from_file(onnx_path)
             .s()?;
 
-        // Check if the model requires type tokens
-        let mut type_id_name = None;
+        let mut token_type_ids = false;
+        let mut token_type_ids_key = String::from("token_type_ids");
+        let mut position_ids = false;
+        let mut past_key_values = false;
+
         for input in &session.inputs {
-            if &input.name == "token_type_ids" || &input.name == "input_type" {
-                type_id_name = Some(input.name.clone());
-                break;
+            match input.name.as_str() {
+                "token_type_ids" | "input_type" => {
+                    token_type_ids = true;
+                    token_type_ids_key = String::from("token_type_ids");
+                }
+                "position_ids" => {
+                    position_ids = true;
+                }
+                name if name.starts_with("past_key_values.") => {
+                    past_key_values = true;
+                }
+                // NOTE: no need to handle `inputs_ids` and `attention_mask` since those are always
+                // required
+                _ => {}
             }
         }
 
         Ok(Self {
             session,
+            config,
+            token_type_ids,
+            token_type_ids_key,
+            position_ids,
+            past_key_values,
             pool,
-            type_id_name,
         })
     }
 }
@@ -96,14 +146,15 @@ impl Backend for OrtBackend {
         // Whether a least one of the request in the batch is padded
         let mut masking = false;
 
-        let (input_ids, type_ids, input_lengths, attention_mask) = {
+        let (input_ids, token_type_ids, input_lengths, attention_mask, position_ids) = {
             let elems = batch_size * max_length;
 
             if batch_size > 1 {
                 // Prepare padded batch
                 let mut input_ids = Vec::with_capacity(elems);
-                let mut type_ids = Vec::with_capacity(elems);
+                let mut token_type_ids = Vec::with_capacity(elems);
                 let mut attention_mask = Vec::with_capacity(elems);
+                let mut position_ids = Vec::with_capacity(elems);
                 let mut input_lengths = Vec::with_capacity(batch_size);
 
                 for i in 0..batch_size {
@@ -113,10 +164,11 @@ impl Backend for OrtBackend {
                     input_lengths.push(seq_length as f32);
 
                     // Copy values
-                    for j in start..end {
+                    for (pos, j) in (start..end).enumerate() {
                         input_ids.push(batch.input_ids[j] as i64);
-                        type_ids.push(batch.token_type_ids[j] as i64);
+                        token_type_ids.push(batch.token_type_ids[j] as i64);
                         attention_mask.push(1_i64);
+                        position_ids.push(pos as i64);
                     }
 
                     // Add padding if needed
@@ -124,22 +176,31 @@ impl Backend for OrtBackend {
                     if padding > 0 {
                         // Set bool to use attention mask
                         masking = true;
-                        for _ in 0..padding {
+                        for pad_pos in 0..padding {
                             input_ids.push(0);
-                            type_ids.push(0);
+                            token_type_ids.push(0);
                             attention_mask.push(0_i64);
+                            position_ids.push((seq_length + pad_pos) as i64);
                         }
                     }
                 }
-                (input_ids, type_ids, input_lengths, attention_mask)
+                (
+                    input_ids,
+                    token_type_ids,
+                    input_lengths,
+                    attention_mask,
+                    position_ids,
+                )
             } else {
                 let attention_mask = vec![1_i64; elems];
+                let position_ids: Vec<i64> = (0..max_length as i64).collect();
 
                 (
                     batch.input_ids.into_iter().map(|v| v as i64).collect(),
                     batch.token_type_ids.into_iter().map(|v| v as i64).collect(),
                     vec![batch.max_length as f32],
                     attention_mask,
+                    position_ids,
                 )
             }
         };
@@ -148,20 +209,58 @@ impl Backend for OrtBackend {
         let input_ids = ndarray::Array2::from_shape_vec((batch_size, max_length), input_ids).e()?;
         let attention_mask =
             ndarray::Array2::from_shape_vec((batch_size, max_length), attention_mask).e()?;
+        let position_ids =
+            ndarray::Array2::from_shape_vec((batch_size, max_length), position_ids).e()?;
         let input_lengths = ndarray::Array1::from_vec(input_lengths);
 
-        // Create onnx inputs
-        let inputs = match self.type_id_name.as_ref() {
-            Some(type_id_name) => {
-                // Add type ids to inputs
-                let type_ids =
-                    ndarray::Array2::from_shape_vec((batch_size, max_length), type_ids).e()?;
-                ort::inputs!["input_ids" => input_ids, "attention_mask" => attention_mask.clone(), type_id_name => type_ids].e()?
+        let inputs = {
+            let mut inputs = ort::inputs![
+                "input_ids" => input_ids,
+                "attention_mask" => attention_mask.clone(),
+            ]
+            .e()?;
+
+            if self.token_type_ids {
+                let token_type_ids_tensor =
+                    ndarray::Array2::from_shape_vec((batch_size, max_length), token_type_ids)
+                        .e()?;
+                let token_type_ids_value =
+                    ort::value::Value::from_array(token_type_ids_tensor).e()?;
+                inputs.push((
+                    self.token_type_ids_key.clone().into(),
+                    token_type_ids_value.into(),
+                ));
             }
-            None => {
-                ort::inputs!["input_ids" => input_ids, "attention_mask" => attention_mask.clone()]
-                    .e()?
+
+            if self.position_ids {
+                let position_ids_value = ort::value::Value::from_array(position_ids).e()?;
+                inputs.push(("position_ids".into(), position_ids_value.into()));
             }
+
+            if self.past_key_values {
+                let head_size = self.config.hidden_size / self.config.num_key_value_heads;
+
+                for i in 0..self.config.num_hidden_layers {
+                    let key_shape = (batch_size, self.config.num_key_value_heads, 0, head_size);
+                    let value_shape = (batch_size, self.config.num_key_value_heads, 0, head_size);
+
+                    let empty_key = ndarray::Array4::<f32>::zeros(key_shape);
+                    let empty_value = ndarray::Array4::<f32>::zeros(value_shape);
+
+                    let key_value = ort::value::Value::from_array(empty_key).e()?;
+                    let value_value = ort::value::Value::from_array(empty_value).e()?;
+                    inputs.push((
+                        format!("past_key_values.{}.key", i).into(),
+                        key_value.into(),
+                    ));
+                    inputs.push((
+                        format!("past_key_values.{}.value", i).into(),
+                        value_value.into(),
+                    ));
+                }
+            }
+
+            inputs
         };
 
         // Run model
@@ -202,7 +301,6 @@ impl Backend for OrtBackend {
             };
 
             let pooled_embeddings = match self.pool {
-                // CLS pooling
                 Pool::Cls => outputs.slice(s![.., 0, ..]).into_owned().into_dyn(),
                 Pool::LastToken => {
                     let axis_len = outputs.len_of(Axis(1));
@@ -211,7 +309,6 @@ impl Backend for OrtBackend {
                         .into_owned()
                         .into_dyn()
                 }
-                // Mean pooling
                 Pool::Mean => {
                     if masking {
                         let mut attention_mask = attention_mask;
@@ -302,14 +399,15 @@ impl Backend for OrtBackend {
         let batch_size = batch.len();
         let max_length = batch.max_length as usize;
 
-        let (input_ids, type_ids, attention_mask) = {
+        let (input_ids, token_type_ids, attention_mask, position_ids) = {
             let elems = batch_size * max_length;
 
             if batch_size > 1 {
                 // Prepare padded batch
                 let mut input_ids = Vec::with_capacity(elems);
-                let mut type_ids = Vec::with_capacity(elems);
+                let mut token_type_ids = Vec::with_capacity(elems);
                 let mut attention_mask = Vec::with_capacity(elems);
+                let mut position_ids = Vec::with_capacity(elems);
 
                 for i in 0..batch_size {
                     let start = batch.cumulative_seq_lengths[i] as usize;
@@ -317,30 +415,34 @@ impl Backend for OrtBackend {
                     let seq_length = (end - start) as u32;
 
                     // Copy values
-                    for j in start..end {
+                    for (pos, j) in (start..end).enumerate() {
                         input_ids.push(batch.input_ids[j] as i64);
-                        type_ids.push(batch.token_type_ids[j] as i64);
+                        token_type_ids.push(batch.token_type_ids[j] as i64);
                         attention_mask.push(1_i64);
+                        position_ids.push(pos as i64);
                     }
 
                     // Add padding if needed
                     let padding = batch.max_length - seq_length;
                     if padding > 0 {
-                        for _ in 0..padding {
+                        for pad_pos in 0..padding {
                             input_ids.push(0);
-                            type_ids.push(0);
+                            token_type_ids.push(0);
                             attention_mask.push(0_i64);
+                            position_ids.push((seq_length + pad_pos) as i64);
                         }
                     }
                 }
-                (input_ids, type_ids, attention_mask)
+                (input_ids, token_type_ids, attention_mask, position_ids)
             } else {
                 let attention_mask = vec![1_i64; elems];
+                let position_ids: Vec<i64> = (0..max_length as i64).collect();
 
                 (
                     batch.input_ids.into_iter().map(|v| v as i64).collect(),
                     batch.token_type_ids.into_iter().map(|v| v as i64).collect(),
                     attention_mask,
+                    position_ids,
                 )
             }
         };
@@ -349,19 +451,57 @@ impl Backend for OrtBackend {
         let input_ids = ndarray::Array2::from_shape_vec((batch_size, max_length), input_ids).e()?;
         let attention_mask =
             ndarray::Array2::from_shape_vec((batch_size, max_length), attention_mask).e()?;
+        let position_ids =
+            ndarray::Array2::from_shape_vec((batch_size, max_length), position_ids).e()?;
 
-        // Create onnx inputs
-        let inputs = match self.type_id_name.as_ref() {
-            Some(type_id_name) => {
-                // Add type ids to inputs
-                let type_ids =
-                    ndarray::Array2::from_shape_vec((batch_size, max_length), type_ids).e()?;
-                ort::inputs!["input_ids" => input_ids, "attention_mask" => attention_mask.clone(), type_id_name => type_ids].e()?
+        let inputs = {
+            let mut inputs = ort::inputs![
+                "input_ids" => input_ids,
+                "attention_mask" => attention_mask.clone(),
+            ]
+            .e()?;
+
+            if self.token_type_ids {
+                let token_type_ids_tensor =
+                    ndarray::Array2::from_shape_vec((batch_size, max_length), token_type_ids)
+                        .e()?;
+                let token_type_ids_value =
+                    ort::value::Value::from_array(token_type_ids_tensor).e()?;
+                inputs.push((
+                    self.token_type_ids_key.clone().into(),
+                    token_type_ids_value.into(),
+                ));
             }
-            None => {
-                ort::inputs!["input_ids" => input_ids, "attention_mask" => attention_mask.clone()]
-                    .e()?
+
+            if self.position_ids {
+                let position_ids_value = ort::value::Value::from_array(position_ids).e()?;
+                inputs.push(("position_ids".into(), position_ids_value.into()));
             }
+
+            if self.past_key_values {
+                let head_size = self.config.hidden_size / self.config.num_key_value_heads;
+
+                for i in 0..self.config.num_hidden_layers {
+                    let key_shape = (batch_size, self.config.num_key_value_heads, 0, head_size);
+                    let value_shape = (batch_size, self.config.num_key_value_heads, 0, head_size);
+
+                    let empty_key = ndarray::Array4::<f32>::zeros(key_shape);
+                    let empty_value = ndarray::Array4::<f32>::zeros(value_shape);
+
+                    let key_value = ort::value::Value::from_array(empty_key).e()?;
+                    let value_value = ort::value::Value::from_array(empty_value).e()?;
+                    inputs.push((
+                        format!("past_key_values.{}.key", i).into(),
+                        key_value.into(),
+                    ));
+                    inputs.push((
+                        format!("past_key_values.{}.value", i).into(),
+                        value_value.into(),
+                    ));
+                }
+            }
+
+            inputs
         };
 
         // Run model
