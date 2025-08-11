@@ -179,7 +179,12 @@ impl Backend {
     }
 
     #[instrument(skip_all)]
-    pub fn create_warmup_batch(&self, shape: (u32, u32), max_token: u32, seq_bucket_size: u32) -> Batch {
+    pub fn create_warmup_batch(
+        &self,
+        shape: (u32, u32),
+        max_token: u32,
+        seq_bucket_size: u32,
+    ) -> Batch {
         let (batch_size, length) = shape;
         let min_length = length.saturating_sub(seq_bucket_size).saturating_add(1);
         let tmp_length = if min_length < length {
