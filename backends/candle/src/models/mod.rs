@@ -61,7 +61,7 @@ pub use modernbert::{ModernBertConfig, ModernBertModel};
 pub use mpnet::{MPNetConfig, MPNetModel};
 pub use nomic::{NomicBertModel, NomicConfig};
 pub use qwen2::Qwen2Config;
-pub use qwen3::{Qwen3Config, Qwen3Model};
+pub use qwen3::{Qwen3Config, Qwen3Model, Qwen3ClassificationHead};
 use text_embeddings_backend_core::Batch;
 
 #[cfg(feature = "cuda")]

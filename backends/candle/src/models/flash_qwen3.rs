@@ -1,6 +1,6 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{get_cos_sin, get_inv_freqs, HiddenAct, Linear, RMSNorm};
-use crate::models::{Model, Qwen3Config};
+use crate::models::{Model, Qwen3Config, Qwen3ClassificationHead};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
 use candle_rotary::apply_rotary_inplace;
@@ -288,6 +288,7 @@ pub struct FlashQwen3Model {
     cos_cache: Tensor,
     sin_cache: Tensor,
     pool: Pool,
+    classification_head: Option<Qwen3ClassificationHead>,
     pub device: Device,
 
     span: tracing::Span,
@@ -304,11 +305,13 @@ impl FlashQwen3Model {
             candle::bail!("FlashQwen3 requires DType::F16")
         }
 
-        let pool = match model_type {
+        let (pool, classification_head) = match model_type {
             ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for Qwen3")
+                // Load classification head before the vb is modified
+                let classification_head = Some(Qwen3ClassificationHead::load(vb.clone(), config)?);
+                (Pool::Cls, classification_head) // Use CLS pooling for classification
             }
-            ModelType::Embedding(pool) => pool,
+            ModelType::Embedding(pool) => (pool, None),
         };
 
         // The Qwen3-Reranker models contain the `model` key
@@ -351,6 +354,7 @@ impl FlashQwen3Model {
             cos_cache,
             sin_cache,
             pool,
+            classification_head,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
@@ -511,5 +515,17 @@ impl Model for FlashQwen3Model {
 
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
+    }
+
+    fn predict(&self, batch: Batch) -> Result<Tensor> {
+        match &self.classification_head {
+            None => candle::bail!("`predict` is not implemented for this model"),
+            Some(classification_head) => {
+                let (pooled_embeddings, _raw_embeddings) = self.forward(batch)?;
+                let pooled_embeddings =
+                    pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
+                classification_head.forward(&pooled_embeddings)
+            }
+        }
     }
 }
