@@ -447,7 +447,7 @@ impl Qwen3Model {
         let (pool, classification_head) = match model_type {
             ModelType::Classifier => {
                 let classification_head = Some(Qwen3ClassificationHead::load(vb.clone(), config)?);
-                (Pool::Cls, classification_head) // Use CLS pooling for classification
+                (Pool::LastToken, classification_head) 
             }
             ModelType::Embedding(pool) => (pool, None),
         };
