@@ -5,6 +5,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::ops::{Div, Mul};
 use std::path::Path;
+use std::sync::Mutex;
 use text_embeddings_backend_core::{
     Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool, Predictions,
 };
@@ -22,10 +23,10 @@ pub struct ModelConfig {
 }
 
 pub struct OrtBackend {
-    session: Session,
     // NOTE: only required for handling the `past_key_values` parsing, and eventually for re-using
     // the EOS and PAD tokens if needed
     config: ModelConfig,
+    session: Mutex<Session>,
 
     token_type_ids: bool,
     // NOTE: required since the key can either be `token_type_ids` or `input_type`
@@ -115,8 +116,8 @@ impl OrtBackend {
         }
 
         Ok(Self {
-            session,
             config,
+            session: Mutex::new(session),
             token_type_ids,
             token_type_ids_key,
             position_ids,
@@ -215,17 +216,16 @@ impl Backend for OrtBackend {
 
         let inputs = {
             let mut inputs = ort::inputs![
-                "input_ids" => input_ids,
-                "attention_mask" => attention_mask.clone(),
-            ]
-            .e()?;
+                "input_ids" => ort::value::Tensor::from_array(input_ids).e()?,
+                "attention_mask" => ort::value::Tensor::from_array(attention_mask.clone()).e()?,
+            ];
 
             if self.token_type_ids {
                 let token_type_ids_tensor =
                     ndarray::Array2::from_shape_vec((batch_size, max_length), token_type_ids)
                         .e()?;
                 let token_type_ids_value =
-                    ort::value::Value::from_array(token_type_ids_tensor).e()?;
+                    ort::value::Tensor::from_array(token_type_ids_tensor).e()?;
                 inputs.push((
                     self.token_type_ids_key.clone().into(),
                     token_type_ids_value.into(),
@@ -233,7 +233,7 @@ impl Backend for OrtBackend {
             }
 
             if self.position_ids {
-                let position_ids_value = ort::value::Value::from_array(position_ids).e()?;
+                let position_ids_value = ort::value::Tensor::from_array(position_ids).e()?;
                 inputs.push(("position_ids".into(), position_ids_value.into()));
             }
 
@@ -247,8 +247,8 @@ impl Backend for OrtBackend {
                     let empty_key = ndarray::Array4::<f32>::zeros(key_shape);
                     let empty_value = ndarray::Array4::<f32>::zeros(value_shape);
 
-                    let key_value = ort::value::Value::from_array(empty_key).e()?;
-                    let value_value = ort::value::Value::from_array(empty_value).e()?;
+                    let key_value = ort::value::Tensor::from_array(empty_key).e()?;
+                    let value_value = ort::value::Tensor::from_array(empty_value).e()?;
                     inputs.push((
                         format!("past_key_values.{}.key", i).into(),
                         key_value.into(),
@@ -264,7 +264,8 @@ impl Backend for OrtBackend {
         };
 
         // Run model
-        let outputs = self.session.run(inputs).e()?;
+        let mut session = self.session.lock().unwrap();
+        let outputs = session.run(inputs).e()?;
 
         // Get last_hidden_state ndarray
         let outputs = outputs
@@ -272,9 +273,9 @@ impl Backend for OrtBackend {
             .or(outputs.get("token_embeddings"))
             .ok_or(BackendError::Inference(format!(
                 "Unknown output keys: {:?}",
-                self.session.outputs
+                outputs
             )))?
-            .try_extract_tensor::<f32>()
+            .try_extract_array::<f32>()
             .e()?
             .to_owned();
 
@@ -456,17 +457,16 @@ impl Backend for OrtBackend {
 
         let inputs = {
             let mut inputs = ort::inputs![
-                "input_ids" => input_ids,
-                "attention_mask" => attention_mask.clone(),
-            ]
-            .e()?;
+                "input_ids" => ort::value::Tensor::from_array(input_ids).e()?,
+                "attention_mask" => ort::value::Tensor::from_array(attention_mask.clone()).e()?,
+            ];
 
             if self.token_type_ids {
                 let token_type_ids_tensor =
                     ndarray::Array2::from_shape_vec((batch_size, max_length), token_type_ids)
                         .e()?;
                 let token_type_ids_value =
-                    ort::value::Value::from_array(token_type_ids_tensor).e()?;
+                    ort::value::Tensor::from_array(token_type_ids_tensor).e()?;
                 inputs.push((
                     self.token_type_ids_key.clone().into(),
                     token_type_ids_value.into(),
@@ -474,7 +474,7 @@ impl Backend for OrtBackend {
             }
 
             if self.position_ids {
-                let position_ids_value = ort::value::Value::from_array(position_ids).e()?;
+                let position_ids_value = ort::value::Tensor::from_array(position_ids).e()?;
                 inputs.push(("position_ids".into(), position_ids_value.into()));
             }
 
@@ -488,8 +488,8 @@ impl Backend for OrtBackend {
                     let empty_key = ndarray::Array4::<f32>::zeros(key_shape);
                     let empty_value = ndarray::Array4::<f32>::zeros(value_shape);
 
-                    let key_value = ort::value::Value::from_array(empty_key).e()?;
-                    let value_value = ort::value::Value::from_array(empty_value).e()?;
+                    let key_value = ort::value::Tensor::from_array(empty_key).e()?;
+                    let value_value = ort::value::Tensor::from_array(empty_value).e()?;
                     inputs.push((
                         format!("past_key_values.{}.key", i).into(),
                         key_value.into(),
@@ -505,13 +505,11 @@ impl Backend for OrtBackend {
         };
 
         // Run model
-        let outputs = self.session.run(inputs).e()?;
+        let mut session = self.session.lock().unwrap();
+        let outputs = session.run(inputs).e()?;
 
         // Get last_hidden_state ndarray
-        let outputs = outputs["logits"]
-            .try_extract_tensor::<f32>()
-            .e()?
-            .to_owned();
+        let outputs = outputs["logits"].try_extract_array::<f32>().e()?.to_owned();
 
         let mut predictions =
             HashMap::with_capacity_and_hasher(batch_size, BuildNoHashHasher::default());
