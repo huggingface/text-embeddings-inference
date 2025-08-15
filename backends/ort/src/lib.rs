@@ -11,21 +11,13 @@ use text_embeddings_backend_core::{
 };
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ModelConfig {
-    pub vocab_size: usize,
+pub struct PastKeyValuesConfig {
     pub hidden_size: usize,
     pub num_hidden_layers: usize,
     pub num_key_value_heads: usize,
-    #[allow(unused)]
-    pub eos_token_id: Option<usize>,
-    #[allow(unused)]
-    pub pad_token_id: Option<usize>,
 }
 
 pub struct OrtBackend {
-    // NOTE: only required for handling the `past_key_values` parsing, and eventually for re-using
-    // the EOS and PAD tokens if needed
-    config: ModelConfig,
     session: Mutex<Session>,
 
     token_type_ids: bool,
@@ -33,6 +25,7 @@ pub struct OrtBackend {
     token_type_ids_key: String,
     position_ids: bool,
     past_key_values: bool,
+    past_key_values_config: Option<PastKeyValuesConfig>,
 
     pool: Pool,
 }
@@ -69,20 +62,6 @@ impl OrtBackend {
             }
         };
 
-        let config = {
-            let config_path = model_path.join("config.json");
-            if !config_path.exists() {
-                return Err(BackendError::Start(format!(
-                    "config.json not found at {:?}",
-                    config_path
-                )));
-            }
-            let config_content = std::fs::read_to_string(config_path)
-                .map_err(|e| BackendError::Start(format!("Failed to read config.json: {}", e)))?;
-            serde_json::from_str::<ModelConfig>(&config_content)
-                .map_err(|e| BackendError::Start(format!("Failed to parse config.json: {}", e)))?
-        };
-
         let session = Session::builder()
             .s()?
             .with_intra_threads(num_cpus::get())
@@ -115,13 +94,34 @@ impl OrtBackend {
             }
         }
 
+        let past_key_values_config = match past_key_values {
+            true => {
+                let path = model_path.join("config.json");
+                if !path.exists() {
+                    return Err(BackendError::Start(format!(
+                        "config.json not found at {:?}",
+                        path
+                    )));
+                }
+                let content = std::fs::read_to_string(path).map_err(|e| {
+                    BackendError::Start(format!("Failed to read config.json: {}", e))
+                })?;
+                Some(
+                    serde_json::from_str::<PastKeyValuesConfig>(&content).map_err(|e| {
+                        BackendError::Start(format!("Failed to parse config.json: {}", e))
+                    })?,
+                )
+            }
+            false => None,
+        };
+
         Ok(Self {
-            config,
             session: Mutex::new(session),
             token_type_ids,
             token_type_ids_key,
             position_ids,
             past_key_values,
+            past_key_values_config,
             pool,
         })
     }
@@ -238,11 +238,12 @@ impl Backend for OrtBackend {
             }
 
             if self.past_key_values {
-                let head_size = self.config.hidden_size / self.config.num_key_value_heads;
+                let config = self.past_key_values_config.as_ref().unwrap();
+                let head_size = config.hidden_size / config.num_key_value_heads;
 
-                for i in 0..self.config.num_hidden_layers {
-                    let key_shape = (batch_size, self.config.num_key_value_heads, 0, head_size);
-                    let value_shape = (batch_size, self.config.num_key_value_heads, 0, head_size);
+                for i in 0..config.num_hidden_layers {
+                    let key_shape = (batch_size, config.num_key_value_heads, 0, head_size);
+                    let value_shape = (batch_size, config.num_key_value_heads, 0, head_size);
 
                     let empty_key = ndarray::Array4::<f32>::zeros(key_shape);
                     let empty_value = ndarray::Array4::<f32>::zeros(value_shape);
@@ -479,11 +480,12 @@ impl Backend for OrtBackend {
             }
 
             if self.past_key_values {
-                let head_size = self.config.hidden_size / self.config.num_key_value_heads;
+                let config = self.past_key_values_config.as_ref().unwrap();
+                let head_size = config.hidden_size / config.num_key_value_heads;
 
-                for i in 0..self.config.num_hidden_layers {
-                    let key_shape = (batch_size, self.config.num_key_value_heads, 0, head_size);
-                    let value_shape = (batch_size, self.config.num_key_value_heads, 0, head_size);
+                for i in 0..config.num_hidden_layers {
+                    let key_shape = (batch_size, config.num_key_value_heads, 0, head_size);
+                    let value_shape = (batch_size, config.num_key_value_heads, 0, head_size);
 
                     let empty_key = ndarray::Array4::<f32>::zeros(key_shape);
                     let empty_value = ndarray::Array4::<f32>::zeros(value_shape);
