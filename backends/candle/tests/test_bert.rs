@@ -2,7 +2,9 @@ mod common;
 
 use crate::common::{sort_embeddings, SnapshotEmbeddings, SnapshotScores};
 use anyhow::Result;
-use common::{batch, cosine_matcher, download_artifacts, load_tokenizer, relative_matcher};
+use common::{
+    batch, cosine_matcher, download_artifacts, get_api_repo, load_tokenizer, relative_matcher,
+};
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
@@ -71,7 +73,8 @@ fn test_bert() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_bert_pooled_raw() -> Result<()> {
-    let model_root = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None, None)?;
+    let api_repo = get_api_repo("sentence-transformers/all-MiniLM-L6-v2", None);
+    let model_root = download_artifacts(&api_repo)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -142,7 +145,8 @@ fn test_bert_pooled_raw() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_emotions() -> Result<()> {
-    let model_root = download_artifacts("SamLowe/roberta-base-go_emotions", None, None)?;
+    let api_repo = get_api_repo("SamLowe/roberta-base-go_emotions", None);
+    let model_root = download_artifacts(&api_repo)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(

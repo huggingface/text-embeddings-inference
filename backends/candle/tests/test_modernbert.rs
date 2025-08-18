@@ -3,7 +3,8 @@ mod common;
 use crate::common::{sort_embeddings, SnapshotEmbeddings};
 use anyhow::Result;
 use common::{
-    batch, cosine_matcher, download_artifacts, load_tokenizer, relative_matcher, SnapshotScores,
+    batch, cosine_matcher, download_artifacts, get_api_repo, load_tokenizer, relative_matcher,
+    SnapshotScores,
 };
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
@@ -11,7 +12,8 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
 #[test]
 #[serial_test::serial]
 fn test_modernbert() -> Result<()> {
-    let model_root = download_artifacts("answerdotai/ModernBERT-base", None, None)?;
+    let api_repo = get_api_repo("answerdotai/ModernBERT-base", None);
+    let model_root = download_artifacts(&api_repo)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -80,7 +82,8 @@ fn test_modernbert() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_modernbert_pooled_raw() -> Result<()> {
-    let model_root = download_artifacts("answerdotai/ModernBERT-base", None, None)?;
+    let api_repo = get_api_repo("answerdotai/ModernBERT-base", None);
+    let model_root = download_artifacts(&api_repo)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(

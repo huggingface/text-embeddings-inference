@@ -2,14 +2,15 @@ mod common;
 
 use crate::common::{sort_embeddings, SnapshotEmbeddings};
 use anyhow::Result;
-use common::{batch, cosine_matcher, download_artifacts, load_tokenizer};
+use common::{batch, cosine_matcher, download_artifacts, get_api_repo, load_tokenizer};
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
 #[test]
 #[serial_test::serial]
 fn test_qwen3() -> Result<()> {
-    let model_root = download_artifacts("Qwen/Qwen3-Embedding-0.6B", None, None)?;
+    let api_repo = get_api_repo("Qwen/Qwen3-Embedding-0.6B", None);
+    let model_root = download_artifacts(&api_repo)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
