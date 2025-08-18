@@ -114,9 +114,10 @@ struct Args {
     /// convert the pooled embeddings into different dimensions, available as `2_Dense_<dims>` e.g.
     /// https://huggingface.co/NovaSearch/stella_en_400M_v5.
     ///
-    /// Note that this argument is optional, only required to be set if the path to the `Dense`
-    /// module is other than `2_Dense`. And it also applies when leveraging the `candle` backend.
-    #[clap(default_value = "2_Dense", long, env)]
+    /// Note that this argument is optional, only required to be set if there is no `modules.json`
+    /// file or when you want to override a single Dense module path, only when running with the
+    /// `candle` backend.
+    #[clap(long, env)]
     dense_path: Option<String>,
 
     /// [DEPRECATED IN FAVOR OF `--hf-token`] Your Hugging Face Hub token
