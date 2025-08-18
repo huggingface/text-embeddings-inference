@@ -56,8 +56,8 @@ fn test_jina_small() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_jina_rerank() -> Result<()> {
-    let model_root =
-        download_artifacts("jinaai/jina-reranker-v1-tiny-en", Some("refs/pr/11"), None)?;
+    let api_repo = get_api_repo("jinaai/jina-reranker-v1-tiny-en", Some("refs/pr/11"));
+    let model_root = download_artifacts(&api_repo)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(

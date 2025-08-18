@@ -219,7 +219,8 @@ fn test_flash_emotions() -> Result<()> {
     any(feature = "flash-attn", feature = "flash-attn-v1")
 ))]
 fn test_flash_bert_classification() -> Result<()> {
-    let model_root = download_artifacts("ibm-research/re2g-reranker-nq", Some("refs/pr/3"), None)?;
+    let api_repo = get_api_repo("ibm-research/re2g-reranker-nq", Some("refs/pr/3"));
+    let model_root = download_artifacts(&api_repo)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
