@@ -417,9 +417,9 @@ async fn init_backend(
                     .await
                     .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
                 tracing::info!("Dense modules downloaded in {:?}", start.elapsed());
-                dense_paths
+                Some(dense_paths)
             } else {
-                vec![]
+                None
             };
 
             let backend = CandleBackend::new(
