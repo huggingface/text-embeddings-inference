@@ -84,7 +84,7 @@ impl Backend {
         api_repo: Option<ApiRepo>,
         dtype: DType,
         model_type: ModelType,
-        dense_path: Option<PathBuf>,
+        dense_path: Option<String>,
         uds_path: String,
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
@@ -356,7 +356,7 @@ async fn init_backend(
     api_repo: Option<ApiRepo>,
     dtype: DType,
     model_type: ModelType,
-    dense_path: Option<PathBuf>,
+    dense_path: Option<String>,
     uds_path: String,
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
@@ -411,11 +411,22 @@ async fn init_backend(
     if cfg!(feature = "candle") {
         #[cfg(feature = "candle")]
         {
+            let dense_modules = if let Some(api_repo) = api_repo.as_ref() {
+                let start = std::time::Instant::now();
+                let modules = download_dense_modules(api_repo, dense_path)
+                    .await
+                    .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
+                tracing::info!("Dense modules downloaded in {:?}", start.elapsed());
+                modules
+            } else {
+                vec![]
+            };
+
             let backend = CandleBackend::new(
                 &model_path,
                 dtype.to_string(),
                 model_type.clone(),
-                dense_path.as_deref(),
+                dense_modules,
             );
             match backend {
                 Ok(b) => return Ok(Box::new(b)),

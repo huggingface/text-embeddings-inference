@@ -100,9 +100,6 @@ pub async fn run(
         )
     };
 
-    // Build path to Dense module, if applicable, otherwise None
-    let dense_root = dense_path.map(|path| model_root.join(path));
-
     // Load config
     let config_path = model_root.join("config.json");
     let config = fs::read_to_string(config_path).context("`config.json` not found")?;
@@ -242,7 +239,7 @@ pub async fn run(
         api_repo,
         dtype.clone(),
         backend_model_type,
-        dense_root,
+        dense_path,
         uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_string()),
         otlp_endpoint.clone(),
         otlp_service_name.clone(),
