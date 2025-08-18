@@ -93,7 +93,7 @@ pub async fn run(
 
         // Download model from the Hub
         (
-            download_artifacts(&api_repo, pooling.is_none(), dense_path.clone())
+            download_artifacts(&api_repo, pooling.is_none())
                 .await
                 .context("Could not download model artifacts")?,
             Some(api_repo),
