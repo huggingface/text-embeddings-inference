@@ -4449,6 +4449,7 @@ dependencies = [
  "clap",
  "hf-hub",
  "rand 0.9.0",
+ "serde",
  "serde_json",
  "text-embeddings-backend-candle",
  "text-embeddings-backend-core",
