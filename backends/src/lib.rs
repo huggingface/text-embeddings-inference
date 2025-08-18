@@ -411,13 +411,13 @@ async fn init_backend(
     if cfg!(feature = "candle") {
         #[cfg(feature = "candle")]
         {
-            let dense_modules = if let Some(api_repo) = api_repo.as_ref() {
+            let dense_paths = if let Some(api_repo) = api_repo.as_ref() {
                 let start = std::time::Instant::now();
-                let modules = download_dense_modules(api_repo, dense_path)
+                let dense_paths = download_dense_modules(api_repo, dense_path)
                     .await
                     .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
                 tracing::info!("Dense modules downloaded in {:?}", start.elapsed());
-                modules
+                dense_paths
             } else {
                 vec![]
             };
@@ -426,7 +426,7 @@ async fn init_backend(
                 &model_path,
                 dtype.to_string(),
                 model_type.clone(),
-                dense_modules,
+                dense_paths,
             );
             match backend {
                 Ok(b) => return Ok(Box::new(b)),
