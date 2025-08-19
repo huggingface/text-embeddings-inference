@@ -2,22 +2,15 @@ mod common;
 
 use crate::common::{sort_embeddings, SnapshotEmbeddings};
 use anyhow::Result;
-use common::{
-    batch, cosine_matcher, download_artifacts, download_dense_modules, get_api_repo, load_tokenizer,
-};
+use common::{batch, cosine_matcher, download_artifacts, load_tokenizer};
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
 #[test]
 #[serial_test::serial]
 fn test_stella_en_400m_v5_default_dense() -> Result<()> {
-    let api_repo = get_api_repo("dunzhang/stella_en_400M_v5", None);
-    let model_root = download_artifacts(&api_repo).unwrap();
+    let (model_root, dense_paths) = download_artifacts("dunzhang/stella_en_400M_v5", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
-    let dense_paths = download_dense_modules(&api_repo, None)
-        .ok()
-        .filter(|paths| !paths.is_empty())
-        .map(|paths| paths.into_iter().map(|path| path.to_string()).collect());
 
     let backend = CandleBackend::new(
         &model_root,
@@ -69,13 +62,12 @@ fn test_stella_en_400m_v5_default_dense() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_stella_en_400m_v5_dense_768() -> Result<()> {
-    let api_repo = get_api_repo("dunzhang/stella_en_400M_v5", None);
-    let model_root = download_artifacts(&api_repo).unwrap();
+    let (model_root, dense_paths) = download_artifacts(
+        "dunzhang/stella_en_400M_v5",
+        None,
+        Some("2_Dense_768".into()),
+    )?;
     let tokenizer = load_tokenizer(&model_root)?;
-    let dense_paths = download_dense_modules(&api_repo, Some("2_Dense_768".to_string()))
-        .ok()
-        .filter(|paths| !paths.is_empty())
-        .map(|paths| paths.into_iter().map(|path| path.to_string()).collect());
 
     let backend = CandleBackend::new(
         &model_root,

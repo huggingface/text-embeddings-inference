@@ -4,9 +4,7 @@ mod common;
 
 use crate::common::{sort_embeddings, SnapshotEmbeddings, SnapshotScores};
 use anyhow::Result;
-use common::{
-    batch, cosine_matcher, download_artifacts, get_api_repo, load_tokenizer, relative_matcher,
-};
+use common::{batch, cosine_matcher, download_artifacts, load_tokenizer, relative_matcher};
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
@@ -17,8 +15,7 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
     any(feature = "flash-attn", feature = "flash-attn-v1")
 ))]
 fn test_flash_mini() -> Result<()> {
-    let api_repo = get_api_repo("sentence-transformers/all-MiniLM-L6-v2", None);
-    let model_root = download_artifacts(&api_repo)?;
+    let (model_root, _) = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -83,8 +80,7 @@ fn test_flash_mini() -> Result<()> {
     any(feature = "flash-attn", feature = "flash-attn-v1")
 ))]
 fn test_flash_mini_pooled_raw() -> Result<()> {
-    let api_repo = get_api_repo("sentence-transformers/all-MiniLM-L6-v2", None);
-    let model_root = download_artifacts(&api_repo)?;
+    let (model_root, _) = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -159,8 +155,7 @@ fn test_flash_mini_pooled_raw() -> Result<()> {
     any(feature = "flash-attn", feature = "flash-attn-v1")
 ))]
 fn test_flash_emotions() -> Result<()> {
-    let api_repo = get_api_repo("SamLowe/roberta-base-go_emotions", None);
-    let model_root = download_artifacts(&api_repo)?;
+    let (model_root, _) = download_artifacts("SamLowe/roberta-base-go_emotions", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -219,8 +214,8 @@ fn test_flash_emotions() -> Result<()> {
     any(feature = "flash-attn", feature = "flash-attn-v1")
 ))]
 fn test_flash_bert_classification() -> Result<()> {
-    let api_repo = get_api_repo("ibm-research/re2g-reranker-nq", Some("refs/pr/3"));
-    let model_root = download_artifacts(&api_repo)?;
+    let (model_root, _) =
+        download_artifacts("ibm-research/re2g-reranker-nq", Some("refs/pr/3"), None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(

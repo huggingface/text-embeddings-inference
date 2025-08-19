@@ -3,8 +3,7 @@ mod common;
 use crate::common::{sort_embeddings, SnapshotEmbeddings};
 use anyhow::Result;
 use common::{
-    batch, cosine_matcher, download_artifacts, get_api_repo, load_tokenizer, relative_matcher,
-    SnapshotScores,
+    batch, cosine_matcher, download_artifacts, load_tokenizer, relative_matcher, SnapshotScores,
 };
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
@@ -12,8 +11,7 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
 #[test]
 #[serial_test::serial]
 fn test_modernbert() -> Result<()> {
-    let api_repo = get_api_repo("answerdotai/ModernBERT-base", None);
-    let model_root = download_artifacts(&api_repo)?;
+    let (model_root, _) = download_artifacts("answerdotai/ModernBERT-base", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -82,8 +80,7 @@ fn test_modernbert() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_modernbert_pooled_raw() -> Result<()> {
-    let api_repo = get_api_repo("answerdotai/ModernBERT-base", None);
-    let model_root = download_artifacts(&api_repo)?;
+    let (model_root, _) = download_artifacts("answerdotai/ModernBERT-base", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -178,8 +175,8 @@ fn test_modernbert_pooled_raw() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_modernbert_classification() -> Result<()> {
-    let api_repo = get_api_repo("Alibaba-NLP/gte-reranker-modernbert-base", None);
-    let model_root = download_artifacts(&api_repo)?;
+    let (model_root, _) =
+        download_artifacts("Alibaba-NLP/gte-reranker-modernbert-base", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -217,8 +214,8 @@ fn test_modernbert_classification() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_modernbert_classification_mean_pooling() -> Result<()> {
-    let api_repo = get_api_repo("tomaarsen/reranker-ModernBERT-large-gooaq-bce", None);
-    let model_root = download_artifacts(&api_repo)?;
+    let (model_root, _) =
+        download_artifacts("tomaarsen/reranker-ModernBERT-large-gooaq-bce", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(

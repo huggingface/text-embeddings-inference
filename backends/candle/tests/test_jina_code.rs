@@ -2,14 +2,13 @@ mod common;
 
 use crate::common::{sort_embeddings, SnapshotEmbeddings};
 use anyhow::Result;
-use common::{batch, cosine_matcher, download_artifacts, get_api_repo, load_tokenizer};
+use common::{batch, cosine_matcher, download_artifacts, load_tokenizer};
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
 #[test]
 fn test_jina_code_base() -> Result<()> {
-    let api_repo = get_api_repo("jinaai/jina-embeddings-v2-base-code", None);
-    let model_root = download_artifacts(&api_repo)?;
+    let (model_root, _) = download_artifacts("jinaai/jina-embeddings-v2-base-code", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(

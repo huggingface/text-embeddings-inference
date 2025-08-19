@@ -4,7 +4,7 @@ mod common;
 
 use crate::common::{sort_embeddings, SnapshotEmbeddings};
 use anyhow::Result;
-use common::{batch, cosine_matcher, download_artifacts, get_api_repo, load_tokenizer};
+use common::{batch, cosine_matcher, download_artifacts, load_tokenizer};
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
 use tokenizers::processors::sequence::Sequence;
@@ -15,8 +15,7 @@ use tokenizers::{PostProcessorWrapper, Tokenizer};
 #[serial_test::serial]
 #[cfg(all(feature = "cuda", feature = "flash-attn"))]
 fn test_flash_qwen2() -> Result<()> {
-    let api_repo = get_api_repo("Alibaba-NLP/gte-Qwen2-1.5B-instruct", None);
-    let model_root = download_artifacts(&api_repo)?;
+    let (model_root, _) = download_artifacts("Alibaba-NLP/gte-Qwen2-1.5B-instruct", None, None)?;
 
     let mut tokenizer = load_tokenizer(&model_root)?;
     // Qwen2 updates the post processor manually instead of into the tokenizer.json...

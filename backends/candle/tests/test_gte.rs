@@ -2,17 +2,14 @@ mod common;
 
 use crate::common::{sort_embeddings, SnapshotEmbeddings, SnapshotScores};
 use anyhow::Result;
-use common::{
-    batch, cosine_matcher, download_artifacts, get_api_repo, load_tokenizer, relative_matcher,
-};
+use common::{batch, cosine_matcher, download_artifacts, load_tokenizer, relative_matcher};
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
 #[test]
 #[serial_test::serial]
 fn test_alibaba_gte() -> Result<()> {
-    let api_repo = get_api_repo("Alibaba-NLP/gte-base-en-v1.5", None);
-    let model_root = download_artifacts(&api_repo)?;
+    let (model_root, _) = download_artifacts("Alibaba-NLP/gte-base-en-v1.5", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -57,8 +54,7 @@ fn test_alibaba_gte() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_alibaba_gte_new() -> Result<()> {
-    let api_repo = get_api_repo("Alibaba-NLP/gte-multilingual-base", None);
-    let model_root = download_artifacts(&api_repo)?;
+    let (model_root, _) = download_artifacts("Alibaba-NLP/gte-multilingual-base", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -103,8 +99,8 @@ fn test_alibaba_gte_new() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_snowflake_gte() -> Result<()> {
-    let api_repo = get_api_repo("Snowflake/snowflake-arctic-embed-m-v2.0", None);
-    let model_root = download_artifacts(&api_repo)?;
+    let (model_root, _) =
+        download_artifacts("Snowflake/snowflake-arctic-embed-m-v2.0", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -149,8 +145,8 @@ fn test_snowflake_gte() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_gte_classification() -> Result<()> {
-    let api_repo = get_api_repo("Alibaba-NLP/gte-multilingual-reranker-base", None);
-    let model_root = download_artifacts(&api_repo)?;
+    let (model_root, _) =
+        download_artifacts("Alibaba-NLP/gte-multilingual-reranker-base", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(

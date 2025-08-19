@@ -3,9 +3,7 @@ mod common;
 
 use crate::common::{sort_embeddings, SnapshotEmbeddings, SnapshotScores};
 use anyhow::Result;
-use common::{
-    batch, cosine_matcher, download_artifacts, get_api_repo, load_tokenizer, relative_matcher,
-};
+use common::{batch, cosine_matcher, download_artifacts, load_tokenizer, relative_matcher};
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
@@ -13,8 +11,7 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
 #[serial_test::serial]
 #[cfg(all(feature = "cuda", feature = "flash-attn"))]
 fn test_flash_gte() -> Result<()> {
-    let api_repo = get_api_repo("Alibaba-NLP/gte-base-en-v1.5", None);
-    let model_root = download_artifacts(&api_repo)?;
+    let (model_root, _) = download_artifacts("Alibaba-NLP/gte-base-en-v1.5", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -63,8 +60,8 @@ fn test_flash_gte() -> Result<()> {
     any(feature = "flash-attn", feature = "flash-attn-v1")
 ))]
 fn test_flash_gte_classification() -> Result<()> {
-    let api_repo = get_api_repo("Alibaba-NLP/gte-multilingual-reranker-base", None);
-    let model_root = download_artifacts(&api_repo)?;
+    let (model_root, _) =
+        download_artifacts("Alibaba-NLP/gte-multilingual-reranker-base", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
