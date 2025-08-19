@@ -165,28 +165,31 @@ pub fn download_artifacts(
         }
     };
 
-    let modules_path = api_repo.get("modules.json")?;
-    let dense_paths = match parse_dense_paths_from_modules(&modules_path) {
-        Ok(paths) => match paths.len() {
-            0 => None,
-            1 => {
-                let path = if let Some(path) = dense_path {
-                    path.to_string()
-                } else {
-                    paths[0].clone()
-                };
+    let dense_paths = if let Ok(modules_path) = api_repo.get("modules.json") {
+        match parse_dense_paths_from_modules(&modules_path) {
+            Ok(paths) => match paths.len() {
+                0 => None,
+                1 => {
+                    let path = if let Some(path) = dense_path {
+                        path.to_string()
+                    } else {
+                        paths[0].clone()
+                    };
 
-                download_dense_module(&api_repo, &path)?;
-                Some(vec![path])
-            }
-            _ => {
-                for path in &paths {
                     download_dense_module(&api_repo, &path)?;
+                    Some(vec![path])
                 }
-                Some(paths)
-            }
-        },
-        _ => None,
+                _ => {
+                    for path in &paths {
+                        download_dense_module(&api_repo, &path)?;
+                    }
+                    Some(paths)
+                }
+            },
+            _ => None,
+        }
+    } else {
+        None
     };
 
     let model_root = model_files[0].parent().unwrap().to_path_buf();
