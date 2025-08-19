@@ -70,7 +70,7 @@ fn test_bert() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_bert_pooled_raw() -> Result<()> {
-    let (model_root, _) = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None, None);
+    let (model_root, _) = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -141,7 +141,7 @@ fn test_bert_pooled_raw() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_emotions() -> Result<()> {
-    let (model_root, _) = download_artifacts("SamLowe/roberta-base-go_emotions", None, None);
+    let (model_root, _) = download_artifacts("SamLowe/roberta-base-go_emotions", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
