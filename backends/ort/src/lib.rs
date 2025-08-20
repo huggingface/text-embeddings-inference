@@ -17,6 +17,24 @@ pub struct PastKeyValuesConfig {
     pub num_key_value_heads: usize,
 }
 
+#[derive(Debug, Clone)]
+enum PaddingSide {
+    Left,
+    Right,
+}
+
+impl std::str::FromStr for PaddingSide {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "left" => Ok(PaddingSide::Left),
+            "right" => Ok(PaddingSide::Right),
+            _ => Err(format!("unrecognized `padding_side` value: {}", s)),
+        }
+    }
+}
+
 pub struct OrtBackend {
     session: Mutex<Session>,
 
@@ -28,6 +46,7 @@ pub struct OrtBackend {
     past_key_values_config: Option<PastKeyValuesConfig>,
 
     pool: Pool,
+    padding_side: PaddingSide,
 }
 
 impl OrtBackend {
@@ -115,6 +134,26 @@ impl OrtBackend {
             false => None,
         };
 
+        let padding_side = model_path
+            .join("tokenizer_config.json")
+            .exists()
+            .then(|| {
+                std::fs::read_to_string(model_path.join("tokenizer_config.json"))
+                    .ok()?
+                    .parse::<serde_json::Value>()
+                    .ok()?
+                    .get("padding_side")?
+                    .as_str()?
+                    .parse::<PaddingSide>()
+                    .map_err(|e| tracing::warn!("Failed to parse `padding_side` from `tokenizer_config.json`: {}, hence using 'right' padding by default.", e))
+                    .ok()
+            })
+            .flatten()
+            .unwrap_or_else(|| {
+                tracing::warn!("Could not determine `padding_side` from `tokenizer_config.json`, hence using 'right' padding by default.");
+                PaddingSide::Right
+            });
+
         Ok(Self {
             session: Mutex::new(session),
             token_type_ids,
@@ -123,6 +162,7 @@ impl OrtBackend {
             past_key_values,
             past_key_values_config,
             pool,
+            padding_side,
         })
     }
 }
