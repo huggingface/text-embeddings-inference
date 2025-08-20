@@ -12,10 +12,14 @@ use text_embeddings_backend_core::{
 };
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct PastKeyValuesConfig {
-    pub hidden_size: usize,
-    pub num_hidden_layers: usize,
-    pub num_key_value_heads: usize,
+pub struct Config {
+    pub pad_token_id: Option<usize>,
+    pub eos_token_id: Option<usize>,
+    // NOTE: the fields below are only required when the ONNX model expects the `past_key_values`
+    // as input i.e., whenever the ONNX model has been exported with optimized MHA nodes
+    pub hidden_size: Option<usize>,
+    pub num_hidden_layers: Option<usize>,
+    pub num_key_value_heads: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,13 +51,13 @@ struct ModelInputs {
 
 pub struct OrtBackend {
     session: Mutex<Session>,
+    config: Option<Config>,
 
     token_type_ids: bool,
     // NOTE: required since the key can either be `token_type_ids` or `input_type`
     token_type_ids_key: String,
     position_ids: bool,
     past_key_values: bool,
-    past_key_values_config: Option<PastKeyValuesConfig>,
 
     pool: Pool,
     padding_side: PaddingSide,
@@ -124,26 +128,44 @@ impl OrtBackend {
             }
         }
 
-        let past_key_values_config = match past_key_values {
-            true => {
-                let path = model_path.join("config.json");
-                if !path.exists() {
+        let config_path = model_path.join("config.json");
+        let config: Option<Config> = if config_path.exists() {
+            let content = std::fs::read_to_string(&config_path)
+                .map_err(|e| BackendError::Start(format!("Failed to read `config.json`: {}", e)))?;
+            Some(serde_json::from_str(&content).map_err(|e| {
+                BackendError::Start(format!("Failed to parse `config.json`: {}", e))
+            })?)
+        } else {
+            None
+        };
+
+        let pad_token_id = config
+            .as_ref()
+            .and_then(|c| c.pad_token_id.or(c.eos_token_id))
+            .unwrap_or(0);
+
+        // NOTE: given that `hidden_size`, `num_hidden_layers`, and `num_key_value_heads` are set
+        // to `Option` in the `Config`, but required if `past_key_values` is an input of ONNX, then
+        // those should be validated in advance
+        if past_key_values {
+            match &config {
+                Some(config) => {
+                    if config.hidden_size.is_none()
+                        || config.num_hidden_layers.is_none()
+                        || config.num_key_value_heads.is_none()
+                    {
+                        return Err(BackendError::Start(
+                            "`config.json` doesn't contain all required keys: `hidden_size`, `num_hidden_layers`, and `num_key_value_heads`.".into()
+                        ));
+                    }
+                }
+                None => {
                     return Err(BackendError::Start(format!(
-                        "config.json not found at {:?}",
-                        path
+                        "`config.json` not found at {config_path:?}, but it's required as this ONNX expects `past_key_values` as input, meaning that the `config.json` file should contain at least the keys: `hidden_size`, `num_hidden_layers`, and `num_key_value_heads`."
                     )));
                 }
-                let content = std::fs::read_to_string(path).map_err(|e| {
-                    BackendError::Start(format!("Failed to read config.json: {}", e))
-                })?;
-                Some(
-                    serde_json::from_str::<PastKeyValuesConfig>(&content).map_err(|e| {
-                        BackendError::Start(format!("Failed to parse config.json: {}", e))
-                    })?,
-                )
             }
-            false => None,
-        };
+        }
 
         let padding_side = model_path
             .join("tokenizer_config.json")
@@ -167,14 +189,14 @@ impl OrtBackend {
 
         Ok(Self {
             session: Mutex::new(session),
+            config,
             token_type_ids,
             token_type_ids_key,
             position_ids,
             past_key_values,
-            past_key_values_config,
             pool,
             padding_side,
-            pad_token_id: 0,
+            pad_token_id,
         })
     }
 }
@@ -197,7 +219,7 @@ impl OrtBackend {
                 let mut position_ids = Vec::with_capacity(elems);
                 let mut input_lengths = Vec::with_capacity(batch_size);
 
-                // Whether a least one of the request in the batch is padded
+                // Whether at least one of the request in the batch is padded
                 let mut masking = false;
 
                 match padding_side {
@@ -310,12 +332,15 @@ impl OrtBackend {
         let input_lengths = ndarray::Array1::from_vec(input_lengths);
 
         let past_key_values = if self.past_key_values {
-            let config = self.past_key_values_config.as_ref().unwrap();
-            let head_size = config.hidden_size / config.num_key_value_heads;
+            let config = self.config.as_ref().unwrap();
+            let hidden_size = config.hidden_size.unwrap();
+            let num_hidden_layers = config.num_hidden_layers.unwrap();
+            let num_key_value_heads = config.num_key_value_heads.unwrap();
+            let head_size = hidden_size / num_key_value_heads;
             let mut arrays = Vec::new();
 
-            for _ in 0..config.num_hidden_layers {
-                let shape = (batch_size, config.num_key_value_heads, 0, head_size);
+            for _ in 0..num_hidden_layers {
+                let shape = (batch_size, num_key_value_heads, 0, head_size);
                 let key_array = ndarray::Array4::<f32>::zeros(shape);
                 let value_array = ndarray::Array4::<f32>::zeros(shape);
                 arrays.push((key_array, value_array));
