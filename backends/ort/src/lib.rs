@@ -42,6 +42,7 @@ struct ModelInputs {
     pub token_type_ids: Option<ndarray::Array2<i64>>,
     pub position_ids: Option<ndarray::Array2<i64>>,
     pub input_lengths: ndarray::Array1<f32>,
+    pub past_key_values: Option<Vec<(ndarray::Array4<f32>, ndarray::Array4<f32>)>>,
 }
 
 pub struct OrtBackend {
@@ -308,6 +309,23 @@ impl OrtBackend {
 
         let input_lengths = ndarray::Array1::from_vec(input_lengths);
 
+        let past_key_values = if self.past_key_values {
+            let config = self.past_key_values_config.as_ref().unwrap();
+            let head_size = config.hidden_size / config.num_key_value_heads;
+            let mut arrays = Vec::new();
+
+            for _ in 0..config.num_hidden_layers {
+                let shape = (batch_size, config.num_key_value_heads, 0, head_size);
+                let key_array = ndarray::Array4::<f32>::zeros(shape);
+                let value_array = ndarray::Array4::<f32>::zeros(shape);
+                arrays.push((key_array, value_array));
+            }
+
+            Some(arrays)
+        } else {
+            None
+        };
+
         Ok((
             ModelInputs {
                 input_ids,
@@ -315,6 +333,7 @@ impl OrtBackend {
                 token_type_ids,
                 position_ids,
                 input_lengths,
+                past_key_values,
             },
             masking,
         ))
@@ -326,7 +345,7 @@ impl OrtBackend {
         attention_mask: ndarray::Array2<i64>,
         token_type_ids: Option<ndarray::Array2<i64>>,
         position_ids: Option<ndarray::Array2<i64>>,
-        batch_size: usize,
+        past_key_values: Option<Vec<(ndarray::Array4<f32>, ndarray::Array4<f32>)>>,
     ) -> Result<Vec<(Cow<'_, str>, SessionInputValue<'_>)>, BackendError> {
         let mut inputs = ort::inputs![
             "input_ids" => ort::value::Tensor::from_array(input_ids).e()?,
@@ -346,26 +365,18 @@ impl OrtBackend {
             inputs.push(("position_ids".into(), position_ids.into()));
         }
 
-        if self.past_key_values {
-            let config = self.past_key_values_config.as_ref().unwrap();
-            let head_size = config.hidden_size / config.num_key_value_heads;
+        if let Some(past_key_values) = past_key_values {
+            for (layer_idx, (key, value)) in past_key_values.into_iter().enumerate() {
+                let key = ort::value::Tensor::from_array(key).e()?;
+                let value = ort::value::Tensor::from_array(value).e()?;
 
-            for i in 0..config.num_hidden_layers {
-                let key_shape = (batch_size, config.num_key_value_heads, 0, head_size);
-                let value_shape = (batch_size, config.num_key_value_heads, 0, head_size);
-
-                let empty_key = ndarray::Array4::<f32>::zeros(key_shape);
-                let empty_value = ndarray::Array4::<f32>::zeros(value_shape);
-
-                let key_value = ort::value::Tensor::from_array(empty_key).e()?;
-                let value_value = ort::value::Tensor::from_array(empty_value).e()?;
                 inputs.push((
-                    format!("past_key_values.{}.key", i).into(),
-                    key_value.into(),
+                    format!("past_key_values.{}.key", layer_idx).into(),
+                    key.into(),
                 ));
                 inputs.push((
-                    format!("past_key_values.{}.value", i).into(),
-                    value_value.into(),
+                    format!("past_key_values.{}.value", layer_idx).into(),
+                    value.into(),
                 ));
             }
         }
@@ -398,7 +409,7 @@ impl Backend for OrtBackend {
             model_inputs.attention_mask.clone(),
             model_inputs.token_type_ids,
             model_inputs.position_ids,
-            batch_size,
+            model_inputs.past_key_values,
         )?;
 
         // Run model
@@ -642,7 +653,7 @@ impl Backend for OrtBackend {
             model_inputs.attention_mask.clone(),
             model_inputs.token_type_ids,
             model_inputs.position_ids,
-            batch_size,
+            model_inputs.past_key_values,
         )?;
 
         // Run model
