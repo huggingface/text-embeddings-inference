@@ -36,6 +36,14 @@ impl std::str::FromStr for PaddingSide {
     }
 }
 
+struct ModelInputs {
+    pub input_ids: ndarray::Array2<i64>,
+    pub attention_mask: ndarray::Array2<i64>,
+    pub token_type_ids: Option<ndarray::Array2<i64>>,
+    pub position_ids: Option<ndarray::Array2<i64>>,
+    pub input_lengths: ndarray::Array1<f32>,
+}
+
 pub struct OrtBackend {
     session: Mutex<Session>,
 
@@ -175,19 +183,7 @@ impl OrtBackend {
         &self,
         batch: &Batch,
         padding_side: &PaddingSide,
-    ) -> Result<
-        (
-            (
-                ndarray::Array2<i64>,
-                ndarray::Array2<i64>,
-                Option<ndarray::Array2<i64>>,
-                Option<ndarray::Array2<i64>>,
-                ndarray::Array1<f32>,
-            ),
-            bool,
-        ),
-        BackendError,
-    > {
+    ) -> Result<(ModelInputs, bool), BackendError> {
         let batch_size = batch.len();
         let max_length = batch.max_length as usize;
         let elems = batch_size * max_length;
@@ -313,13 +309,13 @@ impl OrtBackend {
         let input_lengths = ndarray::Array1::from_vec(input_lengths);
 
         Ok((
-            (
+            ModelInputs {
                 input_ids,
                 attention_mask,
                 token_type_ids,
                 position_ids,
                 input_lengths,
-            ),
+            },
             masking,
         ))
     }
@@ -337,23 +333,17 @@ impl OrtBackend {
             "attention_mask" => ort::value::Tensor::from_array(attention_mask).e()?,
         ];
 
-        match token_type_ids {
-            Some(token_type_ids) => {
-                let token_type_ids = ort::value::Tensor::from_array(token_type_ids).e()?;
-                inputs.push((
-                    self.token_type_ids_key.clone().into(),
-                    token_type_ids.into(),
-                ));
-            }
-            None => (),
+        if let Some(token_type_ids) = token_type_ids {
+            let token_type_ids = ort::value::Tensor::from_array(token_type_ids).e()?;
+            inputs.push((
+                self.token_type_ids_key.clone().into(),
+                token_type_ids.into(),
+            ));
         }
 
-        match position_ids {
-            Some(position_ids) => {
-                let position_ids = ort::value::Tensor::from_array(position_ids).e()?;
-                inputs.push(("position_ids".into(), position_ids.into()));
-            }
-            None => (),
+        if let Some(position_ids) = position_ids {
+            let position_ids = ort::value::Tensor::from_array(position_ids).e()?;
+            inputs.push(("position_ids".into(), position_ids.into()));
         }
 
         if self.past_key_values {
@@ -401,14 +391,13 @@ impl Backend for OrtBackend {
         let batch_size = batch.len();
         let max_length = batch.max_length as usize;
 
-        let ((input_ids, attention_mask, token_type_ids, position_ids, input_lengths), masking) =
-            self.prepare_inputs(&batch, &self.padding_side)?;
+        let (model_inputs, masking) = self.prepare_inputs(&batch, &self.padding_side)?;
 
         let inputs = self.prepare_ort_inputs(
-            input_ids,
-            attention_mask.clone(),
-            token_type_ids,
-            position_ids,
+            model_inputs.input_ids,
+            model_inputs.attention_mask.clone(),
+            model_inputs.token_type_ids,
+            model_inputs.position_ids,
             batch_size,
         )?;
 
@@ -455,7 +444,9 @@ impl Backend for OrtBackend {
                     PaddingSide::Left => {
                         if masking {
                             let mut cls_embeddings = Vec::new();
-                            for (batch_idx, &seq_length) in input_lengths.iter().enumerate() {
+                            for (batch_idx, &seq_length) in
+                                model_inputs.input_lengths.iter().enumerate()
+                            {
                                 let padding = max_length as f32 - seq_length;
                                 let cls_pos = padding as usize;
                                 cls_embeddings
@@ -484,7 +475,9 @@ impl Backend for OrtBackend {
                     PaddingSide::Right => {
                         if masking {
                             let mut last_token_embeddings = Vec::new();
-                            for (batch_idx, &seq_length) in input_lengths.iter().enumerate() {
+                            for (batch_idx, &seq_length) in
+                                model_inputs.input_lengths.iter().enumerate()
+                            {
                                 let last_pos = seq_length as usize - 1;
                                 last_token_embeddings
                                     .push(outputs.slice(s![batch_idx, last_pos, ..]).to_owned());
@@ -509,8 +502,8 @@ impl Backend for OrtBackend {
                 },
                 Pool::Mean => {
                     if masking {
-                        let mut attention_mask = attention_mask;
-                        let mut input_lengths = input_lengths;
+                        let mut attention_mask = model_inputs.attention_mask;
+                        let mut input_lengths = model_inputs.input_lengths;
 
                         if let Some(indices) = indices {
                             // Select values in the batch
@@ -642,14 +635,13 @@ impl Backend for OrtBackend {
     fn predict(&self, batch: Batch) -> Result<Predictions, BackendError> {
         let batch_size = batch.len();
 
-        let ((input_ids, attention_mask, token_type_ids, position_ids, _), _) =
-            self.prepare_inputs(&batch, &self.padding_side)?;
+        let (model_inputs, _) = self.prepare_inputs(&batch, &self.padding_side)?;
 
         let inputs = self.prepare_ort_inputs(
-            input_ids,
-            attention_mask.clone(),
-            token_type_ids,
-            position_ids,
+            model_inputs.input_ids,
+            model_inputs.attention_mask.clone(),
+            model_inputs.token_type_ids,
+            model_inputs.position_ids,
             batch_size,
         )?;
 
