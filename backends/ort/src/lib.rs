@@ -47,6 +47,7 @@ pub struct OrtBackend {
 
     pool: Pool,
     padding_side: PaddingSide,
+    pad_token_id: usize,
 }
 
 impl OrtBackend {
@@ -163,6 +164,7 @@ impl OrtBackend {
             past_key_values_config,
             pool,
             padding_side,
+            pad_token_id: 0,
         })
     }
 }
