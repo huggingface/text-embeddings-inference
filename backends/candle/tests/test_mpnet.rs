@@ -9,7 +9,8 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
 #[test]
 #[serial_test::serial]
 fn test_mpnet() -> Result<()> {
-    let model_root = download_artifacts("sentence-transformers/all-mpnet-base-v2", None, None)?;
+    let (model_root, _) =
+        download_artifacts("sentence-transformers/all-mpnet-base-v2", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -70,7 +71,8 @@ fn test_mpnet() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_mpnet_pooled_raw() -> Result<()> {
-    let model_root = download_artifacts("sentence-transformers/all-mpnet-base-v2", None, None)?;
+    let (model_root, _) =
+        download_artifacts("sentence-transformers/all-mpnet-base-v2", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(

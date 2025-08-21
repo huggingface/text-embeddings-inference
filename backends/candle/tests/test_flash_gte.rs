@@ -11,7 +11,7 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
 #[serial_test::serial]
 #[cfg(all(feature = "cuda", feature = "flash-attn"))]
 fn test_flash_gte() -> Result<()> {
-    let model_root = download_artifacts("Alibaba-NLP/gte-base-en-v1.5", None, None)?;
+    let (model_root, _) = download_artifacts("Alibaba-NLP/gte-base-en-v1.5", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -60,7 +60,8 @@ fn test_flash_gte() -> Result<()> {
     any(feature = "flash-attn", feature = "flash-attn-v1")
 ))]
 fn test_flash_gte_classification() -> Result<()> {
-    let model_root = download_artifacts("Alibaba-NLP/gte-multilingual-reranker-base", None, None)?;
+    let (model_root, _) =
+        download_artifacts("Alibaba-NLP/gte-multilingual-reranker-base", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(

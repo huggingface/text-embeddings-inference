@@ -6,6 +6,17 @@ mod flash_attn;
 mod layers;
 mod models;
 
+use anyhow::Context;
+use candle::{DType, Device};
+use candle_nn::VarBuilder;
+use nohash_hasher::BuildNoHashHasher;
+use serde::{de::Deserializer, Deserialize};
+use std::collections::HashMap;
+use std::path::Path;
+use text_embeddings_backend_core::{
+    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Predictions,
+};
+
 #[cfg(feature = "cuda")]
 use crate::compute_cap::{
     compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
@@ -21,16 +32,6 @@ use crate::models::{
     FlashBertModel, FlashDistilBertModel, FlashGTEModel, FlashJinaBertModel,
     FlashJinaCodeBertModel, FlashMistralModel, FlashModernBertModel, FlashNomicBertModel,
     FlashQwen2Model, FlashQwen3Model,
-};
-use anyhow::Context;
-use candle::{DType, Device};
-use candle_nn::VarBuilder;
-use nohash_hasher::BuildNoHashHasher;
-use serde::{de::Deserializer, Deserialize};
-use std::collections::HashMap;
-use std::path::Path;
-use text_embeddings_backend_core::{
-    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Predictions,
 };
 
 /// This enum is needed to be able to differentiate between jina models that also use
@@ -91,31 +92,31 @@ impl<'de> Deserialize<'de> for BertConfigWrapper {
 #[serde(tag = "model_type", rename_all = "kebab-case")]
 enum Config {
     Bert(BertConfigWrapper),
-    XlmRoberta(BertConfig),
     Camembert(BertConfig),
-    Roberta(BertConfig),
     #[serde(rename(deserialize = "distilbert"))]
     DistilBert(DistilBertConfig),
-    #[serde(rename(deserialize = "nomic_bert"))]
-    NomicBert(NomicConfig),
-    #[allow(dead_code)]
-    Mistral(MistralConfig),
     #[serde(alias = "new")]
     Gte(GTEConfig),
+    #[serde(rename = "mpnet")]
+    MPNet(MPNetConfig),
+    #[allow(dead_code)]
+    Mistral(MistralConfig),
+    #[serde(rename(deserialize = "modernbert"))]
+    ModernBert(ModernBertConfig),
+    #[serde(rename(deserialize = "nomic_bert"))]
+    NomicBert(NomicConfig),
     #[allow(dead_code)]
     Qwen2(Qwen2Config),
     #[allow(dead_code)]
     Qwen3(Qwen3Config),
-    #[serde(rename = "mpnet")]
-    MPNet(MPNetConfig),
-    #[serde(rename(deserialize = "modernbert"))]
-    ModernBert(ModernBertConfig),
+    Roberta(BertConfig),
+    XlmRoberta(BertConfig),
 }
 
 pub struct CandleBackend {
     device: Device,
     model: Box<dyn Model + Send>,
-    dense: Option<Box<dyn DenseLayer + Send>>,
+    dense_layers: Vec<Box<dyn DenseLayer + Send>>,
 }
 
 impl CandleBackend {
@@ -123,7 +124,7 @@ impl CandleBackend {
         model_path: &Path,
         dtype: String,
         model_type: ModelType,
-        dense_path: Option<&Path>,
+        dense_paths: Option<Vec<String>>,
     ) -> Result<Self, BackendError> {
         // Default files
         let default_safetensors = model_path.join("model.safetensors");
@@ -248,7 +249,7 @@ impl CandleBackend {
                 }
             },
             (
-                Config::XlmRoberta(config) | Config::Camembert(config) | Config::Roberta(config),
+                Config::Camembert(config) | Config::Roberta(config) | Config::XlmRoberta(config),
                 Device::Cpu | Device::Metal(_),
             ) => {
                 tracing::info!("Starting Bert model on {:?}", device);
@@ -262,17 +263,27 @@ impl CandleBackend {
                     DistilBertModel::load(vb, &config, model_type).s()?,
                 ))
             }
-            (Config::NomicBert(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting NomicBert model on {:?}", device);
-                Ok(Box::new(NomicBertModel::load(vb, &config, model_type).s()?))
+            (Config::Gte(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting GTE model on {:?}", device);
+                Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
+            }
+            (Config::MPNet(config), _) => {
+                tracing::info!("Starting MPNet model on {:?}", device);
+                Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
             }
             (Config::Mistral(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
                 "Mistral is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
             )),
-            (Config::Gte(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting GTE model on {:?}", device);
-                Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
+            (Config::ModernBert(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting ModernBert model on {:?}", device);
+                Ok(Box::new(
+                    ModernBertModel::load(vb, &config, model_type).s()?,
+                ))
+            }
+            (Config::NomicBert(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting NomicBert model on {:?}", device);
+                Ok(Box::new(NomicBertModel::load(vb, &config, model_type).s()?))
             }
             (Config::Qwen2(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
                 "Qwen2 is only supported on Cuda devices in fp16 with flash attention enabled"
@@ -281,16 +292,6 @@ impl CandleBackend {
             (Config::Qwen3(config), Device::Cpu | Device::Metal(_)) => {
                 tracing::info!("Starting Qwen3 model on {:?}", device);
                 Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
-            }
-            (Config::MPNet(config), _) => {
-                tracing::info!("Starting MPNet model on {:?}", device);
-                Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
-            }
-            (Config::ModernBert(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting ModernBert model on {:?}", device);
-                Ok(Box::new(
-                    ModernBertModel::load(vb, &config, model_type).s()?,
-                ))
             }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
@@ -339,7 +340,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (
-                Config::XlmRoberta(config) | Config::Camembert(config) | Config::Roberta(config),
+                Config::Camembert(config) | Config::Roberta(config) | Config::XlmRoberta(config),
                 Device::Cuda(_),
             ) => {
                 if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
@@ -356,27 +357,6 @@ impl CandleBackend {
                     tracing::info!("Starting Bert model on {:?}", device);
                     Ok(Box::new(
                         BertModel::load_roberta(vb, &config, model_type).s()?,
-                    ))
-                }
-            }
-            #[cfg(feature = "cuda")]
-            (Config::ModernBert(config), Device::Cuda(_)) => {
-                if cfg!(feature = "flash-attn")
-                    && dtype == DType::F16
-                    // Allow disabling because of flash attention v1 precision problems
-                    // See: https://github.com/huggingface/text-embeddings-inference/issues/37
-                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
-                {
-                    tracing::info!("Starting FlashModernBert model on {:?}", device);
-                    Ok(Box::new(
-                        FlashModernBertModel::load(vb, &config, model_type).s()?,
-                    ))
-                } else {
-                    #[cfg(feature = "flash-attn-v1")]
-                    tracing::warn!("Flash attention V1 cannot be used with ModernBert because it lacks windowing support.");
-                    tracing::info!("Starting ModernBert model on {:?}", device);
-                    Ok(Box::new(
-                        ModernBertModel::load(vb, &config, model_type).s()?,
                     ))
                 }
             }
@@ -401,21 +381,19 @@ impl CandleBackend {
                 }
             }
             #[cfg(feature = "cuda")]
-            (Config::NomicBert(config), Device::Cuda(_)) => {
-                if cfg!(feature = "flash-attn")
-                    && dtype == DType::F16
-                    && &std::env::var("USE_FLASH_ATTENTION")
+            (Config::Gte(config), Device::Cuda(_)) => {
+                if dtype != DType::F16
+                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                    || &std::env::var("USE_FLASH_ATTENTION")
                         .unwrap_or("True".to_string())
                         .to_lowercase()
-                        == "true"
+                        != "true"
                 {
-                    tracing::info!("Starting FlashNomicBert model on {:?}", device);
-                    Ok(Box::new(
-                        FlashNomicBertModel::load(vb, &config, model_type).s()?,
-                    ))
+                    tracing::info!("Starting GTE model on {:?}", device);
+                    Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
                 } else {
-                    tracing::info!("Starting NomicBert model on {:?}", device);
-                    Ok(Box::new(NomicBertModel::load(vb, &config, model_type).s()?))
+                    tracing::info!("Starting FlashGTE model on {:?}", device);
+                    Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))
                 }
             }
             #[cfg(feature = "cuda")]
@@ -436,19 +414,42 @@ impl CandleBackend {
                 ))
             }
             #[cfg(feature = "cuda")]
-            (Config::Gte(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
-                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    || &std::env::var("USE_FLASH_ATTENTION")
+            (Config::ModernBert(config), Device::Cuda(_)) => {
+                if cfg!(feature = "flash-attn")
+                    && dtype == DType::F16
+                    // Allow disabling because of flash attention v1 precision problems
+                    // See: https://github.com/huggingface/text-embeddings-inference/issues/37
+                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
+                {
+                    tracing::info!("Starting FlashModernBert model on {:?}", device);
+                    Ok(Box::new(
+                        FlashModernBertModel::load(vb, &config, model_type).s()?,
+                    ))
+                } else {
+                    #[cfg(feature = "flash-attn-v1")]
+                    tracing::warn!("Flash attention V1 cannot be used with ModernBert because it lacks windowing support.");
+                    tracing::info!("Starting ModernBert model on {:?}", device);
+                    Ok(Box::new(
+                        ModernBertModel::load(vb, &config, model_type).s()?,
+                    ))
+                }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::NomicBert(config), Device::Cuda(_)) => {
+                if cfg!(feature = "flash-attn")
+                    && dtype == DType::F16
+                    && &std::env::var("USE_FLASH_ATTENTION")
                         .unwrap_or("True".to_string())
                         .to_lowercase()
-                        != "true"
+                        == "true"
                 {
-                    tracing::info!("Starting GTE model on {:?}", device);
-                    Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
+                    tracing::info!("Starting FlashNomicBert model on {:?}", device);
+                    Ok(Box::new(
+                        FlashNomicBertModel::load(vb, &config, model_type).s()?,
+                    ))
                 } else {
-                    tracing::info!("Starting FlashGTE model on {:?}", device);
-                    Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))
+                    tracing::info!("Starting NomicBert model on {:?}", device);
+                    Ok(Box::new(NomicBertModel::load(vb, &config, model_type).s()?))
                 }
             }
             #[cfg(feature = "cuda")]
@@ -487,50 +488,63 @@ impl CandleBackend {
             }
         };
 
-        // If `2_Dense/model.safetensors` or `2_Dense/pytorch_model.bin` is amongst the downloaded artifacts, then create a Dense
-        // block and provide it to the `CandleBackend`, otherwise, None
-        let dense = if let Some(dense_path) = dense_path {
-            let dense_safetensors = dense_path.join("model.safetensors");
-            let dense_pytorch = dense_path.join("pytorch_model.bin");
+        // Load Dense layers from the provided Dense paths
+        let mut dense_layers = Vec::new();
+        if let Some(dense_paths) = &dense_paths {
+            if !dense_paths.is_empty() {
+                tracing::info!("Loading Dense module/s from path/s: {dense_paths:?}");
 
-            if dense_safetensors.exists() || dense_pytorch.exists() {
-                let dense_config_path = dense_path.join("config.json");
+                for dense_path in dense_paths.iter() {
+                    let dense_safetensors =
+                        model_path.join(format!("{dense_path}/model.safetensors"));
+                    let dense_pytorch = model_path.join(format!("{dense_path}/pytorch_model.bin"));
 
-                let dense_config_str =
-                    std::fs::read_to_string(&dense_config_path).map_err(|err| {
-                        BackendError::Start(format!(
-                            "Unable to read `{dense_path:?}/config.json` file: {err:?}",
-                        ))
-                    })?;
-                let dense_config: DenseConfig =
-                    serde_json::from_str(&dense_config_str).map_err(|err| {
-                        BackendError::Start(format!(
-                            "Unable to parse `{dense_path:?}/config.json`: {err:?}",
-                        ))
-                    })?;
+                    if dense_safetensors.exists() || dense_pytorch.exists() {
+                        let dense_config_path =
+                            model_path.join(format!("{dense_path}/config.json"));
 
-                let dense_vb = if dense_safetensors.exists() {
-                    unsafe {
-                        VarBuilder::from_mmaped_safetensors(&[dense_safetensors], dtype, &device)
+                        let dense_config_str = std::fs::read_to_string(&dense_config_path)
+                            .map_err(|err| {
+                                BackendError::Start(format!(
+                                    "Unable to read `{dense_path}/config.json` file: {err:?}",
+                                ))
+                            })?;
+                        let dense_config: DenseConfig = serde_json::from_str(&dense_config_str)
+                            .map_err(|err| {
+                                BackendError::Start(format!(
+                                    "Unable to parse `{dense_path}/config.json`: {err:?}",
+                                ))
+                            })?;
+
+                        let dense_vb = if dense_safetensors.exists() {
+                            unsafe {
+                                VarBuilder::from_mmaped_safetensors(
+                                    &[dense_safetensors],
+                                    dtype,
+                                    &device,
+                                )
+                            }
+                            .s()?
+                        } else {
+                            VarBuilder::from_pth(&dense_pytorch, dtype, &device).s()?
+                        };
+
+                        let dense_layer = Box::new(Dense::load(dense_vb, &dense_config).s()?)
+                            as Box<dyn DenseLayer + Send>;
+                        dense_layers.push(dense_layer);
+
+                        tracing::info!("Loaded Dense module from path: {dense_path}");
+                    } else {
+                        tracing::warn!("Dense module files not found for path: {dense_path}",);
                     }
-                    .s()?
-                } else {
-                    VarBuilder::from_pth(&dense_pytorch, dtype, &device).s()?
-                };
-
-                Some(Box::new(Dense::load(dense_vb, &dense_config).s()?)
-                    as Box<dyn DenseLayer + Send>)
-            } else {
-                None
+                }
             }
-        } else {
-            None
-        };
+        }
 
         Ok(Self {
             device,
             model: model?,
-            dense,
+            dense_layers,
         })
     }
 }
@@ -567,15 +581,13 @@ impl Backend for CandleBackend {
         // Run forward
         let (pooled_embeddings, raw_embeddings) = self.model.embed(batch).e()?;
 
-        // Apply dense layer if available
+        // Apply Dense layers sequentially if available
         let pooled_embeddings = match pooled_embeddings {
             None => None,
-            Some(pooled_embeddings) => {
-                let pooled_embeddings = if let Some(ref dense) = self.dense {
-                    dense.forward(&pooled_embeddings).e()?
-                } else {
-                    pooled_embeddings
-                };
+            Some(mut pooled_embeddings) => {
+                for dense in &self.dense_layers {
+                    pooled_embeddings = dense.forward(&pooled_embeddings).e()?;
+                }
                 Some(pooled_embeddings)
             }
         };
