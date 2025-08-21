@@ -94,41 +94,23 @@ def attention(
         if use_ipex:
             import intel_extension_for_pytorch as ipex
 
-            if q.device.type == "xpu":
-                return ipex.llm.functional.varlen_attention(
-                    q.contiguous(),
-                    k.contiguous(),
-                    v.contiguous(),
-                    out,
-                    cu_seqlens,
-                    cu_seqlens,
-                    None,
-                    max_s,
-                    max_s,
-                    0,
-                    softmax_scale,
-                    zero_tensors=False,
-                    is_causal=False,
-                    return_softmax=False,
-                    gen_=None,
-                )
-            elif q.device.type == "cpu":
-                return ipex.llm.functional.varlen_attention(
-                    q,
-                    k,
-                    v,
-                    out,
-                    cu_seqlens,
-                    cu_seqlens,
-                    max_s,
-                    max_s,
-                    0,
-                    softmax_scale,
-                    zero_tensors=False,
-                    is_causal=False,
-                    return_softmax=False,
-                    gen_=None,
-                )
+            return ipex.llm.functional.varlen_attention(
+                q.contiguous() if q.device.type == "xpu" else q,
+                k.contiguous() if k.device.type == "xpu" else k,
+                v.contiguous() if v.device.type == "xpu" else v,
+                out,
+                cu_seqlens,
+                cu_seqlens,
+                None,
+                max_s,
+                max_s,
+                0,
+                softmax_scale,
+                zero_tensors=False,
+                is_causal=False,
+                return_softmax=False,
+                gen_=None,
+            )
 
         elif is_hpu:
             return hpu_attn(
