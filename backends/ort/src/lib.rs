@@ -178,12 +178,12 @@ impl OrtBackend {
                     .get("padding_side")?
                     .as_str()?
                     .parse::<PaddingSide>()
-                    .map_err(|e| tracing::warn!("Failed to parse `padding_side` from `tokenizer_config.json`: {}, hence using 'right' padding by default.", e))
+                    .map_err(|e| tracing::warn!("Failed to parse `padding_side` from `tokenizer_config.json`: {}, hence using `right` padding by default.", e))
                     .ok()
             })
             .flatten()
             .unwrap_or_else(|| {
-                tracing::warn!("Could not determine `padding_side` from `tokenizer_config.json`, hence using 'right' padding by default.");
+                tracing::warn!("Could not determine `padding_side` from `tokenizer_config.json`, hence using `right` padding by default.");
                 PaddingSide::Right
             });
 
@@ -501,6 +501,9 @@ impl Backend for OrtBackend {
                     PaddingSide::Right => outputs.slice(s![.., 0, ..]).into_owned().into_dyn(),
                 },
                 Pool::LastToken => match self.padding_side {
+                    // NOTE: when using left-padding, the last-token is always in the last position
+                    // as the padding tokens are on the left (note that given that the last token
+                    // in the sequence is the EOS token we need to use the last - 1.
                     PaddingSide::Left => {
                         let axis_len = outputs.len_of(Axis(1));
                         outputs
