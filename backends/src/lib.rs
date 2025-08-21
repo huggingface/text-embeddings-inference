@@ -2,6 +2,7 @@ mod dtype;
 
 use hf_hub::api::tokio::{ApiError, ApiRepo};
 use rand::Rng;
+use serde::Deserialize;
 use std::cmp::{max, min};
 use std::env;
 use std::path::PathBuf;
@@ -83,7 +84,7 @@ impl Backend {
         api_repo: Option<ApiRepo>,
         dtype: DType,
         model_type: ModelType,
-        dense_path: Option<PathBuf>,
+        dense_path: Option<String>,
         uds_path: String,
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
@@ -355,7 +356,7 @@ async fn init_backend(
     api_repo: Option<ApiRepo>,
     dtype: DType,
     model_type: ModelType,
-    dense_path: Option<PathBuf>,
+    dense_path: Option<String>,
     uds_path: String,
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
@@ -410,11 +411,22 @@ async fn init_backend(
     if cfg!(feature = "candle") {
         #[cfg(feature = "candle")]
         {
+            let dense_paths = if let Some(api_repo) = api_repo.as_ref() {
+                let start = std::time::Instant::now();
+                let dense_paths = download_dense_modules(api_repo, dense_path)
+                    .await
+                    .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
+                tracing::info!("Dense modules downloaded in {:?}", start.elapsed());
+                Some(dense_paths)
+            } else {
+                None
+            };
+
             let backend = CandleBackend::new(
                 &model_path,
                 dtype.to_string(),
                 model_type.clone(),
-                dense_path.as_deref(),
+                dense_paths,
             );
             match backend {
                 Ok(b) => return Ok(Box::new(b)),
@@ -594,4 +606,154 @@ async fn download_onnx(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     }
 
     Ok(model_files)
+}
+
+#[cfg(feature = "candle")]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+enum ModuleType {
+    #[serde(rename = "sentence_transformers.models.Dense")]
+    Dense,
+    #[serde(rename = "sentence_transformers.models.Normalize")]
+    Normalize,
+    #[serde(rename = "sentence_transformers.models.Pooling")]
+    Pooling,
+    #[serde(rename = "sentence_transformers.models.Transformer")]
+    Transformer,
+}
+
+#[cfg(feature = "candle")]
+#[derive(Debug, Clone, Deserialize)]
+struct ModuleConfig {
+    #[allow(dead_code)]
+    idx: usize,
+    #[allow(dead_code)]
+    name: String,
+    path: String,
+    #[serde(rename = "type")]
+    module_type: ModuleType,
+}
+
+#[cfg(feature = "candle")]
+async fn download_file(api: &ApiRepo, file_path: &str) -> Result<PathBuf, ApiError> {
+    tracing::info!("Downloading `{}`", file_path);
+    api.get(file_path).await
+}
+
+#[cfg(feature = "candle")]
+async fn parse_dense_paths_from_modules(
+    modules_path: &PathBuf,
+) -> Result<Vec<String>, std::io::Error> {
+    let content = std::fs::read_to_string(modules_path)?;
+    let modules: Vec<ModuleConfig> = serde_json::from_str(&content)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+
+    Ok(modules
+        .into_iter()
+        .filter(|module| module.module_type == ModuleType::Dense)
+        .map(|module| module.path)
+        .collect::<Vec<String>>())
+}
+
+#[cfg(feature = "candle")]
+#[instrument(skip_all)]
+pub async fn download_dense_modules(
+    api: &ApiRepo,
+    dense_path: Option<String>,
+) -> Result<Vec<String>, ApiError> {
+    match download_file(api, "modules.json").await {
+        Ok(modules_path) => {
+            // If `modules.json` exists, then parse it to capture the Dense modules
+            match parse_dense_paths_from_modules(&modules_path).await {
+                Ok(module_paths) => {
+                    match module_paths.len() {
+                        0 => Ok(vec![]),
+                        // NOTE: if there's only a single Dense module defined i.e., there are
+                        // no sequential Dense modules to be applied, then the one defined in
+                        // `modules.json` will be downloaded, unless the user has specified
+                        // another valid `--dense-path` (that exists in the repository), e.g.
+                        // defualt might be set to `2_Dense_1024/`, but the user might want to
+                        // use `2_Dense/` instead (see https://huggingface.co/NovaSearch/stella_en_400M_v5)
+                        1 => {
+                            let path_to_use = if let Some(ref user_path) = dense_path {
+                                if user_path != &module_paths[0] {
+                                    tracing::info!("`{}` found in `modules.json`, but using provided `--dense-path={user_path}` instead", module_paths[0]);
+                                }
+                                user_path.clone()
+                            } else {
+                                module_paths[0].clone()
+                            };
+
+                            download_dense_module(api, &path_to_use)
+                                .await
+                                .map_err(|err| {
+                                    tracing::error!(
+                                        "Failed to download dense module {}: {}",
+                                        path_to_use,
+                                        err
+                                    );
+                                    err
+                                })?;
+                            Ok(vec![path_to_use])
+                        }
+                        // NOTE: in any other case i.e., more than 1 Dense module, then download
+                        // them all, and then sort them to ensure those are applied sequentially
+                        _ => {
+                            if dense_path.is_some() {
+                                tracing::warn!("A value for `--dense-path` was provided, but since there's more than one subsequent Dense module, then the provided value will be ignored.");
+                            }
+
+                            for module_path in &module_paths {
+                                // NOTE: since the Dense modules here are specified in the
+                                // `modules.json` file, then fail if any of those cannot be
+                                // downloaded
+                                download_dense_module(api, module_path)
+                                    .await
+                                    .map_err(|err| {
+                                        tracing::error!(
+                                            "Failed to download `{module_path}` file: {err}"
+                                        );
+                                        err
+                                    })?;
+                            }
+                            Ok(module_paths)
+                        }
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!("`modules.json` could be downloaded but parsing the modules failed: {err}; so no Dense modules will be downloaded.");
+                    Ok(vec![])
+                }
+            }
+        }
+        // NOTE: if `modules.json` is not there, then no modules will be downloaded, which most
+        // likely means that the model is not a Sentence Transformer model
+        Err(_) => Ok(vec![]),
+    }
+}
+
+#[cfg(feature = "candle")]
+async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBuf, ApiError> {
+    // Download `config.json` for the Dense module
+    let config_file = format!("{}/config.json", dense_path);
+    let config_path = match download_file(api, &config_file).await {
+        Ok(path) => path,
+        Err(err) => {
+            tracing::warn!("Failed to download `{config_file}` file: {err}");
+            return Err(err);
+        }
+    };
+
+    // Try to download the `model.safetensors` first
+    let safetensors_file = format!("{}/model.safetensors", dense_path);
+    if let Err(err) = download_file(api, &safetensors_file).await {
+        tracing::warn!("Failed to download `{safetensors_file}` file: {err}");
+        // Fallback to former `pytorch_model.bin`
+        let pytorch_file = format!("{}/pytorch_model.bin", dense_path);
+        if let Err(err) = download_file(api, &pytorch_file).await {
+            tracing::warn!("Failed to download `{pytorch_file}` file: {err}");
+            return Err(err);
+        }
+    }
+
+    Ok(config_path.parent().unwrap().to_path_buf())
 }
