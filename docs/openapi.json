@@ -1052,6 +1052,7 @@
         "required": [
           "model_id",
           "model_dtype",
+          "served_model_name",
           "model_type",
           "max_concurrent_requests",
           "max_input_length",
@@ -1105,6 +1106,11 @@
           "model_id": {
             "type": "string",
             "description": "Model info",
+            "example": "thenlper/gte-base"
+          },
+          "served_model_name": {
+            "type": "string",
+            "description": "Model name specified by user",
             "example": "thenlper/gte-base"
           },
           "model_sha": {
