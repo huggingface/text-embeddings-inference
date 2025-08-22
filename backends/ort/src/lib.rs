@@ -12,42 +12,14 @@ use text_embeddings_backend_core::{
 };
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(from = "ConfigValidator")]
 pub struct Config {
-    pub pad_token_id: usize,
+    pub pad_token_id: Option<usize>,
     pub eos_token_id: Option<usize>,
     // NOTE: the fields below are only required when the ONNX model expects the `past_key_values`
     // as input i.e., whenever the ONNX model has been exported with optimized MHA nodes
     pub hidden_size: usize,
     pub num_hidden_layers: usize,
-    pub num_key_value_heads: usize,
-}
-
-#[derive(Deserialize)]
-struct ConfigValidator {
-    pad_token_id: Option<usize>,
-    eos_token_id: Option<usize>,
-    hidden_size: usize,
-    num_hidden_layers: usize,
-    num_key_value_heads: Option<usize>,
-}
-
-impl From<ConfigValidator> for Config {
-    fn from(config: ConfigValidator) -> Self {
-        let pad_token_id = config.pad_token_id.or(config.eos_token_id).unwrap_or(0);
-
-        let num_key_value_heads = config
-            .num_key_value_heads
-            .unwrap_or(config.num_hidden_layers);
-
-        Config {
-            pad_token_id,
-            eos_token_id: config.eos_token_id,
-            hidden_size: config.hidden_size,
-            num_hidden_layers: config.num_hidden_layers,
-            num_key_value_heads,
-        }
-    }
+    pub num_key_value_heads: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -195,6 +167,11 @@ impl OrtBackend {
         let max_length = batch.max_length as usize;
         let elems = batch_size * max_length;
 
+        let pad_token_id = self
+            .config
+            .pad_token_id
+            .unwrap_or(self.config.eos_token_id.unwrap_or(0)) as i64;
+
         let (input_ids, attention_mask, token_type_ids, position_ids, input_lengths, masking) =
             if batch_size > 1 {
                 let mut input_ids = Vec::with_capacity(elems);
@@ -227,7 +204,7 @@ impl OrtBackend {
                                 // sequences in the batch have the same length
                                 masking = true;
                                 for pad_pos in 0..padding {
-                                    input_ids.push(self.config.pad_token_id as i64);
+                                    input_ids.push(pad_token_id);
                                     attention_mask.push(0_i64);
                                     token_type_ids.push(0);
                                     position_ids.push((seq_length + pad_pos) as i64);
@@ -257,7 +234,7 @@ impl OrtBackend {
                                 // sequences in the batch have the same length
                                 masking = true;
                                 for _ in 0..padding {
-                                    input_ids.push(self.config.pad_token_id as i64);
+                                    input_ids.push(pad_token_id);
                                     attention_mask.push(0_i64);
                                     token_type_ids.push(0);
                                     position_ids.push(0);
@@ -318,7 +295,10 @@ impl OrtBackend {
         let past_key_values = if self.past_key_values {
             let hidden_size = self.config.hidden_size;
             let num_hidden_layers = self.config.num_hidden_layers;
-            let num_key_value_heads = self.config.num_key_value_heads;
+            let num_key_value_heads = self
+                .config
+                .num_key_value_heads
+                .unwrap_or(self.config.num_hidden_layers);
             let head_size = hidden_size / num_key_value_heads;
             let mut arrays = Vec::new();
 
