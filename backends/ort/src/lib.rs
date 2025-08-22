@@ -22,22 +22,11 @@ pub struct Config {
     pub num_key_value_heads: Option<usize>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "lowercase")]
 enum PaddingSide {
     Left,
     Right,
-}
-
-impl std::str::FromStr for PaddingSide {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "left" => Ok(PaddingSide::Left),
-            "right" => Ok(PaddingSide::Right),
-            _ => Err(format!("unrecognized `padding_side` value: {}", s)),
-        }
-    }
 }
 
 struct ModelInputs {
@@ -171,15 +160,11 @@ impl OrtBackend {
             .join("tokenizer_config.json")
             .exists()
             .then(|| {
-                std::fs::read_to_string(model_path.join("tokenizer_config.json"))
+                let content = std::fs::read_to_string(model_path.join("tokenizer_config.json")).ok()?;
+                serde_json::from_str::<serde_json::Value>(&content)
                     .ok()?
-                    .parse::<serde_json::Value>()
-                    .ok()?
-                    .get("padding_side")?
-                    .as_str()?
-                    .parse::<PaddingSide>()
-                    .map_err(|e| tracing::warn!("Failed to parse `padding_side` from `tokenizer_config.json`: {}, hence using `right` padding by default.", e))
-                    .ok()
+                    .get("padding_side")
+                    .and_then(|v| serde_json::from_value::<PaddingSide>(v.clone()).ok())
             })
             .flatten()
             .unwrap_or_else(|| {
