@@ -50,11 +50,18 @@ impl From<ConfigValidator> for Config {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum PaddingSide {
     Left,
+    #[default]
     Right,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TokenizerConfig {
+    #[serde(default)]
+    padding_side: PaddingSide,
 }
 
 struct ModelInputs {
@@ -69,6 +76,7 @@ struct ModelInputs {
 pub struct OrtBackend {
     session: Mutex<Session>,
     config: Config,
+    tokenizer_config: TokenizerConfig,
 
     token_type_ids: bool,
     // NOTE: required since the key can either be `token_type_ids` or `input_type`
@@ -77,7 +85,6 @@ pub struct OrtBackend {
     past_key_values: bool,
 
     pool: Pool,
-    padding_side: PaddingSide,
 }
 
 impl OrtBackend {
@@ -113,11 +120,26 @@ impl OrtBackend {
         };
 
         let config: Config = {
-            let content = std::fs::read_to_string(&model_path.join("config.json"))
+            let content = std::fs::read_to_string(model_path.join("config.json"))
                 .map_err(|e| BackendError::Start(format!("Failed to read `config.json`: {}", e)))?;
             serde_json::from_str(&content)
                 .map_err(|e| BackendError::Start(format!("Failed to parse `config.json`: {}", e)))?
         };
+
+        let tokenizer_config_path = model_path.join("tokenizer_config.json");
+        let tokenizer_config: TokenizerConfig = if tokenizer_config_path.exists() {
+            let content = std::fs::read_to_string(&tokenizer_config_path).map_err(|e| {
+                BackendError::Start(format!("Failed to read `tokenizer_config.json`: {}", e))
+            })?;
+            serde_json::from_str(&content).map_err(|e| {
+                BackendError::Start(format!("Failed to parse `tokenizer_config.json`: {}", e))
+            })?
+        } else {
+            TokenizerConfig {
+                padding_side: PaddingSide::default(),
+            }
+        };
+
         let session = Session::builder()
             .s()?
             .with_intra_threads(num_cpus::get())
@@ -150,60 +172,15 @@ impl OrtBackend {
             }
         }
 
-
-        let pad_token_id = config
-            .as_ref()
-            .and_then(|c| c.pad_token_id.or(c.eos_token_id))
-            .unwrap_or(0);
-
-        // NOTE: given that `hidden_size`, `num_hidden_layers`, and `num_key_value_heads` are set
-        // to `Option` in the `Config`, but required if `past_key_values` is an input of ONNX, then
-        // those should be validated in advance
-        if past_key_values {
-            match &config {
-                Some(config) => {
-                    if config.hidden_size.is_none()
-                        || config.num_hidden_layers.is_none()
-                        || config.num_key_value_heads.is_none()
-                    {
-                        return Err(BackendError::Start(
-                            "`config.json` doesn't contain all required keys: `hidden_size`, `num_hidden_layers`, and `num_key_value_heads`.".into()
-                        ));
-                    }
-                }
-                None => {
-                    return Err(BackendError::Start(format!(
-                        "`config.json` not found at {config_path:?}, but it's required as this ONNX expects `past_key_values` as input, meaning that the `config.json` file should contain at least the keys: `hidden_size`, `num_hidden_layers`, and `num_key_value_heads`."
-                    )));
-                }
-            }
-        }
-
-        let padding_side = model_path
-            .join("tokenizer_config.json")
-            .exists()
-            .then(|| {
-                let content = std::fs::read_to_string(model_path.join("tokenizer_config.json")).ok()?;
-                serde_json::from_str::<serde_json::Value>(&content)
-                    .ok()?
-                    .get("padding_side")
-                    .and_then(|v| serde_json::from_value::<PaddingSide>(v.clone()).ok())
-            })
-            .flatten()
-            .unwrap_or_else(|| {
-                tracing::warn!("Could not determine `padding_side` from `tokenizer_config.json`, hence using `right` padding by default.");
-                PaddingSide::Right
-            });
-
         Ok(Self {
             session: Mutex::new(session),
             config,
+            tokenizer_config,
             token_type_ids,
             token_type_ids_key,
             position_ids,
             past_key_values,
             pool,
-            padding_side,
         })
     }
 }
@@ -433,7 +410,8 @@ impl Backend for OrtBackend {
         let batch_size = batch.len();
         let max_length = batch.max_length as usize;
 
-        let (model_inputs, masking) = self.prepare_inputs(&batch, &self.padding_side)?;
+        let (model_inputs, masking) =
+            self.prepare_inputs(&batch, &self.tokenizer_config.padding_side)?;
 
         let inputs = self.prepare_ort_inputs(
             model_inputs.input_ids,
@@ -482,7 +460,7 @@ impl Backend for OrtBackend {
             };
 
             let pooled_embeddings = match self.pool {
-                Pool::Cls => match self.padding_side {
+                Pool::Cls => match self.tokenizer_config.padding_side {
                     PaddingSide::Left => {
                         if masking {
                             let mut cls_embeddings = Vec::new();
@@ -506,7 +484,7 @@ impl Backend for OrtBackend {
                     }
                     PaddingSide::Right => outputs.slice(s![.., 0, ..]).into_owned().into_dyn(),
                 },
-                Pool::LastToken => match self.padding_side {
+                Pool::LastToken => match self.tokenizer_config.padding_side {
                     // NOTE: when using left-padding, the last-token is always in the last position
                     // as the padding tokens are on the left (note that given that the last token
                     // in the sequence is the EOS token we need to use the last - 1.
@@ -556,7 +534,7 @@ impl Backend for OrtBackend {
                             input_lengths = input_lengths.select(Axis(0), &indices);
                         };
 
-                        match self.padding_side {
+                        match self.tokenizer_config.padding_side {
                             PaddingSide::Left => {
                                 let mut mean_embeddings = Vec::new();
                                 for (batch_idx, &seq_length) in input_lengths.iter().enumerate() {
@@ -609,7 +587,7 @@ impl Backend for OrtBackend {
             // member of the batch that require pooling
             // or if batch_size > 1 and the members of the batch have different lengths
             let raw_embeddings = if (masking || has_pooling_requests) && batch_size > 1 {
-                match self.padding_side {
+                match self.tokenizer_config.padding_side {
                     PaddingSide::Left => {
                         let mut final_indices: Vec<usize> =
                             Vec::with_capacity(batch_size * max_length);
@@ -680,7 +658,7 @@ impl Backend for OrtBackend {
     fn predict(&self, batch: Batch) -> Result<Predictions, BackendError> {
         let batch_size = batch.len();
 
-        let (model_inputs, _) = self.prepare_inputs(&batch, &self.padding_side)?;
+        let (model_inputs, _) = self.prepare_inputs(&batch, &self.tokenizer_config.padding_side)?;
 
         let inputs = self.prepare_ort_inputs(
             model_inputs.input_ids,
