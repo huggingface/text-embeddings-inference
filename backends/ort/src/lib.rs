@@ -12,14 +12,42 @@ use text_embeddings_backend_core::{
 };
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(from = "ConfigValidator")]
 pub struct Config {
-    pub pad_token_id: Option<usize>,
+    pub pad_token_id: usize,
     pub eos_token_id: Option<usize>,
     // NOTE: the fields below are only required when the ONNX model expects the `past_key_values`
     // as input i.e., whenever the ONNX model has been exported with optimized MHA nodes
-    pub hidden_size: Option<usize>,
-    pub num_hidden_layers: Option<usize>,
-    pub num_key_value_heads: Option<usize>,
+    pub hidden_size: usize,
+    pub num_hidden_layers: usize,
+    pub num_key_value_heads: usize,
+}
+
+#[derive(Deserialize)]
+struct ConfigValidator {
+    pad_token_id: Option<usize>,
+    eos_token_id: Option<usize>,
+    hidden_size: usize,
+    num_hidden_layers: usize,
+    num_key_value_heads: Option<usize>,
+}
+
+impl From<ConfigValidator> for Config {
+    fn from(config: ConfigValidator) -> Self {
+        let pad_token_id = config.pad_token_id.or(config.eos_token_id).unwrap_or(0);
+
+        let num_key_value_heads = config
+            .num_key_value_heads
+            .unwrap_or(config.num_hidden_layers);
+
+        Config {
+            pad_token_id,
+            eos_token_id: config.eos_token_id,
+            hidden_size: config.hidden_size,
+            num_hidden_layers: config.num_hidden_layers,
+            num_key_value_heads,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -40,7 +68,7 @@ struct ModelInputs {
 
 pub struct OrtBackend {
     session: Mutex<Session>,
-    config: Option<Config>,
+    config: Config,
 
     token_type_ids: bool,
     // NOTE: required since the key can either be `token_type_ids` or `input_type`
@@ -50,7 +78,6 @@ pub struct OrtBackend {
 
     pool: Pool,
     padding_side: PaddingSide,
-    pad_token_id: usize,
 }
 
 impl OrtBackend {
@@ -85,6 +112,12 @@ impl OrtBackend {
             }
         };
 
+        let config: Config = {
+            let content = std::fs::read_to_string(&model_path.join("config.json"))
+                .map_err(|e| BackendError::Start(format!("Failed to read `config.json`: {}", e)))?;
+            serde_json::from_str(&content)
+                .map_err(|e| BackendError::Start(format!("Failed to parse `config.json`: {}", e)))?
+        };
         let session = Session::builder()
             .s()?
             .with_intra_threads(num_cpus::get())
@@ -117,16 +150,6 @@ impl OrtBackend {
             }
         }
 
-        let config_path = model_path.join("config.json");
-        let config: Option<Config> = if config_path.exists() {
-            let content = std::fs::read_to_string(&config_path)
-                .map_err(|e| BackendError::Start(format!("Failed to read `config.json`: {}", e)))?;
-            Some(serde_json::from_str(&content).map_err(|e| {
-                BackendError::Start(format!("Failed to parse `config.json`: {}", e))
-            })?)
-        } else {
-            None
-        };
 
         let pad_token_id = config
             .as_ref()
@@ -181,7 +204,6 @@ impl OrtBackend {
             past_key_values,
             pool,
             padding_side,
-            pad_token_id,
         })
     }
 }
@@ -228,7 +250,7 @@ impl OrtBackend {
                                 // sequences in the batch have the same length
                                 masking = true;
                                 for pad_pos in 0..padding {
-                                    input_ids.push(self.pad_token_id as i64);
+                                    input_ids.push(self.config.pad_token_id as i64);
                                     attention_mask.push(0_i64);
                                     token_type_ids.push(0);
                                     position_ids.push((seq_length + pad_pos) as i64);
@@ -258,7 +280,7 @@ impl OrtBackend {
                                 // sequences in the batch have the same length
                                 masking = true;
                                 for _ in 0..padding {
-                                    input_ids.push(self.pad_token_id as i64);
+                                    input_ids.push(self.config.pad_token_id as i64);
                                     attention_mask.push(0_i64);
                                     token_type_ids.push(0);
                                     position_ids.push(0);
@@ -317,10 +339,9 @@ impl OrtBackend {
         let input_lengths = ndarray::Array1::from_vec(input_lengths);
 
         let past_key_values = if self.past_key_values {
-            let config = self.config.as_ref().unwrap();
-            let hidden_size = config.hidden_size.unwrap();
-            let num_hidden_layers = config.num_hidden_layers.unwrap();
-            let num_key_value_heads = config.num_key_value_heads.unwrap();
+            let hidden_size = self.config.hidden_size;
+            let num_hidden_layers = self.config.num_hidden_layers;
+            let num_key_value_heads = self.config.num_key_value_heads;
             let head_size = hidden_size / num_key_value_heads;
             let mut arrays = Vec::new();
 
