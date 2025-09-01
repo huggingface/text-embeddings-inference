@@ -407,6 +407,10 @@ impl CandleBackend {
             (Config::Gte(config), Device::Cuda(_)) => {
                 if dtype != DType::F16
                     || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                    || &std::env::var("USE_FLASH_ATTENTION")
+                        .unwrap_or("True".to_string())
+                        .to_lowercase()
+                        != "true"
                 {
                     tracing::info!("Starting GTE model on {:?}", device);
                     Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
@@ -420,6 +424,10 @@ impl CandleBackend {
                 if dtype != DType::F16
                     || !cfg!(feature = "flash-attn")
                     || get_runtime_compute_cap().unwrap() < 80
+                    || &std::env::var("USE_FLASH_ATTENTION")
+                        .unwrap_or("True".to_string())
+                        .to_lowercase()
+                        != "true"
                 {
                     return Err(BackendError::Start("Mistral is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
                 }
