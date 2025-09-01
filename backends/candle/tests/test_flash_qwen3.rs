@@ -11,7 +11,7 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
 #[serial_test::serial]
 #[cfg(all(feature = "cuda", feature = "flash-attn"))]
 fn test_flash_qwen3() -> Result<()> {
-    let model_root = download_artifacts("Qwen/Qwen3-Embedding-0.6B", None, None)?;
+    let (model_root, _) = download_artifacts("Qwen/Qwen3-Embedding-0.6B", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(

@@ -118,7 +118,7 @@ enum Config {
 pub struct CandleBackend {
     device: Device,
     model: Box<dyn Model + Send>,
-    dense: Option<Box<dyn DenseLayer + Send>>,
+    dense_layers: Vec<Box<dyn DenseLayer + Send>>,
 }
 
 impl CandleBackend {
@@ -126,7 +126,7 @@ impl CandleBackend {
         model_path: &Path,
         dtype: String,
         model_type: ModelType,
-        dense_path: Option<&Path>,
+        dense_paths: Option<Vec<String>>,
     ) -> Result<Self, BackendError> {
         // Default files
         let default_safetensors = model_path.join("model.safetensors");
@@ -471,6 +471,10 @@ impl CandleBackend {
             (Config::Qwen2(config), Device::Cuda(_)) => {
                 if dtype != DType::F16
                     || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                    || &std::env::var("USE_FLASH_ATTENTION")
+                        .unwrap_or("True".to_string())
+                        .to_lowercase()
+                        != "true"
                 {
                     return Err(BackendError::Start("Qwen2 is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
                 }
@@ -483,6 +487,10 @@ impl CandleBackend {
             (Config::Qwen3(config), Device::Cuda(_)) => {
                 if dtype != DType::F16
                     || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                    || &std::env::var("USE_FLASH_ATTENTION")
+                        .unwrap_or("True".to_string())
+                        .to_lowercase()
+                        != "true"
                 {
                     tracing::info!("Starting Qwen3 model on {:?}", device);
                     Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
@@ -495,50 +503,63 @@ impl CandleBackend {
             }
         };
 
-        // If `2_Dense/model.safetensors` or `2_Dense/pytorch_model.bin` is amongst the downloaded artifacts, then create a Dense
-        // block and provide it to the `CandleBackend`, otherwise, None
-        let dense = if let Some(dense_path) = dense_path {
-            let dense_safetensors = dense_path.join("model.safetensors");
-            let dense_pytorch = dense_path.join("pytorch_model.bin");
+        // Load Dense layers from the provided Dense paths
+        let mut dense_layers = Vec::new();
+        if let Some(dense_paths) = &dense_paths {
+            if !dense_paths.is_empty() {
+                tracing::info!("Loading Dense module/s from path/s: {dense_paths:?}");
 
-            if dense_safetensors.exists() || dense_pytorch.exists() {
-                let dense_config_path = dense_path.join("config.json");
+                for dense_path in dense_paths.iter() {
+                    let dense_safetensors =
+                        model_path.join(format!("{dense_path}/model.safetensors"));
+                    let dense_pytorch = model_path.join(format!("{dense_path}/pytorch_model.bin"));
 
-                let dense_config_str =
-                    std::fs::read_to_string(&dense_config_path).map_err(|err| {
-                        BackendError::Start(format!(
-                            "Unable to read `{dense_path:?}/config.json` file: {err:?}",
-                        ))
-                    })?;
-                let dense_config: DenseConfig =
-                    serde_json::from_str(&dense_config_str).map_err(|err| {
-                        BackendError::Start(format!(
-                            "Unable to parse `{dense_path:?}/config.json`: {err:?}",
-                        ))
-                    })?;
+                    if dense_safetensors.exists() || dense_pytorch.exists() {
+                        let dense_config_path =
+                            model_path.join(format!("{dense_path}/config.json"));
 
-                let dense_vb = if dense_safetensors.exists() {
-                    unsafe {
-                        VarBuilder::from_mmaped_safetensors(&[dense_safetensors], dtype, &device)
+                        let dense_config_str = std::fs::read_to_string(&dense_config_path)
+                            .map_err(|err| {
+                                BackendError::Start(format!(
+                                    "Unable to read `{dense_path}/config.json` file: {err:?}",
+                                ))
+                            })?;
+                        let dense_config: DenseConfig = serde_json::from_str(&dense_config_str)
+                            .map_err(|err| {
+                                BackendError::Start(format!(
+                                    "Unable to parse `{dense_path}/config.json`: {err:?}",
+                                ))
+                            })?;
+
+                        let dense_vb = if dense_safetensors.exists() {
+                            unsafe {
+                                VarBuilder::from_mmaped_safetensors(
+                                    &[dense_safetensors],
+                                    dtype,
+                                    &device,
+                                )
+                            }
+                            .s()?
+                        } else {
+                            VarBuilder::from_pth(&dense_pytorch, dtype, &device).s()?
+                        };
+
+                        let dense_layer = Box::new(Dense::load(dense_vb, &dense_config).s()?)
+                            as Box<dyn DenseLayer + Send>;
+                        dense_layers.push(dense_layer);
+
+                        tracing::info!("Loaded Dense module from path: {dense_path}");
+                    } else {
+                        tracing::warn!("Dense module files not found for path: {dense_path}",);
                     }
-                    .s()?
-                } else {
-                    VarBuilder::from_pth(&dense_pytorch, dtype, &device).s()?
-                };
-
-                Some(Box::new(Dense::load(dense_vb, &dense_config).s()?)
-                    as Box<dyn DenseLayer + Send>)
-            } else {
-                None
+                }
             }
-        } else {
-            None
-        };
+        }
 
         Ok(Self {
             device,
             model: model?,
-            dense,
+            dense_layers,
         })
     }
 }
@@ -575,15 +596,13 @@ impl Backend for CandleBackend {
         // Run forward
         let (pooled_embeddings, raw_embeddings) = self.model.embed(batch).e()?;
 
-        // Apply dense layer if available
+        // Apply Dense layers sequentially if available
         let pooled_embeddings = match pooled_embeddings {
             None => None,
-            Some(pooled_embeddings) => {
-                let pooled_embeddings = if let Some(ref dense) = self.dense {
-                    dense.forward(&pooled_embeddings).e()?
-                } else {
-                    pooled_embeddings
-                };
+            Some(mut pooled_embeddings) => {
+                for dense in &self.dense_layers {
+                    pooled_embeddings = dense.forward(&pooled_embeddings).e()?;
+                }
                 Some(pooled_embeddings)
             }
         };

@@ -8,7 +8,7 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
 #[test]
 fn test_nomic_small() -> Result<()> {
-    let model_root = download_artifacts("nomic-ai/nomic-embed-text-v1.5", None, None)?;
+    let (model_root, _) = download_artifacts("nomic-ai/nomic-embed-text-v1.5", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -52,7 +52,7 @@ fn test_nomic_small() -> Result<()> {
 
 #[test]
 fn test_nomic_moe() -> Result<()> {
-    let model_root = download_artifacts("nomic-ai/nomic-embed-text-v2-moe", None, None)?;
+    let (model_root, _) = download_artifacts("nomic-ai/nomic-embed-text-v2-moe", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
