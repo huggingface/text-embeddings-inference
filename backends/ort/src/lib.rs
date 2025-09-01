@@ -405,232 +405,253 @@ impl Backend for OrtBackend {
         let mut session = self.session.lock().unwrap();
         let outputs = session.run(inputs).e()?;
 
-        // Get last_hidden_state ndarray
-        let outputs = outputs
-            .get("last_hidden_state")
-            .or(outputs.get("token_embeddings"))
-            .ok_or(BackendError::Inference(format!(
-                "Unknown output keys: {:?}",
-                outputs
-            )))?
-            .try_extract_array::<f32>()
-            .e()?
-            .to_owned();
-
-        // Final embeddings struct
         let mut embeddings =
             HashMap::with_capacity_and_hasher(batch_size, BuildNoHashHasher::default());
 
-        let has_pooling_requests = !batch.pooled_indices.is_empty();
-        let has_raw_requests = !batch.raw_indices.is_empty();
+        if outputs.contains_key("sentence_embedding") {
+            let outputs = outputs
+                .get("sentence_embedding")
+                .ok_or(BackendError::Inference(format!(
+                    "Unknown output keys: {:?}",
+                    outputs
+                )))?
+                .try_extract_array::<f32>()
+                .e()?
+                .to_owned();
 
-        if has_pooling_requests {
-            let mut outputs = outputs.clone();
+            for (i, e) in outputs.rows().into_iter().enumerate() {
+                embeddings.insert(i, Embedding::Pooled(e.to_vec()));
+            }
+        } else {
+            let outputs = outputs
+                .get("last_hidden_state")
+                .or(outputs.get("token_embeddings"))
+                .ok_or(BackendError::Inference(format!(
+                    "Unknown output keys: {:?}",
+                    outputs
+                )))?
+                .try_extract_array::<f32>()
+                .e()?
+                .to_owned();
 
-            // Only use pooled_indices if at least one member of the batch ask for raw embeddings
-            let indices = if has_raw_requests {
-                let indices: Vec<usize> =
-                    batch.pooled_indices.iter().map(|v| *v as usize).collect();
+            let has_pooling_requests = !batch.pooled_indices.is_empty();
+            let has_raw_requests = !batch.raw_indices.is_empty();
 
-                // Select values in the batch
-                outputs = outputs.select(Axis(0), &indices);
-                Some(indices)
-            } else {
-                None
-            };
+            if has_pooling_requests {
+                let mut outputs = outputs.clone();
 
-            let pooled_embeddings = match self.pool {
-                Pool::Cls => match self.tokenizer_config.padding_side {
-                    PaddingSide::Left => {
-                        if masking {
-                            let mut cls_embeddings = Vec::new();
-                            for (batch_idx, &seq_length) in
-                                model_inputs.input_lengths.iter().enumerate()
-                            {
-                                let padding = max_length as f32 - seq_length;
-                                let cls_pos = padding as usize;
-                                cls_embeddings
-                                    .push(outputs.slice(s![batch_idx, cls_pos, ..]).to_owned());
+                // Only use pooled_indices if at least one member of the batch ask for raw embeddings
+                let indices = if has_raw_requests {
+                    let indices: Vec<usize> =
+                        batch.pooled_indices.iter().map(|v| *v as usize).collect();
+
+                    // Select values in the batch
+                    outputs = outputs.select(Axis(0), &indices);
+                    Some(indices)
+                } else {
+                    None
+                };
+
+                let pooled_embeddings = match self.pool {
+                    Pool::Cls => match self.tokenizer_config.padding_side {
+                        PaddingSide::Left => {
+                            if masking {
+                                let mut cls_embeddings = Vec::new();
+                                for (batch_idx, &seq_length) in
+                                    model_inputs.input_lengths.iter().enumerate()
+                                {
+                                    let padding = max_length as f32 - seq_length;
+                                    let cls_pos = padding as usize;
+                                    cls_embeddings
+                                        .push(outputs.slice(s![batch_idx, cls_pos, ..]).to_owned());
+                                }
+                                ndarray::stack(
+                                    Axis(0),
+                                    &cls_embeddings.iter().map(|x| x.view()).collect::<Vec<_>>(),
+                                )
+                                .unwrap()
+                                .into_dyn()
+                            } else {
+                                outputs.slice(s![.., 0, ..]).into_owned().into_dyn()
                             }
-                            ndarray::stack(
-                                Axis(0),
-                                &cls_embeddings.iter().map(|x| x.view()).collect::<Vec<_>>(),
-                            )
-                            .unwrap()
-                            .into_dyn()
-                        } else {
-                            outputs.slice(s![.., 0, ..]).into_owned().into_dyn()
                         }
-                    }
-                    PaddingSide::Right => outputs.slice(s![.., 0, ..]).into_owned().into_dyn(),
-                },
-                Pool::LastToken => match self.tokenizer_config.padding_side {
-                    // NOTE: when using left-padding, the last-token is always in the last position
-                    // as the padding tokens are on the left (note that given that the last token
-                    // in the sequence is the EOS token we need to use the last - 1.
-                    PaddingSide::Left => {
-                        let axis_len = outputs.len_of(Axis(1));
-                        outputs
-                            .slice(s![.., axis_len - 1, ..])
-                            .into_owned()
-                            .into_dyn()
-                    }
-                    PaddingSide::Right => {
-                        if masking {
-                            let mut last_token_embeddings = Vec::new();
-                            for (batch_idx, &seq_length) in
-                                model_inputs.input_lengths.iter().enumerate()
-                            {
-                                let last_pos = seq_length as usize - 1;
-                                last_token_embeddings
-                                    .push(outputs.slice(s![batch_idx, last_pos, ..]).to_owned());
-                            }
-                            ndarray::stack(
-                                Axis(0),
-                                &last_token_embeddings
-                                    .iter()
-                                    .map(|x| x.view())
-                                    .collect::<Vec<_>>(),
-                            )
-                            .unwrap()
-                            .into_dyn()
-                        } else {
+                        PaddingSide::Right => outputs.slice(s![.., 0, ..]).into_owned().into_dyn(),
+                    },
+                    Pool::LastToken => match self.tokenizer_config.padding_side {
+                        // NOTE: when using left-padding, the last-token is always in the last position
+                        // as the padding tokens are on the left (note that given that the last token
+                        // in the sequence is the EOS token we need to use the last - 1.
+                        PaddingSide::Left => {
                             let axis_len = outputs.len_of(Axis(1));
                             outputs
                                 .slice(s![.., axis_len - 1, ..])
                                 .into_owned()
                                 .into_dyn()
                         }
-                    }
-                },
-                Pool::Mean => {
-                    if masking {
-                        let mut attention_mask = model_inputs.attention_mask;
-                        let mut input_lengths = model_inputs.input_lengths;
-
-                        if let Some(indices) = indices {
-                            // Select values in the batch
-                            attention_mask = attention_mask.select(Axis(0), &indices);
-                            input_lengths = input_lengths.select(Axis(0), &indices);
-                        };
-
-                        match self.tokenizer_config.padding_side {
-                            PaddingSide::Left => {
-                                let mut mean_embeddings = Vec::new();
-                                for (batch_idx, &seq_length) in input_lengths.iter().enumerate() {
-                                    let padding = max_length as f32 - seq_length;
-                                    let start_pos = padding as usize;
-                                    let valid_embeddings =
-                                        outputs.slice(s![batch_idx, start_pos.., ..]);
-                                    mean_embeddings
-                                        .push(valid_embeddings.mean_axis(Axis(0)).unwrap());
+                        PaddingSide::Right => {
+                            if masking {
+                                let mut last_token_embeddings = Vec::new();
+                                for (batch_idx, &seq_length) in
+                                    model_inputs.input_lengths.iter().enumerate()
+                                {
+                                    let last_pos = seq_length as usize - 1;
+                                    last_token_embeddings.push(
+                                        outputs.slice(s![batch_idx, last_pos, ..]).to_owned(),
+                                    );
                                 }
                                 ndarray::stack(
                                     Axis(0),
-                                    &mean_embeddings.iter().map(|x| x.view()).collect::<Vec<_>>(),
+                                    &last_token_embeddings
+                                        .iter()
+                                        .map(|x| x.view())
+                                        .collect::<Vec<_>>(),
                                 )
                                 .unwrap()
                                 .into_dyn()
-                            }
-                            PaddingSide::Right => {
-                                let attention_mask =
-                                    attention_mask.mapv(|x| x as f32).insert_axis(Axis(2));
-                                outputs = outputs.mul(attention_mask);
+                            } else {
+                                let axis_len = outputs.len_of(Axis(1));
                                 outputs
-                                    .sum_axis(Axis(1))
-                                    .div(input_lengths.insert_axis(Axis(1)))
+                                    .slice(s![.., axis_len - 1, ..])
+                                    .into_owned()
+                                    .into_dyn()
                             }
                         }
-                    } else {
-                        outputs.mean_axis(Axis(1)).unwrap()
+                    },
+                    Pool::Mean => {
+                        if masking {
+                            let mut attention_mask = model_inputs.attention_mask;
+                            let mut input_lengths = model_inputs.input_lengths;
+
+                            if let Some(indices) = indices {
+                                // Select values in the batch
+                                attention_mask = attention_mask.select(Axis(0), &indices);
+                                input_lengths = input_lengths.select(Axis(0), &indices);
+                            };
+
+                            match self.tokenizer_config.padding_side {
+                                PaddingSide::Left => {
+                                    let mut mean_embeddings = Vec::new();
+                                    for (batch_idx, &seq_length) in input_lengths.iter().enumerate()
+                                    {
+                                        let padding = max_length as f32 - seq_length;
+                                        let start_pos = padding as usize;
+                                        let valid_embeddings =
+                                            outputs.slice(s![batch_idx, start_pos.., ..]);
+                                        mean_embeddings
+                                            .push(valid_embeddings.mean_axis(Axis(0)).unwrap());
+                                    }
+                                    ndarray::stack(
+                                        Axis(0),
+                                        &mean_embeddings
+                                            .iter()
+                                            .map(|x| x.view())
+                                            .collect::<Vec<_>>(),
+                                    )
+                                    .unwrap()
+                                    .into_dyn()
+                                }
+                                PaddingSide::Right => {
+                                    let attention_mask =
+                                        attention_mask.mapv(|x| x as f32).insert_axis(Axis(2));
+                                    outputs = outputs.mul(attention_mask);
+                                    outputs
+                                        .sum_axis(Axis(1))
+                                        .div(input_lengths.insert_axis(Axis(1)))
+                                }
+                            }
+                        } else {
+                            outputs.mean_axis(Axis(1)).unwrap()
+                        }
                     }
+                    Pool::Splade => unreachable!(),
+                };
+
+                for (i, e) in batch
+                    .pooled_indices
+                    .into_iter()
+                    .zip(pooled_embeddings.rows())
+                {
+                    embeddings.insert(i as usize, Embedding::Pooled(e.to_vec()));
                 }
-                Pool::Splade => unreachable!(),
             };
 
-            for (i, e) in batch
-                .pooled_indices
-                .into_iter()
-                .zip(pooled_embeddings.rows())
-            {
-                embeddings.insert(i as usize, Embedding::Pooled(e.to_vec()));
+            if has_raw_requests {
+                // Reshape outputs
+                let s = outputs.shape().to_vec();
+                #[allow(deprecated)]
+                let outputs = outputs.into_shape((s[0] * s[1], s[2])).e()?;
+
+                // We need to remove the padding tokens only if batch_size > 1 and there are some
+                // member of the batch that require pooling
+                // or if batch_size > 1 and the members of the batch have different lengths
+                let raw_embeddings = if (masking || has_pooling_requests) && batch_size > 1 {
+                    match self.tokenizer_config.padding_side {
+                        PaddingSide::Left => {
+                            let mut final_indices: Vec<usize> =
+                                Vec::with_capacity(batch_size * max_length);
+
+                            for i in batch.raw_indices.iter() {
+                                let i = *i as usize;
+                                let length = batch.cumulative_seq_lengths[i + 1]
+                                    - batch.cumulative_seq_lengths[i];
+                                let padding = batch.max_length - length;
+
+                                // For left padding, actual tokens start after the padding
+                                let start = i * batch.max_length as usize + padding as usize;
+                                let end = start + length as usize;
+
+                                for j in start..end {
+                                    final_indices.push(j);
+                                }
+                            }
+
+                            // Select the tokens with final indices
+                            outputs.select(Axis(0), &final_indices)
+                        }
+                        PaddingSide::Right => {
+                            let mut final_indices: Vec<usize> =
+                                Vec::with_capacity(batch_size * max_length);
+
+                            for i in batch.raw_indices.iter() {
+                                let start = i * batch.max_length;
+                                let i = *i as usize;
+                                let length = batch.cumulative_seq_lengths[i + 1]
+                                    - batch.cumulative_seq_lengths[i];
+
+                                for j in start..start + length {
+                                    // Add indices for the tokens of this specific member of the batch
+                                    final_indices.push(j as usize);
+                                }
+                            }
+
+                            // Select the tokens with final indices
+                            outputs.select(Axis(0), &final_indices)
+                        }
+                    }
+                } else {
+                    outputs
+                };
+
+                // Used for indexing in the raw_embeddings tensor
+                let input_lengths: Vec<usize> = (0..batch_size)
+                    .map(|i| {
+                        (batch.cumulative_seq_lengths[i + 1] - batch.cumulative_seq_lengths[i])
+                            as usize
+                    })
+                    .collect();
+
+                let mut cumulative_length = 0;
+                for i in batch.raw_indices.into_iter() {
+                    let length = input_lengths[i as usize];
+                    let e =
+                        raw_embeddings.slice(s![cumulative_length..cumulative_length + length, ..]);
+                    let e = e.rows().into_iter().map(|v| v.to_vec()).collect();
+
+                    embeddings.insert(i as usize, Embedding::All(e));
+                    cumulative_length += length;
+                }
             }
         };
-
-        if has_raw_requests {
-            // Reshape outputs
-            let s = outputs.shape().to_vec();
-            #[allow(deprecated)]
-            let outputs = outputs.into_shape((s[0] * s[1], s[2])).e()?;
-
-            // We need to remove the padding tokens only if batch_size > 1 and there are some
-            // member of the batch that require pooling
-            // or if batch_size > 1 and the members of the batch have different lengths
-            let raw_embeddings = if (masking || has_pooling_requests) && batch_size > 1 {
-                match self.tokenizer_config.padding_side {
-                    PaddingSide::Left => {
-                        let mut final_indices: Vec<usize> =
-                            Vec::with_capacity(batch_size * max_length);
-
-                        for i in batch.raw_indices.iter() {
-                            let i = *i as usize;
-                            let length = batch.cumulative_seq_lengths[i + 1]
-                                - batch.cumulative_seq_lengths[i];
-                            let padding = batch.max_length - length;
-
-                            // For left padding, actual tokens start after the padding
-                            let start = i * batch.max_length as usize + padding as usize;
-                            let end = start + length as usize;
-
-                            for j in start..end {
-                                final_indices.push(j);
-                            }
-                        }
-
-                        // Select the tokens with final indices
-                        outputs.select(Axis(0), &final_indices)
-                    }
-                    PaddingSide::Right => {
-                        let mut final_indices: Vec<usize> =
-                            Vec::with_capacity(batch_size * max_length);
-
-                        for i in batch.raw_indices.iter() {
-                            let start = i * batch.max_length;
-                            let i = *i as usize;
-                            let length = batch.cumulative_seq_lengths[i + 1]
-                                - batch.cumulative_seq_lengths[i];
-
-                            for j in start..start + length {
-                                // Add indices for the tokens of this specific member of the batch
-                                final_indices.push(j as usize);
-                            }
-                        }
-
-                        // Select the tokens with final indices
-                        outputs.select(Axis(0), &final_indices)
-                    }
-                }
-            } else {
-                outputs
-            };
-
-            // Used for indexing in the raw_embeddings tensor
-            let input_lengths: Vec<usize> = (0..batch_size)
-                .map(|i| {
-                    (batch.cumulative_seq_lengths[i + 1] - batch.cumulative_seq_lengths[i]) as usize
-                })
-                .collect();
-
-            let mut cumulative_length = 0;
-            for i in batch.raw_indices.into_iter() {
-                let length = input_lengths[i as usize];
-                let e = raw_embeddings.slice(s![cumulative_length..cumulative_length + length, ..]);
-                let e = e.rows().into_iter().map(|v| v.to_vec()).collect();
-
-                embeddings.insert(i as usize, Embedding::All(e));
-                cumulative_length += length;
-            }
-        }
 
         Ok(embeddings)
     }
