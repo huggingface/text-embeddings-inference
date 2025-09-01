@@ -381,6 +381,18 @@ async fn init_backend(
                 }
             }
 
+            // NOTE: for ONNX we need to retrieve the `tokenizer_config.json` to identify which
+            // `padding_side` needs to be applied for the input processing and the pooling
+            if let Some(api_repo) = api_repo.as_ref() {
+                tracing::info!("Downloading `tokenizer_config.json`");
+                match api_repo.get("tokenizer_config.json").await {
+                    Ok(_) => (),
+                    Err(err) => {
+                        tracing::warn!("Could not download `tokenizer_config.json`: {}", err)
+                    }
+                }
+            }
+
             let backend = OrtBackend::new(&model_path, dtype.to_string(), model_type.clone());
             match backend {
                 Ok(b) => return Ok(Box::new(b)),
