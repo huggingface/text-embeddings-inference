@@ -110,14 +110,5 @@ FROM base AS http
 
 COPY --from=http-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
 
-# Amazon SageMaker compatible image
-FROM http AS sagemaker
-COPY --chmod=775 sagemaker-entrypoint.sh entrypoint.sh
-
-ENTRYPOINT ["./entrypoint.sh"]
-
-# Default image
-FROM http
-
 ENTRYPOINT ["text-embeddings-router"]
 CMD ["--json-output"]
