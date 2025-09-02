@@ -400,7 +400,7 @@ impl CandleBackend {
                     ))
                 } else {
                     tracing::info!("Starting Gemma3 model on {:?}", device);
-                    Ok(Box::new(Gemma3::load(vb, &config, model_type).s()?))
+                    Ok(Box::new(Gemma3Model::load(vb, &config, model_type).s()?))
                 }
             }
             #[cfg(feature = "cuda")]
