@@ -152,6 +152,8 @@ message RerankRequest {
     bool raw_scores = 4;
     bool return_text = 5;
     TruncationDirection truncation_direction = 6;
+    optional string instruction = 7;
+    optional bool use_template = 8;
 }
 
 message RerankStreamRequest{
@@ -163,6 +165,8 @@ message RerankStreamRequest{
     // The server will only consider the first value
     bool return_text = 5;
     TruncationDirection truncation_direction = 6;
+    optional string instruction = 7;
+    optional bool use_template = 8;
 }
 
 message Rank {
