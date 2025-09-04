@@ -229,8 +229,14 @@ pub async fn run(
         prompts,
     );
 
-    // Get dtype
-    let dtype = dtype.unwrap_or_default();
+    // NOTE: `gemma3_text` won't support Float16 but only Float32, given that with `candle-cuda`
+    // feature, the default `Dtype::Float16` this overrides that to prevent issues when running a
+    // `gemma3_text` model without specifying a `--dtype`
+    let dtype = if dtype.is_none() && config.model_type == "gemma3_text" {
+        DType::Float32
+    } else {
+        dtype.unwrap_or_default()
+    };
 
     // Create backend
     tracing::info!("Starting model backend");

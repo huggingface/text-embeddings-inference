@@ -2,7 +2,6 @@ mod dtype;
 
 use hf_hub::api::tokio::{ApiError, ApiRepo};
 use rand::Rng;
-use serde::Deserialize;
 use std::cmp::{max, min};
 use std::env;
 use std::path::PathBuf;
@@ -13,6 +12,9 @@ use std::time::{Duration, Instant};
 use text_embeddings_backend_core::{Backend as CoreBackend, Predictions};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{instrument, Span};
+
+#[cfg(feature = "candle")]
+use serde::Deserialize;
 
 pub use crate::dtype::DType;
 pub use text_embeddings_backend_core::{

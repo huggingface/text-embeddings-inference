@@ -23,9 +23,9 @@ use crate::compute_cap::{
 };
 use crate::models::{
     BertConfig, BertModel, Dense, DenseConfig, DenseLayer, DistilBertConfig, DistilBertModel,
-    GTEConfig, GTEModel, JinaBertModel, JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig,
-    Model, ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config,
-    Qwen3Config, Qwen3Model,
+    GTEConfig, GTEModel, Gemma3Config, Gemma3Model, JinaBertModel, JinaCodeBertModel, MPNetConfig,
+    MPNetModel, MistralConfig, Model, ModernBertConfig, ModernBertModel, NomicBertModel,
+    NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -95,6 +95,8 @@ enum Config {
     Camembert(BertConfig),
     #[serde(rename(deserialize = "distilbert"))]
     DistilBert(DistilBertConfig),
+    #[serde(rename(deserialize = "gemma3_text"))]
+    Gemma3(Gemma3Config),
     #[serde(alias = "new")]
     Gte(GTEConfig),
     #[serde(rename = "mpnet")]
@@ -263,6 +265,16 @@ impl CandleBackend {
                     DistilBertModel::load(vb, &config, model_type).s()?,
                 ))
             }
+            (Config::Gemma3(config), Device::Cpu | Device::Metal(_)) => {
+                if dtype != DType::F32 {
+                    Err(BackendError::Start(
+                        "Gemma3 is only supported in fp32 precision".to_string(),
+                    ))
+                } else {
+                    tracing::info!("Starting Gemma3 model on {:?}", device);
+                    Ok(Box::new(Gemma3Model::load(vb, &config, model_type).s()?))
+                }
+            }
             (Config::Gte(config), Device::Cpu | Device::Metal(_)) => {
                 tracing::info!("Starting GTE model on {:?}", device);
                 Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
@@ -378,6 +390,17 @@ impl CandleBackend {
                     Ok(Box::new(
                         DistilBertModel::load(vb, &config, model_type).s()?,
                     ))
+                }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::Gemma3(config), Device::Cuda(_)) => {
+                if dtype != DType::F32 {
+                    Err(BackendError::Start(
+                        "Gemma3 is only supported in fp32 precision".to_string(),
+                    ))
+                } else {
+                    tracing::info!("Starting Gemma3 model on {:?}", device);
+                    Ok(Box::new(Gemma3Model::load(vb, &config, model_type).s()?))
                 }
             }
             #[cfg(feature = "cuda")]
