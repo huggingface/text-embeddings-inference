@@ -497,15 +497,14 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 
 [[package]]
 name = "candle-core"
-version = "0.8.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06ccf5ee3532e66868516d9b315f73aec9f34ea1a37ae98514534d458915dbf1"
+version = "0.9.1"
+source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#849c0e09b42417ff16629aa3be9d527d7d34cfa0"
 dependencies = [
  "accelerate-src",
  "byteorder",
- "candle-kernels 0.8.4",
+ "candle-kernels",
  "candle-metal-kernels",
- "cudarc 0.13.5",
+ "cudarc 0.16.6",
  "gemm 0.17.1",
  "half",
  "intel-mkl-src",
@@ -519,33 +518,9 @@ dependencies = [
  "rayon",
  "safetensors",
  "thiserror 1.0.69",
- "ug 0.1.0",
- "ug-cuda 0.1.0",
+ "ug",
+ "ug-cuda",
  "ug-metal",
- "yoke 0.7.5",
- "zip",
-]
-
-[[package]]
-name = "candle-core"
-version = "0.9.1"
-source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#849c0e09b42417ff16629aa3be9d527d7d34cfa0"
-dependencies = [
- "byteorder",
- "candle-kernels 0.9.1",
- "cudarc 0.16.6",
- "gemm 0.17.1",
- "half",
- "memmap2",
- "num-traits",
- "num_cpus",
- "rand 0.9.2",
- "rand_distr",
- "rayon",
- "safetensors",
- "thiserror 1.0.69",
- "ug 0.4.0",
- "ug-cuda 0.4.0",
  "yoke 0.7.5",
  "zip",
 ]
@@ -556,20 +531,19 @@ version = "0.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7695315e349373a2af3dbcfca0a388340fdc3a695a4e4e559eaf5fee7fc98d63"
 dependencies = [
- "candle-core 0.9.1",
- "cudarc 0.13.5",
+ "candle-core",
+ "cudarc 0.16.6",
  "half",
 ]
 
 [[package]]
 name = "candle-flash-attn"
-version = "0.8.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2dc08e6b4740a54e30d70cca5759de9c805b85279de662b091ea135077f24ce3"
+version = "0.9.1"
+source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#849c0e09b42417ff16629aa3be9d527d7d34cfa0"
 dependencies = [
  "anyhow",
  "bindgen_cuda",
- "candle-core 0.8.4",
+ "candle-core",
  "half",
 ]
 
@@ -580,19 +554,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77052ab8dd38cbdce0daaefcb900fc93392a4be82ffe38065b4bc7c211f2ade6"
 dependencies = [
  "anyhow",
- "candle-core 0.9.1",
+ "candle-core",
  "half",
  "num_cpus",
  "rayon",
-]
-
-[[package]]
-name = "candle-kernels"
-version = "0.8.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a10885bd902fad1b8518ba2b22369aaed88a3d94e123533ad3ca73db33b1c8ca"
-dependencies = [
- "bindgen_cuda",
 ]
 
 [[package]]
@@ -610,7 +575,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b7f796928d4ddd47add2a545f74ff1f40a4277b24ce1a567722ee6aee41a4c0"
 dependencies = [
  "anyhow",
- "candle-core 0.9.1",
+ "candle-core",
  "half",
  "num_cpus",
  "rayon",
@@ -618,10 +583,10 @@ dependencies = [
 
 [[package]]
 name = "candle-metal-kernels"
-version = "0.8.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52c85c21827c28db94e7112e364abe7e0cf8d2b022c014edf08642be6b94f21e"
+version = "0.9.1"
+source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#849c0e09b42417ff16629aa3be9d527d7d34cfa0"
 dependencies = [
+ "half",
  "metal 0.27.0",
  "once_cell",
  "thiserror 1.0.69",
@@ -630,12 +595,11 @@ dependencies = [
 
 [[package]]
 name = "candle-nn"
-version = "0.8.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be1160c3b63f47d40d91110a3e1e1e566ae38edddbbf492a60b40ffc3bc1ff38"
+version = "0.9.1"
+source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#849c0e09b42417ff16629aa3be9d527d7d34cfa0"
 dependencies = [
  "accelerate-src",
- "candle-core 0.8.4",
+ "candle-core",
  "candle-metal-kernels",
  "half",
  "metal 0.27.0",
@@ -654,18 +618,17 @@ checksum = "203e1892ad326119ca5b7f1edcaa0dab75243e7ab73446ca0da622edaa2fe440"
 dependencies = [
  "anyhow",
  "bindgen_cuda",
- "candle-core 0.9.1",
+ "candle-core",
  "half",
 ]
 
 [[package]]
 name = "candle-transformers"
-version = "0.8.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94a0900d49f8605e0e7e6693a1f560e6271279de98e5fa369e7abf3aac245020"
+version = "0.9.1"
+source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#849c0e09b42417ff16629aa3be9d527d7d34cfa0"
 dependencies = [
  "byteorder",
- "candle-core 0.8.4",
+ "candle-core",
  "candle-nn",
  "fancy-regex",
  "num-traits",
@@ -945,7 +908,6 @@ name = "cudarc"
 version = "0.13.5"
 source = "git+https://github.com/Narsil/cudarc?rev=8b4f18b4bcd5e4b1a9daf40abc3a2e27f83f06e9#8b4f18b4bcd5e4b1a9daf40abc3a2e27f83f06e9"
 dependencies = [
- "half",
  "lazy_static",
 ]
 
@@ -4601,7 +4563,7 @@ version = "1.8.1"
 dependencies = [
  "accelerate-src",
  "anyhow",
- "candle-core 0.8.4",
+ "candle-core",
  "candle-cublaslt",
  "candle-flash-attn",
  "candle-flash-attn-v1",
@@ -5349,27 +5311,6 @@ checksum = "1dccffe3ce07af9386bfd29e80c0ab1a8205a2fc34e4bcd40364df902cfa8f3f"
 
 [[package]]
 name = "ug"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03719c61a91b51541f076dfdba45caacf750b230cefaa4b32d6f5411c3f7f437"
-dependencies = [
- "gemm 0.18.2",
- "half",
- "libloading",
- "memmap2",
- "num",
- "num-traits",
- "num_cpus",
- "rayon",
- "safetensors",
- "serde",
- "thiserror 1.0.69",
- "tracing",
- "yoke 0.7.5",
-]
-
-[[package]]
-name = "ug"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90b70b37e9074642bc5f60bb23247fd072a84314ca9e71cdf8527593406a0dd3"
@@ -5391,19 +5332,6 @@ dependencies = [
 
 [[package]]
 name = "ug-cuda"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50758486d7941f8b0a636ba7e29455c07071f41590beac1fd307ec893e8db69a"
-dependencies = [
- "cudarc 0.13.5",
- "half",
- "serde",
- "thiserror 1.0.69",
- "ug 0.1.0",
-]
-
-[[package]]
-name = "ug-cuda"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14053653d0b7fa7b21015aa9a62edc8af2f60aa6f9c54e66386ecce55f22ed29"
@@ -5412,21 +5340,21 @@ dependencies = [
  "half",
  "serde",
  "thiserror 1.0.69",
- "ug 0.4.0",
+ "ug",
 ]
 
 [[package]]
 name = "ug-metal"
-version = "0.1.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a02ddc17bf32f7dcaaf016b6735f7198082b82f122df7b3ca15d8ead5911ccef"
+checksum = "76daec3c7a32a1b4a0e3307b6b057fa067aa64e750713987410a2c402e5cd731"
 dependencies = [
  "half",
  "metal 0.29.0",
  "objc",
  "serde",
  "thiserror 1.0.69",
- "ug 0.1.0",
+ "ug",
 ]
 
 [[package]]
@@ -6377,18 +6305,3 @@ dependencies = [
  "num_enum",
  "thiserror 1.0.69",
 ]
-
-[[patch.unused]]
-name = "candle-flash-attn"
-version = "0.9.1"
-source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#849c0e09b42417ff16629aa3be9d527d7d34cfa0"
-
-[[patch.unused]]
-name = "candle-nn"
-version = "0.9.1"
-source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#849c0e09b42417ff16629aa3be9d527d7d34cfa0"
-
-[[patch.unused]]
-name = "candle-transformers"
-version = "0.9.1"
-source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#849c0e09b42417ff16629aa3be9d527d7d34cfa0"
