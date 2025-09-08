@@ -366,18 +366,20 @@ impl NomicExperts {
 pub struct NomicMoELayer {
     router: NomicRouter,
     experts: NomicExperts,
+    idx: usize,
 
     span: tracing::Span,
 }
 
 impl NomicMoELayer {
-    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &NomicConfig, idx: usize) -> Result<Self> {
         let router = NomicRouter::load(vb.pp("router"), config)?;
         let experts = NomicExperts::load(vb.pp("experts"), config)?;
 
         Ok(Self {
             router,
             experts,
+            idx,
             span: tracing::span!(tracing::Level::TRACE, "moe"),
         })
     }
@@ -387,8 +389,14 @@ impl NomicMoELayer {
 
         let (top_weights, top_experts) = self.router.forward(hidden_states)?;
 
-        self.experts
-            .forward(hidden_states, &top_weights, &top_experts)
+        let out = self.experts
+            .forward(hidden_states, &top_weights, &top_experts)?;
+
+        if self.idx == 1 {
+            println!("MoE: {:}", out);
+        }
+
+        Ok(out)
     }
 }
 
@@ -403,7 +411,7 @@ impl NomicMLP {
         let use_moe = matches!(config.moe_every_n_layers, Some(n) if n > 0 && index % n == 1);
 
         if use_moe {
-            Ok(Self::MoE(NomicMoELayer::load(vb, config)?))
+            Ok(Self::MoE(NomicMoELayer::load(vb, config, index)?))
         } else if config.activation_function == HiddenAct::Gelu {
             Ok(Self::Mlp(NomicBertMLP::load(vb, config)?))
         } else {
