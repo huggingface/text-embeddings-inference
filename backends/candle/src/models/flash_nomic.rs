@@ -126,16 +126,16 @@ impl NomicFusedMoELayer {
         let layer = Linear::new(layer_weight, None, None);
 
         let gate_weight = vb
-            .pp("experts.mlp.w1")
+            .pp("experts.mlp")
             .get((moe_num_experts * ffn_hidden_size, hidden_size), "w1")?
             .reshape((moe_num_experts, ffn_hidden_size, hidden_size))?
             .permute((0, 2, 1))?;
         let up_weight = vb
-            .pp("experts.mlp.w2")
+            .pp("experts.mlp")
             .get((moe_num_experts * ffn_hidden_size, hidden_size), "w2")?
             .reshape((moe_num_experts, ffn_hidden_size, hidden_size))?
             .permute((0, 2, 1))?;
-        let bias = vb.pp("experts.bias").get((hidden_size,), "bias")?;
+        let bias = vb.pp("experts").get((hidden_size,), "bias")?;
 
         let moe_act = match activation {
             HiddenAct::Silu => candle_moe::Activation::Silu,
