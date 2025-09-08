@@ -1,5 +1,5 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{get_cos_sin, get_inv_freqs, LayerNorm, Linear};
+use crate::layers::{get_cos_sin, get_inv_freqs, HiddenAct, LayerNorm, Linear};
 use crate::models::nomic::{NomicBertEmbeddings, NomicBertGatedMLP, NomicBertMLP};
 use crate::models::{Model, NomicConfig};
 use candle::{DType, Device, IndexOp, Result, Tensor, D};
@@ -101,7 +101,7 @@ impl NomicAttention {
     }
 }
 
-struct NomicFusedMoELayer {
+pub struct NomicFusedMoELayer {
     layer: Linear,
     gate_weight: Tensor,
     up_weight: Tensor,
@@ -137,7 +137,14 @@ impl NomicFusedMoELayer {
             .permute((0, 2, 1))?;
         let bias = vb.pp("experts.bias").get((hidden_size,), "bias")?;
 
-        let fused_moe = FusedMoeForward::new(moe_num_experts, top_k, candle_moe::Activation::Silu);
+        let moe_act = match activation {
+            HiddenAct::Silu => candle_moe::Activation::Silu,
+            HiddenAct::Gelu => candle_moe::Activation::Gelu,
+            HiddenAct::Relu => candle_moe::Activation::Relu,
+            _ => candle::bail!("not supported activation type"),
+        };
+
+        let fused_moe = FusedMoeForward::new(moe_num_experts, top_k, moe_act);
 
         Ok(Self {
             layer,
@@ -162,7 +169,7 @@ impl NomicFusedMoELayer {
         let topk_indices = Tensor::zeros((seq_len, self.top_k), DType::U32, device)?;
         let token_expert_indices = Tensor::zeros((seq_len, self.top_k), DType::U32, device)?;
 
-        apply_topk_softmax_inplace(weights, &topk_weight, &topk_indices, &token_expert_indices)?;
+        apply_topk_softmax_inplace(&weights, &topk_weight, &topk_indices, &token_expert_indices)?;
 
         Ok((topk_weight, topk_indices))
     }
@@ -197,7 +204,7 @@ impl NomicMLP {
         let use_moe = matches!(config.moe_every_n_layers, Some(n) if n > 0 && index % n == 1);
 
         if use_moe {
-            Ok(Self::MoE(NomicMoELayer::load(vb, config)?))
+            Ok(Self::MoE(NomicFusedMoELayer::load(vb, config)?))
         } else if config.activation_function == HiddenAct::Gelu {
             Ok(Self::Mlp(NomicBertMLP::load(vb, config)?))
         } else {

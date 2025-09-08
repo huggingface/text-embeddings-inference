@@ -598,7 +598,7 @@ dependencies = [
 [[package]]
 name = "candle-moe"
 version = "0.0.1"
-source = "git+https://github.com/kozistr/candle-moe?rev=063e5dc2b905e83e009781c6bce35eb8b144265f#063e5dc2b905e83e009781c6bce35eb8b144265f"
+source = "git+https://github.com/kozistr/candle-moe?rev=990ac1f42248dd441c51c9b5bcb73c5b77c03f99#990ac1f42248dd441c51c9b5bcb73c5b77c03f99"
 dependencies = [
  "anyhow",
  "bindgen_cuda",
