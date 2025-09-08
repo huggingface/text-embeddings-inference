@@ -498,7 +498,7 @@ checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
 [[package]]
 name = "candle-core"
 version = "0.9.1"
-source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#849c0e09b42417ff16629aa3be9d527d7d34cfa0"
+source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#f513e42b8c179d9fbf90354d096c95bfeb4718b6"
 dependencies = [
  "accelerate-src",
  "byteorder",
@@ -532,14 +532,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7695315e349373a2af3dbcfca0a388340fdc3a695a4e4e559eaf5fee7fc98d63"
 dependencies = [
  "candle-core",
- "cudarc 0.16.6",
+ "cudarc 0.13.5",
  "half",
 ]
 
 [[package]]
 name = "candle-flash-attn"
 version = "0.9.1"
-source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#849c0e09b42417ff16629aa3be9d527d7d34cfa0"
+source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#f513e42b8c179d9fbf90354d096c95bfeb4718b6"
 dependencies = [
  "anyhow",
  "bindgen_cuda",
@@ -563,7 +563,7 @@ dependencies = [
 [[package]]
 name = "candle-kernels"
 version = "0.9.1"
-source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#849c0e09b42417ff16629aa3be9d527d7d34cfa0"
+source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#f513e42b8c179d9fbf90354d096c95bfeb4718b6"
 dependencies = [
  "bindgen_cuda",
 ]
@@ -584,7 +584,7 @@ dependencies = [
 [[package]]
 name = "candle-metal-kernels"
 version = "0.9.1"
-source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#849c0e09b42417ff16629aa3be9d527d7d34cfa0"
+source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#f513e42b8c179d9fbf90354d096c95bfeb4718b6"
 dependencies = [
  "half",
  "metal 0.27.0",
@@ -596,7 +596,7 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.9.1"
-source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#849c0e09b42417ff16629aa3be9d527d7d34cfa0"
+source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#f513e42b8c179d9fbf90354d096c95bfeb4718b6"
 dependencies = [
  "accelerate-src",
  "candle-core",
@@ -625,7 +625,7 @@ dependencies = [
 [[package]]
 name = "candle-transformers"
 version = "0.9.1"
-source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#849c0e09b42417ff16629aa3be9d527d7d34cfa0"
+source = "git+https://github.com/alvarobartt/candle?branch=0.9.1-text-embeddings-inference#f513e42b8c179d9fbf90354d096c95bfeb4718b6"
 dependencies = [
  "byteorder",
  "candle-core",
@@ -908,6 +908,7 @@ name = "cudarc"
 version = "0.13.5"
 source = "git+https://github.com/Narsil/cudarc?rev=8b4f18b4bcd5e4b1a9daf40abc3a2e27f83f06e9#8b4f18b4bcd5e4b1a9daf40abc3a2e27f83f06e9"
 dependencies = [
+ "half",
  "lazy_static",
 ]
 
