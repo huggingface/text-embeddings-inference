@@ -108,13 +108,12 @@ pub struct NomicFusedMoELayer {
     bias: Tensor,
     fused_moe: FusedMoeForward,
     top_k: usize,
-    idx: usize,
 
     span: tracing::Span,
 }
 
 impl NomicFusedMoELayer {
-    pub fn load(vb: VarBuilder, config: &NomicConfig, idx: usize) -> Result<Self> {
+    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
         let hidden_size = config.n_embd;
         let ffn_hidden_size = config.n_inner;
         let num_experts = config.num_experts.unwrap();
@@ -129,11 +128,15 @@ impl NomicFusedMoELayer {
         let gate_weight = vb
             .pp("experts.mlp")
             .get((num_experts * ffn_hidden_size, hidden_size), "w1")?
-            .reshape((num_experts, hidden_size, ffn_hidden_size))?;
+            .reshape((num_experts, ffn_hidden_size, hidden_size))?
+            .permute((0, 2, 1))?
+            .contiguous()?;
         let up_weight = vb
             .pp("experts.mlp")
             .get((num_experts * ffn_hidden_size, hidden_size), "w2")?
-            .reshape((num_experts, hidden_size, ffn_hidden_size))?;
+            .reshape((num_experts, ffn_hidden_size, hidden_size))?
+            .permute((0, 2, 1))?
+            .contiguous()?;
         let bias = vb.pp("experts").get((hidden_size,), "bias")?;
 
         let moe_act = match activation {
@@ -152,7 +155,6 @@ impl NomicFusedMoELayer {
             bias,
             fused_moe,
             top_k,
-            idx,
             span: tracing::span!(tracing::Level::TRACE, "moe"),
         })
     }
@@ -189,13 +191,7 @@ impl NomicFusedMoELayer {
             1_u32,
         )?;
 
-        let out = out.broadcast_add(&self.bias)?;
-
-        if self.idx == 1 {
-            println!("MoE: {:}", out);
-        }
-
-        Ok(out)
+        out.broadcast_add(&self.bias)
     }
 }
 
@@ -210,7 +206,7 @@ impl NomicMLP {
         let use_moe = matches!(config.moe_every_n_layers, Some(n) if n > 0 && index % n == 1);
 
         if use_moe {
-            Ok(Self::MoE(NomicFusedMoELayer::load(vb, config, index)?))
+            Ok(Self::MoE(NomicFusedMoELayer::load(vb, config)?))
         } else if config.activation_function == HiddenAct::Gelu {
             Ok(Self::Mlp(NomicBertMLP::load(vb, config)?))
         } else {
