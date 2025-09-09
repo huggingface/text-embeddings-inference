@@ -3,6 +3,8 @@ use crate::layers::{
 };
 use crate::models::Model;
 use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
+#[cfg(feature = "cuda")]
+use candle_moe;
 use candle_nn::{Embedding, VarBuilder};
 use candle_transformers::models::deepseek2::{BincountOp, NonZeroOp, TopKLastDimOp, TopKOutput};
 use serde::Deserialize;
@@ -264,9 +266,9 @@ impl NomicFusedRouter {
     }
 
     pub fn forward(&self, hidden_states: &Tensor) -> Result<(Tensor, Tensor)> {
-        use candle_moe::apply_topk_softmax_inplace;
-
         let _enter = self.span.enter();
+
+        let device = hidden_states.device();
 
         let weights = hidden_states.reshape(((), hidden_states.dim(D::Minus1)?))?;
         let weights = self.layer.forward(&weights)?.to_dtype(DType::F32)?;
@@ -277,7 +279,12 @@ impl NomicFusedRouter {
         let topk_indices = Tensor::zeros((seq_len, self.top_k), DType::U32, device)?;
         let token_expert_indices = Tensor::zeros((seq_len, self.top_k), DType::U32, device)?;
 
-        apply_topk_softmax_inplace(&weights, &topk_weight, &topk_indices, &token_expert_indices)?;
+        candle_moe::apply_topk_softmax_inplace(
+            &weights,
+            &topk_weight,
+            &topk_indices,
+            &token_expert_indices,
+        )?;
 
         Ok((topk_weight, topk_indices))
     }
@@ -409,9 +416,10 @@ impl NomicExperts {
 
 #[cfg(feature = "cuda")]
 pub struct NomicFusedExperts {
-    num_experts: usize,
-    mlp: NomicExpertMLP,
+    gate_weight: Tensor,
+    up_weight: Tensor,
     bias: Tensor,
+    fused_moe: candle_moe::FusedMoeForward,
 
     span: tracing::Span,
 }
@@ -440,8 +448,6 @@ impl NomicFusedExperts {
 
         let bias = vb.get((config.n_embd,), "bias")?;
 
-        use candle_moe::{Activation, FusedMoeForward};
-
         let moe_act = match activation {
             HiddenAct::Silu => candle_moe::Activation::Silu,
             HiddenAct::Gelu => candle_moe::Activation::Gelu,
@@ -449,7 +455,7 @@ impl NomicFusedExperts {
             _ => candle::bail!("not supported activation type"),
         };
 
-        let fused_moe = FusedMoeForward::new(num_experts, top_k, moe_act);
+        let fused_moe = candle_moe::FusedMoeForward::new(num_experts, top_k, moe_act);
 
         Ok(Self {
             gate_weight,
@@ -480,10 +486,10 @@ impl NomicFusedExperts {
         let hidden_states = hidden_states.reshape(((), hidden_size))?;
 
         let mut out = self.fused_moe.forward(
-            hidden_states,
+            &hidden_states,
             &self.gate_weight,
             &self.up_weight,
-            None, // Nomic MoE doesn't need down projection
+            None,
             &top_weights,
             &top_experts,
             1_u32, // Nomic MoE
