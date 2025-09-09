@@ -8,7 +8,7 @@ homepage.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 accelerate-src = { version = "0.3.2", optional = true }
-intel-mkl-src = { workspace = true, optional = true  }
+intel-mkl-src = { workspace = true, optional = true }
 candle = { workspace = true }
 candle-nn = { workspace = true }
 candle-transformers = { workspace = true }
