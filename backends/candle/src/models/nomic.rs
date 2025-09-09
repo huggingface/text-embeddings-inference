@@ -239,6 +239,50 @@ impl NomicRouter {
     }
 }
 
+#[cfg(feature = "cuda")]
+pub struct NomicFusedRouter {
+    layer: Linear,
+    top_k: usize,
+
+    span: tracing::Span,
+}
+
+#[cfg(feature = "cuda")]
+impl NomicFusedRouter {
+    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
+        let num_experts = config.num_experts.unwrap();
+        let top_k = config.moe_top_k.unwrap();
+
+        let layer_weight = vb.pp("layer").get((num_experts, config.n_embd), "weight")?;
+        let layer = Linear::new(layer_weight, None, None);
+
+        Ok(Self {
+            layer,
+            top_k,
+            span: tracing::span!(tracing::Level::TRACE, "router"),
+        })
+    }
+
+    pub fn forward(&self, hidden_states: &Tensor) -> Result<(Tensor, Tensor)> {
+        use candle_moe::apply_topk_softmax_inplace;
+
+        let _enter = self.span.enter();
+
+        let weights = hidden_states.reshape(((), hidden_states.dim(D::Minus1)?))?;
+        let weights = self.layer.forward(&weights)?.to_dtype(DType::F32)?;
+
+        let (seq_len, _) = weights.shape().dims2()?;
+
+        let topk_weight = Tensor::zeros((seq_len, self.top_k), DType::F32, device)?;
+        let topk_indices = Tensor::zeros((seq_len, self.top_k), DType::U32, device)?;
+        let token_expert_indices = Tensor::zeros((seq_len, self.top_k), DType::U32, device)?;
+
+        apply_topk_softmax_inplace(&weights, &topk_weight, &topk_indices, &token_expert_indices)?;
+
+        Ok((topk_weight, topk_indices))
+    }
+}
+
 pub struct NomicExpertMLP {
     w1: Tensor,
     w2: Tensor,
@@ -363,6 +407,96 @@ impl NomicExperts {
     }
 }
 
+#[cfg(feature = "cuda")]
+pub struct NomicFusedExperts {
+    num_experts: usize,
+    mlp: NomicExpertMLP,
+    bias: Tensor,
+
+    span: tracing::Span,
+}
+
+#[cfg(feature = "cuda")]
+impl NomicFusedExperts {
+    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
+        let hidden_size = config.n_embd;
+        let ffn_hidden_size = config.n_inner;
+        let num_experts = config.num_experts.unwrap();
+        let top_k = config.moe_top_k.unwrap();
+        let activation = config.activation_function.clone();
+
+        let gate_weight = vb
+            .pp("mlp")
+            .get((num_experts * ffn_hidden_size, hidden_size), "w1")?
+            .reshape((num_experts, ffn_hidden_size, hidden_size))?
+            .permute((0, 2, 1))?
+            .contiguous()?;
+        let up_weight = vb
+            .pp("mlp")
+            .get((num_experts * ffn_hidden_size, hidden_size), "w2")?
+            .reshape((num_experts, ffn_hidden_size, hidden_size))?
+            .permute((0, 2, 1))?
+            .contiguous()?;
+
+        let bias = vb.get((config.n_embd,), "bias")?;
+
+        use candle_moe::{Activation, FusedMoeForward};
+
+        let moe_act = match activation {
+            HiddenAct::Silu => candle_moe::Activation::Silu,
+            HiddenAct::Gelu => candle_moe::Activation::Gelu,
+            HiddenAct::Relu => candle_moe::Activation::Relu,
+            _ => candle::bail!("not supported activation type"),
+        };
+
+        let fused_moe = FusedMoeForward::new(num_experts, top_k, moe_act);
+
+        Ok(Self {
+            gate_weight,
+            up_weight,
+            bias,
+            fused_moe,
+            span: tracing::span!(tracing::Level::TRACE, "experts"),
+        })
+    }
+
+    pub fn forward(
+        &self,
+        hidden_states: &Tensor,
+        top_weights: &Tensor,
+        top_experts: &Tensor,
+    ) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let dims = hidden_states.dims();
+        let ndim = dims.len();
+
+        let (bs, seq_len, hidden_size) = match ndim {
+            3 => (dims[0], dims[1], dims[2]),
+            2 => (1, dims[0], dims[1]),
+            _ => unreachable!(),
+        };
+
+        let hidden_states = hidden_states.reshape(((), hidden_size))?;
+
+        let mut out = self.fused_moe.forward(
+            hidden_states,
+            &self.gate_weight,
+            &self.up_weight,
+            None, // Nomic MoE doesn't need down projection
+            &top_weights,
+            &top_experts,
+            1_u32, // Nomic MoE
+        )?;
+
+        if ndim == 3 {
+            out = out.reshape((bs, seq_len, hidden_size))?;
+        }
+
+        out.broadcast_add(&self.bias)
+    }
+}
+
 pub struct NomicMoELayer {
     router: NomicRouter,
     experts: NomicExperts,
@@ -392,8 +526,41 @@ impl NomicMoELayer {
     }
 }
 
+#[cfg(feature = "cuda")]
+pub struct NomicFusedMoELayer {
+    router: NomicFusedRouter,
+    experts: NomicFusedExperts,
+
+    span: tracing::Span,
+}
+
+#[cfg(feature = "cuda")]
+impl NomicFusedMoELayer {
+    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
+        let router = NomicFusedRouter::load(vb.pp("router"), config)?;
+        let experts = NomicFusedExperts::load(vb.pp("experts"), config)?;
+
+        Ok(Self {
+            router,
+            experts,
+            span: tracing::span!(tracing::Level::TRACE, "moe"),
+        })
+    }
+
+    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let (top_weights, top_experts) = self.router.forward(hidden_states)?;
+
+        self.experts
+            .forward(hidden_states, &top_weights, &top_experts)
+    }
+}
+
 pub enum NomicMLP {
     MoE(NomicMoELayer),
+    #[cfg(feature = "cuda")]
+    FusedMoE(NomicFusedMoELayer),
     GatedMLP(NomicBertGatedMLP),
     Mlp(NomicBertMLP),
 }
@@ -403,7 +570,14 @@ impl NomicMLP {
         let use_moe = matches!(config.moe_every_n_layers, Some(n) if n > 0 && index % n == 1);
 
         if use_moe {
-            Ok(Self::MoE(NomicMoELayer::load(vb, config)?))
+            #[cfg(feature = "cuda")]
+            {
+                Ok(Self::FusedMoE(NomicFusedMoELayer::load(vb, config)?))
+            }
+            #[cfg(not(feature = "cuda"))]
+            {
+                Ok(Self::MoE(NomicMoELayer::load(vb, config)?))
+            }
         } else if config.activation_function == HiddenAct::Gelu {
             Ok(Self::Mlp(NomicBertMLP::load(vb, config)?))
         } else {
@@ -414,6 +588,8 @@ impl NomicMLP {
     pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         match self {
             Self::MoE(layer) => layer.forward(hidden_states),
+            #[cfg(feature = "cuda")]
+            Self::FusedMoE(layer) => layer.forward(hidden_states),
             Self::GatedMLP(layer) => layer.forward(hidden_states),
             Self::Mlp(layer) => layer.forward(hidden_states),
         }

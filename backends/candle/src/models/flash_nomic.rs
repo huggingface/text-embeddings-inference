@@ -1,9 +1,8 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{get_cos_sin, get_inv_freqs, HiddenAct, LayerNorm, Linear};
-use crate::models::nomic::{NomicBertEmbeddings, NomicBertGatedMLP, NomicBertMLP};
+use crate::models::nomic::{NomicBertEmbeddings, NomicMLP};
 use crate::models::{Model, NomicConfig};
 use candle::{DType, Device, IndexOp, Result, Tensor, D};
-use candle_moe::{apply_topk_softmax_inplace, FusedMoeForward};
 use candle_nn::VarBuilder;
 use candle_rotary::apply_rotary_inplace;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
@@ -98,128 +97,6 @@ impl NomicAttention {
         let attention = attention.flatten_from(D::Minus2)?;
 
         self.out_proj.forward(&attention)
-    }
-}
-
-pub struct NomicFusedMoELayer {
-    layer: Linear,
-    gate_weight: Tensor,
-    up_weight: Tensor,
-    bias: Tensor,
-    fused_moe: FusedMoeForward,
-    top_k: usize,
-
-    span: tracing::Span,
-}
-
-impl NomicFusedMoELayer {
-    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
-        let hidden_size = config.n_embd;
-        let ffn_hidden_size = config.n_inner;
-        let num_experts = config.num_experts.unwrap();
-        let top_k = config.moe_top_k.unwrap();
-        let activation = config.activation_function.clone();
-
-        let layer_weight = vb
-            .pp("router.layer")
-            .get((num_experts, hidden_size), "weight")?;
-        let layer = Linear::new(layer_weight, None, None);
-
-        let gate_weight = vb
-            .pp("experts.mlp")
-            .get((num_experts * ffn_hidden_size, hidden_size), "w1")?
-            .reshape((num_experts, ffn_hidden_size, hidden_size))?
-            .permute((0, 2, 1))?
-            .contiguous()?;
-        let up_weight = vb
-            .pp("experts.mlp")
-            .get((num_experts * ffn_hidden_size, hidden_size), "w2")?
-            .reshape((num_experts, ffn_hidden_size, hidden_size))?
-            .permute((0, 2, 1))?
-            .contiguous()?;
-        let bias = vb.pp("experts").get((hidden_size,), "bias")?;
-
-        let moe_act = match activation {
-            HiddenAct::Silu => candle_moe::Activation::Silu,
-            HiddenAct::Gelu => candle_moe::Activation::Gelu,
-            HiddenAct::Relu => candle_moe::Activation::Relu,
-            _ => candle::bail!("not supported activation type"),
-        };
-
-        let fused_moe = FusedMoeForward::new(num_experts, top_k, moe_act);
-
-        Ok(Self {
-            layer,
-            gate_weight,
-            up_weight,
-            bias,
-            fused_moe,
-            top_k,
-            span: tracing::span!(tracing::Level::TRACE, "moe"),
-        })
-    }
-
-    fn forward_router(&self, hidden_states: &Tensor) -> Result<(Tensor, Tensor)> {
-        let device = hidden_states.device();
-
-        let weights = hidden_states.reshape(((), hidden_states.dim(D::Minus1)?))?;
-        let weights = self.layer.forward(&weights)?.to_dtype(DType::F32)?;
-
-        let (seq_len, _) = weights.shape().dims2()?;
-
-        let topk_weight = Tensor::zeros((seq_len, self.top_k), DType::F32, device)?;
-        let topk_indices = Tensor::zeros((seq_len, self.top_k), DType::U32, device)?;
-        let token_expert_indices = Tensor::zeros((seq_len, self.top_k), DType::U32, device)?;
-
-        apply_topk_softmax_inplace(&weights, &topk_weight, &topk_indices, &token_expert_indices)?;
-
-        Ok((topk_weight, topk_indices))
-    }
-
-    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let (scores, indices) = self.forward_router(hidden_states)?;
-
-        let out = self.fused_moe.forward(
-            hidden_states,
-            &self.gate_weight,
-            &self.up_weight,
-            None,
-            &scores,
-            &indices,
-            1_u32,
-        )?;
-
-        out.broadcast_add(&self.bias)
-    }
-}
-
-pub enum NomicMLP {
-    MoE(NomicFusedMoELayer),
-    GatedMLP(NomicBertGatedMLP),
-    Mlp(NomicBertMLP),
-}
-
-impl NomicMLP {
-    pub fn load(vb: VarBuilder, index: usize, config: &NomicConfig) -> Result<Self> {
-        let use_moe = matches!(config.moe_every_n_layers, Some(n) if n > 0 && index % n == 1);
-
-        if use_moe {
-            Ok(Self::MoE(NomicFusedMoELayer::load(vb, config)?))
-        } else if config.activation_function == HiddenAct::Gelu {
-            Ok(Self::Mlp(NomicBertMLP::load(vb, config)?))
-        } else {
-            Ok(Self::GatedMLP(NomicBertGatedMLP::load(vb, config)?))
-        }
-    }
-
-    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
-        match self {
-            Self::MoE(layer) => layer.forward(hidden_states),
-            Self::GatedMLP(layer) => layer.forward(hidden_states),
-            Self::Mlp(layer) => layer.forward(hidden_states),
-        }
     }
 }
 
