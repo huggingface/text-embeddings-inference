@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - 'main'
+      - "main"
   pull_request:
     paths:
       - ".github/workflows/build.yaml"
@@ -17,7 +17,7 @@ on:
       - "rust-toolchain.toml"
       - "Dockerfile"
     branches:
-      - 'main'
+      - "main"
 
 jobs:
   tests:
@@ -38,6 +38,7 @@ jobs:
         env:
           SCCACHE_GHA_ENABLED: "true"
           RUSTC_WRAPPER: "sccache"
+          HF_TOKEN: ${{ secrets.HF_HUB_READ_TOKEN }}
         run: |
           sudo apt-get update && sudo apt-get install protobuf-compiler -y
           cargo test --profile=release-debug
