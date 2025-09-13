@@ -77,6 +77,7 @@ print(len(embedding[0]))
 ```
 
 #### OpenAI
+The server is availabe at : localhost:8080/v1/embeddings
 
 You can install it via pip as `pip install --upgrade openai`, and then run:
 
@@ -84,14 +85,14 @@ You can install it via pip as `pip install --upgrade openai`, and then run:
 import os
 from openai import OpenAI
 
-client = OpenAI(base_url="http://localhost:8080/v1/embeddings")
+client = OpenAI(base_url="http://localhost:8080/v1", api_key= "fake")
 
 response = client.embeddings.create(
   model="tei",
   input="What is deep learning?"
 )
 
-print(response)
+print(response.data[0].embedding)
 ```
 
 ## Re-rankers and sequence classification
