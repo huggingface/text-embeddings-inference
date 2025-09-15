@@ -94,18 +94,6 @@ print(response.data[0].embedding)
 ```
 
 Alternatively, you can also send the request with cURL as follows:
-
-```bash
-curl http://localhost/v1/embeddings \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": "What is Deep Learning?",
-    "model": "text-embeddings-inference",
-    "encoding_format": "float"
-  }'
-``
-
-Alternatively, you can also send the request with cURL as follows:
 ```bash
 curl http://localhost:8080/v1/embeddings \
   -H "Content-Type: application/json" \
