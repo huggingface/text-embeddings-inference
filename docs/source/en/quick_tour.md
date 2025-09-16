@@ -77,21 +77,31 @@ print(len(embedding[0]))
 ```
 
 #### OpenAI
-
-You can install it via pip as `pip install --upgrade openai`, and then run:
+To send requests to the [OpenAI Embeddings API](https://platform.openai.com/docs/api-reference/embeddings/create) exposed on Text Embeddings Inference (TEI) with the OpenAI Python SDK, you can install it as `pip install --upgrade openai`, and then run the following snippet:
 
 ```python
 import os
 from openai import OpenAI
 
-client = OpenAI(base_url="http://localhost:8080/v1/embeddings")
+client = OpenAI(base_url="http://localhost:8080/v1", api_key= "-")
 
 response = client.embeddings.create(
-  model="tei",
-  input="What is deep learning?"
+    model="text-embeddings-inference",
+    input="What is Deep Learning?",
 )
 
-print(response)
+print(response.data[0].embedding)
+```
+
+Alternatively, you can also send the request with cURL as follows:
+```bash
+curl http://localhost:8080/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": "What is Deep Learning?",
+    "model": "text-embeddings-inference",
+    "encoding_format": "float"
+  }'
 ```
 
 ## Re-rankers and sequence classification
