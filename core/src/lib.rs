@@ -13,6 +13,8 @@ pub enum TextEmbeddingsError {
     Tokenizer(#[from] tokenizers::Error),
     #[error("Input validation error: {0}")]
     Validation(String),
+    #[error("Input validation error: {0}")]
+    Empty(String),
     #[error("Model is overloaded")]
     Overloaded(#[from] TryAcquireError),
     #[error("Backend error: {0}")]
