@@ -197,7 +197,7 @@ pub async fn run(
     let max_input_length = if base_input_length > max_batch_tokens {
         if !auto_truncate {
             anyhow::bail!(
-                "`max_input_length` must be smaller than `max_batch_tokens` when `auto_truncate` is disabled ({} > {})",
+                "`--max-batch-tokens` cannot be lower than the model `max_input_length` ({} < {}) when `--auto-truncate` is disabled, add the `--auto-truncate` flag to truncate the input sequences to match the `--max-batch-tokens`.",
                 base_input_length,
                 max_batch_tokens
             );
