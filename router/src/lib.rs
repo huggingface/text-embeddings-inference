@@ -203,7 +203,8 @@ pub async fn run(
             );
         }
         tracing::warn!(
-            "Reduce `max_input_length` to `max_batch_tokens` (from {} to {})",
+            "The input sequences will be truncated to {} tokens even if the model `max_input_length` is greater than the provided `--max-batch-tokens` ({} > {}), as `--auto-truncate` is enabled.",
+            max_batch_tokens,
             base_input_length,
             max_batch_tokens
         );
