@@ -184,13 +184,35 @@ pub async fn run(
             break;
         }
     }
-    let max_input_length = match st_config {
+
+    let base_input_length = match st_config {
         Some(config) => config.max_seq_length,
         None => {
             tracing::warn!("Could not find a Sentence Transformers config");
             config.max_position_embeddings - position_offset
         }
     };
+
+    // Raise an error when max_input_length is bigger than max_batch tokens to prevent an infinite loop in the queue
+    let max_input_length = if base_input_length > max_batch_tokens {
+        if !auto_truncate {
+            anyhow::bail!(
+                "`--max-batch-tokens` cannot be lower than the model `max_input_length` ({} < {}) when `--auto-truncate` is disabled, add the `--auto-truncate` flag to truncate the input sequences to match the `--max-batch-tokens`.",
+                base_input_length,
+                max_batch_tokens
+            );
+        }
+        tracing::warn!(
+            "The input sequences will be truncated to {} tokens even if the model `max_input_length` is greater than the provided `--max-batch-tokens` ({} > {}), as `--auto-truncate` is enabled.",
+            max_batch_tokens,
+            base_input_length,
+            max_batch_tokens
+        );
+        max_batch_tokens
+    } else {
+        base_input_length
+    };
+
     tracing::info!("Maximum number of tokens per request: {max_input_length}");
 
     let tokenization_workers = tokenization_workers.unwrap_or_else(num_cpus::get);
