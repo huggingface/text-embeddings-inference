@@ -552,6 +552,7 @@ impl From<TextEmbeddingsError> for ErrorResponse {
         let error_type = match err {
             TextEmbeddingsError::Tokenizer(_) => ErrorType::Tokenizer,
             TextEmbeddingsError::Validation(_) => ErrorType::Validation,
+            TextEmbeddingsError::Empty(_) => ErrorType::Empty,
             TextEmbeddingsError::Overloaded(_) => ErrorType::Overloaded,
             TextEmbeddingsError::Backend(_) => ErrorType::Backend,
         };
