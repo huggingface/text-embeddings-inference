@@ -1,43 +1,60 @@
-FROM nvidia/cuda:12.2.0-devel-ubuntu22.04 AS base-builder
+# syntax=docker/dockerfile:1
 
-ENV SCCACHE=0.10.0
-ENV RUSTC_WRAPPER=/usr/local/bin/sccache
-ENV PATH="/root/.cargo/bin:${PATH}"
-# aligned with `cargo-chef` version in `lukemathwalker/cargo-chef:latest-rust-1.85-bookworm`
-ENV CARGO_CHEF=0.1.71
+ARG BASE_IMAGE_BUILDER=nvidia/cuda:12.2.0-devel-ubuntu22.04
+ARG BASE_IMAGE_RUNTIME=nvidia/cuda:12.2.0-runtime-ubuntu22.04
+# Build with support for Google Cloud Vertex AI:
+# https://cloud.google.com/vertex-ai
+ARG VERTEX="false"
 
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    curl \
-    libssl-dev \
-    pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+FROM $(BASE_IMAGE_BUILDER) AS base-builder
+ARG DEBIAN_FRONTEND=noninteractive
+RUN <<HEREDOC
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        curl \
+        libssl-dev \
+        pkg-config
 
-# Donwload and configure sccache
-RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sccache-v$SCCACHE-x86_64-unknown-linux-musl.tar.gz | tar -xzv --strip-components=1 -C /usr/local/bin sccache-v$SCCACHE-x86_64-unknown-linux-musl/sccache && \
+    rm -rf /var/lib/apt/lists/*
+HEREDOC
+
+# Download sccache
+ARG SCCACHE_RELEASE=0.10.0
+RUN <<HEREDOC
+    ASSET_NAME="sccache-v${SCCACHE_RELEASE}-x86_64-unknown-linux-musl"
+
+    curl -fsSL "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_RELEASE}/${ASSET_NAME}.tar.gz" \
+      | tar -xz -C /usr/local/bin --strip-components=1 "${ASSET_NAME}/sccache"
+
     chmod +x /usr/local/bin/sccache
+HEREDOC
 
 RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
-RUN cargo install cargo-chef --version $CARGO_CHEF --locked
+ENV PATH="/root/.cargo/bin:${PATH}"
+ENV RUSTC_WRAPPER=/usr/local/bin/sccache
+
+# aligned with `cargo-chef` version in `lukemathwalker/cargo-chef:latest-rust-1.85-bookworm`
+ARG CARGO_CHEF_RELEASE=0.1.71
+RUN cargo install cargo-chef --version ${CARGO_CHEF_RELEASE} --locked
+
 
 FROM base-builder AS planner
-
 WORKDIR /usr/src
-
 COPY backends backends
 COPY core core
 COPY router router
 COPY Cargo.toml ./
 COPY Cargo.lock ./
-
 RUN cargo chef prepare  --recipe-path recipe.json
 
-FROM base-builder AS builder
 
+FROM base-builder AS builder-setup
 ARG GIT_SHA
 ARG DOCKER_LABEL
-ARG VERTEX="false"
 
-# sccache specific variables
+# sccache supports GHA cache as storage backend:
+# https://github.com/mozilla/sccache/blob/main/docs/GHA.md
+# The mounted `RUN` secrets `ACTIONS_RESULTS_URL` + `ACTIONS_RUNTIME_TOKEN` must be provided (making this toggle redundant?)
 ARG SCCACHE_GHA_ENABLED
 
 # Limit parallelism
@@ -46,44 +63,39 @@ ARG CARGO_BUILD_JOBS
 ARG CARGO_BUILD_INCREMENTAL
 
 WORKDIR /usr/src
-
 COPY --from=planner /usr/src/recipe.json recipe.json
 
+# NOTE: The next two stages cook without the cuda feature enabled,
+# Only difference between the two is the `google` feature when ARG `VERTEX=true`
+
+FROM builder-setup AS builder-vertex-false
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    if [ $VERTEX = "true" ]; \
-    then \
-      cargo chef cook --release --features google --recipe-path recipe.json && sccache -s; \
-    else \
-      cargo chef cook --release --recipe-path recipe.json && sccache -s; \
-    fi;
+    cargo chef cook --release --recipe-path recipe.json && sccache -s
+ARG WITH_FEATURES=candle-cuda
+
+FROM builder-setup AS builder-vertex-true
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    cargo chef cook --release --features google --recipe-path recipe.json && sccache -s
+ARG WITH_FEATURES=google,candle-cuda
+
+# Cook the Cuda CC variants:
+FROM builder-vertex-${VERTEX} AS builder
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    CUDA_COMPUTE_CAP=75 cargo chef cook --release --features "${WITH_FEATURES}-turing" --recipe-path recipe.json \
+    && sccache -s
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    if [ $VERTEX = "true" ]; \
-    then \
-      CUDA_COMPUTE_CAP=75 cargo chef cook --release --features google --features candle-cuda-turing --recipe-path recipe.json && sccache -s; \
-    else \
-      CUDA_COMPUTE_CAP=75 cargo chef cook --release --features candle-cuda-turing --recipe-path recipe.json && sccache -s; \
-    fi;
+    CUDA_COMPUTE_CAP=80 cargo chef cook --release --features "${WITH_FEATURES}" --recipe-path recipe.json \
+    && sccache -s
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    if [ $VERTEX = "true" ]; \
-    then \
-      CUDA_COMPUTE_CAP=80 cargo chef cook --release --features google --features candle-cuda --recipe-path recipe.json && sccache -s; \
-    else \
-      CUDA_COMPUTE_CAP=80 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s; \
-    fi;
-
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    if [ $VERTEX = "true" ]; \
-    then \
-      CUDA_COMPUTE_CAP=90 cargo chef cook --release --features google --features candle-cuda --recipe-path recipe.json && sccache -s; \
-    else \
-      CUDA_COMPUTE_CAP=90 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s; \
-    fi;
+    CUDA_COMPUTE_CAP=90 cargo chef cook --release --features "${WITH_FEATURES}" --recipe-path recipe.json \
+    && sccache -s
 
 COPY backends backends
 COPY core core
@@ -93,66 +105,51 @@ COPY Cargo.lock ./
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    if [ $VERTEX = "true" ]; \
-    then \
-        CUDA_COMPUTE_CAP=75 cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F google  && sccache -s; \
-    else \
-        CUDA_COMPUTE_CAP=75 cargo build --release --bin text-embeddings-router -F candle-cuda-turing && sccache -s; \
-    fi;
-
-RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-75
+    CUDA_COMPUTE_CAP=75 cargo build --release --features "${WITH_FEATURES}-turing" --bin text-embeddings-router \
+    && sccache -s \
+    && mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-75
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    if [ $VERTEX = "true" ]; \
-    then \
-        CUDA_COMPUTE_CAP=80 cargo build --release --bin text-embeddings-router -F candle-cuda -F google  && sccache -s; \
-    else \
-        CUDA_COMPUTE_CAP=80 cargo build --release --bin text-embeddings-router -F candle-cuda && sccache -s; \
-    fi;
-
-RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-80
+    CUDA_COMPUTE_CAP=80 cargo build --release --features "${WITH_FEATURES}" --bin text-embeddings-router \
+    && sccache -s \
+    && mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-80
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    if [ $VERTEX = "true" ]; \
-    then \
-        CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda -F google  && sccache -s; \
-    else \
-        CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda && sccache -s; \
-    fi;
+    CUDA_COMPUTE_CAP=90 cargo build --release --features "${WITH_FEATURES}" --bin text-embeddings-router \
+    && sccache -s \
+    && mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-90
 
-RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-90
 
-FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04 AS base
-
+FROM ${BASE_IMAGE_RUNTIME} AS runtime-base
 ARG DEFAULT_USE_FLASH_ATTENTION=True
-
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80 \
-    USE_FLASH_ATTENTION=$DEFAULT_USE_FLASH_ATTENTION
+    USE_FLASH_ATTENTION=${DEFAULT_USE_FLASH_ATTENTION}
 
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ca-certificates \
-    libssl-dev \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+ARG DEBIAN_FRONTEND=noninteractive
+RUN <<HEREDOC
+    apt-get update
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      libssl-dev \
+      curl
+
+    rm -rf /var/lib/apt/lists/*
+HEREDOC
 
 COPY --from=builder /usr/src/target/release/text-embeddings-router-75 /usr/local/bin/text-embeddings-router-75
 COPY --from=builder /usr/src/target/release/text-embeddings-router-80 /usr/local/bin/text-embeddings-router-80
 COPY --from=builder /usr/src/target/release/text-embeddings-router-90 /usr/local/bin/text-embeddings-router-90
 
 # Amazon SageMaker compatible image
-FROM base AS sagemaker
-
+FROM runtime-base AS sagemaker
 COPY --chmod=775 sagemaker-entrypoint-cuda-all.sh entrypoint.sh
-
 ENTRYPOINT ["./entrypoint.sh"]
 
 # Default image
-FROM base
-
+FROM runtime-base
 COPY --chmod=775 cuda-all-entrypoint.sh entrypoint.sh
-
 ENTRYPOINT ["./entrypoint.sh"]
 CMD ["--json-output"]
