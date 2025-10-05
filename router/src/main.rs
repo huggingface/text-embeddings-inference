@@ -11,7 +11,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// App Configuration
 #[derive(Parser, Redact)]
 #[clap(author, version, about, long_about = None)]
-struct Args {
+pub struct Args {
     /// The name of the model to load.
     /// Can be a MODEL_ID as listed on <https://hf.co/models> like
     /// `BAAI/bge-large-en-v1.5`.

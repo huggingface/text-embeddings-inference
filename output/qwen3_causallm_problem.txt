@@ -1,0 +1,54 @@
+## Problem: Qwen3-Reranker CausalLM Integration with TEI
+
+### Current Issue
+The Qwen3-Reranker-0.6B model returns identical scores (0.7310586) for all query-document pairs when used with text-embeddings-inference (TEI). This happens because:
+
+1. **Model Type Mismatch**: Qwen3-Reranker is a CausalLM model, not a SequenceClassification model
+2. **Wrong Backend**: TEI is using the Candle backend on Metal, not the Python backend where our fix was applied
+3. **Missing Scoring Logic**: The model requires special prompt formatting and yes/no token probability scoring
+
+### Model Architecture
+- **Type**: Qwen3ForCausalLM
+- **Config**: `"architectures": ["Qwen3ForCausalLM"]`
+- **Scoring Method**: Compares log probabilities of "yes" vs "no" tokens
+
+### Required Implementation
+
+The model needs:
+1. **Chat Template Application**: System prompt + user prompt with specific format
+2. **Token Prediction**: Get logits for the last token position
+3. **Yes/No Scoring**: Extract probabilities for "yes" and "no" tokens
+4. **Score Calculation**: `score = exp(yes_logit) / (exp(yes_logit) + exp(no_logit))`
+
+### Prompt Format
+```
+<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: {instruction}
+<Query>: {query}
+<Document>: {doc}<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+```
+
+### Technical Constraints
+1. TEI is using Candle backend on Metal (not Python backend)
+2. Need to either:
+   - Modify the Candle backend to support Qwen3 CausalLM reranking
+   - Force TEI to use the Python backend
+   - Create a custom serving solution
+
+### Test Case
+- Korean query about Tulsa University coach 2003-2006
+- Expected: Text about Steve Kragthorpe should score highest
+- Current: All texts get 0.7310586
+
+### Success Criteria
+1. Different query-document pairs produce different scores
+2. Semantically relevant documents score higher
+3. Korean text handled correctly
+4. Performance remains acceptable (<100ms latency)

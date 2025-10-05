@@ -1,0 +1,1104 @@
+[2m2025-08-13T23:14:08.548180Z[0m [32m INFO[0m [2mtext_embeddings_router[0m[2m:[0m [2mrouter/src/main.rs[0m[2m:[0m[2m202:[0m Args { model_id: "tom******/*****-********-*.**-***-cls", revision: None, tokenization_workers: None, dtype: None, pooling: None, max_concurrent_requests: 512, max_batch_tokens: 16384, max_batch_requests: None, max_client_batch_size: 32, auto_truncate: false, default_prompt_name: None, default_prompt: None, dense_path: Some("2_Dense"), hf_api_token: None, hf_token: None, hostname: "0.0.0.0", port: 8080, uds_path: "/tmp/text-embeddings-inference-server", huggingface_hub_cache: None, payload_limit: 2000000, api_key: None, json_output: false, disable_spans: false, otlp_endpoint: None, otlp_service_name: "text-embeddings-inference.server", prometheus_port: 9000, cors_allow_origin: None }
+[2m2025-08-13T23:14:08.553692Z[0m [32m INFO[0m [1mdownload_artifacts[0m[2m:[0m [2mtext_embeddings_core::download[0m[2m:[0m [2mcore/src/download.rs[0m[2m:[0m[2m24:[0m Starting download
+[2m2025-08-13T23:14:08.553723Z[0m [32m INFO[0m [1mdownload_artifacts[0m[2m:[0m[1mdownload_pool_config[0m[2m:[0m [2mtext_embeddings_core::download[0m[2m:[0m [2mcore/src/download.rs[0m[2m:[0m[2m72:[0m Downloading `1_Pooling/config.json`
+[2m2025-08-13T23:14:08.885787Z[0m [33m WARN[0m [1mdownload_artifacts[0m[2m:[0m [2mtext_embeddings_core::download[0m[2m:[0m [2mcore/src/download.rs[0m[2m:[0m[2m30:[0m Download failed: request error: HTTP status client error (404 Not Found) for url (https://huggingface.co/tomaarsen/Qwen3-Reranker-0.6B-seq-cls/resolve/main/1_Pooling/config.json)
+[2m2025-08-13T23:14:10.987914Z[0m [32m INFO[0m [1mdownload_artifacts[0m[2m:[0m[1mdownload_new_st_config[0m[2m:[0m [2mtext_embeddings_core::download[0m[2m:[0m [2mcore/src/download.rs[0m[2m:[0m[2m132:[0m Downloading `config_sentence_transformers.json`
+[2m2025-08-13T23:14:11.315553Z[0m [33m WARN[0m [1mdownload_artifacts[0m[2m:[0m [2mtext_embeddings_core::download[0m[2m:[0m [2mcore/src/download.rs[0m[2m:[0m[2m40:[0m Download failed: request error: HTTP status client error (404 Not Found) for url (https://huggingface.co/tomaarsen/Qwen3-Reranker-0.6B-seq-cls/resolve/main/config_sentence_transformers.json)
+[2m2025-08-13T23:14:11.315635Z[0m [32m INFO[0m [1mdownload_artifacts[0m[2m:[0m[1mdownload_dense_config[0m[2m:[0m [2mtext_embeddings_core::download[0m[2m:[0m [2mcore/src/download.rs[0m[2m:[0m[2m84:[0m Downloading `2_Dense/config.json`
+[2m2025-08-13T23:14:11.570746Z[0m [32m INFO[0m [1mdownload_artifacts[0m[2m:[0m [2mtext_embeddings_core::download[0m[2m:[0m [2mcore/src/download.rs[0m[2m:[0m[2m59:[0m Downloading `config.json`
+[2m2025-08-13T23:14:11.570980Z[0m [32m INFO[0m [1mdownload_artifacts[0m[2m:[0m [2mtext_embeddings_core::download[0m[2m:[0m [2mcore/src/download.rs[0m[2m:[0m[2m62:[0m Downloading `tokenizer.json`
+[2m2025-08-13T23:14:11.571123Z[0m [32m INFO[0m [1mdownload_artifacts[0m[2m:[0m [2mtext_embeddings_core::download[0m[2m:[0m [2mcore/src/download.rs[0m[2m:[0m[2m66:[0m Model artifacts downloaded in 3.017440458s
+[2m2025-08-13T23:14:11.690235Z[0m [33m WARN[0m [2mtext_embeddings_router[0m[2m:[0m [2mrouter/src/lib.rs[0m[2m:[0m[2m193:[0m Could not find a Sentence Transformers config
+[2m2025-08-13T23:14:11.690269Z[0m [32m INFO[0m [2mtext_embeddings_router[0m[2m:[0m [2mrouter/src/lib.rs[0m[2m:[0m[2m197:[0m Maximum number of tokens per request: 40960
+[2m2025-08-13T23:14:11.690282Z[0m [32m INFO[0m [2mtext_embeddings_core::tokenization[0m[2m:[0m [2mcore/src/tokenization.rs[0m[2m:[0m[2m40:[0m Starting 16 tokenization workers
+[2m2025-08-13T23:14:11.779235Z[0m [32m INFO[0m [2mtext_embeddings_router[0m[2m:[0m [2mrouter/src/lib.rs[0m[2m:[0m[2m240:[0m Starting model backend
+[2m2025-08-13T23:14:11.779269Z[0m [32m INFO[0m [2mtext_embeddings_backend[0m[2m:[0m [2mbackends/src/lib.rs[0m[2m:[0m[2m576:[0m Downloading `model.safetensors`
+[2m2025-08-13T23:14:11.779361Z[0m [32m INFO[0m [2mtext_embeddings_backend[0m[2m:[0m [2mbackends/src/lib.rs[0m[2m:[0m[2m443:[0m Model weights downloaded in 93.333µs
+Checking device availability:
+  CUDA available: false
+  Metal available: true
+  Metal is available, using Metal device
+  Selected device: Metal(MetalDevice(DeviceId(1)))
+[2m2025-08-13T23:14:11.786078Z[0m [32m INFO[0m [2mtext_embeddings_backend_candle[0m[2m:[0m [2mbackends/candle/src/lib.rs[0m[2m:[0m[2m292:[0m Starting Qwen3 model on Metal(MetalDevice(DeviceId(1)))
+Loading Qwen3ClassificationHead...
+Number of classes: 1
+Found score.weight, shape: [1, 1024]
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Sending predict command to backend thread...
+
+=== BACKEND THREAD STARTED ===
+Waiting for response from backend thread...
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 1
+DEBUG: Input IDs sample: [0]
+DEBUG: Cumulative seq lengths: [0, 1]
+QWEN3 FORWARD CALLED! Shape: [1, 1, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 1, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[1.2958984]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+[2m2025-08-13T23:14:15.639592Z[0m [32m INFO[0m [2mtext_embeddings_router[0m[2m:[0m [2mrouter/src/lib.rs[0m[2m:[0m[2m258:[0m Warming up model
+
+=== WARMUP STARTING ===
+Model type: Classifier
+Max input length: 40960
+Max batch tokens: 16384
+Max batch requests: None
+Warmup batch created:
+  Input IDs length: 16384
+  Cumulative seq lengths: [0, 16384]
+  Pooled indices: [0]
+  Max length: 16384
+Calling predict for warmup...
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Sending predict command to backend thread...
+Waiting for response from backend thread...
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 16384
+DEBUG: Input IDs sample: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+DEBUG: Cumulative seq lengths: [0, 16384]
+QWEN3 FORWARD CALLED! Shape: [1, 16384, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 16384, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[-0.5786133]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Warmup completed in 73.385052042s
+Warmup result: Ok(())
+=== WARMUP DONE ===
+
+
+=== BACKEND TASK STARTED ===
+Backend model type: Classifier
+[2m2025-08-13T23:15:29.244703Z[0m [32m INFO[0m [2mtext_embeddings_router::http::server[0m[2m:[0m [2mrouter/src/http/server.rs[0m[2m:[0m[2m1852:[0m Starting HTTP server: 0.0.0.0:8080
+[2m2025-08-13T23:15:29.244790Z[0m [32m INFO[0m [2mtext_embeddings_router::http::server[0m[2m:[0m [2mrouter/src/http/server.rs[0m[2m:[0m[2m1853:[0m Ready
+DEBUG: Template formatted text for rerank: query='한국 음식', doc='부산' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: 한국 음식
+<Document>: 부산<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='한국 음식', doc='김치' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: 한국 음식
+<Document>: 김치<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='한국 음식', doc='뉴욕' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: 한국 음식
+<Document>: 뉴욕<|im_end|>
+<|im_start|>assistant
+'
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 1
+Batch size: 1
+Backend task: Model is Classifier, calling predict
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Sending predict command to backend thread...
+Waiting for response from backend thread...
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 75
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 75]
+QWEN3 FORWARD CALLED! Shape: [1, 75, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 75, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[2.1035156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 1
+Batch size: 1
+Backend task: Model is Classifier, calling predict
+Backend task: Got predictions, count: 1
+Backend task: Prediction for 0: [2.1035156]
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Sending predict command to backend thread...
+Waiting for response from backend thread...
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 73
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 73]
+QWEN3 FORWARD CALLED! Shape: [1, 73, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 73, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[2.1035156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 1
+Batch size: 1
+Backend task: Model is Classifier, calling predict
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Backend task: Got predictions, count: 1
+Backend task: Prediction for 0: [2.1035156]
+Sending predict command to backend thread...
+Waiting for response from backend thread...
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 73
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 73]
+QWEN3 FORWARD CALLED! Shape: [1, 73, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 73, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[2.1035156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+Backend task: Got predictions, count: 1
+Backend task: Prediction for 0: [2.1035156]
+[2m2025-08-13T23:16:27.223060Z[0m [32m INFO[0m [1mrerank[0m[1m{[0m[3mtotal_time[0m[2m=[0m"3.607676666s" [3mtokenization_time[0m[2m=[0m"45.543514ms" [3mqueue_time[0m[2m=[0m"2.333097736s" [3minference_time[0m[2m=[0m"1.188692s"[1m}[0m[2m:[0m [2mtext_embeddings_router::http::server[0m[2m:[0m [2mrouter/src/http/server.rs[0m[2m:[0m[2m471:[0m Success
+DEBUG: Template formatted text for rerank: query='What is the capital of France?', doc='Tokyo is the capital of Japan' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: What is the capital of France?
+<Document>: Tokyo is the capital of Japan<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='What is the capital of France?', doc='Paris is the capital of France' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: What is the capital of France?
+<Document>: Paris is the capital of France<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='What is the capital of France?', doc='Pizza is a food from Italy' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: What is the capital of France?
+<Document>: Pizza is a food from Italy<|im_end|>
+<|im_start|>assistant
+'
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 1
+Batch size: 1
+Backend task: Model is Classifier, calling predict
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Sending predict command to backend thread...
+Waiting for response from backend thread...
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 79
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 79]
+QWEN3 FORWARD CALLED! Shape: [1, 79, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 79, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[2.1035156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 1
+Batch size: 1
+Backend task: Model is Classifier, calling predict
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Sending predict command to backend thread...
+Waiting for response from backend thread...
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 79
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 79]
+Backend task: Got predictions, count: 1
+Backend task: Prediction for 0: [2.1035156]
+QWEN3 FORWARD CALLED! Shape: [1, 79, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 79, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[2.1035156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 1
+Batch size: 1
+Backend task: Model is Classifier, calling predict
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Sending predict command to backend thread...
+Waiting for response from backend thread...
+Backend task: Got predictions, count: 1
+Backend task: Prediction for 0: [2.1035156]
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 79
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 79]
+QWEN3 FORWARD CALLED! Shape: [1, 79, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 79, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[2.1035156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+Backend task: Got predictions, count: 1
+Backend task: Prediction for 0: [2.1035156]
+[2m2025-08-13T23:16:27.347378Z[0m [32m INFO[0m [1mrerank[0m[1m{[0m[3mtotal_time[0m[2m=[0m"120.689167ms" [3mtokenization_time[0m[2m=[0m"29.022875ms" [3mqueue_time[0m[2m=[0m"30.487347ms" [3minference_time[0m[2m=[0m"30.694819ms"[1m}[0m[2m:[0m [2mtext_embeddings_router::http::server[0m[2m:[0m [2mrouter/src/http/server.rs[0m[2m:[0m[2m471:[0m Success
+DEBUG: Template formatted text for rerank: query='food', doc='pizza' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: food
+<Document>: pizza<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='food', doc='hamburger' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: food
+<Document>: hamburger<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='food', doc='food' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: food
+<Document>: food<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='food', doc='bicycle' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: food
+<Document>: bicycle<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='food', doc='car' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: food
+<Document>: car<|im_end|>
+<|im_start|>assistant
+'
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 1
+Batch size: 1
+Backend task: Model is Classifier, calling predict
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Sending predict command to backend thread...
+Waiting for response from backend thread...
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 69
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 69]
+QWEN3 FORWARD CALLED! Shape: [1, 69, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 69, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[2.1035156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 1
+Batch size: 1
+Backend task: Model is Classifier, calling predict
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Sending predict command to backend thread...
+Backend task: Got predictions, count: 1
+Backend task: Prediction for 0: [2.1035156]
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 69
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 69]
+Waiting for response from backend thread...
+QWEN3 FORWARD CALLED! Shape: [1, 69, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 69, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[2.1035156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 3
+Batch size: 3
+Backend task: Model is Classifier, calling predict
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 3
+Creating oneshot channel...
+Sending predict command to backend thread...
+Backend task: Got predictions, count: 1
+Backend task: Prediction for 0: [2.1035156]
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 3
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 3
+Batch pooled_indices: [0, 1, 2]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 3
+Max length: 69
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 69, 138, 207]
+Waiting for response from backend thread...
+QWEN3 FORWARD CALLED! Shape: [3, 69, 1024]
+[2m2025-08-13T23:16:27.444234Z[0m [32m INFO[0m [1mbackend_task[0m[2m:[0m[1mpredict[0m[2m:[0m [2mtext_embeddings_backend_candle::models::qwen3[0m[2m:[0m [2mbackends/candle/src/models/qwen3.rs[0m[2m:[0m[2m670:[0m CLS pooling: outputs shape [3, 69, 1024], batch_size 3
+[2m2025-08-13T23:16:27.444246Z[0m [32m INFO[0m [1mbackend_task[0m[2m:[0m[1mpredict[0m[2m:[0m [2mtext_embeddings_backend_candle::models::qwen3[0m[2m:[0m [2mbackends/candle/src/models/qwen3.rs[0m[2m:[0m[2m672:[0m CLS pooled shape: [3, 1024]
+DEBUG: Pooled embeddings shape: [3, 1024]
+ClassificationHead forward: input shape [3, 1024]
+ClassificationHead forward: output shape [3, 1]
+PREDICT RESULT SHAPE: [3, 1]
+DEBUG: Predict results shape: [3, 1]
+DEBUG: Results as vec2: [[-2.0273438], [-1.15625], [-3.4160156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+Backend task: Got predictions, count: 3
+Backend task: Prediction for 0: [-2.0273438]
+Backend task: Prediction for 1: [-1.15625]
+Backend task: Prediction for 2: [-3.4160156]
+[2m2025-08-13T23:16:27.512386Z[0m [32m INFO[0m [1mrerank[0m[1m{[0m[3mtotal_time[0m[2m=[0m"162.07275ms" [3mtokenization_time[0m[2m=[0m"31.538358ms" [3mqueue_time[0m[2m=[0m"39.97815ms" [3minference_time[0m[2m=[0m"55.437274ms"[1m}[0m[2m:[0m [2mtext_embeddings_router::http::server[0m[2m:[0m [2mrouter/src/http/server.rs[0m[2m:[0m[2m471:[0m Success
+DEBUG: Template formatted text for rerank: query='machine learning', doc='neural networks' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: machine learning
+<Document>: neural networks<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='machine learning', doc='car engines' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: machine learning
+<Document>: car engines<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='machine learning', doc='cooking recipes' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: machine learning
+<Document>: cooking recipes<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='machine learning', doc='artificial intelligence' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: machine learning
+<Document>: artificial intelligence<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='machine learning', doc='deep learning' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: machine learning
+<Document>: deep learning<|im_end|>
+<|im_start|>assistant
+'
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 1
+Batch size: 1
+Backend task: Model is Classifier, calling predict
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Sending predict command to backend thread...
+Waiting for response from backend thread...
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 71
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 71]
+QWEN3 FORWARD CALLED! Shape: [1, 71, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 71, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[2.1035156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 1
+Batch size: 1
+Backend task: Model is Classifier, calling predict
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Backend task: Got predictions, count: 1
+Backend task: Prediction for 0: [2.1035156]
+Sending predict command to backend thread...
+Waiting for response from backend thread...
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 71
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 71]
+QWEN3 FORWARD CALLED! Shape: [1, 71, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 71, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[2.1035156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 3
+Batch size: 3
+Backend task: Model is Classifier, calling predict
+Backend task: Got predictions, count: 1
+Backend task: Prediction for 0: [2.1035156]
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 3
+Creating oneshot channel...
+Sending predict command to backend thread...
+Waiting for response from backend thread...
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 3
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 3
+Batch pooled_indices: [0, 1, 2]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 3
+Max length: 71
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 71, 142, 213]
+QWEN3 FORWARD CALLED! Shape: [3, 71, 1024]
+[2m2025-08-13T23:16:27.606834Z[0m [32m INFO[0m [1mbackend_task[0m[2m:[0m[1mpredict[0m[2m:[0m [2mtext_embeddings_backend_candle::models::qwen3[0m[2m:[0m [2mbackends/candle/src/models/qwen3.rs[0m[2m:[0m[2m670:[0m CLS pooling: outputs shape [3, 71, 1024], batch_size 3
+[2m2025-08-13T23:16:27.606852Z[0m [32m INFO[0m [1mbackend_task[0m[2m:[0m[1mpredict[0m[2m:[0m [2mtext_embeddings_backend_candle::models::qwen3[0m[2m:[0m [2mbackends/candle/src/models/qwen3.rs[0m[2m:[0m[2m672:[0m CLS pooled shape: [3, 1024]
+DEBUG: Pooled embeddings shape: [3, 1024]
+ClassificationHead forward: input shape [3, 1024]
+ClassificationHead forward: output shape [3, 1]
+PREDICT RESULT SHAPE: [3, 1]
+DEBUG: Predict results shape: [3, 1]
+DEBUG: Results as vec2: [[0.70214844], [0.80126953], [0.4765625]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+Backend task: Got predictions, count: 3
+Backend task: Prediction for 0: [0.70214844]
+Backend task: Prediction for 1: [0.80126953]
+Backend task: Prediction for 2: [0.4765625]
+[2m2025-08-13T23:16:27.676352Z[0m [32m INFO[0m [1mrerank[0m[1m{[0m[3mtotal_time[0m[2m=[0m"162.08525ms" [3mtokenization_time[0m[2m=[0m"31.214933ms" [3mqueue_time[0m[2m=[0m"39.244732ms" [3minference_time[0m[2m=[0m"56.090592ms"[1m}[0m[2m:[0m [2mtext_embeddings_router::http::server[0m[2m:[0m [2mrouter/src/http/server.rs[0m[2m:[0m[2m471:[0m Success
+DEBUG: Template formatted text for rerank: query='Python programming', doc='Python is a programming language' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: Python programming
+<Document>: Python is a programming language<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='Python programming', doc='파이썬 프로그래밍' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: Python programming
+<Document>: 파이썬 프로그래밍<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='Python programming', doc='자바스크립트' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: Python programming
+<Document>: 자바스크립트<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='Python programming', doc='How to cook pasta' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: Python programming
+<Document>: How to cook pasta<|im_end|>
+<|im_start|>assistant
+'
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 1
+Batch size: 1
+Backend task: Model is Classifier, calling predict
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Sending predict command to backend thread...
+Waiting for response from backend thread...
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 73
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 73]
+QWEN3 FORWARD CALLED! Shape: [1, 73, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 73, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[2.1035156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 1
+Batch size: 1
+Backend task: Model is Classifier, calling predict
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Sending predict command to backend thread...
+Backend task: Got predictions, count: 1
+Backend task: Prediction for 0: [2.1035156]
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+Waiting for response from backend thread...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 74
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 74]
+QWEN3 FORWARD CALLED! Shape: [1, 74, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 74, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[2.1035156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 2
+Batch size: 2
+Backend task: Model is Classifier, calling predict
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 2
+Creating oneshot channel...
+Sending predict command to backend thread...
+Waiting for response from backend thread...
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 2
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 2
+Batch pooled_indices: [0, 1]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 2
+Max length: 76
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 74, 150]
+Backend task: Got predictions, count: 1
+Backend task: Prediction for 0: [2.1035156]
+QWEN3 FORWARD CALLED! Shape: [2, 76, 1024]
+[2m2025-08-13T23:16:27.746503Z[0m [32m INFO[0m [1mbackend_task[0m[2m:[0m[1mpredict[0m[2m:[0m [2mtext_embeddings_backend_candle::models::qwen3[0m[2m:[0m [2mbackends/candle/src/models/qwen3.rs[0m[2m:[0m[2m670:[0m CLS pooling: outputs shape [2, 76, 1024], batch_size 2
+[2m2025-08-13T23:16:27.746514Z[0m [32m INFO[0m [1mbackend_task[0m[2m:[0m[1mpredict[0m[2m:[0m [2mtext_embeddings_backend_candle::models::qwen3[0m[2m:[0m [2mbackends/candle/src/models/qwen3.rs[0m[2m:[0m[2m672:[0m CLS pooled shape: [2, 1024]
+DEBUG: Pooled embeddings shape: [2, 1024]
+ClassificationHead forward: input shape [2, 1024]
+ClassificationHead forward: output shape [2, 1]
+PREDICT RESULT SHAPE: [2, 1]
+DEBUG: Predict results shape: [2, 1]
+DEBUG: Results as vec2: [[-1.203125], [2.1035156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+Backend task: Got predictions, count: 2
+Backend task: Prediction for 0: [-1.203125]
+Backend task: Prediction for 1: [2.1035156]
+[2m2025-08-13T23:16:27.794106Z[0m [32m INFO[0m [1mrerank[0m[1m{[0m[3mtotal_time[0m[2m=[0m"115.372458ms" [3mtokenization_time[0m[2m=[0m"1.695124ms" [3mqueue_time[0m[2m=[0m"38.131948ms" [3minference_time[0m[2m=[0m"41.539937ms"[1m}[0m[2m:[0m [2mtext_embeddings_router::http::server[0m[2m:[0m [2mrouter/src/http/server.rs[0m[2m:[0m[2m471:[0m Success
+DEBUG: Template formatted text for rerank: query='test', doc='test' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: test
+<Document>: test<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='test', doc='test' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: test
+<Document>: test<|im_end|>
+<|im_start|>assistant
+'
+DEBUG: Template formatted text for rerank: query='test', doc='different' -> '<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: Select only the Documents that are semantically similar to the Query.
+<Query>: test
+<Document>: different<|im_end|>
+<|im_start|>assistant
+'
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 1
+Batch size: 1
+Backend task: Model is Classifier, calling predict
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Sending predict command to backend thread...
+Waiting for response from backend thread...
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 69
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 69]
+QWEN3 FORWARD CALLED! Shape: [1, 69, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 69, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[2.1035156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 1
+Batch size: 1
+Backend task: Model is Classifier, calling predict
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Sending predict command to backend thread...
+Backend task: Got predictions, count: 1
+Backend task: Prediction for 0: [2.1035156]
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 69
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 69]
+Waiting for response from backend thread...
+QWEN3 FORWARD CALLED! Shape: [1, 69, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 69, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[2.1035156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+
+=== BACKEND TASK: Processing batch ===
+Batch metadata count: 1
+Batch size: 1
+Backend task: Model is Classifier, calling predict
+Backend task: Got predictions, count: 1
+Backend task: Prediction for 0: [2.1035156]
+
+=== BACKEND PREDICT CALLED ===
+Batch size: 1
+Creating oneshot channel...
+Sending predict command to backend thread...
+Waiting for response from backend thread...
+
+BackendThread: Processing Predict command
+BackendThread: Batch size: 1
+BackendThread: Calling backend.predict()...
+
+=== CANDLE BACKEND PREDICT CALLED ===
+Batch size: 1
+Batch pooled_indices: [0]
+=============== QWEN3 PREDICT CALLED ===============
+=============== QWEN3 FORWARD ENTRY ===============
+Batch size: 1
+Max length: 69
+DEBUG: Input IDs sample: [151644, 8948, 198, 60256, 3425, 279, 11789, 20027, 279, 8502]
+DEBUG: Cumulative seq lengths: [0, 69]
+QWEN3 FORWARD CALLED! Shape: [1, 69, 1024]
+DEBUG: CLS pooling single item: outputs shape [1, 69, 1024]
+DEBUG: Batch size is 1, pooled_indices: [0]
+DEBUG: First token sample values: None
+DEBUG: CLS pooled single shape: [1, 1024]
+DEBUG: Pooled embeddings shape: [1, 1024]
+ClassificationHead forward: input shape [1, 1024]
+ClassificationHead forward: output shape [1, 1]
+PREDICT RESULT SHAPE: [1, 1]
+DEBUG: Predict results shape: [1, 1]
+DEBUG: Results as vec2: [[2.1035156]]
+BackendThread: backend.predict() returned: true
+BackendThread: Predict completed successfully
+Received response: true
+=== BACKEND PREDICT DONE ===
+
+Backend task: predict returned: true
+Backend task: Got predictions, count: 1
+Backend task: Prediction for 0: [2.1035156]
+[2m2025-08-13T23:16:27.886095Z[0m [32m INFO[0m [1mrerank[0m[1m{[0m[3mtotal_time[0m[2m=[0m"89.979167ms" [3mtokenization_time[0m[2m=[0m"408.749µs" [3mqueue_time[0m[2m=[0m"29.81475ms" [3minference_time[0m[2m=[0m"29.791097ms"[1m}[0m[2m:[0m [2mtext_embeddings_router::http::server[0m[2m:[0m [2mrouter/src/http/server.rs[0m[2m:[0m[2m471:[0m Success
+[2m2025-08-14T01:47:56.998866Z[0m [32m INFO[0m [2mtext_embeddings_router::shutdown[0m[2m:[0m [2mrouter/src/shutdown.rs[0m[2m:[0m[2m27:[0m signal received, starting graceful shutdown
+=== BACKEND THREAD EXITING ===

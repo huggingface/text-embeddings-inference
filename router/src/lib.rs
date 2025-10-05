@@ -1,7 +1,7 @@
 /// Text Embedding Inference Webserver
 mod logging;
 mod prometheus;
-mod strategy;
+pub mod strategy;
 
 #[cfg(feature = "http")]
 mod http;
@@ -48,6 +48,47 @@ pub enum ModelKind {
     ListwiseReranker, // Detected via projector + special tokens
 }
 
+use crate::strategy::{RerankMode, RerankOrdering};
+use std::sync::Arc;
+
+/// Listwise reranking configuration
+#[derive(Debug, Clone)]
+pub struct ListwiseConfig {
+    pub max_docs_per_pass: usize,
+    pub ordering: RerankOrdering,
+    pub instruction: Option<String>,
+    pub payload_limit_bytes: usize,
+    pub block_timeout_ms: u64,
+    pub random_seed: Option<u64>,
+    pub max_documents_per_request: usize,
+    pub max_document_length_bytes: usize,
+}
+
+impl Default for ListwiseConfig {
+    fn default() -> Self {
+        Self {
+            max_docs_per_pass: 125,
+            ordering: RerankOrdering::Input,
+            instruction: None,
+            payload_limit_bytes: 2_000_000,
+            block_timeout_ms: 30_000,
+            random_seed: None,
+            max_documents_per_request: 1_000,
+            max_document_length_bytes: 102_400,
+        }
+    }
+}
+
+/// Extended application state
+#[derive(Clone)]
+pub struct AppState {
+    pub infer: Arc<Infer>,
+    pub info: Arc<Info>,
+    pub model_kind: ModelKind,
+    pub reranker_mode: RerankMode,
+    pub listwise_config: Arc<ListwiseConfig>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,6 +124,83 @@ mod tests {
         let original = ModelKind::ListwiseReranker;
         let cloned = original.clone();
         assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn test_listwise_config_default() {
+        let config = ListwiseConfig::default();
+
+        assert_eq!(config.max_docs_per_pass, 125);
+        assert_eq!(config.ordering, RerankOrdering::Input);
+        assert_eq!(config.instruction, None);
+        assert_eq!(config.payload_limit_bytes, 2_000_000);
+        assert_eq!(config.block_timeout_ms, 30_000);
+        assert_eq!(config.random_seed, None);
+        assert_eq!(config.max_documents_per_request, 1_000);
+        assert_eq!(config.max_document_length_bytes, 102_400);
+    }
+
+    #[test]
+    fn test_listwise_config_custom() {
+        let config = ListwiseConfig {
+            max_docs_per_pass: 100,
+            ordering: RerankOrdering::Random,
+            instruction: Some("Focus on relevance".to_string()),
+            payload_limit_bytes: 5_000_000,
+            block_timeout_ms: 60_000,
+            random_seed: Some(42),
+            max_documents_per_request: 2_000,
+            max_document_length_bytes: 204_800,
+        };
+
+        assert_eq!(config.max_docs_per_pass, 100);
+        assert_eq!(config.ordering, RerankOrdering::Random);
+        assert_eq!(config.instruction, Some("Focus on relevance".to_string()));
+        assert_eq!(config.payload_limit_bytes, 5_000_000);
+        assert_eq!(config.block_timeout_ms, 60_000);
+        assert_eq!(config.random_seed, Some(42));
+        assert_eq!(config.max_documents_per_request, 2_000);
+        assert_eq!(config.max_document_length_bytes, 204_800);
+    }
+
+    #[test]
+    fn test_listwise_config_clone() {
+        let original = ListwiseConfig {
+            max_docs_per_pass: 200,
+            ordering: RerankOrdering::Random,
+            instruction: Some("Test instruction".to_string()),
+            payload_limit_bytes: 3_000_000,
+            block_timeout_ms: 45_000,
+            random_seed: Some(123),
+            max_documents_per_request: 500,
+            max_document_length_bytes: 50_000,
+        };
+
+        let cloned = original.clone();
+        assert_eq!(original.max_docs_per_pass, cloned.max_docs_per_pass);
+        assert_eq!(original.ordering, cloned.ordering);
+        assert_eq!(original.instruction, cloned.instruction);
+        assert_eq!(original.payload_limit_bytes, cloned.payload_limit_bytes);
+        assert_eq!(original.block_timeout_ms, cloned.block_timeout_ms);
+        assert_eq!(original.random_seed, cloned.random_seed);
+        assert_eq!(
+            original.max_documents_per_request,
+            cloned.max_documents_per_request
+        );
+        assert_eq!(
+            original.max_document_length_bytes,
+            cloned.max_document_length_bytes
+        );
+    }
+
+    #[test]
+    fn test_listwise_config_debug_format() {
+        let config = ListwiseConfig::default();
+        let debug_str = format!("{:?}", config);
+
+        assert!(debug_str.contains("ListwiseConfig"));
+        assert!(debug_str.contains("max_docs_per_pass: 125"));
+        assert!(debug_str.contains("ordering: Input"));
     }
 }
 

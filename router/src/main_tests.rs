@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::Args;
     use clap::Parser;
 
     #[test]
     fn test_args_default_values() {
-        let args = Args::try_parse_from(&[""]).unwrap();
+        let args = Args::try_parse_from(&["text-embeddings-router"]).unwrap();
 
         // Test default values
         assert_eq!(args.reranker_mode, "auto");
@@ -21,47 +21,65 @@ mod tests {
 
     #[test]
     fn test_args_parse_reranker_mode() {
-        let args = Args::try_parse_from(&["--reranker-mode", "listwise"]).unwrap();
+        let args = Args::try_parse_from(&["text-embeddings-router", "--reranker-mode", "listwise"])
+            .unwrap();
         assert!(args.parse_reranker_mode().is_ok());
         assert_eq!(
             args.parse_reranker_mode().unwrap(),
             text_embeddings_router::strategy::RerankMode::Listwise
         );
 
-        let args = Args::try_parse_from(&["--reranker-mode", "pairwise"]).unwrap();
+        let args = Args::try_parse_from(&["text-embeddings-router", "--reranker-mode", "pairwise"])
+            .unwrap();
         assert!(args.parse_reranker_mode().is_ok());
         assert_eq!(
             args.parse_reranker_mode().unwrap(),
             text_embeddings_router::strategy::RerankMode::Pairwise
         );
 
-        let args = Args::try_parse_from(&["--reranker-mode", "invalid"]).unwrap();
+        let args = Args::try_parse_from(&["text-embeddings-router", "--reranker-mode", "invalid"])
+            .unwrap();
         assert!(args.parse_reranker_mode().is_err());
+        assert!(args
+            .parse_reranker_mode()
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid reranker mode"));
     }
 
     #[test]
     fn test_args_parse_rerank_ordering() {
-        let args = Args::try_parse_from(&["--rerank-ordering", "random"]).unwrap();
+        let args = Args::try_parse_from(&["text-embeddings-router", "--rerank-ordering", "random"])
+            .unwrap();
         assert!(args.parse_rerank_ordering().is_ok());
         assert_eq!(
             args.parse_rerank_ordering().unwrap(),
             text_embeddings_router::strategy::RerankOrdering::Random
         );
 
-        let args = Args::try_parse_from(&["--rerank-ordering", "input"]).unwrap();
+        let args = Args::try_parse_from(&["text-embeddings-router", "--rerank-ordering", "input"])
+            .unwrap();
         assert!(args.parse_rerank_ordering().is_ok());
         assert_eq!(
             args.parse_rerank_ordering().unwrap(),
             text_embeddings_router::strategy::RerankOrdering::Input
         );
 
-        let args = Args::try_parse_from(&["--rerank-ordering", "invalid"]).unwrap();
+        let args =
+            Args::try_parse_from(&["text-embeddings-router", "--rerank-ordering", "invalid"])
+                .unwrap();
         assert!(args.parse_rerank_ordering().is_err());
+        assert!(args
+            .parse_rerank_ordering()
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid rerank ordering"));
     }
 
     #[test]
     fn test_args_custom_values() {
         let args = Args::try_parse_from(&[
+            "text-embeddings-router",
             "--reranker-mode",
             "listwise",
             "--max-listwise-docs-per-pass",
@@ -99,14 +117,16 @@ mod tests {
 
     #[test]
     fn test_args_case_insensitive_parsing() {
-        let args = Args::try_parse_from(&["--reranker-mode", "AUTO"]).unwrap();
+        let args =
+            Args::try_parse_from(&["text-embeddings-router", "--reranker-mode", "AUTO"]).unwrap();
         assert!(args.parse_reranker_mode().is_ok());
         assert_eq!(
             args.parse_reranker_mode().unwrap(),
             text_embeddings_router::strategy::RerankMode::Auto
         );
 
-        let args = Args::try_parse_from(&["--rerank-ordering", "INPUT"]).unwrap();
+        let args = Args::try_parse_from(&["text-embeddings-router", "--rerank-ordering", "INPUT"])
+            .unwrap();
         assert!(args.parse_rerank_ordering().is_ok());
         assert_eq!(
             args.parse_rerank_ordering().unwrap(),

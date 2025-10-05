@@ -4532,10 +4532,12 @@ dependencies = [
 name = "text-embeddings-core"
 version = "1.8.0"
 dependencies = [
+ "anyhow",
  "async-channel",
  "hf-hub",
  "metrics",
  "serde_json",
+ "tempfile",
  "text-embeddings-backend",
  "thiserror 1.0.69",
  "tokenizers",
