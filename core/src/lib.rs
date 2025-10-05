@@ -1,3 +1,4 @@
+pub mod detection;
 pub mod download;
 pub mod infer;
 pub mod queue;

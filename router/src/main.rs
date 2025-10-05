@@ -153,6 +153,58 @@ struct Args {
     #[clap(default_value = "2000000", long, env)]
     payload_limit: usize,
 
+    /// Reranker mode selection
+    #[clap(long, env, default_value = "auto")]
+    reranker_mode: String,
+
+    /// Maximum documents per listwise pass
+    #[clap(long, env, default_value = "125")]
+    max_listwise_docs_per_pass: usize,
+
+    /// Document ordering for listwise reranking
+    ///
+    /// IMPORTANT REPRODUCIBILITY NOTE:
+    /// - `input`: Deterministic - documents processed in request order (default)
+    /// - `random`: NON-DETERMINISTIC without seed - repeated calls with same input
+    ///   will produce DIFFERENT scores/rankings each time
+    ///
+    /// For production use with `random` ordering, ALWAYS provide `--rerank-rand-seed`
+    /// to ensure reproducible results across API calls.
+    #[clap(long, env, default_value = "input")]
+    rerank_ordering: String,
+
+    /// RNG seed for reproducible random ordering
+    ///
+    /// Seed for random document ordering (required for reproducibility).
+    ///
+    /// ⚠️ WARNING: Without seed, ordering is NON-DETERMINISTIC! The same query+documents
+    /// will produce DIFFERENT rankings on each request. For reproducible results in
+    /// production, ALWAYS specify this parameter when using `--rerank-ordering random`.
+    ///
+    /// Example: `--rerank-rand-seed 42`
+    #[clap(long, env)]
+    rerank_rand_seed: Option<u64>,
+
+    /// Optional instruction for reranking
+    #[clap(long, env)]
+    rerank_instruction: Option<String>,
+
+    /// Listwise payload size limit in bytes
+    #[clap(long, env, default_value = "2000000")]
+    listwise_payload_limit_bytes: usize,
+
+    /// Listwise block processing timeout in milliseconds
+    #[clap(long, env, default_value = "30000")]
+    listwise_block_timeout_ms: u64,
+
+    /// Maximum length per document in bytes (DoS protection)
+    #[clap(long, env, default_value = "102400")]
+    max_document_length_bytes: usize,
+
+    /// Maximum number of documents per request (DoS protection)
+    #[clap(long, env, default_value = "1000")]
+    max_documents_per_request: usize,
+
     /// Set an api key for request authorization.
     ///
     /// By default the server responds to every request. With an api key set, the requests must have the Authorization header set with the api key as Bearer token.
@@ -185,6 +237,21 @@ struct Args {
     #[clap(long, env)]
     cors_allow_origin: Option<Vec<String>>,
 }
+
+impl Args {
+    pub fn parse_reranker_mode(&self) -> Result<text_embeddings_router::strategy::RerankMode> {
+        self.reranker_mode.parse()
+    }
+
+    pub fn parse_rerank_ordering(
+        &self,
+    ) -> Result<text_embeddings_router::strategy::RerankOrdering> {
+        self.rerank_ordering.parse()
+    }
+}
+
+#[cfg(test)]
+mod main_tests;
 
 #[tokio::main]
 async fn main() -> Result<()> {

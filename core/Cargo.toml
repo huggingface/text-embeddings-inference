@@ -6,6 +6,7 @@ authors.workspace = true
 homepage.workspace = true
 
 [dependencies]
+anyhow = { workspace = true }
 async-channel = "^2.3"
 hf-hub = { workspace = true }
 metrics = { workspace = true }
@@ -15,3 +16,6 @@ thiserror = { workspace = true }
 tokenizers = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.0"

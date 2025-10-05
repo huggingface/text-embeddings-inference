@@ -1,6 +1,7 @@
 /// Text Embedding Inference Webserver
 mod logging;
 mod prometheus;
+mod strategy;
 
 #[cfg(feature = "http")]
 mod http;
@@ -38,6 +39,52 @@ use tokenizers::{PostProcessorWrapper, Tokenizer};
 use tracing::Span;
 
 pub use logging::init_logging;
+
+/// Router-level model classification for strategy selection
+#[derive(Debug, Clone, PartialEq)]
+pub enum ModelKind {
+    Embedding,
+    SequenceClassifier,
+    ListwiseReranker, // Detected via projector + special tokens
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_modelkind_equality() {
+        let embedding = ModelKind::Embedding;
+        let classifier = ModelKind::SequenceClassifier;
+        let listwise = ModelKind::ListwiseReranker;
+
+        assert_eq!(embedding, ModelKind::Embedding);
+        assert_eq!(classifier, ModelKind::SequenceClassifier);
+        assert_eq!(listwise, ModelKind::ListwiseReranker);
+
+        assert_ne!(embedding, classifier);
+        assert_ne!(classifier, listwise);
+        assert_ne!(listwise, embedding);
+    }
+
+    #[test]
+    fn test_modelkind_debug_format() {
+        let embedding = ModelKind::Embedding;
+        let classifier = ModelKind::SequenceClassifier;
+        let listwise = ModelKind::ListwiseReranker;
+
+        assert_eq!(format!("{:?}", embedding), "Embedding");
+        assert_eq!(format!("{:?}", classifier), "SequenceClassifier");
+        assert_eq!(format!("{:?}", listwise), "ListwiseReranker");
+    }
+
+    #[test]
+    fn test_modelkind_clone() {
+        let original = ModelKind::ListwiseReranker;
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+}
 
 /// Create entrypoint
 #[allow(clippy::too_many_arguments)]
