@@ -30,6 +30,7 @@ fn compute_cap_matching(runtime_compute_cap: usize, compile_compute_cap: usize) 
         (86..=89, 80..=86) => true,
         (89, 89) => true,
         (90, 90) => true,
+        (120, 120) => true,
         (_, _) => false,
     }
 }
