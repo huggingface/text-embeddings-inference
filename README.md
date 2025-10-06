@@ -581,6 +581,9 @@ runtime_compute_cap=89
 # Example for H100
 runtime_compute_cap=90
 
+# Example for Nvidia GTX 5090
+runtime_compute_cap=120
+
 docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
 ```
 

@@ -32,6 +32,7 @@ the examples of runtime compute capabilities for various GPU types:
 - A10 - `runtime_compute_cap=86`
 - Ada Lovelace (RTX 4000 series, ...) - `runtime_compute_cap=89`
 - H100 - `runtime_compute_cap=90`
+- Blackwell (RTX 5000 series, ...) - `runtime_compute_cap=120`
 
 Once you have determined the compute capability is determined, set it as the `runtime_compute_cap` variable and build
 the container as shown in the example below:
