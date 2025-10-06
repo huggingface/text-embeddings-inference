@@ -68,7 +68,7 @@ fn is_hpu() -> bool {
 #[derive(Debug, Clone)]
 pub struct Backend {
     /// Channel to communicate with the background thread
-    backend_sender: mpsc::Sender<BackendCommand>,
+    pub backend_sender: mpsc::Sender<BackendCommand>,
     /// Health status
     health_receiver: watch::Receiver<bool>,
     _backend_thread: Arc<BackendThread>,
@@ -514,7 +514,7 @@ impl Drop for BackendThread {
     }
 }
 
-enum BackendCommand {
+pub enum BackendCommand {
     Health(Span, oneshot::Sender<Result<(), BackendError>>),
     Embed(
         Batch,

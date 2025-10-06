@@ -3,10 +3,12 @@ use crate::tokenization::{EncodingInput, RawEncoding, Tokenization};
 use crate::TextEmbeddingsError;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use text_embeddings_backend::{Backend, BackendError, Embedding, ModelType};
+use text_embeddings_backend::{
+    Backend, BackendError, Embedding, ListwiseBlockInput, ListwiseBlockOutput, ModelType,
+};
 use tokenizers::TruncationDirection;
 use tokio::sync::{mpsc, oneshot, watch, Notify, OwnedSemaphorePermit, Semaphore};
-use tracing::instrument;
+use tracing::{instrument, Span};
 
 /// Inference struct
 #[derive(Debug, Clone)]
@@ -508,6 +510,45 @@ impl Infer {
             self.backend.model_type,
             ModelType::Embedding(text_embeddings_backend::Pool::Splade)
         )
+    }
+
+    /// Dispatch listwise block to backend without going through the batch queue.
+    ///
+    /// Important: This method includes the channel dispatch logic (oneshot sender/receiver)
+    /// that was previously in `Backend::embed_listwise_block()`. Centralizing it here
+    /// avoids duplication and keeps the async boundary in one place.
+    ///
+    /// ⚠️ **Blocker B2 fix applied:** Uses `send().await` instead of `try_send()` to
+    /// prevent panic when channel is full. Applies natural backpressure, preventing
+    /// panics during traffic spikes and allowing system to self-regulate.
+    #[instrument(skip_all)]
+    pub async fn embed_listwise_block(
+        &self,
+        input: ListwiseBlockInput,
+    ) -> Result<ListwiseBlockOutput, TextEmbeddingsError> {
+        let (sender, receiver) = oneshot::channel();
+
+        // Blocker B2: Use send().await for backpressure (not try_send which panics when full)
+        use text_embeddings_backend::BackendCommand;
+        self.backend
+            .backend_sender
+            .send(BackendCommand::EmbedListwise(
+                input,
+                Span::current(),
+                sender,
+            ))
+            .await
+            .map_err(|e| {
+                TextEmbeddingsError::Backend(BackendError::Inference(format!(
+                    "Backend channel closed: {}",
+                    e
+                )))
+            })?;
+
+        receiver
+            .await
+            .expect("Backend blocking task dropped the sender without a response. This is a bug.")
+            .map_err(TextEmbeddingsError::Backend)
     }
 
     #[instrument(skip(self))]
