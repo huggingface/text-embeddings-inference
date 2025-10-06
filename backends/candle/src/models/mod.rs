@@ -44,6 +44,7 @@ mod flash_qwen3;
 mod flash_modernbert;
 
 mod gte;
+pub mod lbnl_reranker;
 mod mpnet;
 mod qwen2;
 mod qwen3;
@@ -56,6 +57,7 @@ pub use distilbert::{DistilBertConfig, DistilBertModel};
 pub use gte::{GTEClassificationHead, GTEConfig, GTEModel, GTEMLP};
 pub use jina::JinaBertModel;
 pub use jina_code::JinaCodeBertModel;
+pub use lbnl_reranker::LbnlReranker;
 pub use mistral::MistralConfig;
 pub use modernbert::{ModernBertConfig, ModernBertModel};
 pub use mpnet::{MPNetConfig, MPNetModel};

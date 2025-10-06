@@ -31,6 +31,27 @@
 - 각 Milestone은 독립적으로 컴파일 가능하도록 설계됨
 - 이전 Milestone이 완료되어야 다음으로 진행 가능
 
+### 🔍 품질 검증 명령어
+
+**중요:** Router는 `http` 또는 `grpc` 피처가 필요하므로, workspace 전체 검증시 반드시 포함해야 합니다.
+
+```bash
+# 1. 포맷팅 (항상 먼저 실행)
+cargo fmt
+
+# 2. Candle 백엔드 패키지 단독 검증
+cargo clippy -p text-embeddings-backend-candle --no-deps -- --deny warnings
+
+# 3. Workspace 전체 검증 (올바른 방법)
+cargo clippy --no-default-features --features candle,http --no-deps -- --deny warnings
+
+# 4. 빌드 확인
+cargo build -p text-embeddings-backend-candle
+
+# ❌ 잘못된 검증 (router 컴파일 실패)
+# cargo clippy --no-default-features --features candle --no-deps -- --deny warnings
+```
+
 ---
 
 ## 📋 구현 진행 상황
@@ -59,7 +80,22 @@
   - **Tests: 25 passed** (3 backend-core + 11 core + 11 router), 0 failed
   - Note: Tokenizer configuration deferred to router layer (Milestone 5+)
 
-- [ ] **Milestone 4: Candle 백엔드 구현**
+- [x] **Milestone 4: Candle 백엔드 구현** ✅
+  - [x] Qwen3 hidden state API (forward_layers, forward_with_tensors)
+  - [x] Projector layer (backends/candle/src/layers/projector.rs)
+  - [x] LbnlReranker model (backends/candle/src/models/lbnl_reranker.rs)
+  - [x] CandleBackend integration with projector weight detection
+  - [x] Model trait implementation for LbnlReranker
+  - [x] Module declarations and exports
+  - [x] Fixed compilation errors (candle imports, tensor operations)
+  - [x] Fixed clippy warnings (needless return, unused imports)
+  - **Build: ✅ Successful** - `cargo build -p text-embeddings-backend-candle`
+  - **Clippy:**
+    - ✅ Package-level: `cargo clippy -p text-embeddings-backend-candle --no-deps -- --deny warnings` (PASS)
+    - ✅ Workspace-level: `cargo clippy --no-default-features --features candle,http --no-deps -- --deny warnings` (PASS)
+    - ⚠️  Router dependency: Router requires `http` or `grpc` feature; candle-only (`--features candle`) fails at workspace level
+  - **Tests: ⚠️ Network-dependent** - Integration tests require HuggingFace model downloads (no network in env)
+  - Note: Candle backend code compiles and passes all static checks; runtime tests deferred to environment with network access
 - [ ] **Milestone 5: 라우터 통합 - 특수 토큰 검증**
 - [ ] **Milestone 6: 라우터 통합 - 수학 유틸리티**
 - [ ] **Milestone 7: 큐 격리 및 Prometheus 메트릭**
@@ -130,7 +166,7 @@ text-embeddings-inference/
 │   │       │   └── projector.rs          # 신규: MLP Projector
 │   │       ├── models/
 │   │       │   ├── qwen3.rs              # 수정: hidden state 추출 추가
-│   │       │   └── lbnl_reranker.rs      # 신규: Listwise reranker 모델
+│   │       │   └── lbnl_reranker.rs      # 신규: Last but not Late Interaction 모델
 │   │       └── lib.rs                    # 수정: LBNL 지원 추가
 │   ├── core/
 │   │   └── src/

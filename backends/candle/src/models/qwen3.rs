@@ -471,6 +471,92 @@ impl Qwen3Model {
         attention_bias.broadcast_add(&causal_mask)
     }
 
+    fn forward_layers(
+        &self,
+        input_ids: &Tensor,
+        position_ids: &Tensor,
+        attention_bias: Option<&Tensor>,
+    ) -> Result<Tensor> {
+        let (batch_size, max_length) = input_ids.dims2()?;
+
+        let mut hidden_states = self.embeddings.forward(input_ids)?;
+
+        let cos = self
+            .rotary_cache
+            .0
+            .index_select(&position_ids.flatten_all()?, 0)?;
+        let sin = self
+            .rotary_cache
+            .1
+            .index_select(&position_ids.flatten_all()?, 0)?;
+
+        let cos = cos.reshape((batch_size, 1, max_length, self.rotary_dim))?;
+        let sin = sin.reshape((batch_size, 1, max_length, self.rotary_dim))?;
+
+        for layer in &self.layers {
+            hidden_states = layer.forward(&hidden_states, attention_bias, &cos, &sin)?;
+        }
+
+        let (outputs, _) = self.norm.forward(&hidden_states, None)?;
+        Ok(outputs)
+    }
+
+    /// Forward pass for LBNL reranker, taking pre-built tensors as input.
+    ///
+    /// # Arguments
+    ///
+    /// * `input_ids` - A tensor of shape `(batch_size, seq_len)`.
+    /// * `attention_mask` - A tensor of shape `(batch_size, seq_len)` with `1` for tokens
+    ///                      to attend to and `0` for padding.
+    pub fn forward_with_tensors(
+        &self,
+        input_ids: &Tensor,
+        attention_mask: &Tensor,
+    ) -> Result<Tensor> {
+        let input_ids = input_ids.to_device(&self.device)?;
+        let attention_mask = attention_mask.to_device(&self.device)?;
+
+        let (batch_size, seq_len) = input_ids.dims2()?;
+
+        // Create position_ids from attention_mask for left-padding.
+        // Padded tokens get position 0, and actual tokens get incremental positions.
+        let position_ids = {
+            let i64_mask = attention_mask.to_dtype(DType::I64)?;
+            let one = Tensor::ones_like(&i64_mask)?;
+            (i64_mask.cumsum(D::Minus1)? - one)?
+                .broadcast_mul(&i64_mask)?
+                .to_dtype(DType::U32)?
+        };
+
+        // Create attention_bias from attention_mask
+        let attention_bias = {
+            let min_value = match self.dtype {
+                DType::F32 => f32::MIN,
+                _ => -65504.0,
+            };
+
+            let mask_b = attention_mask.reshape((batch_size, 1, 1, seq_len))?;
+            let negatives =
+                Tensor::full(min_value, mask_b.shape(), &self.device)?.to_dtype(self.dtype)?;
+            let zeros = Tensor::zeros_like(&mask_b)?.to_dtype(self.dtype)?;
+
+            // Where mask is 0 (padding), use a large negative value. Where it is 1 (token), use 0.
+            let padding_bias = mask_b.where_cond(&zeros, &negatives)?;
+            let expanded_bias = padding_bias.broadcast_as((
+                batch_size,
+                self.num_attention_heads,
+                seq_len,
+                seq_len,
+            ))?;
+
+            // Apply causal masking
+            self.get_causal_attention_bias(expanded_bias)?
+        };
+
+        // Call the core layer processing
+        self.forward_layers(&input_ids, &position_ids, Some(&attention_bias))
+    }
+
     pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         let _enter = self.span.enter();
 
@@ -561,25 +647,8 @@ impl Qwen3Model {
             None
         };
 
-        let mut hidden_states = self.embeddings.forward(&input_ids)?;
-
-        let cos = self
-            .rotary_cache
-            .0
-            .index_select(&position_ids.flatten_all()?, 0)?;
-        let sin = self
-            .rotary_cache
-            .1
-            .index_select(&position_ids.flatten_all()?, 0)?;
-
-        let cos = cos.reshape((batch_size, 1, max_length, self.rotary_dim))?;
-        let sin = sin.reshape((batch_size, 1, max_length, self.rotary_dim))?;
-
-        for layer in &self.layers {
-            hidden_states = layer.forward(&hidden_states, attention_bias.as_ref(), &cos, &sin)?;
-        }
-
-        let (outputs, _) = self.norm.forward(&hidden_states, None)?;
+        // REFACTORED: Call the new forward_layers method
+        let outputs = self.forward_layers(&input_ids, &position_ids, attention_bias.as_ref())?;
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();

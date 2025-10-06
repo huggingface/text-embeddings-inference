@@ -12,9 +12,9 @@ use crate::compute_cap::{
 };
 use crate::models::{
     BertConfig, BertModel, Dense, DenseConfig, DenseLayer, DistilBertConfig, DistilBertModel,
-    GTEConfig, GTEModel, JinaBertModel, JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig,
-    Model, ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config,
-    Qwen3Config, Qwen3Model,
+    GTEConfig, GTEModel, JinaBertModel, JinaCodeBertModel, LbnlReranker, MPNetConfig, MPNetModel,
+    MistralConfig, Model, ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig,
+    Qwen2Config, Qwen3Config, Qwen3Model,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -225,6 +225,36 @@ impl CandleBackend {
             unsafe { VarBuilder::from_mmaped_safetensors(&model_files, dtype, &device) }
         }
         .s()?;
+
+        // LBNL Reranker Integration
+        if let Config::Qwen3(qwen3_cfg) = &config {
+            // Check for projector weights to detect LBNL model
+            if vb.contains_tensor("projector.0.weight") && vb.contains_tensor("projector.2.weight")
+            {
+                tracing::info!(
+                    "Detected LBNL reranker (projector weights found); loading Candle integration"
+                );
+
+                let qwen3_model =
+                    Qwen3Model::load(vb.pp("model"), qwen3_cfg, model_type.clone()).s()?;
+
+                let projector_vb = vb.pp("projector");
+                let lbnl = LbnlReranker::new(
+                    projector_vb,
+                    qwen3_model,
+                    device.clone(),
+                    qwen3_cfg.hidden_size,
+                    dtype,
+                )
+                .s()?;
+
+                return Ok(Self {
+                    device,
+                    model: Box::new(lbnl),
+                    dense: None,
+                });
+            }
+        }
 
         let model: Result<Box<dyn Model + Send>, BackendError> = match (config, &device) {
             #[cfg(not(feature = "cuda"))]

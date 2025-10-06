@@ -32,13 +32,9 @@ impl fmt::Display for DType {
             #[cfg(feature = "python")]
             DType::Bfloat16 => write!(f, "bfloat16"),
             // Catch-all for impossible configurations
-            #[cfg(all(
-                not(feature = "python"),
-                not(feature = "candle"),
-                not(feature = "ort")
-            ))]
+            #[cfg(all(not(feature = "python"), not(feature = "candle"), not(feature = "ort")))]
             _ => {
-                let _ = f;  // Suppress unused variable warning
+                let _ = f; // Suppress unused variable warning
                 unreachable!("DType has no variants in this configuration")
             }
         }
@@ -61,28 +57,21 @@ impl Default for DType {
             not(feature = "accelerate")
         ))]
         {
-            return DType::Float16;
+            DType::Float16
         }
 
         // Priority 3: Candle with accelerate OR ORT → Float32
         #[cfg(all(
             not(feature = "python"),
-            any(
-                all(feature = "candle", feature = "accelerate"),
-                feature = "ort"
-            )
+            any(all(feature = "candle", feature = "accelerate"), feature = "ort")
         ))]
         {
-            return DType::Float32;
+            DType::Float32
         }
 
         // Unreachable: If no features are enabled, build will fail earlier
         // This branch should never execute but satisfies the compiler
-        #[cfg(all(
-            not(feature = "python"),
-            not(feature = "candle"),
-            not(feature = "ort")
-        ))]
+        #[cfg(all(not(feature = "python"), not(feature = "candle"), not(feature = "ort")))]
         {
             unreachable!("No DType available - build should have failed earlier");
         }
