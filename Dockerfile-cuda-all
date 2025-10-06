@@ -85,6 +85,15 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
       CUDA_COMPUTE_CAP=90 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s; \
     fi;
 
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    if [ $VERTEX = "true" ]; \
+    then \
+      CUDA_COMPUTE_CAP=120 cargo chef cook --release --features google --features candle-cuda --recipe-path recipe.json && sccache -s; \
+    else \
+      CUDA_COMPUTE_CAP=120 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s; \
+    fi;
+
 COPY backends backends
 COPY core core
 COPY router router
@@ -122,9 +131,18 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
         CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda && sccache -s; \
     fi;
 
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    if [ $VERTEX = "true" ]; \
+    then \
+        CUDA_COMPUTE_CAP=120 cargo build --release --bin text-embeddings-router -F candle-cuda -F google  && sccache -s; \
+    else \
+        CUDA_COMPUTE_CAP=120 cargo build --release --bin text-embeddings-router -F candle-cuda && sccache -s; \
+    fi;
+
 RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-90
 
-FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04 AS base
+FROM nvidia/cuda:12.9.0-runtime-ubuntu22.04 AS base
 
 ARG DEFAULT_USE_FLASH_ATTENTION=True
 
