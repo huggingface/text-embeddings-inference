@@ -40,13 +40,8 @@ use tracing::Span;
 
 pub use logging::init_logging;
 
-/// Router-level model classification for strategy selection
-#[derive(Debug, Clone, PartialEq)]
-pub enum ModelKind {
-    Embedding,
-    SequenceClassifier,
-    ListwiseReranker, // Detected via projector + special tokens
-}
+// Re-export ModelKind from core for public API
+pub use text_embeddings_core::detection::ModelKind;
 
 use crate::strategy::{RerankMode, RerankOrdering};
 use std::sync::Arc;
@@ -231,6 +226,16 @@ pub async fn run(
     otlp_service_name: String,
     prometheus_port: u16,
     cors_allow_origin: Option<Vec<String>>,
+    // Listwise reranking parameters
+    reranker_mode: strategy::RerankMode,
+    max_listwise_docs_per_pass: usize,
+    rerank_ordering: strategy::RerankOrdering,
+    rerank_instruction: Option<String>,
+    listwise_payload_limit_bytes: usize,
+    listwise_block_timeout_ms: u64,
+    max_documents_per_request: usize,
+    max_document_length_bytes: usize,
+    rerank_rand_seed: Option<u64>,
 ) -> Result<()> {
     let model_id_path = Path::new(&model_id);
     let (model_root, api_repo) = if model_id_path.exists() && model_id_path.is_dir() {
@@ -331,6 +336,11 @@ pub async fn run(
             }
         };
     }
+
+    // Detect model kind for listwise reranking support
+    let model_kind = text_embeddings_core::detection::detect_model_kind(&tokenizer, &model_root)
+        .context("Failed to detect model type")?;
+    tracing::info!("✅ Detected model kind: {:?}", model_kind);
 
     // Position IDs offset. Used for Roberta and camembert.
     let position_offset = if &config.model_type == "xlm-roberta"
@@ -462,6 +472,19 @@ pub async fn run(
         docker_label: option_env!("DOCKER_LABEL"),
     };
 
+    // Create ListwiseConfig from CLI parameters
+    let listwise_config = ListwiseConfig {
+        max_docs_per_pass: max_listwise_docs_per_pass,
+        ordering: rerank_ordering,
+        instruction: rerank_instruction,
+        payload_limit_bytes: listwise_payload_limit_bytes,
+        block_timeout_ms: listwise_block_timeout_ms,
+        random_seed: rerank_rand_seed,
+        max_documents_per_request,
+        max_document_length_bytes,
+    };
+    tracing::info!("✅ Listwise config: {:?}", listwise_config);
+
     // use AIP_HTTP_PORT if google feature is enabled
     let port = if cfg!(feature = "google") {
         std::env::var("AIP_HTTP_PORT")
@@ -493,6 +516,13 @@ pub async fn run(
 
     #[cfg(not(any(feature = "http", feature = "grpc")))]
     compile_error!("Either feature `http` or `grpc` must be enabled.");
+
+    // Note: model_kind, reranker_mode, and listwise_config are detected and logged above
+    // These will be wired into HTTP/gRPC handlers in future milestones (Milestone 2+)
+    // For now, we verify detection works correctly
+    let _ = model_kind;
+    let _ = reranker_mode;
+    let _ = listwise_config;
 
     #[cfg(feature = "http")]
     {

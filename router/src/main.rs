@@ -282,6 +282,10 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Parse listwise reranking settings first (before moving args fields)
+    let reranker_mode = args.parse_reranker_mode()?;
+    let rerank_ordering = args.parse_rerank_ordering()?;
+
     // Since `--hf-api-token` is deprecated in favor of `--hf-token`, we need to still make sure
     // that if the user provides the token with `--hf-api-token` the token is still parsed properly
     if args.hf_api_token.is_some() {
@@ -314,6 +318,16 @@ async fn main() -> Result<()> {
         args.otlp_service_name,
         args.prometheus_port,
         args.cors_allow_origin,
+        // Listwise reranking parameters
+        reranker_mode,
+        args.max_listwise_docs_per_pass,
+        rerank_ordering,
+        args.rerank_instruction,
+        args.listwise_payload_limit_bytes,
+        args.listwise_block_timeout_ms,
+        args.max_documents_per_request,
+        args.max_document_length_bytes,
+        args.rerank_rand_seed,
     )
     .await?;
 
