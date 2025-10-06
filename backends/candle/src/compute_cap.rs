@@ -55,6 +55,7 @@ mod tests {
         assert!(compute_cap_matching(86, 86));
         assert!(compute_cap_matching(89, 89));
         assert!(compute_cap_matching(90, 90));
+        assert!(compute_cap_matching(120, 120));
 
         assert!(compute_cap_matching(86, 80));
         assert!(compute_cap_matching(89, 80));
