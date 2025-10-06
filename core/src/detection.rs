@@ -196,12 +196,11 @@ mod tests {
     use tokenizers::Tokenizer;
 
     fn create_test_tokenizer(with_special_tokens: bool) -> Tokenizer {
-        use tokenizers::models::bpe::BPE;
+        use tokenizers::models::wordpiece::WordPiece;
         use tokenizers::{AddedToken, Tokenizer as TokenizerBuilder};
 
-        // Create a minimal BPE tokenizer for testing
-        let mut tokenizer =
-            TokenizerBuilder::new(BPE::builder().build().expect("Failed to build BPE model"));
+        // Create a minimal WordPiece tokenizer with default vocab for testing
+        let mut tokenizer = TokenizerBuilder::new(WordPiece::default());
 
         if with_special_tokens {
             // Add the LBNL special tokens

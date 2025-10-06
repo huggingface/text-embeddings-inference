@@ -10,8 +10,8 @@ use crate::http::types::{
     VertexResponse,
 };
 use crate::{
-    logging, shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
-    ResponseMetadata,
+    logging, shutdown, AppState, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info,
+    ModelType, ResponseMetadata,
 };
 use ::http::HeaderMap;
 use anyhow::Context;
@@ -1597,14 +1597,16 @@ async fn metrics(prom_handle: Extension<PrometheusHandle>) -> String {
 
 /// Serving method
 pub async fn run(
-    infer: Infer,
-    info: Info,
+    app_state: AppState,
     addr: SocketAddr,
     prom_builder: PrometheusBuilder,
     payload_limit: usize,
     api_key: Option<String>,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<(), anyhow::Error> {
+    // Extract for backward compatibility with existing handlers
+    let infer = (*app_state.infer).clone();
+    let info = (*app_state.info).clone();
     // OpenAPI documentation
     #[derive(OpenApi)]
     #[openapi(

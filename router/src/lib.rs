@@ -517,18 +517,25 @@ pub async fn run(
     #[cfg(not(any(feature = "http", feature = "grpc")))]
     compile_error!("Either feature `http` or `grpc` must be enabled.");
 
-    // Note: model_kind, reranker_mode, and listwise_config are detected and logged above
-    // These will be wired into HTTP/gRPC handlers in future milestones (Milestone 2+)
-    // For now, we verify detection works correctly
-    let _ = model_kind;
-    let _ = reranker_mode;
-    let _ = listwise_config;
+    // Create AppState with detected model_kind and listwise config
+    let app_state = AppState {
+        infer: Arc::new(infer),
+        info: Arc::new(info),
+        model_kind,
+        reranker_mode,
+        listwise_config: Arc::new(listwise_config),
+    };
+
+    tracing::info!(
+        "🚀 Server starting with model_kind={:?}, reranker_mode={:?}",
+        app_state.model_kind,
+        app_state.reranker_mode
+    );
 
     #[cfg(feature = "http")]
     {
         http::server::run(
-            infer,
-            info,
+            app_state,
             addr,
             prom_builder,
             payload_limit,
@@ -543,6 +550,9 @@ pub async fn run(
         // cors_allow_origin and payload_limit are not used for gRPC servers
         let _ = cors_allow_origin;
         let _ = payload_limit;
+        // Extract for grpc (will be updated to use AppState in future milestone)
+        let infer = (*app_state.infer).clone();
+        let info = (*app_state.info).clone();
         grpc::server::run(infer, info, addr, prom_builder, api_key).await
     }
 }
