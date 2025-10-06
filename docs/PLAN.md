@@ -167,6 +167,12 @@ cargo build -p text-embeddings-backend-candle
     - NO retry loop or spill logic in reference implementation
     - Decision: NOT implemented (avoiding feature creep, maintaining parity)
   - **Tests: 23 passed**, 0 failed
+  - **Commits**:
+    - 8c7d97c: Core handler implementation with modeling.py parity
+    - ba0cd7d: Random ordering + block spill/shrink verification
+  - **Dependencies**: rand = "0.8", rand_chacha = "0.3"
+  - **Status**: ✅ MILESTONE 8 FULLY COMPLETE - All features implemented, all deferred items resolved, exact modeling.py parity achieved
+
 - [ ] **Milestone 9: End-to-End 통합**
   - note: Milestone 9.3 (Infer integration) completed ✅    Summary    Files Modified:   1. backends/src/lib.rs:     - Made backend_sender public     - Made BackendCommand enum public (required for public field)   2. core/src/infer.rs:     - Added embed_listwise_block() async method with backpressure-safe send().await     - Uses BackendCommand::EmbedListwise variant from Milestone 3     - Implements blocker B2 fix (avoids panic on full channel)
 ---
