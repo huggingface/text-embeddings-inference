@@ -98,7 +98,46 @@ pub async fn rerank_listwise(
     let model_max_length = state.info.max_input_length;
 
     // ─────────────────────────────────────────────────────────────
-    // 3. BLOCK CONSTRUCTION (modeling.py algorithm)
+    // 3. RANDOM ORDERING (if configured)
+    // ─────────────────────────────────────────────────────────────
+    // Combine data into tuples: (original_index, doc, token_length)
+    let mut process_items: Vec<(usize, String, usize)> = truncated_docs
+        .into_iter()
+        .zip(doc_token_lengths.into_iter())
+        .enumerate()
+        .map(|(idx, (doc, len))| (idx, doc, len))
+        .collect();
+
+    // Apply random shuffle if configured (using ChaCha8Rng for reproducibility)
+    if config.ordering == crate::strategy::RerankOrdering::Random {
+        use rand::seq::SliceRandom;
+        use rand::SeedableRng;
+        use rand_chacha::ChaCha8Rng;
+
+        let mut rng = match config.random_seed {
+            Some(seed) => ChaCha8Rng::seed_from_u64(seed),
+            None => ChaCha8Rng::from_entropy(),
+        };
+
+        process_items.shuffle(&mut rng);
+
+        tracing::info!(
+            "Applied random ordering to {} documents (seed: {:?})",
+            process_items.len(),
+            config.random_seed
+        );
+    }
+
+    // Extract shuffled/ordered data
+    let doc_original_indices: Vec<usize> = process_items.iter().map(|(idx, _, _)| *idx).collect();
+    let truncated_docs: Vec<String> = process_items
+        .iter()
+        .map(|(_, doc, _)| doc.clone())
+        .collect();
+    let doc_token_lengths: Vec<usize> = process_items.iter().map(|(_, _, len)| *len).collect();
+
+    // ─────────────────────────────────────────────────────────────
+    // 4. BLOCK CONSTRUCTION (modeling.py algorithm)
     // ─────────────────────────────────────────────────────────────
     const MAX_BLOCK_SIZE: usize = 125;
     const LENGTH_CAPACITY_MARGIN: usize = 2048;
@@ -261,7 +300,9 @@ pub async fn rerank_listwise(
         block_weights.push(weight);
 
         // Store document embeddings (map back to original indices)
-        for (i, &original_idx) in block_indices.iter().enumerate() {
+        // block_indices contains shuffled indices, doc_original_indices maps them to original
+        for (i, &shuffled_idx) in block_indices.iter().enumerate() {
+            let original_idx = doc_original_indices[shuffled_idx];
             all_doc_embeddings[original_idx] = Some(block_output.doc_embeddings[i].clone());
         }
     }

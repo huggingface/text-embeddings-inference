@@ -27,6 +27,8 @@ num_cpus = { workspace = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { version = "0.15.1", features = [] }
 opentelemetry = "0.23.0"
+rand = "0.8"
+rand_chacha = "0.3"
 opentelemetry_sdk = { version = "0.23.0", features = ["rt-tokio"] }
 opentelemetry-otlp = "0.16.0"
 reqwest = { version = "0.12.5", features = [] }

@@ -156,9 +156,17 @@ cargo build -p text-embeddings-backend-candle
   - [x] Strategy dispatch (Auto/Pairwise/Listwise) via determine_strategy()
   - [x] AppState extended with tokenizer field
   - [x] Updated comments to match actual behavior
+  - [x] **Random ordering implementation** ✅
+    - Uses combined tuple approach: (original_idx, doc, token_length)
+    - ChaCha8Rng for cross-platform reproducibility
+    - Seed support via config.random_seed
+    - Maintains correct index mapping to req.texts
+  - [x] **Block spill/shrink verification** ✅
+    - **VERIFIED: Does NOT exist in modeling.py**
+    - Python code directly tokenizes without overflow checking
+    - NO retry loop or spill logic in reference implementation
+    - Decision: NOT implemented (avoiding feature creep, maintaining parity)
   - **Tests: 23 passed**, 0 failed
-  - **TODO (deferred)**: Random ordering (RerankOrdering::Random shuffle)
-  - **TODO (verify)**: Block spill/shrink logic (needs modeling.py verification)
 - [ ] **Milestone 9: End-to-End 통합**
   - note: Milestone 9.3 (Infer integration) completed ✅    Summary    Files Modified:   1. backends/src/lib.rs:     - Made backend_sender public     - Made BackendCommand enum public (required for public field)   2. core/src/infer.rs:     - Added embed_listwise_block() async method with backpressure-safe send().await     - Uses BackendCommand::EmbedListwise variant from Milestone 3     - Implements blocker B2 fix (avoids panic on full channel)
 ---
