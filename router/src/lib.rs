@@ -1,3 +1,4 @@
+pub mod listwise;
 /// Text Embedding Inference Webserver
 mod logging;
 mod prometheus;

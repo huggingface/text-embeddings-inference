@@ -108,7 +108,22 @@ cargo build -p text-embeddings-backend-candle
   - **Tests: 4 passed** (validation_tests module), 0 failed
   - Function accessible as `text_embeddings_core::tokenization::validate_special_tokens`
 
-- [ ] **Milestone 6: 라우터 통합 - 수학 유틸리티**
+- [x] **Milestone 6: 라우터 통합 - 수학 유틸리티** ✅
+  - [x] Math utilities module (router/src/listwise/math.rs)
+  - [x] cosine_similarity() with internal L2 normalization
+  - [x] normalize() and normalize_new() for vector normalization
+  - [x] weighted_average() for combining block embeddings
+  - [x] add_scaled() for AXPY operations
+  - [x] Epsilon stability (1e-8) for zero-norm protection
+  - [x] Cosine result clamping to [-1, 1]
+  - [x] Comprehensive error handling (dimension mismatches, empty vectors)
+  - [x] 12 unit tests (orthogonal, parallel, antiparallel, edge cases)
+  - [x] All tests passing
+  - [x] No clippy warnings
+  - **Tests: 12 passed**, 0 failed
+  - Functions accessible as `router::listwise::math::*`
+  - Normalization policy: L2 norm happens ONLY in cosine_similarity (modeling.py parity)
+
 - [ ] **Milestone 7: 큐 격리 및 Prometheus 메트릭**
 - [ ] **Milestone 8: 라우터 핸들러 구현**
 - [ ] **Milestone 9: End-to-End 통합**
