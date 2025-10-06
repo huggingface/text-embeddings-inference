@@ -59,6 +59,48 @@ impl std::str::FromStr for RerankOrdering {
     }
 }
 
+/// Determine the runtime reranking strategy from CLI mode and model capabilities
+///
+/// # Arguments
+/// * `mode` - The CLI reranker mode (Auto/Pairwise/Listwise)
+/// * `kind` - The detected model kind (ModelKind from core)
+///
+/// # Returns
+/// The determined RerankStrategy (Pairwise or Listwise)
+///
+/// # Errors
+/// Returns error if:
+/// - Listwise mode is requested but model doesn't support it
+/// - Pairwise mode is requested but model only supports listwise
+pub fn determine_strategy(
+    mode: &RerankMode,
+    kind: &text_embeddings_core::detection::ModelKind,
+) -> Result<RerankStrategy> {
+    use text_embeddings_core::detection::ModelKind;
+
+    match (mode, kind) {
+        // Auto mode: Choose based on model capabilities
+        (RerankMode::Auto, ModelKind::ListwiseReranker) => Ok(RerankStrategy::Listwise),
+        (RerankMode::Auto, _) => Ok(RerankStrategy::Pairwise),
+
+        // Pairwise mode: Reject listwise-only models
+        (RerankMode::Pairwise, ModelKind::ListwiseReranker) => Err(anyhow!(
+            "This model only supports listwise reranking. \
+             Use --reranker-mode auto or --reranker-mode listwise."
+        )),
+        (RerankMode::Pairwise, _) => Ok(RerankStrategy::Pairwise),
+
+        // Listwise mode: Only allow if model supports it
+        (RerankMode::Listwise, ModelKind::ListwiseReranker) => Ok(RerankStrategy::Listwise),
+        (RerankMode::Listwise, kind) => Err(anyhow!(
+            "Model kind {:?} does not support listwise reranking. \
+             Model must have projector weights and special tokens. \
+             Use --reranker-mode auto or --reranker-mode pairwise.",
+            kind
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

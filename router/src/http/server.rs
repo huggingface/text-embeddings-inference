@@ -305,18 +305,37 @@ example = json ! ({"error": "Batch size error", "error_type": "validation"})),
     fields(total_time, tokenization_time, queue_time, inference_time,)
 )]
 async fn rerank(
+    state: Extension<AppState>,
     infer: Extension<Infer>,
     info: Extension<Info>,
     Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<RerankRequest>,
-    // TODO Milestone 2: Add `app_state: Extension<AppState>` to access:
-    // - app_state.model_kind (ListwiseReranker detection)
-    // - app_state.reranker_mode (Auto/Pairwise/Listwise)
-    // - app_state.listwise_config (max_docs_per_pass, ordering, etc.)
 ) -> Result<(HeaderMap, Json<RerankResponse>), (StatusCode, Json<ErrorResponse>)> {
     let span = tracing::Span::current();
     if let Some(context) = context {
         span.set_parent(context);
+    }
+
+    // Determine reranking strategy and dispatch (Milestone 8)
+    use crate::http::listwise_handler::rerank_listwise;
+    use crate::strategy::{determine_strategy, RerankStrategy};
+
+    let strategy = determine_strategy(&state.reranker_mode, &state.model_kind).map_err(|e| {
+        tracing::error!("Strategy determination failed: {}", e);
+        ErrorResponse {
+            error: e.to_string(),
+            error_type: ErrorType::Validation,
+        }
+    })?;
+
+    match strategy {
+        RerankStrategy::Listwise => {
+            // Dispatch to listwise handler
+            return rerank_listwise(axum::extract::State(state.0), Json(req)).await;
+        }
+        RerankStrategy::Pairwise => {
+            // Continue with existing pairwise logic below
+        }
     }
 
     let start_time = Instant::now();
@@ -1508,6 +1527,7 @@ example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )]
 #[instrument(skip_all)]
 async fn vertex_compatibility(
+    state: Extension<AppState>,
     infer: Extension<Infer>,
     info: Extension<Info>,
     context: Extension<Option<opentelemetry::Context>>,
@@ -1534,23 +1554,34 @@ async fn vertex_compatibility(
         let result = predict(infer, info, context, Json(req)).await?;
         Ok(VertexPrediction::Predict(result.1 .0))
     };
-    let rerank_future = move |infer: Extension<Infer>,
+    let rerank_future = move |state: Extension<AppState>,
+                              infer: Extension<Infer>,
                               info: Extension<Info>,
                               context: Extension<Option<opentelemetry::Context>>,
                               req: RerankRequest| async move {
-        let result = rerank(infer, info, context, Json(req)).await?;
+        let result = rerank(state, infer, info, context, Json(req)).await?;
         Ok(VertexPrediction::Rerank(result.1 .0))
     };
 
     let mut futures = Vec::with_capacity(req.instances.len());
     for instance in req.instances {
+        let local_state = state.clone();
         let local_infer = infer.clone();
         let local_info = info.clone();
         let local_context = context.clone();
 
         // Rerank is the only payload that can me matched safely
         if let Ok(instance) = serde_json::from_value::<RerankRequest>(instance.clone()) {
-            futures.push(rerank_future(local_infer, local_info, local_context, instance).boxed());
+            futures.push(
+                rerank_future(
+                    local_state,
+                    local_infer,
+                    local_info,
+                    local_context,
+                    instance,
+                )
+                .boxed(),
+            );
             continue;
         }
 

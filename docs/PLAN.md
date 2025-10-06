@@ -138,9 +138,29 @@ cargo build -p text-embeddings-backend-candle
   - **Tests: 23 passed**, 0 failed (router lib tests)
   - Metrics will be recorded in Milestone 8 handler implementation
 
-- [ ] **Milestone 8: 라우터 핸들러 구현**
+- [x] **Milestone 8: 라우터 핸들러 구현** ✅
+  - [x] rerank_listwise() HTTP handler in router/src/http/listwise_handler.rs
+  - [x] Input validation (empty texts, max documents, max document length)
+  - [x] Text truncation with modeling.py parity (query: 512, docs: 2048)
+  - [x] Block construction algorithm (max 125 docs OR capacity exhaustion)
+  - [x] **CRITICAL FIX**: Block weight calculation = max((1 + scores) / 2.0) ✅
+    - Previous: Used doc count (WRONG)
+    - Current: Uses max normalized score from block (matches modeling.py line ~180)
+  - [x] Zero-weight protection (fallback to equal weighting when total < 1e-6)
+  - [x] Special token validation with BAD_REQUEST (400) error code ✅
+    - Previous: Returned INTERNAL_SERVER_ERROR (500) (WRONG)
+    - Current: Returns BAD_REQUEST (400) for validation failures
+  - [x] Weighted average query embedding aggregation
+  - [x] Cosine similarity final scoring
+  - [x] Prometheus metrics integration (tei_lbnl_ms_per_group, tei_lbnl_seq_tokens, tei_lbnl_group_size, tei_lbnl_block_timeout_total)
+  - [x] Strategy dispatch (Auto/Pairwise/Listwise) via determine_strategy()
+  - [x] AppState extended with tokenizer field
+  - [x] Updated comments to match actual behavior
+  - **Tests: 23 passed**, 0 failed
+  - **TODO (deferred)**: Random ordering (RerankOrdering::Random shuffle)
+  - **TODO (verify)**: Block spill/shrink logic (needs modeling.py verification)
 - [ ] **Milestone 9: End-to-End 통합**
-
+  - note: Milestone 9.3 (Infer integration) completed ✅    Summary    Files Modified:   1. backends/src/lib.rs:     - Made backend_sender public     - Made BackendCommand enum public (required for public field)   2. core/src/infer.rs:     - Added embed_listwise_block() async method with backpressure-safe send().await     - Uses BackendCommand::EmbedListwise variant from Milestone 3     - Implements blocker B2 fix (avoids panic on full channel)
 ---
 
 ## 목차

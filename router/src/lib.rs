@@ -83,6 +83,7 @@ pub struct AppState {
     pub model_kind: ModelKind,
     pub reranker_mode: RerankMode,
     pub listwise_config: Arc<ListwiseConfig>,
+    pub tokenizer: Arc<Tokenizer>,
 }
 
 #[cfg(test)]
@@ -398,6 +399,9 @@ pub async fn run(
         default_prompt
     };
 
+    // Clone tokenizer for AppState (listwise handler needs direct access)
+    let tokenizer_for_state = tokenizer.clone();
+
     // Tokenization logic
     let tokenization = Tokenization::new(
         tokenization_workers,
@@ -525,6 +529,7 @@ pub async fn run(
         model_kind,
         reranker_mode,
         listwise_config: Arc::new(listwise_config),
+        tokenizer: Arc::new(tokenizer_for_state),
     };
 
     tracing::info!(
