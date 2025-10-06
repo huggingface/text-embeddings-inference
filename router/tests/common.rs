@@ -44,6 +44,8 @@ async fn check_health(port: u16, timeout: Duration) -> Result<()> {
 }
 
 pub async fn start_server(model_id: String, revision: Option<String>, dtype: DType) -> Result<()> {
+    use text_embeddings_router::strategy::{RerankMode, RerankOrdering};
+
     let server_task = tokio::spawn({
         run(
             model_id,
@@ -69,6 +71,16 @@ pub async fn start_server(model_id: String, revision: Option<String>, dtype: DTy
             None,
             "text-embeddings-inference.server".to_owned(),
             9000,
+            None,
+            // Listwise reranking parameters (defaults for tests)
+            RerankMode::Auto,
+            125,
+            RerankOrdering::Input,
+            None,
+            2_000_000,
+            30_000,
+            1_000,
+            102_400,
             None,
         )
     });

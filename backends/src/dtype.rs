@@ -31,6 +31,16 @@ impl fmt::Display for DType {
             DType::Float32 => write!(f, "float32"),
             #[cfg(feature = "python")]
             DType::Bfloat16 => write!(f, "bfloat16"),
+            // Catch-all for impossible configurations
+            #[cfg(all(
+                not(feature = "python"),
+                not(feature = "candle"),
+                not(feature = "ort")
+            ))]
+            _ => {
+                let _ = f;  // Suppress unused variable warning
+                unreachable!("DType has no variants in this configuration")
+            }
         }
     }
 }
@@ -38,22 +48,43 @@ impl fmt::Display for DType {
 #[allow(clippy::derivable_impls)]
 impl Default for DType {
     fn default() -> Self {
-        #[cfg(any(feature = "accelerate", feature = "mkl", feature = "ort"))]
-        {
-            DType::Float32
-        }
-        #[cfg(not(any(
-            feature = "accelerate",
-            feature = "mkl",
-            feature = "ort",
-            feature = "python"
-        )))]
-        {
-            DType::Float16
-        }
+        // Priority 1: Python feature → Bfloat16
         #[cfg(feature = "python")]
         {
-            DType::Bfloat16
+            return DType::Bfloat16;
+        }
+
+        // Priority 2: Candle with Float16 support (candle + !accelerate)
+        #[cfg(all(
+            not(feature = "python"),
+            feature = "candle",
+            not(feature = "accelerate")
+        ))]
+        {
+            return DType::Float16;
+        }
+
+        // Priority 3: Candle with accelerate OR ORT → Float32
+        #[cfg(all(
+            not(feature = "python"),
+            any(
+                all(feature = "candle", feature = "accelerate"),
+                feature = "ort"
+            )
+        ))]
+        {
+            return DType::Float32;
+        }
+
+        // Unreachable: If no features are enabled, build will fail earlier
+        // This branch should never execute but satisfies the compiler
+        #[cfg(all(
+            not(feature = "python"),
+            not(feature = "candle"),
+            not(feature = "ort")
+        ))]
+        {
+            unreachable!("No DType available - build should have failed earlier");
         }
     }
 }

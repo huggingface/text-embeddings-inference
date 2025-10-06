@@ -15,7 +15,8 @@ use tracing::{instrument, Span};
 
 pub use crate::dtype::DType;
 pub use text_embeddings_backend_core::{
-    BackendError, Batch, Embedding, Embeddings, ModelType, Pool,
+    BackendError, Batch, Embedding, Embeddings, ListwiseBlockInput, ListwiseBlockOutput, ModelType,
+    Pool,
 };
 
 #[cfg(feature = "candle")]
@@ -493,6 +494,12 @@ impl BackendThread {
                             (e, start.elapsed())
                         }));
                     }
+                    BackendCommand::EmbedListwise(input, span, sender) => {
+                        let _span = span.entered();
+                        let _ = sender.send(backend.embed_listwise_block(input).inspect(|_| {
+                            healthy = true;
+                        }));
+                    }
                 };
                 let _ = health_sender.send(healthy);
             }
@@ -519,6 +526,12 @@ enum BackendCommand {
         Span,
         #[allow(clippy::type_complexity)]
         oneshot::Sender<Result<(Predictions, Duration), BackendError>>,
+    ),
+    #[allow(dead_code)] // Will be used in Milestone 9
+    EmbedListwise(
+        ListwiseBlockInput,
+        Span,
+        oneshot::Sender<Result<ListwiseBlockOutput, BackendError>>,
     ),
 }
 
