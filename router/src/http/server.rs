@@ -309,6 +309,10 @@ async fn rerank(
     info: Extension<Info>,
     Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<RerankRequest>,
+    // TODO Milestone 2: Add `app_state: Extension<AppState>` to access:
+    // - app_state.model_kind (ListwiseReranker detection)
+    // - app_state.reranker_mode (Auto/Pairwise/Listwise)
+    // - app_state.listwise_config (max_docs_per_pass, ordering, etc.)
 ) -> Result<(HeaderMap, Json<RerankResponse>), (StatusCode, Json<ErrorResponse>)> {
     let span = tracing::Span::current();
     if let Some(context) = context {
@@ -1836,6 +1840,9 @@ pub async fn run(
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", doc))
         .merge(routes)
         .merge(public_routes)
+        // AppState available to handlers via Extension<AppState>
+        .layer(Extension(app_state.clone()))
+        // Legacy extensions for backward compatibility
         .layer(Extension(infer))
         .layer(Extension(info))
         .layer(Extension(prom_handle.clone()))
