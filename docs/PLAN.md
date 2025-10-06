@@ -96,7 +96,18 @@ cargo build -p text-embeddings-backend-candle
     - ⚠️  Router dependency: Router requires `http` or `grpc` feature; candle-only (`--features candle`) fails at workspace level
   - **Tests: ⚠️ Network-dependent** - Integration tests require HuggingFace model downloads (no network in env)
   - Note: Candle backend code compiles and passes all static checks; runtime tests deferred to environment with network access
-- [ ] **Milestone 5: 라우터 통합 - 특수 토큰 검증**
+
+- [x] **Milestone 5: 라우터 통합 - 특수 토큰 검증** ✅
+  - [x] validate_special_tokens() function in core/src/tokenization.rs
+  - [x] Validates embed_token count matches document count
+  - [x] Validates rerank_token count is exactly 1
+  - [x] Returns clear error messages for validation failures
+  - [x] 4 unit tests (success, missing_embed, extra_rerank, no_rerank)
+  - [x] All tests passing
+  - [x] No clippy warnings
+  - **Tests: 4 passed** (validation_tests module), 0 failed
+  - Function accessible as `text_embeddings_core::tokenization::validate_special_tokens`
+
 - [ ] **Milestone 6: 라우터 통합 - 수학 유틸리티**
 - [ ] **Milestone 7: 큐 격리 및 Prometheus 메트릭**
 - [ ] **Milestone 8: 라우터 핸들러 구현**

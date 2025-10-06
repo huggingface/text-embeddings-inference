@@ -531,8 +531,6 @@ pub fn into_tokens(encoding: tokenizers::Encoding, input: &str) -> Vec<SimpleTok
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // Note: This test requires hf-hub with ureq feature enabled
     // Disabled for now as it's not critical for Milestone 3 and causes build failures
     // TODO: Re-enable when proper feature flags are configured
@@ -772,4 +770,90 @@ pub fn truncate_texts(
     }
 
     Ok((query_trunc, docs_trunc, doc_lens, query_len))
+}
+
+/// 토큰화된 프롬프트가 예상되는 특수 토큰 개수를 포함하는지 검증
+///
+/// Hidden states에서 임베딩 추출시 범위 밖 접근 방지.
+///
+/// # 인자
+/// * `input_ids` - 토큰화된 시퀀스
+/// * `embed_token_id` - `<|embed_token|>`의 ID
+/// * `rerank_token_id` - `<|rerank_token|>`의 ID
+/// * `expected_doc_count` - 프롬프트의 문서 개수
+///
+/// # 에러
+/// 다음 경우 에러 반환:
+/// - embed 토큰 개수가 문서 개수와 일치하지 않음
+/// - rerank 토큰 개수가 정확히 1이 아님
+///
+/// # 예시
+/// ```rust
+/// let input_ids = vec![100, 151670, 200, 151670, 300, 151671, 400];
+/// validate_special_tokens(&input_ids, 151670, 151671, 2)?; // OK: 2 embed, 1 rerank
+/// ```
+pub fn validate_special_tokens(
+    input_ids: &[u32],
+    embed_token_id: u32,
+    rerank_token_id: u32,
+    expected_doc_count: usize,
+) -> anyhow::Result<()> {
+    use anyhow::anyhow;
+
+    let embed_count = input_ids.iter().filter(|&&id| id == embed_token_id).count();
+
+    if embed_count != expected_doc_count {
+        return Err(anyhow!(
+            "Special token validation failed: Expected {} <|embed_token|> (ID: {}), found {}. \
+             This may indicate prompt injection or tokenization error.",
+            expected_doc_count,
+            embed_token_id,
+            embed_count
+        ));
+    }
+
+    let rerank_count = input_ids
+        .iter()
+        .filter(|&&id| id == rerank_token_id)
+        .count();
+
+    if rerank_count != 1 {
+        return Err(anyhow!(
+            "Special token validation failed: Expected exactly 1 <|rerank_token|> (ID: {}), found {}. \
+             This may indicate prompt injection or tokenization error.",
+            rerank_token_id,
+            rerank_count
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_special_tokens_success() {
+        let ids = vec![1, 2, 151670, 3, 151670, 4, 151671, 5];
+        assert!(validate_special_tokens(&ids, 151670, 151671, 2).is_ok());
+    }
+
+    #[test]
+    fn test_validate_special_tokens_missing_embed() {
+        let ids = vec![1, 2, 151670, 3, 151671, 4]; // embed 토큰 1개만
+        assert!(validate_special_tokens(&ids, 151670, 151671, 2).is_err());
+    }
+
+    #[test]
+    fn test_validate_special_tokens_extra_rerank() {
+        let ids = vec![1, 151670, 2, 151671, 3, 151671, 4]; // rerank 토큰 2개
+        assert!(validate_special_tokens(&ids, 151670, 151671, 1).is_err());
+    }
+
+    #[test]
+    fn test_validate_special_tokens_no_rerank() {
+        let ids = vec![1, 151670, 2, 151670, 3]; // rerank 토큰 없음
+        assert!(validate_special_tokens(&ids, 151670, 151671, 2).is_err());
+    }
 }
