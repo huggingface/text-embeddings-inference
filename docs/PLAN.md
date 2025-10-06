@@ -124,7 +124,20 @@ cargo build -p text-embeddings-backend-candle
   - Functions accessible as `router::listwise::math::*`
   - Normalization policy: L2 norm happens ONLY in cosine_similarity (modeling.py parity)
 
-- [ ] **Milestone 7: 큐 격리 및 Prometheus 메트릭**
+- [x] **Milestone 7: 큐 격리 및 Prometheus 메트릭** ✅
+  - [x] Queue isolation policy documented in router/src/listwise/mod.rs
+  - [x] Shared worker queue design (BackendCommand::EmbedListwise from Milestone 3)
+  - [x] No cross-request batching (privacy/accuracy guarantee)
+  - [x] Prometheus metrics buckets configured in router/src/prometheus.rs
+  - [x] Histogram buckets: tei_lbnl_ms_per_group (duration in ms)
+  - [x] Histogram buckets: tei_lbnl_seq_tokens (sequence length)
+  - [x] Histogram buckets: tei_lbnl_group_size (docs per block)
+  - [x] Counter: tei_lbnl_block_timeout_total (timeout events, will be used in handler)
+  - [x] All buckets properly registered with PrometheusBuilder
+  - [x] No clippy warnings
+  - **Tests: 23 passed**, 0 failed (router lib tests)
+  - Metrics will be recorded in Milestone 8 handler implementation
+
 - [ ] **Milestone 8: 라우터 핸들러 구현**
 - [ ] **Milestone 9: End-to-End 통합**
 
