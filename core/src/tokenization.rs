@@ -647,3 +647,124 @@ mod tests {
         );
     }
 }
+
+/// Listwise reranking을 위한 left padding으로 프롬프트 인코딩
+///
+/// Qwen3 모델은 인과성을 유지하기 위해 left padding이 필요합니다.
+///
+/// ⚠️ **SHOULD-FIX S2: 향상된 문서화**
+/// - 이것은 단일 샘플을 인코딩합니다 (배치 없음), 따라서 패딩이 적용되지 않습니다
+/// - Attention mask는 패드 토큰이 없으므로 모두 1입니다
+/// - 패딩은 서로 다른 길이의 여러 시퀀스를 배치할 때만 필요합니다
+/// - `add_special_tokens=true`는 HuggingFace Transformers 기본 동작과 일치합니다
+///
+/// # 인자
+/// * `tokenizer` - 토크나이저 인스턴스 (left padding으로 설정되어야 함)
+/// * `prompt` - 완전한 프롬프트 문자열 (이미 모든 특수 토큰 포함)
+/// * `max_length` - 최대 시퀀스 길이 (선택적, 검증용)
+///
+/// # 반환
+/// attention_mask=모두 1인 토큰화된 인코딩 (단일 샘플의 경우 패딩 없음)
+pub fn encode_listwise(
+    tokenizer: &Tokenizer,
+    prompt: &str,
+    max_length: Option<usize>,
+) -> anyhow::Result<tokenizers::Encoding> {
+    use anyhow::anyhow;
+
+    // 인코딩 정책 (S2): 단일 샘플 (배치 없음), 패딩 불필요
+    // 단일 시퀀스 인코딩에는 패딩이 없으므로 모든 attention mask 값은 1
+    // 패딩은 여러 시퀀스를 배치할 때만 적용됨
+
+    // 중요: add_special_tokens=true는 Python Transformers 기본값과 일치
+    // 정확한 블록 청킹을 위해 modeling.py와 토큰 카운트가 일치하도록 보장
+    // ChatML 토큰(<|im_start|>, <|im_end|>)을 인코딩에 포함
+    let encoding = tokenizer
+        .encode(prompt, true) // false였음 - 토큰 길이 불일치 발생!
+        .map_err(|e| anyhow!("Tokenization failed: {}", e))?;
+
+    // 길이 검증
+    if let Some(max_len) = max_length {
+        if encoding.len() > max_len {
+            return Err(anyhow!(
+                "Prompt exceeds max length: {} > {}. Try reducing document count or length.",
+                encoding.len(),
+                max_len
+            ));
+        }
+    }
+
+    Ok(encoding)
+}
+
+// 주의: Padding side/token은 모델 로드 중에 설정되어야 합니다 (Milestone 3.2 참조).
+
+/// 토큰 제한을 적용하기 위해 텍스트 절단 및 디코딩
+///
+/// Python 참조 `_truncate_texts` 동작과 일치:
+/// - 쿼리는 max_query_length로 절단 (기본값 512)
+/// - 각 문서는 max_doc_length로 절단 (기본값 2048)
+/// - 디코딩된 문자열과 토큰 길이 반환
+///
+/// 토크나이제이션 정책:
+/// - HuggingFace Transformers 기본값과 일치하는 `add_special_tokens=false` 사용
+/// - 이것은 encode/decode 사이클의 표준 동작
+/// - 특수 토큰(<|embed_token|>, <|rerank_token|>)은 토크나이저가 아닌 프롬프트 빌더에 의해 추가됨
+///
+/// # 반환
+/// (truncated_query, truncated_docs, doc_token_lengths, query_token_length)
+pub fn truncate_texts(
+    tokenizer: &Tokenizer,
+    query: &str,
+    documents: &[String],
+    max_query_length: usize,
+    max_doc_length: usize,
+) -> anyhow::Result<(String, Vec<String>, Vec<usize>, usize)> {
+    use anyhow::anyhow;
+
+    // 중요 토크나이제이션 정책 (modeling.py 패리티):
+    // - encode(..., true): 특수 토큰 추가 (HF Transformers 기본값과 일치)
+    // - decode(..., true): 디코딩시 특수 토큰 건너뛰기 (프롬프트에 BOS/EOS 방지)
+    // 완전한 HF 패리티를 위해 둘 다 TRUE로 설정
+
+    // 성능: clone 불필요 - 이 함수 동안 토크나이저는 불변
+    let tk = tokenizer;
+
+    // 쿼리
+    let q_enc = tk
+        .encode(query, true)
+        .map_err(|e| anyhow!("encode(query): {}", e))?;
+    let mut query_ids = q_enc.get_ids().to_vec();
+    let mut query_trunc = query.to_string();
+    if query_ids.len() > max_query_length {
+        query_ids.truncate(max_query_length);
+        // skip_special_tokens=true는 HF decode 기본값과 일치
+        query_trunc = tk
+            .decode(&query_ids, true)
+            .map_err(|e| anyhow!("decode(query): {}", e))?;
+    }
+    let query_len = query_ids.len();
+
+    // 문서들
+    let mut docs_trunc = Vec::with_capacity(documents.len());
+    let mut doc_lens = Vec::with_capacity(documents.len());
+    for d in documents {
+        let d_enc = tk
+            .encode(d, true)
+            .map_err(|e| anyhow!("encode(doc): {}", e))?;
+        let mut ids = d_enc.get_ids().to_vec();
+        if ids.len() > max_doc_length {
+            ids.truncate(max_doc_length);
+            // skip_special_tokens=true는 HF decode 기본값과 일치
+            docs_trunc.push(
+                tk.decode(&ids, true)
+                    .map_err(|e| anyhow!("decode(doc): {}", e))?,
+            );
+        } else {
+            docs_trunc.push(d.clone());
+        }
+        doc_lens.push(ids.len());
+    }
+
+    Ok((query_trunc, docs_trunc, doc_lens, query_len))
+}

@@ -1,6 +1,7 @@
 pub mod detection;
 pub mod download;
 pub mod infer;
+pub mod prompt;
 pub mod queue;
 pub mod tokenization;
 
