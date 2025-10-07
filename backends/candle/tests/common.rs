@@ -133,12 +133,12 @@ pub fn download_artifacts(
 ) -> Result<(PathBuf, Option<Vec<String>>)> {
     let mut builder = ApiBuilder::from_env().with_progress(false);
 
-    if let Some(cache_dir) = std::env::var_os("HUGGINGFACE_HUB_CACHE") {
-        builder = builder.with_cache_dir(cache_dir.into());
+    if let Ok(token) = std::env::var("HF_TOKEN") {
+        builder = builder.with_token(Some(token));
     }
 
-    if let Ok(origin) = std::env::var("HF_HUB_USER_AGENT_ORIGIN") {
-        builder = builder.with_user_agent("origin", origin.as_str());
+    if let Some(cache_dir) = std::env::var_os("HUGGINGFACE_HUB_CACHE") {
+        builder = builder.with_cache_dir(cache_dir.into());
     }
 
     let api = builder.build().unwrap();

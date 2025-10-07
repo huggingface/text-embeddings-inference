@@ -2,7 +2,6 @@ mod dtype;
 
 use hf_hub::api::tokio::{ApiError, ApiRepo};
 use rand::Rng;
-use serde::Deserialize;
 use std::cmp::{max, min};
 use std::env;
 use std::path::PathBuf;
@@ -13,6 +12,9 @@ use std::time::{Duration, Instant};
 use text_embeddings_backend_core::{Backend as CoreBackend, Predictions};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{instrument, Span};
+
+#[cfg(feature = "candle")]
+use serde::Deserialize;
 
 pub use crate::dtype::DType;
 pub use text_embeddings_backend_core::{
@@ -377,6 +379,18 @@ async fn init_backend(
                     }
                     false => {
                         tracing::info!("Model ONNX weights downloaded in {:?}", start.elapsed())
+                    }
+                }
+            }
+
+            // NOTE: for ONNX we need to retrieve the `tokenizer_config.json` to identify which
+            // `padding_side` needs to be applied for the input processing and the pooling
+            if let Some(api_repo) = api_repo.as_ref() {
+                tracing::info!("Downloading `tokenizer_config.json`");
+                match api_repo.get("tokenizer_config.json").await {
+                    Ok(_) => (),
+                    Err(err) => {
+                        tracing::warn!("Could not download `tokenizer_config.json`: {}", err)
                     }
                 }
             }

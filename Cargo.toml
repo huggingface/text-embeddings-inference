@@ -22,7 +22,7 @@ default-members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.8.0"
+version = "1.8.2"
 edition = "2021"
 authors = ["Olivier Dehaene", "Nicolas Patry", "Alvaro Bartolome"]
 homepage = "https://github.com/huggingface/text-embeddings-inference"
@@ -42,13 +42,13 @@ serde_json = "1.0"
 thiserror = "1.0"
 rand = "0.9"
 serial_test = "2.0.0"
-cudarc = { version = "0.13" , features =["cuda-12020"], default-features = false}
-intel-mkl-src = { version = "0.8"}
+cudarc = { version = "0.13", features =["cuda-12020"], default-features = false }
+intel-mkl-src = { version = "0.8", default-features = false }
 candle = { version = "0.8", package = "candle-core" }
-candle-nn = { version = "0.8"  }
+candle-nn = { version = "0.8" }
 candle-transformers = { version = "0.8" }
 candle-flash-attn = { version = "0.8" }
-candle-cublaslt= { version = "0.0.1" }
+candle-cublaslt = { version = "0.0.1" }
 candle-layer-norm = { version = "0.0.1" }
 candle-rotary = { version = "0.0.1" }
 candle-flash-attn-v1 = { version = "0.0.1" }
