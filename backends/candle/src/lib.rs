@@ -115,6 +115,46 @@ enum Config {
     XlmRoberta(BertConfig),
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+enum ModuleType {
+    #[serde(rename = "sentence_transformers.models.Dense")]
+    Dense,
+    #[serde(rename = "sentence_transformers.models.Normalize")]
+    Normalize,
+    #[serde(rename = "sentence_transformers.models.Pooling")]
+    Pooling,
+    #[serde(rename = "sentence_transformers.models.Transformer")]
+    Transformer,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ModuleConfig {
+    #[allow(dead_code)]
+    idx: usize,
+    #[allow(dead_code)]
+    name: String,
+    path: String,
+    #[serde(rename = "type")]
+    module_type: ModuleType,
+}
+
+fn parse_dense_paths_from_modules(model_path: &Path) -> Result<Vec<String>, std::io::Error> {
+    let modules_path = model_path.join("modules.json");
+    if !modules_path.exists() {
+        return Ok(vec![]);
+    }
+
+    let content = std::fs::read_to_string(&modules_path)?;
+    let modules: Vec<ModuleConfig> = serde_json::from_str(&content)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+
+    Ok(modules
+        .into_iter()
+        .filter(|module| module.module_type == ModuleType::Dense)
+        .map(|module| module.path)
+        .collect::<Vec<String>>())
+}
+
 pub struct CandleBackend {
     device: Device,
     model: Box<dyn Model + Send>,
@@ -511,55 +551,66 @@ impl CandleBackend {
             }
         };
 
-        // Load Dense layers from the provided Dense paths
+        // Load modules.json and read the Dense paths from there, unless `dense_paths` is provided
+        // in such case simply use the `dense_paths`
+        // 1. If `dense_paths` is None then try to read the `modules.json` file and parse the
+        //    content to read the paths of the default Dense paths, useful when the model directory
+        //    is provided as the `model-id` rather than the ID from the Hugging Face Hub
+        // 2. If `dense_paths` is Some (even if empty), respect that explicit choice and do not
+        //    read from modules.json, this allows users to explicitly disable dense layers
         let mut dense_layers = Vec::new();
-        if let Some(dense_paths) = &dense_paths {
-            if !dense_paths.is_empty() {
-                tracing::info!("Loading Dense module/s from path/s: {dense_paths:?}");
 
-                for dense_path in dense_paths.iter() {
-                    let dense_safetensors =
-                        model_path.join(format!("{dense_path}/model.safetensors"));
-                    let dense_pytorch = model_path.join(format!("{dense_path}/pytorch_model.bin"));
+        let paths_to_load = if let Some(dense_paths) = &dense_paths {
+            // If dense_paths is explicitly provided (even if empty), respect that choice
+            dense_paths.clone()
+        } else {
+            // Try to parse modules.json only if dense_paths is None
+            parse_dense_paths_from_modules(model_path).unwrap_or_default()
+        };
 
-                    if dense_safetensors.exists() || dense_pytorch.exists() {
-                        let dense_config_path =
-                            model_path.join(format!("{dense_path}/config.json"));
+        if !paths_to_load.is_empty() {
+            tracing::info!("Loading Dense module/s from path/s: {paths_to_load:?}");
 
-                        let dense_config_str = std::fs::read_to_string(&dense_config_path)
-                            .map_err(|err| {
-                                BackendError::Start(format!(
-                                    "Unable to read `{dense_path}/config.json` file: {err:?}",
-                                ))
-                            })?;
-                        let dense_config: DenseConfig = serde_json::from_str(&dense_config_str)
-                            .map_err(|err| {
-                                BackendError::Start(format!(
-                                    "Unable to parse `{dense_path}/config.json`: {err:?}",
-                                ))
-                            })?;
+            for dense_path in paths_to_load.iter() {
+                let dense_safetensors = model_path.join(format!("{dense_path}/model.safetensors"));
+                let dense_pytorch = model_path.join(format!("{dense_path}/pytorch_model.bin"));
 
-                        let dense_vb = if dense_safetensors.exists() {
-                            unsafe {
-                                VarBuilder::from_mmaped_safetensors(
-                                    &[dense_safetensors],
-                                    dtype,
-                                    &device,
-                                )
-                            }
-                            .s()?
-                        } else {
-                            VarBuilder::from_pth(&dense_pytorch, dtype, &device).s()?
-                        };
+                if dense_safetensors.exists() || dense_pytorch.exists() {
+                    let dense_config_path = model_path.join(format!("{dense_path}/config.json"));
 
-                        let dense_layer = Box::new(Dense::load(dense_vb, &dense_config).s()?)
-                            as Box<dyn DenseLayer + Send>;
-                        dense_layers.push(dense_layer);
+                    let dense_config_str =
+                        std::fs::read_to_string(&dense_config_path).map_err(|err| {
+                            BackendError::Start(format!(
+                                "Unable to read `{dense_path}/config.json` file: {err:?}",
+                            ))
+                        })?;
+                    let dense_config: DenseConfig = serde_json::from_str(&dense_config_str)
+                        .map_err(|err| {
+                            BackendError::Start(format!(
+                                "Unable to parse `{dense_path}/config.json`: {err:?}",
+                            ))
+                        })?;
 
-                        tracing::info!("Loaded Dense module from path: {dense_path}");
+                    let dense_vb = if dense_safetensors.exists() {
+                        unsafe {
+                            VarBuilder::from_mmaped_safetensors(
+                                &[dense_safetensors],
+                                dtype,
+                                &device,
+                            )
+                        }
+                        .s()?
                     } else {
-                        tracing::warn!("Dense module files not found for path: {dense_path}",);
-                    }
+                        VarBuilder::from_pth(&dense_pytorch, dtype, &device).s()?
+                    };
+
+                    let dense_layer = Box::new(Dense::load(dense_vb, &dense_config).s()?)
+                        as Box<dyn DenseLayer + Send>;
+                    dense_layers.push(dense_layer);
+
+                    tracing::info!("Loaded Dense module from path: {dense_path}");
+                } else {
+                    tracing::warn!("Dense module files not found for path: {dense_path}",);
                 }
             }
         }
