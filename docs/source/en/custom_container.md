@@ -16,7 +16,7 @@ rendered properly in your Markdown viewer.
 
 # Build a custom container for TEI
 
-You can build our own CPU or CUDA TEI container using Docker.  To build a CPU container, run the following command in the
+You can build our own CPU or CUDA TEI container using Docker. To build a CPU container, run the following command in the
 directory containing your custom Dockerfile:
 
 ```shell
@@ -35,7 +35,8 @@ the examples of runtime compute capabilities for various GPU types:
 - Blackwell (RTX 5000 series, ...) - `runtime_compute_cap=120`
 
 Once you have determined the compute capability is determined, set it as the `runtime_compute_cap` variable and build
-the container as shown in the example below:
+the container using `Dockerfile-cuda` if the runtime compute cap is lower than 120 otherwise use
+`Dockerfile-cuda-blackwell` as shown in the example below:
 
 ```shell
 # Get submodule dependencies
