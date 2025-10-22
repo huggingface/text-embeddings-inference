@@ -1,4 +1,6 @@
 import os
+import re
+import functools
 from loguru import logger
 import importlib.metadata
 import importlib.util
@@ -49,6 +51,21 @@ def is_hpu() -> bool:
         is_hpu_available = False
     return is_hpu_available
 
+@functools.cache
+def get_neuron_major() -> int:
+    MAJORS_FILE = "/proc/devices"
+    NEURON_MAJOR_LINE = re.compile(r"^\s*(\d+)\s+neuron\s*$")
+    if not os.path.exists(MAJORS_FILE):
+        return -1
+    with open(MAJORS_FILE, "r") as f:
+        for l in f.readlines():
+            m = NEURON_MAJOR_LINE.match(l)
+            if m:
+                return int(m.group(1))
+    return -1
+
+def is_neuron() -> bool:
+    return get_neuron_major > -1
 
 def use_ipex() -> bool:
     value = os.environ.get("USE_IPEX", "True").lower()
@@ -72,5 +89,7 @@ def get_device():
 
         if hasattr(torch, "xpu") and torch.xpu.is_available():
             device = torch.device("xpu")
+    elif is_neuron():
+        device = torch.device("xla")
 
     return device

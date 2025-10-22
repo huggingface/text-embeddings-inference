@@ -14,7 +14,9 @@ from text_embeddings_server.models.classification_model import ClassificationMod
 from text_embeddings_server.models.jinaBert_model import FlashJinaBert
 from text_embeddings_server.models.flash_mistral import FlashMistral
 from text_embeddings_server.models.flash_qwen3 import FlashQwen3
-from text_embeddings_server.utils.device import get_device, use_ipex
+from text_embeddings_server.models.neuron_models import NeuronSentenceTransformers
+
+from text_embeddings_server.utils.device import get_device, use_ipex, is_neuron
 
 __all__ = ["Model"]
 
@@ -74,6 +76,11 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
     logger.info(f"backend device: {device}")
 
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
+    
+    # Neuron cases
+    if is_neuron():
+        if config.model_type == "bert":
+            return create_model(NeuronSentenceTransformers, model_path)
 
     if (
         hasattr(config, "auto_map")
