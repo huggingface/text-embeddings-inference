@@ -1,0 +1,187 @@
+ARG PLATFORM=neuron
+FROM lukemathwalker/cargo-chef:latest-rust-1.85-bookworm AS chef
+WORKDIR /usr/src
+
+ENV SCCACHE=0.10.0
+ENV RUSTC_WRAPPER=/usr/local/bin/sccache
+
+# Donwload, configure sccache
+RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sccache-v$SCCACHE-x86_64-unknown-linux-musl.tar.gz | tar -xzv --strip-components=1 -C /usr/local/bin sccache-v$SCCACHE-x86_64-unknown-linux-musl/sccache && \
+    chmod +x /usr/local/bin/sccache
+
+FROM chef AS planner
+
+COPY backends backends
+COPY core core
+COPY router router
+COPY Cargo.toml ./
+COPY Cargo.lock ./
+
+RUN cargo chef prepare  --recipe-path recipe.json
+
+FROM chef AS builder
+
+ARG GIT_SHA
+ARG DOCKER_LABEL
+
+# sccache specific variables
+ARG SCCACHE_GHA_ENABLED
+
+COPY --from=planner /usr/src/recipe.json recipe.json
+
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    cargo chef cook --release --features ort,candle,mkl,static-linking --no-default-features --recipe-path recipe.json && sccache -s
+
+COPY backends backends
+COPY core core
+COPY router router
+COPY Cargo.toml ./
+COPY Cargo.lock ./
+
+FROM builder AS http-builder
+
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    cargo build --release --bin text-embeddings-router --features ort,candle,mkl,static-linking,http --no-default-features && sccache -s
+
+FROM builder AS grpc-builder
+
+RUN PROTOC_ZIP=protoc-21.12-linux-x86_64.zip && \
+    curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v21.12/$PROTOC_ZIP && \
+    unzip -o $PROTOC_ZIP -d /usr/local bin/protoc && \
+    unzip -o $PROTOC_ZIP -d /usr/local 'include/*' && \
+    rm -f $PROTOC_ZIP
+
+COPY proto proto
+
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    cargo build --release --bin text-embeddings-router --features ort,candle,mkl,static-linking,grpc --no-default-features && sccache -s
+
+FROM public.ecr.aws/docker/library/ubuntu:22.04 AS neuron
+
+ENV HUGGINGFACE_HUB_CACHE=/data \
+    PORT=80
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-dev \
+    build-essential \
+    git \
+    curl \
+    cmake \
+    pkg-config \
+    protobuf-compiler \
+    ninja-build \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN ln -s /usr/bin/python3 /usr/local/bin/python || true
+RUN ln -s /usr/bin/pip3 /usr/local/bin/pip || true
+
+WORKDIR /usr/src
+COPY backends backends
+COPY backends/python/server/text_embeddings_server/models/__init__.py backends/python/server/text_embeddings_server/models/__init__.py
+COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
+RUN cd backends/python/server && \
+    make install
+
+ARG NEURONX_COLLECTIVES_LIB_VERSION=2.28.27.0-bc30ece58
+ARG NEURONX_RUNTIME_LIB_VERSION=2.28.23.0-dd5879008
+ARG NEURONX_TOOLS_VERSION=2.26.14.0
+
+ARG NEURONX_CC_VERSION=2.21.18209.0+043b1bf7
+ARG NEURONX_FRAMEWORK_VERSION=2.8.0.2.10.13553+1e4dd6ca
+ARG NEURONX_DISTRIBUTED_VERSION=0.15.22404+1f27bddf
+ARG NEURONX_DISTRIBUTED_INFERENCE_VERSION=0.6.10598+a59fdc00
+
+RUN apt-get update \
+ && apt-get upgrade -y \
+ && apt-get install -y --no-install-recommends \
+    apt-transport-https \
+    build-essential \
+    ca-certificates \
+    cmake \
+    curl \
+    emacs \
+    git \
+    gnupg2 \
+    gpg-agent \
+    jq \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libcap-dev \
+    libhwloc-dev \
+    openjdk-11-jdk \
+    unzip \
+    vim \
+    wget \
+    zlib1g-dev \
+ && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /tmp/tmp* \
+ && apt-get clean
+
+RUN echo "deb https://apt.repos.neuron.amazonaws.com focal main" > /etc/apt/sources.list.d/neuron.list
+RUN wget -qO - https://apt.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB | apt-key add -
+
+RUN apt-get update \
+ && apt-get install -y \
+   aws-neuronx-tools=$NEURONX_TOOLS_VERSION \
+   aws-neuronx-collectives=$NEURONX_COLLECTIVES_LIB_VERSION \
+   aws-neuronx-runtime-lib=$NEURONX_RUNTIME_LIB_VERSION \
+ && rm -rf /var/lib/apt/lists/* \
+ && rm -rf /tmp/tmp* \
+ && apt-get clean
+
+RUN pip install --index-url https://pip.repos.neuron.amazonaws.com \
+    --extra-index-url https://pypi.org/simple \
+    --trusted-host pip.repos.neuron.amazonaws.com \
+    neuronx-cc==$NEURONX_CC_VERSION \
+    torch-neuronx==$NEURONX_FRAMEWORK_VERSION \
+    neuronx_distributed==$NEURONX_DISTRIBUTED_VERSION \
+ && rm -rf ~/.cache/pip/*
+
+# HF ARGS
+ARG TRANSFORMERS_VERSION=4.55.4
+ARG DIFFUSERS_VERSION=0.35.2
+ARG HUGGINGFACE_HUB_VERSION=0.36.0
+ARG OPTIMUM_NEURON_VERSION=0.4.1
+ARG SENTENCE_TRANSFORMERS=5.1.2
+ARG PEFT_VERSION=0.17.0
+ARG DATASETS_VERSION=4.1.1
+
+# install Hugging Face libraries and its dependencies
+RUN pip install --no-cache-dir -U \
+	networkx==2.8.8 \
+	transformers[sentencepiece,audio,vision]==${TRANSFORMERS_VERSION} \
+    diffusers==${DIFFUSERS_VERSION} \
+    compel \
+    controlnet-aux \
+    huggingface_hub==${HUGGINGFACE_HUB_VERSION} \
+    hf_transfer \
+    datasets==${DATASETS_VERSION} \
+    optimum-neuron==${OPTIMUM_NEURON_VERSION} \
+ 	sentence_transformers==${SENTENCE_TRANSFORMERS} \
+	peft==${PEFT_VERSION} \
+ && rm -rf ~/.cache/pip/*
+
+
+FROM neuron AS grpc
+
+COPY --from=grpc-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
+
+ENTRYPOINT ["text-embeddings-router"]
+CMD ["--json-output"]
+
+FROM neuron
+
+COPY --from=http-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
+
+ENTRYPOINT ["text-embeddings-router"]
+CMD ["--json-output"]
+
+

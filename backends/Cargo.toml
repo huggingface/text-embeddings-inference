@@ -21,7 +21,6 @@ rand = { workspace = true }
 [features]
 clap = ["dep:clap", "text-embeddings-backend-core/clap"]
 python = ["dep:text-embeddings-backend-python"]
-neuron = ["dep:text-embeddings-backend-neuron"]
 ort = ["dep:text-embeddings-backend-ort"]
 candle = ["dep:text-embeddings-backend-candle"]
 cuda = ["text-embeddings-backend-candle?/cuda"]

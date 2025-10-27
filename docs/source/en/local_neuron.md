@@ -1,1 +1,0 @@
-# Neuron backend for AWS Trainium and Inferentia
