@@ -433,6 +433,8 @@ async fn init_backend(
                 tracing::info!("Dense modules downloaded in {:?}", start.elapsed());
                 Some(dense_paths)
             } else {
+                // TODO(alvarobartt): eventually detach the Sentence Transformers module handling
+                // to prevent from duplicated code here and there
                 // For local models, try to parse modules.json and handle dense_path logic
                 let modules_json_path = model_path.join("modules.json");
                 if modules_json_path.exists() {
