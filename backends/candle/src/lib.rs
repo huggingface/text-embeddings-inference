@@ -511,9 +511,8 @@ impl CandleBackend {
             }
         };
 
-        // Load Dense layers from the provided Dense paths
         let mut dense_layers = Vec::new();
-        if let Some(dense_paths) = &dense_paths {
+        if let Some(dense_paths) = dense_paths {
             if !dense_paths.is_empty() {
                 tracing::info!("Loading Dense module/s from path/s: {dense_paths:?}");
 
