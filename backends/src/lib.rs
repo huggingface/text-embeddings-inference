@@ -433,7 +433,40 @@ async fn init_backend(
                 tracing::info!("Dense modules downloaded in {:?}", start.elapsed());
                 Some(dense_paths)
             } else {
-                None
+                // TODO(alvarobartt): eventually detach the Sentence Transformers module handling
+                // to prevent from duplicated code here and there
+                // For local models, try to parse modules.json and handle dense_path logic
+                let modules_json_path = model_path.join("modules.json");
+                if modules_json_path.exists() {
+                    match parse_dense_paths_from_modules(&modules_json_path).await {
+                        Ok(module_paths) => match module_paths.len() {
+                            0 => Some(vec![]),
+                            1 => {
+                                let path_to_use = if let Some(ref user_path) = dense_path {
+                                    if user_path != &module_paths[0] {
+                                        tracing::info!("`{}` found in `modules.json`, but using provided `--dense-path={user_path}` instead", module_paths[0]);
+                                    }
+                                    user_path.clone()
+                                } else {
+                                    module_paths[0].clone()
+                                };
+                                Some(vec![path_to_use])
+                            }
+                            _ => {
+                                if dense_path.is_some() {
+                                    tracing::warn!("A value for `--dense-path` was provided, but since there's more than one subsequent Dense module, then the provided value will be ignored.");
+                                }
+                                Some(module_paths)
+                            }
+                        },
+                        Err(err) => {
+                            tracing::warn!("Failed to parse local modules.json: {err}");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
             };
 
             let backend = CandleBackend::new(
