@@ -564,6 +564,7 @@ pub enum ErrorType {
     Validation,
     Tokenizer,
     Empty,
+    NotFound,
 }
 
 #[derive(Serialize)]

@@ -1141,6 +1141,29 @@ async fn openai_embed(
         span.set_parent(context);
     }
 
+    // Validate model name if provided in request
+    if let Some(requested_model) = &req.model {
+        let expected_model = info
+            .served_model_name
+            .as_ref()
+            .unwrap_or(&info.model_id);
+
+        if requested_model != expected_model {
+            let message = format!(
+                "Model `{}` not found. Available model: `{}`",
+                requested_model, expected_model
+            );
+            tracing::error!("{message}");
+            let err = ErrorResponse {
+                error: message,
+                error_type: ErrorType::NotFound,
+            };
+            let counter = metrics::counter!("te_request_failure", "err" => "model_not_found");
+            counter.increment(1);
+            return Err((StatusCode::NOT_FOUND, Json(err.into())));
+        }
+    }
+
     let start_time = Instant::now();
 
     let truncate = info.auto_truncate;
@@ -1869,6 +1892,7 @@ impl From<&ErrorType> for StatusCode {
             ErrorType::Tokenizer => StatusCode::UNPROCESSABLE_ENTITY,
             ErrorType::Validation => StatusCode::PAYLOAD_TOO_LARGE,
             ErrorType::Empty => StatusCode::BAD_REQUEST,
+            ErrorType::NotFound => StatusCode::NOT_FOUND,
         }
     }
 }
