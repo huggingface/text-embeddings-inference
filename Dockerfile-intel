@@ -59,7 +59,7 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     cargo build --release --bin text-embeddings-router -F grpc -F python --no-default-features && sccache -s
 
-FROM intel/intel-extension-for-pytorch:2.7.0-pip-base AS cpu
+FROM intel/intel-extension-for-pytorch:2.8.0-pip-base AS cpu
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80
 
@@ -77,12 +77,12 @@ COPY backends/python/server/text_embeddings_server/models/__init__.py backends/p
 COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
 COPY backends/python/server/requirements-intel.txt backends/python/server/requirements.txt
 
-RUN python -m pip install torch==2.7.0 torchvision torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cpu --no-cache-dir
+RUN python -m pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cpu --no-cache-dir
 
 RUN cd backends/python/server && \
     make install
 
-FROM vault.habana.ai/gaudi-docker/1.21.0/ubuntu22.04/habanalabs/pytorch-installer-2.6.0:latest AS hpu
+FROM vault.habana.ai/gaudi-docker/1.21.3/ubuntu22.04/habanalabs/pytorch-installer-2.6.0:latest AS hpu
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80
 ENV PT_HPU_LAZY_MODE=1
@@ -104,7 +104,7 @@ COPY backends/python/server/requirements-hpu.txt backends/python/server/requirem
 RUN cd backends/python/server && \
     make install
 
-FROM intel/intel-extension-for-pytorch:2.7.10-xpu AS xpu
+FROM intel/intel-extension-for-pytorch:2.8.10-xpu AS xpu
 
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80
@@ -118,8 +118,8 @@ RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRO
 
 RUN apt-get update && apt install -y intel-basekit cmake vim python3-dev ninja-build pciutils
 WORKDIR /usr/src
-RUN pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/xpu --no-cache-dir
-RUN pip install intel-extension-for-pytorch==2.7.10+xpu oneccl_bind_pt==2.7.0+xpu --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ --no-cache-dir
+RUN pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/xpu --no-cache-dir
+RUN pip install intel-extension-for-pytorch==2.8.10+xpu oneccl_bind_pt==2.8.0+xpu --extra-index-url https://pytorch-extension.intel.com/release-whl/stable/xpu/us/ --no-cache-dir
 
 ENV CCL_ROOT=/opt/intel/oneapi/ccl/latest
 ENV I_MPI_ROOT=/opt/intel/oneapi/mpi/latest

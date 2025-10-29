@@ -103,18 +103,42 @@ pub fn sort_embeddings(embeddings: Embeddings) -> (Vec<Vec<f32>>, Vec<Vec<f32>>)
     (pooled_embeddings, raw_embeddings)
 }
 
+#[derive(Deserialize, PartialEq)]
+enum ModuleType {
+    #[serde(rename = "sentence_transformers.models.Dense")]
+    Dense,
+    #[serde(rename = "sentence_transformers.models.Normalize")]
+    Normalize,
+    #[serde(rename = "sentence_transformers.models.Pooling")]
+    Pooling,
+    #[serde(rename = "sentence_transformers.models.Transformer")]
+    Transformer,
+}
+
+#[derive(Deserialize)]
+struct ModuleConfig {
+    #[allow(dead_code)]
+    idx: usize,
+    #[allow(dead_code)]
+    name: String,
+    path: String,
+    #[serde(rename = "type")]
+    module_type: ModuleType,
+}
+
 pub fn download_artifacts(
     model_id: &'static str,
     revision: Option<&'static str>,
-) -> Result<PathBuf> {
+    dense_path: Option<&'static str>,
+) -> Result<(PathBuf, Option<Vec<String>>)> {
     let mut builder = ApiBuilder::from_env().with_progress(false);
+
+    if let Ok(token) = std::env::var("HF_TOKEN") {
+        builder = builder.with_token(Some(token));
+    }
 
     if let Some(cache_dir) = std::env::var_os("HUGGINGFACE_HUB_CACHE") {
         builder = builder.with_cache_dir(cache_dir.into());
-    }
-
-    if let Ok(origin) = std::env::var("HF_HUB_USER_AGENT_ORIGIN") {
-        builder = builder.with_user_agent("origin", origin.as_str());
     }
 
     let api = builder.build().unwrap();
@@ -140,8 +164,36 @@ pub fn download_artifacts(
             vec![p]
         }
     };
+
+    let dense_paths = if let Ok(modules_path) = api_repo.get("modules.json") {
+        match parse_dense_paths_from_modules(&modules_path) {
+            Ok(paths) => match paths.len() {
+                0 => None,
+                1 => {
+                    let path = if let Some(path) = dense_path {
+                        path.to_string()
+                    } else {
+                        paths[0].clone()
+                    };
+
+                    download_dense_module(&api_repo, &path)?;
+                    Some(vec![path])
+                }
+                _ => {
+                    for path in &paths {
+                        download_dense_module(&api_repo, &path)?;
+                    }
+                    Some(paths)
+                }
+            },
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     let model_root = model_files[0].parent().unwrap().to_path_buf();
-    Ok(model_root)
+    Ok((model_root, dense_paths))
 }
 
 fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
@@ -181,6 +233,38 @@ fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     }
 
     Ok(safetensors_files)
+}
+
+fn parse_dense_paths_from_modules(modules_path: &PathBuf) -> Result<Vec<String>, std::io::Error> {
+    let content = std::fs::read_to_string(modules_path)?;
+    let modules: Vec<ModuleConfig> = serde_json::from_str(&content)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+
+    Ok(modules
+        .into_iter()
+        .filter(|module| module.module_type == ModuleType::Dense)
+        .map(|module| module.path)
+        .collect::<Vec<String>>())
+}
+
+fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBuf, ApiError> {
+    let config_file = format!("{}/config.json", dense_path);
+    tracing::info!("Downloading `{}`", config_file);
+    let config_path = api.get(&config_file)?;
+
+    let safetensors_file = format!("{}/model.safetensors", dense_path);
+    tracing::info!("Downloading `{}`", safetensors_file);
+    match api.get(&safetensors_file) {
+        Ok(_) => {}
+        Err(err) => {
+            tracing::warn!("Could not download `{}`: {}", safetensors_file, err);
+            let pytorch_file = format!("{}/pytorch_model.bin", dense_path);
+            tracing::info!("Downloading `{}`", pytorch_file);
+            api.get(&pytorch_file)?;
+        }
+    }
+
+    Ok(config_path.parent().unwrap().to_path_buf())
 }
 
 #[allow(unused)]

@@ -55,6 +55,7 @@ pub async fn run(
     auto_truncate: bool,
     default_prompt: Option<String>,
     default_prompt_name: Option<String>,
+    dense_path: Option<String>,
     hf_token: Option<String>,
     hostname: Option<String>,
     port: u16,
@@ -184,13 +185,35 @@ pub async fn run(
             break;
         }
     }
-    let max_input_length = match st_config {
+
+    let base_input_length = match st_config {
         Some(config) => config.max_seq_length,
         None => {
             tracing::warn!("Could not find a Sentence Transformers config");
             config.max_position_embeddings - position_offset
         }
     };
+
+    // Raise an error when max_input_length is bigger than max_batch tokens to prevent an infinite loop in the queue
+    let max_input_length = if base_input_length > max_batch_tokens {
+        if !auto_truncate {
+            anyhow::bail!(
+                "`--max-batch-tokens` cannot be lower than the model `max_input_length` ({} < {}) when `--auto-truncate` is disabled, add the `--auto-truncate` flag to truncate the input sequences to match the `--max-batch-tokens`.",
+                base_input_length,
+                max_batch_tokens
+            );
+        }
+        tracing::warn!(
+            "The input sequences will be truncated to {} tokens even if the model `max_input_length` is greater than the provided `--max-batch-tokens` ({} > {}), as `--auto-truncate` is enabled.",
+            max_batch_tokens,
+            base_input_length,
+            max_batch_tokens
+        );
+        max_batch_tokens
+    } else {
+        base_input_length
+    };
+
     tracing::info!("Maximum number of tokens per request: {max_input_length}");
 
     let tokenization_workers = tokenization_workers.unwrap_or_else(num_cpus::get);
@@ -229,8 +252,14 @@ pub async fn run(
         prompts,
     );
 
-    // Get dtype
-    let dtype = dtype.unwrap_or_default();
+    // NOTE: `gemma3_text` won't support Float16 but only Float32, given that with `candle-cuda`
+    // feature, the default `Dtype::Float16` this overrides that to prevent issues when running a
+    // `gemma3_text` model without specifying a `--dtype`
+    let dtype = if dtype.is_none() && config.model_type == "gemma3_text" {
+        DType::Float32
+    } else {
+        dtype.unwrap_or_default()
+    };
 
     // Create backend
     tracing::info!("Starting model backend");
@@ -239,6 +268,7 @@ pub async fn run(
         api_repo,
         dtype.clone(),
         backend_model_type,
+        dense_path,
         uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_string()),
         otlp_endpoint.clone(),
         otlp_service_name.clone(),
@@ -407,6 +437,7 @@ fn get_backend_model_type(
             }
         }
     };
+
     Ok(text_embeddings_backend::ModelType::Embedding(pool))
 }
 
@@ -547,6 +578,7 @@ impl From<TextEmbeddingsError> for ErrorResponse {
         let error_type = match err {
             TextEmbeddingsError::Tokenizer(_) => ErrorType::Tokenizer,
             TextEmbeddingsError::Validation(_) => ErrorType::Validation,
+            TextEmbeddingsError::Empty(_) => ErrorType::Empty,
             TextEmbeddingsError::Overloaded(_) => ErrorType::Overloaded,
             TextEmbeddingsError::Backend(_) => ErrorType::Backend,
         };

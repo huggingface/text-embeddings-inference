@@ -91,6 +91,7 @@ impl TextEmbeddingsService {
                 truncation_direction,
                 request.prompt_name,
                 request.normalize,
+                request.dimensions.map(|v| v as usize),
                 permit,
             )
             .await

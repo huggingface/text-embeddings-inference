@@ -34,7 +34,7 @@ Next it's time to deploy your model. Let's say you want to use [`Qwen/Qwen3-Embe
 model=Qwen/Qwen3-Embedding-0.6B
 volume=$PWD/data
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id $model
 ```
 
 <Tip>
@@ -77,21 +77,31 @@ print(len(embedding[0]))
 ```
 
 #### OpenAI
-
-You can install it via pip as `pip install --upgrade openai`, and then run:
+To send requests to the [OpenAI Embeddings API](https://platform.openai.com/docs/api-reference/embeddings/create) exposed on Text Embeddings Inference (TEI) with the OpenAI Python SDK, you can install it as `pip install --upgrade openai`, and then run the following snippet:
 
 ```python
 import os
 from openai import OpenAI
 
-client = OpenAI(base_url="http://localhost:8080/v1/embeddings")
+client = OpenAI(base_url="http://localhost:8080/v1", api_key= "-")
 
 response = client.embeddings.create(
-  model="tei",
-  input="What is deep learning?"
+    model="text-embeddings-inference",
+    input="What is Deep Learning?",
 )
 
-print(response)
+print(response.data[0].embedding)
+```
+
+Alternatively, you can also send the request with cURL as follows:
+```bash
+curl http://localhost:8080/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input": "What is Deep Learning?",
+    "model": "text-embeddings-inference",
+    "encoding_format": "float"
+  }'
 ```
 
 ## Re-rankers and sequence classification
@@ -110,7 +120,7 @@ Let's say you want to use [`BAAI/bge-reranker-large`](https://huggingface.co/BAA
 model=BAAI/bge-reranker-large
 volume=$PWD/data
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id $model
 ```
 
 Once you have deployed a model, you can use the `rerank` endpoint to rank the similarity between a query and a list of texts. With `cURL` this can be done like so:
@@ -130,7 +140,7 @@ You can also use classic Sequence Classification models like [`SamLowe/roberta-b
 model=SamLowe/roberta-base-go_emotions
 volume=$PWD/data
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id $model
 ```
 
 Once you have deployed the model you can use the `predict` endpoint to get the emotions most associated with an input:
@@ -182,5 +192,5 @@ git clone https://huggingface.co/Alibaba-NLP/gte-base-en-v1.5
 volume=$PWD
 
 # Mount the models directory inside the container with a volume and set the model ID
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id /data/gte-base-en-v1.5
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id /data/gte-base-en-v1.5
 ```

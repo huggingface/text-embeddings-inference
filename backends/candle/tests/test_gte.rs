@@ -9,13 +9,14 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
 #[test]
 #[serial_test::serial]
 fn test_alibaba_gte() -> Result<()> {
-    let model_root = download_artifacts("Alibaba-NLP/gte-base-en-v1.5", None)?;
+    let (model_root, _) = download_artifacts("Alibaba-NLP/gte-base-en-v1.5", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
         &model_root,
         "float32".to_string(),
         ModelType::Embedding(Pool::Cls),
+        None,
     )?;
 
     let input_batch = batch(
@@ -53,13 +54,14 @@ fn test_alibaba_gte() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_alibaba_gte_new() -> Result<()> {
-    let model_root = download_artifacts("Alibaba-NLP/gte-multilingual-base", None)?;
+    let (model_root, _) = download_artifacts("Alibaba-NLP/gte-multilingual-base", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
         &model_root,
         "float32".to_string(),
         ModelType::Embedding(Pool::Cls),
+        None,
     )?;
 
     let input_batch = batch(
@@ -97,13 +99,15 @@ fn test_alibaba_gte_new() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_snowflake_gte() -> Result<()> {
-    let model_root = download_artifacts("Snowflake/snowflake-arctic-embed-m-v2.0", None)?;
+    let (model_root, _) =
+        download_artifacts("Snowflake/snowflake-arctic-embed-m-v2.0", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
         &model_root,
         "float32".to_string(),
         ModelType::Embedding(Pool::Cls),
+        None,
     )?;
 
     let input_batch = batch(
@@ -141,10 +145,16 @@ fn test_snowflake_gte() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_gte_classification() -> Result<()> {
-    let model_root = download_artifacts("Alibaba-NLP/gte-multilingual-reranker-base", None)?;
+    let (model_root, _) =
+        download_artifacts("Alibaba-NLP/gte-multilingual-reranker-base", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
-    let backend = CandleBackend::new(&model_root, "float32".to_string(), ModelType::Classifier)?;
+    let backend = CandleBackend::new(
+        &model_root,
+        "float32".to_string(),
+        ModelType::Classifier,
+        None,
+    )?;
 
     let input_single = batch(
         vec![tokenizer

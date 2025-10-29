@@ -39,18 +39,18 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ## Step 3: Install necessary packages
 
-This step  can take a while as we need to compile a lot of cuda kernels.
+This step  can take a while as we need to compile a lot of CUDA kernels.
 
 ### For Turing GPUs (T4, RTX 2000 series ... )
 
 ```shell
-cargo install --path router -F candle-cuda-turing -F http --no-default-features
+cargo install --path router -F candle-cuda-turing
 ```
 
 ### For Ampere and Hopper
 
 ```shell
-cargo install --path router -F candle-cuda -F http --no-default-features
+cargo install --path router -F candle-cuda
 ```
 
 ## Step 4: Launch Text Embeddings Inference
