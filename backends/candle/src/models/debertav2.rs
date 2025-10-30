@@ -1005,7 +1005,9 @@ impl DebertaV2Encoder {
 
         // Convert binary mask to additive bias: 0 for valid positions, large negative for masked
         let one = Tensor::ones_like(&attention_mask)?;
-        let bias = attention_mask.broadcast_sub(&one)?.broadcast_mul(&Tensor::new(&[10000.0_f32], &self.device)?)?;
+        let bias = attention_mask
+            .broadcast_sub(&one)?
+            .broadcast_mul(&Tensor::new(&[10000.0_f32], &self.device)?)?;
 
         Ok(bias)
     }
