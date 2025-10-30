@@ -1,8 +1,9 @@
 import os
-import torch
-from text_embeddings_server.utils.device import use_ipex, is_hpu
 
+import torch
 from loguru import logger
+
+from text_embeddings_server.utils.device import is_hpu, use_ipex
 
 if os.getenv("USE_FLASH_ATTENTION", "").lower() == "false":
     raise ImportError("`USE_FLASH_ATTENTION` is false.")
@@ -30,7 +31,7 @@ else:
         except ImportError:
             raise ImportError(
                 "Flash Attention V2 is not installed.\n"
-                "Use the official Docker image (ghcr.io/huggingface/text-generation-inference:latest) "
+                "Use the official Docker image (ghcr.io/huggingface/text-embeddings-inference:cuda-latest) "
                 "or install flash attention v2 with `cd server && make install install-flash-attention-v2`"
             )
         if not (is_sm8x or is_sm90):
@@ -45,7 +46,7 @@ else:
         except ImportError:
             raise ImportError(
                 "Flash Attention is not installed.\n"
-                "Use the official Docker image (ghcr.io/huggingface/text-generation-inference:latest) "
+                "Use the official Docker image (ghcr.io/huggingface/text-embeddings-inference:cuda-latest) "
                 "or install flash attention with `cd server && make install install-flash-attention`"
             ) from e
 
@@ -93,41 +94,23 @@ def attention(
         if use_ipex:
             import intel_extension_for_pytorch as ipex
 
-            if q.device.type == "xpu":
-                return ipex.llm.functional.varlen_attention(
-                    q.contiguous(),
-                    k.contiguous(),
-                    v.contiguous(),
-                    out,
-                    cu_seqlens,
-                    cu_seqlens,
-                    None,
-                    max_s,
-                    max_s,
-                    0,
-                    softmax_scale,
-                    zero_tensors=False,
-                    is_causal=False,
-                    return_softmax=False,
-                    gen_=None,
-                )
-            elif q.device.type == "cpu":
-                return ipex.llm.functional.varlen_attention(
-                    q,
-                    k,
-                    v,
-                    out,
-                    cu_seqlens,
-                    cu_seqlens,
-                    max_s,
-                    max_s,
-                    0,
-                    softmax_scale,
-                    zero_tensors=False,
-                    is_causal=False,
-                    return_softmax=False,
-                    gen_=None,
-                )
+            return ipex.llm.functional.varlen_attention(
+                q.contiguous() if q.device.type == "xpu" else q,
+                k.contiguous() if k.device.type == "xpu" else k,
+                v.contiguous() if v.device.type == "xpu" else v,
+                out,
+                cu_seqlens,
+                cu_seqlens,
+                None,
+                max_s,
+                max_s,
+                0,
+                softmax_scale,
+                zero_tensors=False,
+                is_causal=False,
+                return_softmax=False,
+                gen_=None,
+            )
 
         elif is_hpu:
             return hpu_attn(

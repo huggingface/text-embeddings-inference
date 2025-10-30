@@ -118,6 +118,16 @@ Options:
 
           [env: DEFAULT_PROMPT=]
 
+      --dense-path <DENSE_PATH>
+          Optionally, define the path to the Dense module required for some embedding models.
+
+          Some embedding models require an extra `Dense` module which contains a single Linear layer and an activation function. By default, those `Dense` modules are stored under the `2_Dense` directory, but there might be cases where different `Dense` modules are provided, to convert the pooled embeddings into different dimensions, available as `2_Dense_<dims>` e.g. https://huggingface.co/NovaSearch/stella_en_400M_v5.
+
+          Note that this argument is optional, only required to be set if the path to the `Dense` module is other than `2_Dense`. And it also applies when leveraging the `candle` backend.
+
+          [env: DENSE_PATH=]
+          [default: 2_Dense]
+
       --hf-token <HF_TOKEN>
           Your Hugging Face Hub token
 
@@ -191,9 +201,9 @@ Options:
 
           [env: CORS_ALLOW_ORIGIN=]
 
-      -h, --help
+  -h, --help
           Print help (see a summary with '-h')
 
-      -V, --version
+  -V, --version
           Print version
 ```

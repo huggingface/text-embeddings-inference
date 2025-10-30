@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0"
     },
-    "version": "1.7.1"
+    "version": "1.8.2"
   },
   "paths": {
     "/decode": {
@@ -41,6 +41,34 @@
               }
             }
           },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch is empty",
+                  "error_type": "empty"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Tokenization error",
             "content": {
@@ -49,8 +77,8 @@
                   "$ref": "#/components/schemas/ErrorResponse"
                 },
                 "example": {
-                  "message": "Tokenization error",
-                  "type": "tokenizer"
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
                 }
               }
             }
@@ -82,6 +110,20 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EmbedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch is empty",
+                  "error_type": "empty"
                 }
               }
             }
@@ -174,6 +216,20 @@
               }
             }
           },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch is empty",
+                  "error_type": "empty"
+                }
+              }
+            }
+          },
           "413": {
             "description": "Batch size error",
             "content": {
@@ -257,6 +313,20 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EmbedSparseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch is empty",
+                  "error_type": "empty"
                 }
               }
             }
@@ -418,6 +488,20 @@
               }
             }
           },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch is empty",
+                  "error_type": "empty"
+                }
+              }
+            }
+          },
           "413": {
             "description": "Batch size error",
             "content": {
@@ -502,6 +586,20 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RerankResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch is empty",
+                  "error_type": "empty"
                 }
               }
             }
@@ -593,6 +691,20 @@
               }
             }
           },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch is empty",
+                  "error_type": "empty"
+                }
+              }
+            }
+          },
           "413": {
             "description": "Batch size error",
             "content": {
@@ -680,6 +792,34 @@
               }
             }
           },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch is empty",
+                  "error_type": "empty"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              }
+            }
+          },
           "422": {
             "description": "Tokenization error",
             "content": {
@@ -688,8 +828,8 @@
                   "$ref": "#/components/schemas/ErrorResponse"
                 },
                 "example": {
-                  "message": "Tokenization error",
-                  "type": "tokenizer"
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
                 }
               }
             }
@@ -721,6 +861,20 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OpenAICompatResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                },
+                "example": {
+                  "message": "Batch is empty",
+                  "type": "empty"
                 }
               }
             }
@@ -900,6 +1054,14 @@
           "inputs"
         ],
         "properties": {
+          "dimensions": {
+            "type": "integer",
+            "description": "The number of dimensions that the output embeddings should have. If not set, the original\nshape of the representation will be returned instead.",
+            "default": "null",
+            "example": "null",
+            "nullable": true,
+            "minimum": 0
+          },
           "inputs": {
             "$ref": "#/components/schemas/Input"
           },
@@ -1044,7 +1206,8 @@
           "Backend",
           "Overloaded",
           "Validation",
-          "Tokenizer"
+          "Tokenizer",
+          "Empty"
         ]
       },
       "Info": {
@@ -1269,6 +1432,13 @@
           "input"
         ],
         "properties": {
+          "dimensions": {
+            "type": "integer",
+            "default": "null",
+            "example": "null",
+            "nullable": true,
+            "minimum": 0
+          },
           "encoding_format": {
             "allOf": [
               {
@@ -1554,9 +1724,6 @@
       },
       "SimilarityParameters": {
         "type": "object",
-        "required": [
-          "truncation_direction"
-        ],
         "properties": {
           "prompt_name": {
             "type": "string",

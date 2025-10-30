@@ -151,20 +151,16 @@ impl Infer {
             panic!("unexpected enum variant")
         };
 
-        // Timings
         let total_time = start_time.elapsed();
 
-        // Metrics
-        let counter = metrics::counter!("te_embed_success");
-        counter.increment(1);
-        let histogram = metrics::histogram!("te_embed_duration");
-        histogram.record(total_time.as_secs_f64());
-        let histogram = metrics::histogram!("te_embed_tokenization_duration");
-        histogram.record(response.metadata.tokenization.as_secs_f64());
-        let histogram = metrics::histogram!("te_embed_queue_duration");
-        histogram.record(response.metadata.queue.as_secs_f64());
-        let histogram = metrics::histogram!("te_embed_inference_duration");
-        histogram.record(response.metadata.inference.as_secs_f64());
+        metrics::counter!("te_embed_success").increment(1);
+        metrics::histogram!("te_embed_duration").record(total_time.as_secs_f64());
+        metrics::histogram!("te_embed_tokenization_duration")
+            .record(response.metadata.tokenization.as_secs_f64());
+        metrics::histogram!("te_embed_queue_duration")
+            .record(response.metadata.queue.as_secs_f64());
+        metrics::histogram!("te_embed_inference_duration")
+            .record(response.metadata.inference.as_secs_f64());
 
         Ok(response)
     }
@@ -224,6 +220,7 @@ impl Infer {
         Ok(response)
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self, inputs, permit))]
     pub async fn embed_pooled<I: Into<EncodingInput> + std::fmt::Debug>(
         &self,
@@ -232,6 +229,7 @@ impl Infer {
         truncation_direction: TruncationDirection,
         prompt_name: Option<String>,
         normalize: bool,
+        dimensions: Option<usize>,
         permit: OwnedSemaphorePermit,
     ) -> Result<PooledEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
@@ -239,11 +237,21 @@ impl Infer {
         if self.is_splade() && normalize {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
             counter.increment(1);
+
             let message = "`normalize` is not available for SPLADE models".to_string();
             tracing::error!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
             )));
+        }
+
+        if let Some(dimensions) = dimensions {
+            if dimensions == 0 {
+                metrics::counter!("te_request_failure", "err" => "validation").increment(1);
+                let message = "`dimensions` should be positive".to_string();
+                tracing::error!("{message}");
+                return Err(TextEmbeddingsError::Validation(message));
+            }
         }
 
         let results = self
@@ -261,6 +269,21 @@ impl Infer {
         let InferResult::PooledEmbedding(mut response) = results else {
             panic!("unexpected enum variant")
         };
+
+        if let Some(mrl_dimensions) = dimensions {
+            if mrl_dimensions > response.results.len() {
+                metrics::counter!("te_request_failure", "err" => "validation").increment(1);
+
+                let message =
+                    "`dimensions` should be smaller than the maximum embedding dimension."
+                        .to_string();
+                tracing::error!("{message}");
+
+                return Err(TextEmbeddingsError::Validation(message));
+            }
+
+            response.results.truncate(mrl_dimensions);
+        }
 
         if normalize {
             // Normalize embedding

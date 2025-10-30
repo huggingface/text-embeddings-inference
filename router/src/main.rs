@@ -106,6 +106,20 @@ struct Args {
     #[clap(long, env, conflicts_with = "default_prompt_name")]
     default_prompt: Option<String>,
 
+    /// Optionally, define the path to the Dense module required for some embedding models.
+    ///
+    /// Some embedding models require an extra `Dense` module which contains a single Linear layer
+    /// and an activation function. By default, those `Dense` modules are stored under the `2_Dense`
+    /// directory, but there might be cases where different `Dense` modules are provided, to
+    /// convert the pooled embeddings into different dimensions, available as `2_Dense_<dims>` e.g.
+    /// https://huggingface.co/NovaSearch/stella_en_400M_v5.
+    ///
+    /// Note that this argument is optional, only required to be set if there is no `modules.json`
+    /// file or when you want to override a single Dense module path, only when running with the
+    /// `candle` backend.
+    #[clap(long, env)]
+    dense_path: Option<String>,
+
     /// [DEPRECATED IN FAVOR OF `--hf-token`] Your Hugging Face Hub token
     #[clap(long, env, hide = true)]
     #[redact(partial)]
@@ -222,6 +236,7 @@ async fn main() -> Result<()> {
         args.auto_truncate,
         args.default_prompt,
         args.default_prompt_name,
+        args.dense_path,
         token,
         Some(args.hostname),
         args.port,

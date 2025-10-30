@@ -5,6 +5,7 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize, PartialEq, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum HiddenAct {
+    #[serde(alias = "gelu_pytorch_tanh")]
     Gelu,
     Relu,
     Silu,
@@ -68,15 +69,19 @@ impl Linear {
                 ),
             }
         } else {
-            let w = match x.dims() {
-                &[bsize, _, _] => self.weight.broadcast_left(bsize)?.t()?,
-                _ => self.weight.t()?,
+            let (x, w) = match x.dims() {
+                &[bsize, _, _] => (x, self.weight.broadcast_left(bsize)?.t()?),
+                // Metal devices require contiguous tensors for 2D matrix multiplication apparently
+                _ if matches!(x.device(), Device::Metal(_)) => (&x.contiguous()?, self.weight.t()?),
+                _ => (x, self.weight.t()?),
             };
             let x = x.matmul(&w)?;
+
             let x = match &self.bias {
                 None => Ok(x),
                 Some(bias) => x.broadcast_add(bias),
             }?;
+
             if let Some(act) = &self.act {
                 match act {
                     HiddenAct::Gelu => x.gelu(),

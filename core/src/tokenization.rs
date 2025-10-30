@@ -72,7 +72,7 @@ impl Tokenization {
     ) -> Result<ValidEncoding, TextEmbeddingsError> {
         // Check if inputs is empty
         if inputs.is_empty() {
-            return Err(TextEmbeddingsError::Validation(
+            return Err(TextEmbeddingsError::Empty(
                 "`inputs` cannot be empty".to_string(),
             ));
         }
@@ -107,7 +107,7 @@ impl Tokenization {
     ) -> Result<(Option<String>, RawEncoding), TextEmbeddingsError> {
         // Check if inputs is empty
         if inputs.is_empty() {
-            return Err(TextEmbeddingsError::Validation(
+            return Err(TextEmbeddingsError::Empty(
                 "`inputs` cannot be empty".to_string(),
             ));
         }
@@ -138,9 +138,9 @@ impl Tokenization {
         ids: Vec<u32>,
         skip_special_tokens: bool,
     ) -> Result<String, TextEmbeddingsError> {
-        // Check if inputs is empty
+        // Check if input_ids is empty
         if ids.is_empty() {
-            return Err(TextEmbeddingsError::Validation(
+            return Err(TextEmbeddingsError::Empty(
                 "`input_ids` cannot be empty".to_string(),
             ));
         }
