@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use candle::{bail, Context, DType, Device, IndexOp, Module, Result, Tensor, D};
+use crate::layers::HiddenAct;
 use crate::models::Model;
 use candle_nn::{
     conv1d, embedding, layer_norm, Conv1d, Conv1dConfig, Embedding, LayerNorm, Linear, VarBuilder,
@@ -9,37 +10,6 @@ use serde::{Deserialize, Deserializer};
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 pub const DTYPE: DType = DType::F32;
-
-// NOTE: HiddenAct and HiddenActLayer are both direct copies from bert.rs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum HiddenAct {
-    Gelu,
-    GeluApproximate,
-    Relu,
-}
-
-pub struct HiddenActLayer {
-    act: HiddenAct,
-    span: tracing::Span,
-}
-
-impl HiddenActLayer {
-    fn new(act: HiddenAct) -> Self {
-        let span = tracing::span!(tracing::Level::TRACE, "hidden-act");
-        Self { act, span }
-    }
-
-    fn forward(&self, xs: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-        match self.act {
-            // https://github.com/huggingface/transformers/blob/cd4584e3c809bb9e1392ccd3fe38b40daba5519a/src/transformers/activations.py#L213
-            HiddenAct::Gelu => xs.gelu_erf(),
-            HiddenAct::GeluApproximate => xs.gelu(),
-            HiddenAct::Relu => xs.relu(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -58,6 +28,7 @@ pub struct DebertaV2Config {
     pub num_hidden_layers: usize,
     pub num_attention_heads: usize,
     pub intermediate_size: usize,
+    #[serde(deserialize_with = "deberta_hidden_act_deserializer::deserialize")]
     pub hidden_act: HiddenAct,
     pub max_position_embeddings: usize,
     pub type_vocab_size: usize,
@@ -79,6 +50,7 @@ pub struct DebertaV2Config {
     pub conv_act: Option<String>,
     pub id2label: Option<Id2Label>,
     pub label2id: Option<Label2Id>,
+    #[serde(deserialize_with = "deberta_hidden_act_deserializer::deserialize_optional")]
     pub pooler_hidden_act: Option<HiddenAct>,
     pub pooler_hidden_size: Option<usize>,
 }
@@ -97,6 +69,36 @@ where
     match StringOrVec::deserialize(deserializer)? {
         StringOrVec::String(s) => Ok(s.split('|').map(String::from).collect()),
         StringOrVec::Vec(v) => Ok(v),
+    }
+}
+
+// Custom deserializer for DeBERTa hidden_act: maps "gelu" to GeluExact (exact GELU)
+mod deberta_hidden_act_deserializer {
+    use super::*;
+
+    fn parse(s: &str) -> std::result::Result<HiddenAct, String> {
+        match s.to_lowercase().as_str() {
+            "gelu" => Ok(HiddenAct::GeluExact),
+            "relu" => Ok(HiddenAct::Relu),
+            _ => Err(format!("Unknown hidden_act: {}", s)),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> std::result::Result<HiddenAct, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        parse(&s).map_err(serde::de::Error::custom)
+    }
+
+    pub fn deserialize_optional<'de, D>(deserializer: D) -> std::result::Result<Option<HiddenAct>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Option::<String>::deserialize(deserializer)?
+            .map(|s| parse(&s).map_err(serde::de::Error::custom))
+            .transpose()
     }
 }
 
@@ -268,6 +270,8 @@ pub struct DebertaV2DisentangledSelfAttention {
     share_att_key: bool,
     pos_key_proj: Option<Linear>,
     pos_query_proj: Option<Linear>,
+    is_c2p_attn: bool,
+    is_p2c_attn: bool,
     span: tracing::Span,
 }
 
@@ -299,6 +303,10 @@ impl DebertaV2DisentangledSelfAttention {
         let relative_attention = config.relative_attention;
         let mut max_relative_positions = config.max_relative_positions;
 
+        // Precompute attention type checks
+        let is_c2p_attn = config.pos_att_type.iter().any(|s| s == "c2p");
+        let is_p2c_attn = config.pos_att_type.iter().any(|s| s == "p2c");
+
         let mut pos_ebd_size: isize = 0;
         let position_buckets = config.position_buckets.unwrap_or(-1);
         let mut pos_key_proj: Option<Linear> = None;
@@ -314,14 +322,14 @@ impl DebertaV2DisentangledSelfAttention {
             }
 
             if !share_att_key {
-                if config.pos_att_type.iter().any(|s| s == "c2p") {
+                if is_c2p_attn {
                     pos_key_proj = Some(candle_nn::linear(
                         config.hidden_size,
                         all_head_size,
                         vb.pp("pos_key_proj"),
                     )?);
                 }
-                if config.pos_att_type.iter().any(|s| s == "p2c") {
+                if is_p2c_attn {
                     pos_query_proj = Some(candle_nn::linear(
                         config.hidden_size,
                         all_head_size,
@@ -347,6 +355,8 @@ impl DebertaV2DisentangledSelfAttention {
             share_att_key,
             pos_key_proj,
             pos_query_proj,
+            is_c2p_attn,
+            is_p2c_attn,
             span: tracing::span!(tracing::Level::TRACE, "attention"),
         })
     }
@@ -371,11 +381,11 @@ impl DebertaV2DisentangledSelfAttention {
 
         let mut scale_factor: usize = 1;
 
-        if self.config.pos_att_type.iter().any(|s| s == "c2p") {
+        if self.is_c2p_attn {
             scale_factor += 1;
         }
 
-        if self.config.pos_att_type.iter().any(|s| s == "p2c") {
+        if self.is_p2c_attn {
             scale_factor += 1;
         }
 
@@ -523,7 +533,7 @@ impl DebertaV2DisentangledSelfAttention {
                     .repeat(repeat_with)?,
             )
         } else {
-            if self.config.pos_att_type.iter().any(|s| s == "c2p") {
+            if self.is_c2p_attn {
                 pos_key_layer = Some(
                     self.transpose_for_scores(
                         &self
@@ -537,7 +547,7 @@ impl DebertaV2DisentangledSelfAttention {
                     .repeat(repeat_with)?,
                 )
             }
-            if self.config.pos_att_type.iter().any(|s| s == "p2c") {
+            if self.is_p2c_attn {
                 pos_query_layer = Some(self.transpose_for_scores(&self
                     .pos_query_proj
                     .as_ref()
@@ -548,7 +558,7 @@ impl DebertaV2DisentangledSelfAttention {
 
         let mut score = Tensor::new(&[0 as f32], &self.device)?;
 
-        if self.config.pos_att_type.iter().any(|s| s == "c2p") {
+        if self.is_c2p_attn {
             let pos_key_layer = pos_key_layer.context("c2p without pos_key_layer")?;
 
             let scale = Tensor::new(
@@ -580,7 +590,7 @@ impl DebertaV2DisentangledSelfAttention {
             )?;
         }
 
-        if self.config.pos_att_type.iter().any(|s| s == "p2c") {
+        if self.is_p2c_attn {
             let pos_query_layer = pos_query_layer.context("p2c without pos_key_layer")?;
 
             let scale = Tensor::new(
@@ -699,7 +709,7 @@ impl DebertaV2SelfOutput {
 // https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L307
 pub struct DebertaV2Intermediate {
     dense: Linear,
-    intermediate_act: HiddenActLayer,
+    intermediate_act: HiddenAct,
     span: tracing::Span,
 }
 
@@ -710,7 +720,7 @@ impl DebertaV2Intermediate {
             config.intermediate_size,
             vb.pp("intermediate.dense"),
         )?;
-        let intermediate_act = HiddenActLayer::new(config.hidden_act);
+        let intermediate_act = config.hidden_act.clone();
         Ok(Self {
             dense,
             intermediate_act,
@@ -1363,9 +1373,10 @@ impl DebertaV2ContextPooler {
         let pooler_hidden_act = self
             .config
             .pooler_hidden_act
+            .clone()
             .context("Could not obtain pooler hidden act from config")?;
 
-        HiddenActLayer::new(pooler_hidden_act).forward(&pooled_output)
+        pooler_hidden_act.forward(&pooled_output)
     }
 
     pub fn output_dim(&self) -> Result<usize> {
