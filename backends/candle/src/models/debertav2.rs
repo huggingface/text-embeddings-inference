@@ -1,15 +1,13 @@
 use std::collections::HashMap;
 
-use candle::{bail, Context, DType, Device, IndexOp, Module, Result, Tensor, D};
 use crate::layers::HiddenAct;
 use crate::models::Model;
+use candle::{bail, Context, DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{
     conv1d, embedding, layer_norm, Conv1d, Conv1dConfig, Embedding, LayerNorm, Linear, VarBuilder,
 };
 use serde::{Deserialize, Deserializer};
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
-
-pub const DTYPE: DType = DType::F32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -92,7 +90,9 @@ mod deberta_hidden_act_deserializer {
         parse(&s).map_err(serde::de::Error::custom)
     }
 
-    pub fn deserialize_optional<'de, D>(deserializer: D) -> std::result::Result<Option<HiddenAct>, D::Error>
+    pub fn deserialize_optional<'de, D>(
+        deserializer: D,
+    ) -> std::result::Result<Option<HiddenAct>, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -104,7 +104,6 @@ mod deberta_hidden_act_deserializer {
 
 // https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L823
 pub struct DebertaV2Embeddings {
-    device: Device,
     word_embeddings: Embedding,
     position_embeddings: Option<Embedding>,
     token_type_embeddings: Option<Embedding>,
@@ -117,7 +116,6 @@ pub struct DebertaV2Embeddings {
 
 impl DebertaV2Embeddings {
     pub fn load(vb: VarBuilder, config: &DebertaV2Config) -> Result<Self> {
-        let device = vb.device().clone();
         let config = config.clone();
 
         let embedding_size = config.embedding_size.unwrap_or(config.hidden_size);
@@ -166,7 +164,6 @@ impl DebertaV2Embeddings {
             position_embeddings,
             token_type_embeddings,
             layer_norm,
-            device,
             config,
             embedding_size,
             embed_proj,
@@ -185,7 +182,7 @@ impl DebertaV2Embeddings {
         let input_embeds = self.word_embeddings.forward(input_ids)?;
 
         let position_embeddings = match &self.position_embeddings {
-            Some(emb) => emb.forward(&position_ids)?,
+            Some(emb) => emb.forward(position_ids)?,
             None => Tensor::zeros_like(&input_embeds)?,
         };
 
@@ -199,7 +196,7 @@ impl DebertaV2Embeddings {
             embeddings = self.token_type_embeddings.as_ref().map_or_else(
                 || bail!("token_type_embeddings must be set when type_vocab_size > 0"),
                 |token_type_embeddings| {
-                    embeddings.add(&token_type_embeddings.forward(&token_type_ids)?)
+                    embeddings.add(&token_type_embeddings.forward(token_type_ids)?)
                 },
             )?;
         }
@@ -257,7 +254,6 @@ impl XSoftmax {
 
 // https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L605
 pub struct DebertaV2DisentangledSelfAttention {
-    config: DebertaV2Config,
     num_attention_heads: usize,
     query_proj: Linear,
     key_proj: Linear,
@@ -342,7 +338,6 @@ impl DebertaV2DisentangledSelfAttention {
         let device = vb.device().clone();
 
         Ok(Self {
-            config,
             num_attention_heads,
             query_proj,
             key_proj,
@@ -655,7 +650,11 @@ impl DebertaV2Attention {
     pub fn load(vb: VarBuilder, config: &DebertaV2Config) -> Result<Self> {
         let dsa = DebertaV2DisentangledSelfAttention::load(vb.pp("attention.self"), config)?;
         let output = DebertaV2SelfOutput::load(vb.pp("attention.output"), config)?;
-        Ok(Self { dsa, output, span: tracing::span!(tracing::Level::TRACE, "attention") })
+        Ok(Self {
+            dsa,
+            output,
+            span: tracing::span!(tracing::Level::TRACE, "attention"),
+        })
     }
 
     fn forward(
@@ -695,7 +694,11 @@ impl DebertaV2SelfOutput {
             config.layer_norm_eps,
             vb.pp("LayerNorm"),
         )?;
-        Ok(Self { dense, layer_norm, span: tracing::span!(tracing::Level::TRACE, "self-output") })
+        Ok(Self {
+            dense,
+            layer_norm,
+            span: tracing::span!(tracing::Level::TRACE, "self-output"),
+        })
     }
 
     pub fn forward(&self, hidden_states: &Tensor, input_tensor: &Tensor) -> Result<Tensor> {
@@ -754,7 +757,11 @@ impl DebertaV2Output {
             config.layer_norm_eps,
             vb.pp("output.LayerNorm"),
         )?;
-        Ok(Self { dense, layer_norm, span: tracing::span!(tracing::Level::TRACE, "output") })
+        Ok(Self {
+            dense,
+            layer_norm,
+            span: tracing::span!(tracing::Level::TRACE, "output"),
+        })
     }
 
     pub fn forward(&self, hidden_states: &Tensor, input_tensor: &Tensor) -> Result<Tensor> {
@@ -1096,17 +1103,15 @@ impl DebertaV2Model {
                 let classifier = DebertaV2SeqClassificationHead::load(vb.clone(), config)?;
                 (Some(classifier), None)
             }
-            ModelType::Embedding(pool) => {
-                (None, Some(pool))
-            }
+            ModelType::Embedding(pool) => (None, Some(pool)),
         };
-        
+
         // Try loading embeddings from "embeddings" first, then "deberta.embeddings"
         let embeddings = match DebertaV2Embeddings::load(vb.pp("embeddings"), config) {
             Ok(embeddings) => embeddings,
             Err(_) => DebertaV2Embeddings::load(vb.pp("deberta.embeddings"), config)?,
         };
-        
+
         // Try loading encoder from "encoder" first, then "deberta.encoder"
         let encoder = match DebertaV2Encoder::load(vb.pp("encoder"), config) {
             Ok(encoder) => encoder,
@@ -1132,70 +1137,77 @@ impl DebertaV2Model {
 
         let shape = (batch_size, max_length);
 
-        let (input_ids, token_type_ids, position_ids, input_lengths, attention_mask) = if batch_size > 1 {
-            // Prepare padded batch
-            let elems = batch_size * max_length;
+        let (input_ids, token_type_ids, position_ids, input_lengths, attention_mask) =
+            if batch_size > 1 {
+                // Prepare padded batch
+                let elems = batch_size * max_length;
 
-            let mut input_ids = Vec::with_capacity(elems);
-            let mut token_type_ids = Vec::with_capacity(elems);
-            let mut position_ids = Vec::with_capacity(elems);
-            let mut attention_mask = Vec::with_capacity(elems);
-            let mut input_lengths = Vec::with_capacity(batch_size);
-            // Bool to know if we need to use the attention mask
-            let mut masking = false;
+                let mut input_ids = Vec::with_capacity(elems);
+                let mut token_type_ids = Vec::with_capacity(elems);
+                let mut position_ids = Vec::with_capacity(elems);
+                let mut attention_mask = Vec::with_capacity(elems);
+                let mut input_lengths = Vec::with_capacity(batch_size);
+                // Bool to know if we need to use the attention mask
+                let mut masking = false;
 
-            for i in 0..batch_size {
-                let start = batch.cumulative_seq_lengths[i] as usize;
-                let end = batch.cumulative_seq_lengths[i + 1] as usize;
-                let seq_length = (end - start) as u32;
-                input_lengths.push(seq_length as f32);
+                for i in 0..batch_size {
+                    let start = batch.cumulative_seq_lengths[i] as usize;
+                    let end = batch.cumulative_seq_lengths[i + 1] as usize;
+                    let seq_length = (end - start) as u32;
+                    input_lengths.push(seq_length as f32);
 
-                // Copy values
-                for j in start..end {
-                    input_ids.push(batch.input_ids[j]);
-                    token_type_ids.push(batch.token_type_ids[j]);
-                    position_ids.push(batch.position_ids[j]);
-                    attention_mask.push(1.0_f32);
-                }
+                    // Copy values
+                    for j in start..end {
+                        input_ids.push(batch.input_ids[j]);
+                        token_type_ids.push(batch.token_type_ids[j]);
+                        position_ids.push(batch.position_ids[j]);
+                        attention_mask.push(1.0_f32);
+                    }
 
-                // Add padding if needed
-                let padding = batch.max_length - seq_length;
-                if padding > 0 {
-                    // Set bool to use attention mask
-                    masking = true;
-                    for _ in 0..padding {
-                        input_ids.push(0);
-                        token_type_ids.push(0);
-                        position_ids.push(0);
-                        attention_mask.push(0.0_f32);
+                    // Add padding if needed
+                    let padding = batch.max_length - seq_length;
+                    if padding > 0 {
+                        // Set bool to use attention mask
+                        masking = true;
+                        for _ in 0..padding {
+                            input_ids.push(0);
+                            token_type_ids.push(0);
+                            position_ids.push(0);
+                            attention_mask.push(0.0_f32);
+                        }
                     }
                 }
-            }
 
-            let attention_mask = match masking {
-                true => {
-                    let attention_mask = Tensor::from_vec(
-                        attention_mask,
-                        (batch_size, max_length, 1),
-                        &self.device,
-                    )?
-                    .to_dtype(self.dtype)?;
+                let attention_mask = match masking {
+                    true => {
+                        let attention_mask = Tensor::from_vec(
+                            attention_mask,
+                            (batch_size, max_length, 1),
+                            &self.device,
+                        )?
+                        .to_dtype(self.dtype)?;
 
-                    Some(attention_mask)
-                }
-                false => None,
+                        Some(attention_mask)
+                    }
+                    false => None,
+                };
+
+                (
+                    input_ids,
+                    token_type_ids,
+                    position_ids,
+                    input_lengths,
+                    attention_mask,
+                )
+            } else {
+                (
+                    batch.input_ids,
+                    batch.token_type_ids,
+                    batch.position_ids,
+                    vec![batch.max_length as f32],
+                    None,
+                )
             };
-
-            (input_ids, token_type_ids, position_ids, input_lengths, attention_mask)
-        } else {
-            (
-                batch.input_ids,
-                batch.token_type_ids,
-                batch.position_ids,
-                vec![batch.max_length as f32],
-                None,
-            )
-        };
 
         let input_ids = Tensor::from_vec(input_ids, shape, &self.device)?;
         let token_type_ids = Tensor::from_vec(token_type_ids, shape, &self.device)?;
@@ -1210,8 +1222,13 @@ impl DebertaV2Model {
             attention_mask.as_ref(),
         )?;
 
-        let encoder_attention_mask = attention_mask.as_ref().cloned().unwrap_or_else(|| Tensor::ones(shape, self.dtype, &self.device).unwrap());
-        let encoder_output = self.encoder.forward(&embedding_output, &encoder_attention_mask, None, None)?;
+        let encoder_attention_mask = attention_mask
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| Tensor::ones(shape, self.dtype, &self.device).unwrap());
+        let encoder_output =
+            self.encoder
+                .forward(&embedding_output, &encoder_attention_mask, None, None)?;
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();
@@ -1303,7 +1320,6 @@ impl DebertaV2Model {
 }
 
 pub struct DebertaV2SeqClassificationHead {
-    pub device: Device,
     pooler: DebertaV2ContextPooler,
     classifier: Linear,
     span: tracing::Span,
@@ -1319,13 +1335,15 @@ impl DebertaV2SeqClassificationHead {
         let output_dim = pooler.output_dim()?;
 
         // Try loading classifier from "classifier" first, then "deberta.classifier"
-        let classifier = match candle_nn::linear(output_dim, id2label_len, vb.root().pp("classifier")) {
-            Ok(classifier) => classifier,
-            Err(_) => candle_nn::linear(output_dim, id2label_len, vb.root().pp("deberta.classifier"))?,
-        };
+        let classifier =
+            match candle_nn::linear(output_dim, id2label_len, vb.root().pp("classifier")) {
+                Ok(classifier) => classifier,
+                Err(_) => {
+                    candle_nn::linear(output_dim, id2label_len, vb.root().pp("deberta.classifier"))?
+                }
+            };
 
         Ok(Self {
-            device: vb.device().clone(),
             pooler,
             classifier,
             span: tracing::span!(tracing::Level::TRACE, "classifier"),
@@ -1334,7 +1352,7 @@ impl DebertaV2SeqClassificationHead {
 
     pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
-        let pooled_output = self.pooler.forward(&hidden_states)?;
+        let pooled_output = self.pooler.forward(hidden_states)?;
         self.classifier.forward(&pooled_output)
     }
 }
