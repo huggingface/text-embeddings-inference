@@ -399,7 +399,9 @@ impl DebertaV2DisentangledSelfAttention {
             attention_scores.dim(D::Minus1)?,
         ))?;
 
-        let attention_probs = attention_scores.broadcast_add(attention_mask)?;
+        // Add attention mask bias and apply softmax (ModernBERT approach)
+        let attention_mask = attention_mask.to_dtype(attention_scores.dtype())?;
+        let attention_probs = attention_scores.broadcast_add(&attention_mask)?;
         let attention_probs = candle_nn::ops::softmax(&attention_probs, D::Minus1)?;
 
         let mut context_layer = attention_probs
@@ -527,7 +529,8 @@ impl DebertaV2DisentangledSelfAttention {
             }
         }
 
-        let mut score = Tensor::new(&[0 as f32], &self.device)?;
+        // Initialize score tensor with the same dtype as query_layer to avoid dtype mismatches
+        let mut score = Tensor::new(&[0 as f32], &self.device)?.to_dtype(query_layer.dtype())?;
 
         if self.is_c2p_attn {
             let pos_key_layer = pos_key_layer.context("c2p without pos_key_layer")?;
@@ -541,7 +544,7 @@ impl DebertaV2DisentangledSelfAttention {
             let mut c2p_att = query_layer.matmul(&pos_key_layer.t()?)?;
 
             let c2p_pos = relative_pos
-                .broadcast_add(&Tensor::new(&[att_span as i64], &self.device)?)?
+                .broadcast_add(&Tensor::new(&[att_span as i64], &self.device)?.to_dtype(relative_pos.dtype())?)?
                 .clamp(0 as f32, (att_span * 2 - 1) as f32)?;
 
             c2p_att = c2p_att.gather(
@@ -1007,7 +1010,7 @@ impl DebertaV2Encoder {
         let one = Tensor::ones_like(&attention_mask)?;
         let bias = attention_mask
             .broadcast_sub(&one)?
-            .broadcast_mul(&Tensor::new(&[10000.0_f32], &self.device)?)?;
+            .broadcast_mul(&Tensor::new(&[10000.0_f32], &self.device)?.to_dtype(attention_mask.dtype())?)?;
 
         Ok(bias)
     }
