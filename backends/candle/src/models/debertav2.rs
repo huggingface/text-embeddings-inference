@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use candle::{bail, Context, DType, Device, IndexOp, Module, Result, Tensor, D};
 use crate::models::Model;
 use candle_nn::{
-    conv1d, embedding, layer_norm, Conv1d, Conv1dConfig, Embedding, LayerNorm, VarBuilder,
+    conv1d, embedding, layer_norm, Conv1d, Conv1dConfig, Embedding, LayerNorm, Linear, VarBuilder,
 };
 use serde::{Deserialize, Deserializer};
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
@@ -59,8 +59,6 @@ pub struct DebertaV2Config {
     pub num_attention_heads: usize,
     pub intermediate_size: usize,
     pub hidden_act: HiddenAct,
-    pub hidden_dropout_prob: f64,
-    pub attention_probs_dropout_prob: f64,
     pub max_position_embeddings: usize,
     pub type_vocab_size: usize,
     pub initializer_range: f64,
@@ -81,10 +79,8 @@ pub struct DebertaV2Config {
     pub conv_act: Option<String>,
     pub id2label: Option<Id2Label>,
     pub label2id: Option<Label2Id>,
-    pub pooler_dropout: Option<f64>,
     pub pooler_hidden_act: Option<HiddenAct>,
     pub pooler_hidden_size: Option<usize>,
-    pub cls_dropout: Option<f64>,
 }
 
 fn deserialize_pos_att_type<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
@@ -111,10 +107,10 @@ pub struct DebertaV2Embeddings {
     position_embeddings: Option<Embedding>,
     token_type_embeddings: Option<Embedding>,
     layer_norm: LayerNorm,
-    position_ids: Tensor,
     config: DebertaV2Config,
     embedding_size: usize,
-    embed_proj: Option<candle_nn::Linear>,
+    embed_proj: Option<Linear>,
+    span: tracing::Span,
 }
 
 impl DebertaV2Embeddings {
@@ -147,7 +143,7 @@ impl DebertaV2Embeddings {
             None
         };
 
-        let embed_proj: Option<candle_nn::Linear> = if embedding_size != config.hidden_size {
+        let embed_proj: Option<Linear> = if embedding_size != config.hidden_size {
             Some(candle_nn::linear_no_bias(
                 embedding_size,
                 config.hidden_size,
@@ -163,58 +159,28 @@ impl DebertaV2Embeddings {
             vb.pp("LayerNorm"),
         )?;
 
-        let position_ids =
-            Tensor::arange(0, config.max_position_embeddings as u32, &device)?.unsqueeze(0)?;
-
         Ok(Self {
             word_embeddings,
             position_embeddings,
             token_type_embeddings,
             layer_norm,
-            position_ids,
             device,
             config,
             embedding_size,
             embed_proj,
+            span: tracing::span!(tracing::Level::TRACE, "embeddings"),
         })
     }
 
     pub fn forward(
         &self,
-        input_ids: Option<&Tensor>,
-        token_type_ids: Option<&Tensor>,
-        position_ids: Option<&Tensor>,
+        input_ids: &Tensor,
+        token_type_ids: &Tensor,
+        position_ids: &Tensor,
         mask: Option<&Tensor>,
-        inputs_embeds: Option<&Tensor>,
     ) -> Result<Tensor> {
-        let (input_shape, input_embeds) = match (input_ids, inputs_embeds) {
-            (Some(ids), None) => {
-                let embs = self.word_embeddings.forward(ids)?;
-                (ids.dims(), embs)
-            }
-            (None, Some(e)) => (e.dims(), e.clone()),
-            (None, None) => {
-                bail!("Must specify either input_ids or inputs_embeds")
-            }
-            (Some(_), Some(_)) => {
-                bail!("Can't specify both input_ids and inputs_embeds")
-            }
-        };
-
-        let seq_length = match input_shape.last() {
-            Some(v) => *v,
-            None => bail!("DebertaV2Embeddings invalid input shape"),
-        };
-
-        let position_ids = match position_ids {
-            Some(v) => v.clone(),
-            None => self.position_ids.narrow(1, 0, seq_length)?,
-        };
-
-        let token_type_ids = match token_type_ids {
-            Some(ids) => ids.clone(),
-            None => Tensor::zeros(input_shape, DType::U32, &self.device)?,
-        };
+        let _enter = self.span.enter();
+        let input_embeds = self.word_embeddings.forward(input_ids)?;
 
         let position_embeddings = match &self.position_embeddings {
             Some(emb) => emb.forward(&position_ids)?,
@@ -291,17 +257,18 @@ impl XSoftmax {
 pub struct DebertaV2DisentangledSelfAttention {
     config: DebertaV2Config,
     num_attention_heads: usize,
-    query_proj: candle_nn::Linear,
-    key_proj: candle_nn::Linear,
-    value_proj: candle_nn::Linear,
+    query_proj: Linear,
+    key_proj: Linear,
+    value_proj: Linear,
     device: Device,
     relative_attention: bool,
     position_buckets: isize,
     max_relative_positions: isize,
     pos_ebd_size: isize,
     share_att_key: bool,
-    pos_key_proj: Option<candle_nn::Linear>,
-    pos_query_proj: Option<candle_nn::Linear>,
+    pos_key_proj: Option<Linear>,
+    pos_query_proj: Option<Linear>,
+    span: tracing::Span,
 }
 
 impl DebertaV2DisentangledSelfAttention {
@@ -334,8 +301,8 @@ impl DebertaV2DisentangledSelfAttention {
 
         let mut pos_ebd_size: isize = 0;
         let position_buckets = config.position_buckets.unwrap_or(-1);
-        let mut pos_key_proj: Option<candle_nn::Linear> = None;
-        let mut pos_query_proj: Option<candle_nn::Linear> = None;
+        let mut pos_key_proj: Option<Linear> = None;
+        let mut pos_query_proj: Option<Linear> = None;
 
         if relative_attention {
             if max_relative_positions < 1 {
@@ -380,6 +347,7 @@ impl DebertaV2DisentangledSelfAttention {
             share_att_key,
             pos_key_proj,
             pos_query_proj,
+            span: tracing::span!(tracing::Level::TRACE, "attention"),
         })
     }
 
@@ -391,6 +359,7 @@ impl DebertaV2DisentangledSelfAttention {
         relative_pos: Option<&Tensor>,
         rel_embeddings: Option<&Tensor>,
     ) -> Result<Tensor> {
+        let _enter = self.span.enter();
         let query_states = match query_states {
             Some(qs) => qs,
             None => hidden_states,
@@ -669,13 +638,14 @@ impl DebertaV2DisentangledSelfAttention {
 pub struct DebertaV2Attention {
     dsa: DebertaV2DisentangledSelfAttention,
     output: DebertaV2SelfOutput,
+    span: tracing::Span,
 }
 
 impl DebertaV2Attention {
     pub fn load(vb: VarBuilder, config: &DebertaV2Config) -> Result<Self> {
         let dsa = DebertaV2DisentangledSelfAttention::load(vb.pp("attention.self"), config)?;
         let output = DebertaV2SelfOutput::load(vb.pp("attention.output"), config)?;
-        Ok(Self { dsa, output })
+        Ok(Self { dsa, output, span: tracing::span!(tracing::Level::TRACE, "attention") })
     }
 
     fn forward(
@@ -686,6 +656,7 @@ impl DebertaV2Attention {
         relative_pos: Option<&Tensor>,
         rel_embeddings: Option<&Tensor>,
     ) -> Result<Tensor> {
+        let _enter = self.span.enter();
         let self_output = self.dsa.forward(
             hidden_states,
             attention_mask,
@@ -701,8 +672,9 @@ impl DebertaV2Attention {
 
 // https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L255
 pub struct DebertaV2SelfOutput {
-    dense: candle_nn::Linear,
+    dense: Linear,
     layer_norm: LayerNorm,
+    span: tracing::Span,
 }
 
 impl DebertaV2SelfOutput {
@@ -713,10 +685,11 @@ impl DebertaV2SelfOutput {
             config.layer_norm_eps,
             vb.pp("LayerNorm"),
         )?;
-        Ok(Self { dense, layer_norm })
+        Ok(Self { dense, layer_norm, span: tracing::span!(tracing::Level::TRACE, "self-output") })
     }
 
     pub fn forward(&self, hidden_states: &Tensor, input_tensor: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
         let hidden_states = self.dense.forward(hidden_states)?;
         self.layer_norm
             .forward(&hidden_states.broadcast_add(input_tensor)?)
@@ -725,8 +698,9 @@ impl DebertaV2SelfOutput {
 
 // https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L307
 pub struct DebertaV2Intermediate {
-    dense: candle_nn::Linear,
+    dense: Linear,
     intermediate_act: HiddenActLayer,
+    span: tracing::Span,
 }
 
 impl DebertaV2Intermediate {
@@ -740,10 +714,12 @@ impl DebertaV2Intermediate {
         Ok(Self {
             dense,
             intermediate_act,
+            span: tracing::span!(tracing::Level::TRACE, "intermediate"),
         })
     }
 
     pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
         self.intermediate_act
             .forward(&self.dense.forward(hidden_states)?)
     }
@@ -751,8 +727,9 @@ impl DebertaV2Intermediate {
 
 // https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L323
 pub struct DebertaV2Output {
-    dense: candle_nn::Linear,
+    dense: Linear,
     layer_norm: LayerNorm,
+    span: tracing::Span,
 }
 
 impl DebertaV2Output {
@@ -767,10 +744,11 @@ impl DebertaV2Output {
             config.layer_norm_eps,
             vb.pp("output.LayerNorm"),
         )?;
-        Ok(Self { dense, layer_norm })
+        Ok(Self { dense, layer_norm, span: tracing::span!(tracing::Level::TRACE, "output") })
     }
 
     pub fn forward(&self, hidden_states: &Tensor, input_tensor: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
         let mut hidden_states = self.dense.forward(hidden_states)?;
         hidden_states = {
             let to_norm = hidden_states.broadcast_add(input_tensor)?;
@@ -785,6 +763,7 @@ pub struct DebertaV2Layer {
     attention: DebertaV2Attention,
     intermediate: DebertaV2Intermediate,
     output: DebertaV2Output,
+    span: tracing::Span,
 }
 
 impl DebertaV2Layer {
@@ -796,6 +775,7 @@ impl DebertaV2Layer {
             attention,
             intermediate,
             output,
+            span: tracing::span!(tracing::Level::TRACE, "layer"),
         })
     }
 
@@ -807,6 +787,7 @@ impl DebertaV2Layer {
         relative_pos: Option<&Tensor>,
         rel_embeddings: Option<&Tensor>,
     ) -> Result<Tensor> {
+        let _enter = self.span.enter();
         let attention_output = self.attention.forward(
             hidden_states,
             attention_mask,
@@ -890,6 +871,7 @@ pub struct DebertaV2Encoder {
     layer_norm: Option<LayerNorm>,
     conv: Option<ConvLayer>,
     device: Device,
+    span: tracing::Span,
 }
 
 impl DebertaV2Encoder {
@@ -956,6 +938,7 @@ impl DebertaV2Encoder {
             layer_norm,
             conv,
             device: vb.device().clone(),
+            span: tracing::span!(tracing::Level::TRACE, "encoder"),
         })
     }
 
@@ -966,6 +949,7 @@ impl DebertaV2Encoder {
         query_states: Option<&Tensor>,
         relative_pos: Option<&Tensor>,
     ) -> Result<Tensor> {
+        let _enter = self.span.enter();
         let input_mask = if attention_mask.dims().len() <= 2 {
             attention_mask.clone()
         } else {
@@ -1210,14 +1194,13 @@ impl DebertaV2Model {
             Tensor::from_vec(input_lengths, (batch_size, 1), &self.device)?.to_dtype(self.dtype)?;
 
         let embedding_output = self.embeddings.forward(
-            Some(&input_ids),
-            Some(&token_type_ids),
-            Some(&position_ids),
+            &input_ids,
+            &token_type_ids,
+            &position_ids,
             attention_mask.as_ref(),
-            None,
         )?;
 
-        let encoder_attention_mask = attention_mask.as_ref().cloned().unwrap_or_else(|| Tensor::ones(shape, DType::I64, &self.device).unwrap());
+        let encoder_attention_mask = attention_mask.as_ref().cloned().unwrap_or_else(|| Tensor::ones(shape, self.dtype, &self.device).unwrap());
         let encoder_output = self.encoder.forward(&embedding_output, &encoder_attention_mask, None, None)?;
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
@@ -1312,7 +1295,8 @@ impl DebertaV2Model {
 pub struct DebertaV2SeqClassificationHead {
     pub device: Device,
     pooler: DebertaV2ContextPooler,
-    classifier: candle_nn::Linear,
+    classifier: Linear,
+    span: tracing::Span,
 }
 
 impl DebertaV2SeqClassificationHead {
@@ -1323,7 +1307,7 @@ impl DebertaV2SeqClassificationHead {
         };
         let pooler = DebertaV2ContextPooler::load(vb.clone(), config)?;
         let output_dim = pooler.output_dim()?;
-        
+
         // Try loading classifier from "classifier" first, then "deberta.classifier"
         let classifier = match candle_nn::linear(output_dim, id2label_len, vb.root().pp("classifier")) {
             Ok(classifier) => classifier,
@@ -1334,18 +1318,21 @@ impl DebertaV2SeqClassificationHead {
             device: vb.device().clone(),
             pooler,
             classifier,
+            span: tracing::span!(tracing::Level::TRACE, "classifier"),
         })
     }
 
     pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
         let pooled_output = self.pooler.forward(&hidden_states)?;
         self.classifier.forward(&pooled_output)
     }
 }
 
 pub struct DebertaV2ContextPooler {
-    dense: candle_nn::Linear,
+    dense: Linear,
     config: DebertaV2Config,
+    span: tracing::Span,
 }
 
 // https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L49
@@ -1364,10 +1351,12 @@ impl DebertaV2ContextPooler {
         Ok(Self {
             dense,
             config: config.clone(),
+            span: tracing::span!(tracing::Level::TRACE, "pooler"),
         })
     }
 
     pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
         let context_token = hidden_states.narrow(1, 0, 1)?.squeeze(1)?;
 
         let pooled_output = self.dense.forward(&context_token.contiguous()?)?;
