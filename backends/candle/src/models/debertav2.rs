@@ -228,30 +228,6 @@ impl DebertaV2Embeddings {
     }
 }
 
-// https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L72
-struct XSoftmax {}
-
-impl XSoftmax {
-    pub fn apply(input: &Tensor, mask: &Tensor, dim: D, device: &Device) -> Result<Tensor> {
-        // NOTE: At the time of this writing, candle does not have a logical-not operator.
-        let mut rmask = mask.broadcast_as(input.shape())?.to_dtype(DType::F32)?;
-
-        rmask = rmask
-            .broadcast_lt(&Tensor::new(&[1.0_f32], device)?)?
-            .to_dtype(DType::U8)?;
-
-        let min_value_tensor = Tensor::new(&[f32::MIN], device)?.broadcast_as(input.shape())?;
-        let mut output = rmask.where_cond(&min_value_tensor, input)?;
-
-        output = candle_nn::ops::softmax(&output, dim)?;
-
-        let t_zeroes = Tensor::new(&[0f32], device)?.broadcast_as(input.shape())?;
-        output = rmask.where_cond(&t_zeroes, &output)?;
-
-        Ok(output)
-    }
-}
-
 // https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L605
 pub struct DebertaV2DisentangledSelfAttention {
     num_attention_heads: usize,
@@ -423,8 +399,8 @@ impl DebertaV2DisentangledSelfAttention {
             attention_scores.dim(D::Minus1)?,
         ))?;
 
-        let attention_probs =
-            XSoftmax::apply(&attention_scores, attention_mask, D::Minus1, &self.device)?;
+        let attention_probs = attention_scores.broadcast_add(attention_mask)?;
+        let attention_probs = candle_nn::ops::softmax(&attention_probs, D::Minus1)?;
 
         let mut context_layer = attention_probs
             .reshape((
@@ -1027,7 +1003,11 @@ impl DebertaV2Encoder {
             len => bail!("Unsupported attentiom mask size length: {len}"),
         }
 
-        Ok(attention_mask)
+        // Convert binary mask to additive bias: 0 for valid positions, large negative for masked
+        let one = Tensor::ones_like(&attention_mask)?;
+        let bias = attention_mask.broadcast_sub(&one)?.broadcast_mul(&Tensor::new(&[10000.0_f32], &self.device)?)?;
+
+        Ok(bias)
     }
 
     fn get_rel_pos(
