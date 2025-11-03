@@ -90,10 +90,9 @@ ARG NEURONX_COLLECTIVES_LIB_VERSION=2.28.27.0-bc30ece58
 ARG NEURONX_RUNTIME_LIB_VERSION=2.28.23.0-dd5879008
 ARG NEURONX_TOOLS_VERSION=2.26.14.0
 
-ARG NEURONX_CC_VERSION=2.21.18209.0+043b1bf7
-ARG NEURONX_FRAMEWORK_VERSION=2.8.0.2.10.13553+1e4dd6ca
+ARG NEURONX_CC_VERSION=2.21.33363.0+82129205
+ARG NEURONX_FRAMEWORK_VERSION=2.8.0.2.10.16998+e9bf8a50
 ARG NEURONX_DISTRIBUTED_VERSION=0.15.22404+1f27bddf
-ARG NEURONX_DISTRIBUTED_INFERENCE_VERSION=0.6.10598+a59fdc00
 
 RUN apt-get update \
  && apt-get upgrade -y \
@@ -137,13 +136,13 @@ RUN apt-get update \
  && apt-get clean
 
 ENV PATH="/opt/aws/neuron/bin:${PATH}"
-ENV NEURON_RT_VISIBLE_CORES=ALL
 
 RUN pip install --index-url https://pip.repos.neuron.amazonaws.com \
     --extra-index-url https://pypi.org/simple \
     --trusted-host pip.repos.neuron.amazonaws.com \
     neuronx-cc==$NEURONX_CC_VERSION \
     torch-neuronx==$NEURONX_FRAMEWORK_VERSION \
+    torchvision \
     neuronx_distributed==$NEURONX_DISTRIBUTED_VERSION \
  && rm -rf ~/.cache/pip/*
 

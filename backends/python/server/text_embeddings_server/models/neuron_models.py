@@ -3,7 +3,7 @@ import torch
 
 from pathlib import Path
 from typing import Type, List
-from optimum.neuron import NeuronModelForSentenceTransformers
+from optimum.neuron import NeuronSentenceTransformers
 from opentelemetry import trace
 
 from text_embeddings_server.models import Model
@@ -12,14 +12,14 @@ from text_embeddings_server.models.types import PaddedBatch, Embedding, Score
 tracer = trace.get_tracer(__name__)
 
 
-class NeuronSentenceTransformers(Model):
+class NeuronSentenceTransformersModel(Model):
     def __init__(
         self,
         model_path: Path,
         device: torch.device,
         dtype: torch.dtype,
     ):
-        model = NeuronModelForSentenceTransformers.from_pretrained(model_path)
+        model = NeuronSentenceTransformers.from_pretrained(model_path)
 
         self.hidden_size = model.config.hidden_size
         position_offset = 0
@@ -42,7 +42,7 @@ class NeuronSentenceTransformers(Model):
             is not None
         )
 
-        super(NeuronSentenceTransformers, self).__init__(
+        super(NeuronSentenceTransformersModel, self).__init__(
             model=model, dtype=dtype, device=device
         )
 
@@ -52,16 +52,20 @@ class NeuronSentenceTransformers(Model):
 
     @tracer.start_as_current_span("embed")
     def embed(self, batch: PaddedBatch) -> List[Embedding]:
-        pass
-
-    @tracer.start_as_current_span("predict")
-    def predict(self, batch: PaddedBatch) -> List[Score]:
         kwargs = {"input_ids": batch.input_ids, "attention_mask": batch.attention_mask}
         if self.has_token_type_ids:
             kwargs["token_type_ids"] = batch.token_type_ids
-        if self.has_position_ids:
-            kwargs["position_ids"] = batch.position_ids
+        output = self.model(**kwargs)
 
-        output = self.model(**kwargs, return_dict=True)
-        all_scores = output.logits.tolist()
-        return [Score(values=scores) for scores in all_scores]
+        sentence_embedding = output["sentence_embedding"]
+
+        return [
+            Embedding(
+                values=sentence_embedding[i * self.hidden_size : (i + 1) * self.hidden_size]
+            )
+            for i in range(len(batch))
+        ]
+
+    @tracer.start_as_current_span("predict")
+    def predict(self, batch: PaddedBatch) -> List[Score]:
+        pass

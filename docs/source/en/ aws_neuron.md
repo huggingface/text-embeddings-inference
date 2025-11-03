@@ -22,7 +22,7 @@ To build a container optimized for AWS Neuron devices, run the following command
 ```shell
 platform="neuron"
 
-docker build . -f Dockerfile-neuron -t tei_neuron
+docker build . -f Dockerfile-neuron -t tei-neuron:main
 ```
 
 ### Deploy Docker Container
@@ -30,8 +30,8 @@ docker build . -f Dockerfile-neuron -t tei_neuron
 To deploy your model on an AWS Trainium or Inferentia instance, use the following command:
 
 ```shell
-model='Qwen/Qwen3-Embedding-0.6B'
+model='optimum/bge-base-en-v1.5-neuronx'
 volume=$PWD/data
 
-docker run -p 8080:80 -v $volume:/data tei_neuron --model-id $model
+docker run -p 8080:80 -v $volume:/data tei-neuron:main --model-id $model --dtype float32
 ```
