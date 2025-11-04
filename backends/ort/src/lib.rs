@@ -15,10 +15,16 @@ use text_embeddings_backend_core::{
 pub struct Config {
     pub pad_token_id: Option<usize>,
     pub eos_token_id: Option<usize>,
-    // NOTE: the fields below are only required when the ONNX model expects the `past_key_values`
-    // as input i.e., whenever the ONNX model has been exported with optimized MHA nodes
+
+    // NOTE: The fields below are only required when the ONNX model expects the `past_key_values`
+    // as input i.e., whenever the ONNX model has been exported with optimized MHA/MQA nodes
+    // NOTE: The renames from `n_embd`, `n_layer`, and `n_head` have been included for some edge
+    // cases as e.g. `nomic-ai/nomic-embed-text-v1`, given that those ONNX exports use MQA
+    #[serde(rename = "n_embd")]
     pub hidden_size: usize,
+    #[serde(rename = "n_layer")]
     pub num_hidden_layers: usize,
+    #[serde(rename = "n_head")]
     pub num_key_value_heads: Option<usize>,
 }
 
