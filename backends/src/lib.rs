@@ -67,6 +67,15 @@ fn is_hpu() -> bool {
     }
 }
 
+fn is_neuron() -> bool {
+    match Command::new("neuron-ls")
+        .output()
+    {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Backend {
     /// Channel to communicate with the background thread
@@ -409,16 +418,39 @@ async fn init_backend(
     if let Some(api_repo) = api_repo.as_ref() {
         if cfg!(feature = "python") || cfg!(feature = "candle") {
             let start = std::time::Instant::now();
-            if download_safetensors(api_repo).await.is_err() {
-                tracing::warn!("safetensors weights not found. Using `pytorch_model.bin` instead. Model loading will be significantly slower.");
-                tracing::info!("Downloading `pytorch_model.bin`");
-                api_repo
-                    .get("pytorch_model.bin")
+            if is_neuron() {
+                tracing::info!("Downloading `model.neuron`");
+                let model_files = download_neuron(api_repo)
                     .await
                     .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
-            }
 
-            tracing::info!("Model weights downloaded in {:?}", start.elapsed());
+                if model_files.is_empty() {
+                    tracing::error!(
+                        "Neuron model files not found in the repository. \
+                        You can easily compile your model to neuron format following the guide: \
+                        https://huggingface.co/docs/optimum-neuron/en/model_doc/sentence_transformers/overview "
+                    );
+                    return Err(BackendError::WeightsNotFound(
+                        "No Neuron model files found".into(),
+                    ));
+                }
+
+                tracing::info!("Neuron model downloaded in {:?}", start.elapsed());
+            } else {
+                if download_safetensors(api_repo).await.is_err() {
+                    tracing::warn!(
+                        "safetensors weights not found. Using `pytorch_model.bin` instead. \
+                        Model loading will be significantly slower."
+                    );
+                    tracing::info!("Downloading `pytorch_model.bin`");
+                    api_repo
+                        .get("pytorch_model.bin")
+                        .await
+                        .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
+                }
+
+                tracing::info!("Model weights downloaded in {:?}", start.elapsed());
+            }
         }
     }
 
@@ -651,6 +683,20 @@ async fn download_onnx(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
             }
         }
     }
+
+    Ok(model_files)
+}
+
+async fn download_neuron(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
+    let mut model_files: Vec<PathBuf> = Vec::new();
+
+    tracing::info!("Downloading `model.neuron`");
+    match api.get("model.neuron").await {
+        Ok(p) => model_files.push(p),
+        Err(err) => {
+            tracing::warn!("Could not download `model.neuron`: {err}");
+        }
+    };
 
     Ok(model_files)
 }
