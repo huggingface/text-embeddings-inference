@@ -13,22 +13,21 @@ verlte() {
 # CUDA compat libs logic
 if [ -f /usr/local/cuda/compat/libcuda.so.1 ]; then
     CUDA_COMPAT_MAX_DRIVER_VERSION=$(readlink /usr/local/cuda/compat/libcuda.so.1 | cut -d"." -f 3-)
-    echo "CUDA compat package requires Nvidia driver ≤${CUDA_COMPAT_MAX_DRIVER_VERSION}"
+    echo "CUDA compat package requires NVIDIA driver ≤ ${CUDA_COMPAT_MAX_DRIVER_VERSION}"
     cat /proc/driver/nvidia/version
-    NVIDIA_DRIVER_VERSION=$(sed -n 's/^NVRM.*Kernel Module \([0-9.]*\).*$/\1/p' /proc/driver/nvidia/version 2>/dev/null || true)
-    echo "Current installed Nvidia driver version is ${NVIDIA_DRIVER_VERSION}"
+    NVIDIA_DRIVER_VERSION=$(sed -n 's/^NVRM version:.* \([0-9]\+\.[0-9]\+\.[0-9]\+\) .*/\1/p' /proc/driver/nvidia/version 2>/dev/null || true)
+    echo "Current installed NVIDIA driver version is ${NVIDIA_DRIVER_VERSION}"
     if [ $(verlte "$CUDA_COMPAT_MAX_DRIVER_VERSION" "$NVIDIA_DRIVER_VERSION") ]; then
         echo "Setup CUDA compatibility libs path to LD_LIBRARY_PATH"
         export LD_LIBRARY_PATH=/usr/local/cuda/compat:$LD_LIBRARY_PATH
         echo $LD_LIBRARY_PATH
     else
-        echo "Skip CUDA compat libs setup as newer Nvidia driver is installed"
+        echo "Skip CUDA compat libs setup as newer NVIDIA driver is installed"
     fi
 else
     echo "Skip CUDA compat libs setup as package not found"
 fi
 
-# Model variables check
 if [[ -z "${HF_MODEL_ID}" ]]; then
     echo "HF_MODEL_ID must be set"
     exit 1
@@ -40,8 +39,6 @@ if [[ -n "${HF_MODEL_REVISION}" ]]; then
 fi
 
 compute_cap=$(nvidia-smi --query-gpu=compute_cap --format=csv | sed -n '2p' | sed 's/\.//g')
-
-# Router selection logic
 if [ ${compute_cap} -eq 75 ]; then
     exec text-embeddings-router-75 --port 8080 --json-output
 elif [ ${compute_cap} -ge 80 -a ${compute_cap} -lt 90 ]; then
@@ -49,6 +46,6 @@ elif [ ${compute_cap} -ge 80 -a ${compute_cap} -lt 90 ]; then
 elif [ ${compute_cap} -eq 90 ]; then
     exec text-embeddings-router-90 --port 8080 --json-output
 else
-    echo "cuda compute cap ${compute_cap} is not supported"
+    echo "CUDA compute cap ${compute_cap} is not supported"
     exit 1
 fi
