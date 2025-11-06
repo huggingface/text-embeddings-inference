@@ -7,12 +7,11 @@ use serde::Deserialize;
 pub enum HiddenAct {
     Gelu,
     #[serde(alias = "gelu_new")]
+    #[serde(alias = "gelu_pytorch_tanh")]
     NewGelu,
     Relu,
     Silu,
     Swiglu,
-    #[serde(alias = "gelu_pytorch_tanh")]
-    GeluPytorchTanh,
 }
 
 impl HiddenAct {
@@ -23,7 +22,6 @@ impl HiddenAct {
             Self::Relu => x.relu(),
             Self::Silu => x.silu(),
             Self::Swiglu => candle_nn::ops::swiglu(x),
-            Self::GeluPytorchTanh => x.gelu(),
         }
     }
 }
@@ -94,7 +92,6 @@ impl Linear {
                     HiddenAct::Relu => x.relu(),
                     HiddenAct::Silu => x.silu(),
                     HiddenAct::Swiglu => candle_nn::ops::swiglu(&x),
-                    HiddenAct::GeluPytorchTanh => x.gelu(),
                 }
             } else {
                 Ok(x)
