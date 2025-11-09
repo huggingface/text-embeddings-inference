@@ -294,6 +294,34 @@ mod tests {
     }
 
     #[test]
+    fn test_fold_gather_points_to_first_occurrence() {
+        // Two sequences with overlapping prefixes/suffixes
+        // S1: a b c d
+        // S2: a b e f
+        let input_ids = vec![1,2,3,4, 1,2,5,6];
+        let position_ids = vec![0,1,2,3, 0,1,2,3];
+        let cu = vec![0,4,8];
+
+        let (compact_ids, compact_pos, scatter, fold_gather) =
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu);
+
+        // For each compact index, compute the minimal original position that maps to it.
+        let mut mins = vec![u32::MAX; compact_ids.len()];
+        for (orig_idx, &cidx) in scatter.iter().enumerate() {
+            mins[cidx as usize] = mins[cidx as usize].min(orig_idx as u32);
+        }
+
+        assert_eq!(mins.len(), fold_gather.len());
+        for (i, (&m, &fg)) in mins.iter().zip(fold_gather.iter()).enumerate() {
+            assert_eq!(m, fg, "fold_gather[{}] should be first occurrence index", i);
+            // sanity: the pair at fold_gather matches compact pair at i
+            let fi = fg as usize;
+            assert_eq!(input_ids[fi], compact_ids[i]);
+            assert_eq!(position_ids[fi], compact_pos[i]);
+        }
+    }
+
+    #[test]
     fn test_compute_fold_and_scatter_no_overlap() {
         // Two sequences with no overlap: [a,b] and [c,d]
         let input_ids = vec![1, 2, 3, 4];
