@@ -14,10 +14,10 @@ pub struct Batch {
     pub max_length: u32,
     pub pooled_indices: Vec<u32>,
     pub raw_indices: Vec<u32>,
-    pub compact_input_ids: Option<Vec<u32>>,           // Missing comma, extra brace
-    pub compact_position_ids: Option<Vec<u32>>,   // Typo: "postion" -> "position"  
-    pub scatter_unfold: Option<Vec<u32>>,         // Typo: "scater" -> "scatter"
-    pub fold_gather: Option<Vec<u32>>,      
+    pub compact_input_ids: Option<Vec<u32>>,
+    pub compact_position_ids: Option<Vec<u32>>,
+    pub scatter_unfold: Option<Vec<u32>>,
+    pub fold_gather: Option<Vec<u32>>,
 }
 
 impl Batch {

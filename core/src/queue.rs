@@ -1,12 +1,12 @@
 use crate::infer::InferResult;
+use crate::radix_mlp;
 use crate::tokenization::ValidEncoding;
 use std::cmp::max;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{BackendError, Batch};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{instrument, Span};
-use crate::radix_mlp;
+use tracing::{Span, instrument};
 
 /// Queue entry
 #[derive(Debug)]
@@ -181,19 +181,24 @@ fn queue_blocking_task(
                 }
 
                 // Compute RadixMLP compact representation with BOTH mappings
-                let (compact_fold, compact_position_ids, scatter_unfold, fold_gather) = 
+                let (compact_fold, compact_position_ids, scatter_unfold, fold_gather) =
                     if input_ids.len() > 0 && cu_seq_lengths.len() > 2 {
-                        let (compact_ids, compact_pos, scatter, fold) = 
+                        let (compact_ids, compact_pos, scatter, fold) =
                             crate::radix_mlp::compute_fold_and_scatter(
-                                &input_ids, 
-                                &position_ids, 
-                                &cu_seq_lengths
+                                &input_ids,
+                                &position_ids,
+                                &cu_seq_lengths,
                             );
-                        
+
                         // Only use if we achieved meaningful compression
                         let compression_ratio = compact_ids.len() as f32 / input_ids.len() as f32;
                         if compression_ratio < 0.99 {
-                            (Some(compact_ids), Some(compact_pos), Some(scatter), Some(fold))
+                            (
+                                Some(compact_ids),
+                                Some(compact_pos),
+                                Some(scatter),
+                                Some(fold),
+                            )
                         } else {
                             (None, None, None, None)
                         }
@@ -218,7 +223,7 @@ fn queue_blocking_task(
                             compact_fold,
                             compact_position_ids,
                             scatter_unfold,
-                            fold_gather,  // Add the second mapping
+                            fold_gather, // Add the second mapping
                         },
                     ))
                 };

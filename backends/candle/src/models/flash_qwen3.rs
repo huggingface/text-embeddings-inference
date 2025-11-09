@@ -1,5 +1,5 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{get_cos_sin, get_inv_freqs, HiddenAct, Linear, RMSNorm};
+use crate::layers::{HiddenAct, Linear, RMSNorm, get_cos_sin, get_inv_freqs};
 use crate::models::{Model, Qwen3Config};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
@@ -404,26 +404,34 @@ impl FlashQwen3Model {
             &self.device,
         )?;
 
-        let (mut hidden_states, scatter_unfold_t, fold_gather_t, position_ids_compact): (Tensor, Option<Tensor>, Option<Tensor>,  Tensor) =
-            if let (Some(compact_ids), Some(compact_pos), Some(scatter), Some(fold)) =
-                (batch.compact_input_ids.as_ref(),
-                 batch.compact_position_ids.as_ref(),
-                 batch.scatter_unfold.as_ref(),
-                 batch.fold_gather.as_ref())
-        {
+        let (mut hidden_states, scatter_unfold_t, fold_gather_t, position_ids_compact): (
+            Tensor,
+            Option<Tensor>,
+            Option<Tensor>,
+            Tensor,
+        ) = if let (Some(compact_ids), Some(compact_pos), Some(scatter), Some(fold)) = (
+            batch.compact_input_ids.as_ref(),
+            batch.compact_position_ids.as_ref(),
+            batch.scatter_unfold.as_ref(),
+            batch.fold_gather.as_ref(),
+        ) {
             let m = compact_ids.len();
             let compact_ids_t = Tensor::from_vec(compact_ids.clone(), m, &self.device)?;
             let emb_c = self.embeddings.forward(&compact_ids_t)?.contiguous()?;
             let scatter_t = Tensor::from_vec(scatter.clone(), shape, &self.device)?;
             let fold_t = Tensor::from_vec(fold.clone(), m, &self.device)?;
 
-            let position_ids_compact =
-                Tensor::from_vec(compact_pos.clone(), m, &self.device)?;
+            let position_ids_compact = Tensor::from_vec(compact_pos.clone(), m, &self.device)?;
             (emb_c, Some(scatter_t), Some(fold_t), position_ids_compact)
         } else {
             let input_ids = Tensor::from_vec(batch.input_ids, shape, &self.device)?;
             let position_ids = Tensor::from_vec(batch.position_ids, shape, &self.device)?;
-            (self.embeddings.forward(&input_ids)?.contiguous()?, None, None, position_ids)
+            (
+                self.embeddings.forward(&input_ids)?.contiguous()?,
+                None,
+                None,
+                position_ids,
+            )
         };
 
         // sin and cos are applied on the compact formation, therefore should be on the compact array
@@ -447,7 +455,7 @@ impl FlashQwen3Model {
         }
 
         let (outputs, _) = self.norm.forward(&hidden_states, residual.as_ref())?;
-        
+
         let outputs = if let Some(scatter) = &scatter_unfold_t {
             outputs.index_select(scatter, 0)?.contiguous()?
         } else {
