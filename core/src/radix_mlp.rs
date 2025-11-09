@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 // Transformer inference consists of two phases: \emph{prefill}, which processes all input tokens to initialize attention and MLP states, and \emph{decode}, which generates new tokens autoregressively. Prefill dominates runtime in stateless applications, where caching is either unavailable or reset between requests.
 
 // Systems such as FlashAttention~\citep{dao2022flashattention}, FlashInfer~\citep{zheng2024flashinfer}, and HydraGen~\citep{juravsky2024hydragen} accelerate attention computations using efficient memory layouts. However, the MLP component---typically 40–60\% of inference FLOPs---remains fully recomputed even when many inputs share identical hidden states.
@@ -56,8 +54,6 @@ pub fn compute_fold_and_scatter(
 
     #[derive(Debug)]
     struct Node {
-        token: u32,
-        pos: u32,
         compact: u32,                // u32::MAX => not assigned yet
         children: Vec<(u64, usize)>, // sorted by key
     }
@@ -67,8 +63,6 @@ pub fn compute_fold_and_scatter(
     // Arena of nodes; index 0 is a synthetic root.
     let mut nodes: Vec<Node> = Vec::with_capacity(n + 1);
     nodes.push(Node {
-        token: 0,
-        pos: 0,
         compact: u32::MAX,
         children: Vec::new(),
     });
@@ -108,8 +102,6 @@ pub fn compute_fold_and_scatter(
                 let insert_pos = val;
                 let idx = nodes.len();
                 nodes.push(Node {
-                    token: t,
-                    pos: p,
                     compact: next_compact, // assign compact immediately
                     children: Vec::new(),
                 });
