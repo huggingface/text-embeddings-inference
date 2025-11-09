@@ -181,10 +181,10 @@ fn queue_blocking_task(
                 }
 
                 // Compute RadixMLP compact representation with BOTH mappings
-                let (compact_fold, compact_position_ids, scatter_unfold, fold_gather) =
+                let (compact_input_ids, compact_position_ids, scatter_unfold, fold_gather) =
                     if input_ids.len() > 0 && cu_seq_lengths.len() > 2 {
                         let (compact_ids, compact_pos, scatter, fold) =
-                            crate::radix_mlp::compute_fold_and_scatter(
+                            radix_mlp::compute_fold_and_scatter(
                                 &input_ids,
                                 &position_ids,
                                 &cu_seq_lengths,
@@ -220,7 +220,7 @@ fn queue_blocking_task(
                             max_length,
                             pooled_indices,
                             raw_indices,
-                            compact_fold,
+                            compact_input_ids,
                             compact_position_ids,
                             scatter_unfold,
                             fold_gather, // Add the second mapping

@@ -223,6 +223,10 @@ impl Backend {
             max_length: tmp_length,
             pooled_indices,
             raw_indices: vec![],
+            compact_input_ids: None,
+            compact_position_ids: None,
+            fold_gather: None,
+            scatter_unfold: None
         }
     }
 
@@ -280,6 +284,10 @@ impl Backend {
             max_length,
             pooled_indices,
             raw_indices: vec![],
+            compact_input_ids: None,
+            compact_position_ids: None,
+            fold_gather: None,
+            scatter_unfold: None
         };
 
         match &self.model_type {
@@ -314,6 +322,10 @@ impl Backend {
                 max_length: 1,
                 pooled_indices: vec![0],
                 raw_indices: vec![],
+                compact_input_ids: None,
+            compact_position_ids: None,
+            fold_gather: None,
+            scatter_unfold: None
             };
             match &self.model_type {
                 ModelType::Classifier => self.predict(batch).await.map(|_| ()),

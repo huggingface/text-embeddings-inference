@@ -574,6 +574,7 @@ impl FlashQwen3Model {
         let raw_embeddings = if has_raw_requests {
             if batch_size > 1 && has_pooling_requests {
                 // Create indexing vector for the embeddings
+                let shape = batch.input_ids.len();
                 let mut final_indices: Vec<u32> = Vec::with_capacity(shape);
                 for i in batch.raw_indices.into_iter() {
                     let i = i as usize;
