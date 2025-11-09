@@ -29,7 +29,7 @@ use std::collections::HashMap;
 // fold_ids    = [0,1,2,3,4,5,6, 0,1,2,7,8,9,10,11]
 // scatter_ids = {0:[0,7], 1:[1,8], 2:[2,9], ...}
 // \end{verbatim}
-// 
+//
 // in paractival matters, we aim to implement both as continous map
 
 pub fn compute_fold_and_scatter(
@@ -58,8 +58,8 @@ pub fn compute_fold_and_scatter(
     struct Node {
         token: u32,
         pos: u32,
-        compact: u32,                 // u32::MAX => not assigned yet
-        children: Vec<(u64, usize)>,  // sorted by key
+        compact: u32,                // u32::MAX => not assigned yet
+        children: Vec<(u64, usize)>, // sorted by key
     }
 
     let n = input_ids.len();
@@ -151,10 +151,10 @@ mod tests {
         let input_ids = vec![];
         let position_ids = vec![];
         let cu_seq_lengths = vec![];
-        
-        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
+
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
-        
+
         assert_eq!(compact_input_ids, vec![]);
         assert_eq!(compact_position_ids, vec![]);
         assert_eq!(scatter_indices, vec![]);
@@ -167,10 +167,10 @@ mod tests {
         let input_ids = vec![1, 2, 3];
         let position_ids = vec![0, 1, 2];
         let cu_seq_lengths = vec![0, 3];
-        
-        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
+
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
-        
+
         // No deduplication possible with single sequence
         assert_eq!(compact_input_ids, vec![1, 2, 3]);
         assert_eq!(compact_position_ids, vec![0, 1, 2]);
@@ -187,21 +187,21 @@ mod tests {
         // Expected folded:
         // tokens    = [a,b,c, d,e,f,g, e,f,g,h,i]
         // pos       = [0,1,2, 3,4,5,6, 3,4,5,6,7]
-        
+
         let input_ids = vec![1, 2, 3, 4, 5, 6, 7, 1, 2, 3, 5, 6, 7, 8, 9];
         let position_ids = vec![0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6, 7];
         let cu_seq_lengths = vec![0, 7, 10, 15];
-        
-        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
+
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
-        
+
         // Should deduplicate shared prefix [a,b,c] at positions [0,1,2]
         // and shared subsequence [e,f,g] at positions [3,4,5]
         assert_eq!(compact_input_ids.len(), 12); // Reduced from 15 to 12
         assert_eq!(compact_position_ids.len(), 12);
         assert_eq!(scatter_indices.len(), 15); // Original length preserved
         assert_eq!(fold_gather.len(), 12); // Same as compact length
-        
+
         // Verify that we can reconstruct original sequences using scatter indices
         for i in 0..input_ids.len() {
             let compact_idx = scatter_indices[i] as usize;
@@ -216,10 +216,10 @@ mod tests {
         let input_ids = vec![1, 2, 3, 1, 2, 3];
         let position_ids = vec![0, 1, 2, 0, 1, 2];
         let cu_seq_lengths = vec![0, 3, 6];
-        
-        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
+
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
-        
+
         // Should completely deduplicate to single sequence
         assert_eq!(compact_input_ids, vec![1, 2, 3]);
         assert_eq!(compact_position_ids, vec![0, 1, 2]);
@@ -232,9 +232,9 @@ mod tests {
         // Two sequences with overlapping prefixes/suffixes
         // S1: a b c d
         // S2: a b e f
-        let input_ids = vec![1,2,3,4, 1,2,5,6];
-        let position_ids = vec![0,1,2,3, 0,1,2,3];
-        let cu = vec![0,4,8];
+        let input_ids = vec![1, 2, 3, 4, 1, 2, 5, 6];
+        let position_ids = vec![0, 1, 2, 3, 0, 1, 2, 3];
+        let cu = vec![0, 4, 8];
 
         let (compact_ids, compact_pos, scatter, fold_gather) =
             compute_fold_and_scatter(&input_ids, &position_ids, &cu);
@@ -261,10 +261,10 @@ mod tests {
         let input_ids = vec![1, 2, 3, 4];
         let position_ids = vec![0, 1, 0, 1];
         let cu_seq_lengths = vec![0, 2, 4];
-        
-        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
+
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
-        
+
         // No deduplication possible
         assert_eq!(compact_input_ids, vec![1, 2, 3, 4]);
         assert_eq!(compact_position_ids, vec![0, 1, 0, 1]);
@@ -278,16 +278,16 @@ mod tests {
         let input_ids = vec![1, 2, 3, 1, 2, 4];
         let position_ids = vec![0, 1, 2, 0, 1, 2];
         let cu_seq_lengths = vec![0, 3, 6];
-        
-        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
+
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
-        
+
         // Should deduplicate shared prefix [a,b] at positions [0,1]
         assert_eq!(compact_input_ids.len(), 4); // [a,b,c,d] in some order
         assert_eq!(compact_position_ids.len(), 4);
         assert_eq!(scatter_indices.len(), 6);
         assert_eq!(fold_gather.len(), 4);
-        
+
         // Verify reconstruction
         for i in 0..input_ids.len() {
             let compact_idx = scatter_indices[i] as usize;
@@ -302,10 +302,10 @@ mod tests {
         let input_ids = vec![1, 2, 1, 2];
         let position_ids = vec![0, 1, 2, 3];
         let cu_seq_lengths = vec![0, 2, 4];
-        
-        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
+
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
-        
+
         // Should NOT deduplicate because positions are different
         assert_eq!(compact_input_ids.len(), 4);
         assert_eq!(compact_position_ids.len(), 4);
@@ -317,22 +317,22 @@ mod tests {
     fn test_compute_fold_and_scatter_three_sequences_complex() {
         // Three sequences with various overlaps:
         // Seq1: [a,b,c,d] at [0,1,2,3]
-        // Seq2: [a,b,e,f] at [0,1,2,3] 
+        // Seq2: [a,b,e,f] at [0,1,2,3]
         // Seq3: [a,b,c,g] at [0,1,2,3]
         let input_ids = vec![1, 2, 3, 4, 1, 2, 5, 6, 1, 2, 3, 7];
         let position_ids = vec![0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3];
         let cu_seq_lengths = vec![0, 4, 8, 12];
-        
-        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
+
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
-        
+
         // Should deduplicate:
         // - [a,b] at [0,1] shared by all three
         // - [c] at [2] shared by seq1 and seq3
         assert!(compact_input_ids.len() < 12); // Some deduplication should occur
         assert_eq!(scatter_indices.len(), 12);
         assert_eq!(fold_gather.len(), compact_input_ids.len());
-        
+
         // Verify reconstruction
         for i in 0..input_ids.len() {
             let compact_idx = scatter_indices[i] as usize;
@@ -347,10 +347,10 @@ mod tests {
         let input_ids = vec![1, 2, 1];
         let position_ids = vec![0, 0, 0];
         let cu_seq_lengths = vec![0, 1, 2, 3];
-        
-        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
+
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
-        
+
         // Should deduplicate token 1 at position 0
         assert_eq!(compact_input_ids.len(), 2); // [1, 2]
         assert_eq!(scatter_indices, vec![0, 1, 0]); // First and third map to same compact index
@@ -363,53 +363,55 @@ mod tests {
         let input_ids = vec![1, 2, 3, 1, 2, 4];
         let position_ids = vec![0, 1, 2, 0, 1, 2];
         let cu_seq_lengths = vec![0, 3, 6];
-        
+
         let result1 = compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
         let result2 = compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
-        
+
         assert_eq!(result1, result2);
     }
 
-    // also, add some tests that allow you to reconstruct. e.g. do a function where we do the following function. 
-    // this test is more sophisticated. 
-    // impagine the baseline is 
+    // also, add some tests that allow you to reconstruct. e.g. do a function where we do the following function.
+    // this test is more sophisticated.
+    // impagine the baseline is
     // input_ids = [..]
-    // position_ids = 
+    // position_ids =
 
     // def positional_embeddings()? e.g. add for each position 0.01 to the input_ids.
     // optional
 
-    // def dummy_mlp(input_tensors: Vec[f32]): 
+    // def dummy_mlp(input_tensors: Vec[f32]):
     //    input_ids *= 2 // simulates the mlp part, input ids get embedded.
-    // 
+    //
     /// def dummy_attention(transformed_ids: Vec[f32], cu_seq_lengths):
     ///      let final_values = []
-    ///      for start, end in cu_seq_lengths.take_two(): // unsure how 
+    ///      for start, end in cu_seq_lengths.take_two(): // unsure how
     ///           sequence_only = vector[slice(start, end)]
     ///           // attention part:
     ///           attention = cumsum(sequence_only)
     ///           final_values.push(attention)
     ///      final_values
-    /// 
+    ///
     /// now do a range of input_ids, with and without prefix.
-    /// 
+    ///
     /// attn_orig = attention(dummy_mlp(input_ids, cu_seq_length)
-    /// 
+    ///
     /// for radix mlp approach
     /// fold_ids, fold_positions, scatter = compute_fold_and_scatter()
     /// compact_input_ids = input_ids.index_select(fold_ids)
     /// compact_positions_ids = position_ids.index_select(fold_ids)
-    /// 
+    ///
     /// compact_mlp_out = mlp(compact_input_ids) // output and input are len_compact
     /// mlp_unfolded = compact_mlp_out.index_select(compact_mlp_out) // unfolded len is OG length before compact
     /// attention_folded = dummy_attention(mlp_unfolded)
-    /// 
+    ///
     /// test with various instances, and always assert that attention_folded and unfolded are always the same.
     /// you could just implement it in plain rust, but also use helpers.
     /// run over a large range of possible samples and interesting range of inputs.
-// Helper functions for simulation
+    // Helper functions for simulation
     fn apply_positional_embeddings(input_ids: &[u32], position_ids: &[u32]) -> Vec<f32> {
-        input_ids.iter().zip(position_ids.iter())
+        input_ids
+            .iter()
+            .zip(position_ids.iter())
             .map(|(&token, &pos)| {
                 let base = token as f32;
                 let pos_embed = (pos as f32 * 0.1).sin() * 0.01;
@@ -420,21 +422,22 @@ mod tests {
 
     fn dummy_mlp(input_embeddings: &[f32]) -> Vec<f32> {
         // Simple MLP: multiply by 2 and add small nonlinearity
-        input_embeddings.iter()
+        input_embeddings
+            .iter()
             .map(|&x| x * 2.0 + (x * 0.1).tanh() * 0.1)
             .collect()
     }
 
     fn dummy_attention(mlp_outputs: &[f32], cu_seq_lengths: &[u32]) -> Vec<f32> {
         let mut final_values = Vec::new();
-        
+
         for i in 0..cu_seq_lengths.len().saturating_sub(1) {
             let start = cu_seq_lengths[i] as usize;
             let end = cu_seq_lengths[i + 1] as usize;
-            
+
             if start < end && end <= mlp_outputs.len() {
                 let sequence_slice = &mlp_outputs[start..end];
-                
+
                 // Cumulative sum (simplified attention)
                 let mut cumsum = 0.0;
                 for &value in sequence_slice {
@@ -443,14 +446,12 @@ mod tests {
                 }
             }
         }
-        
+
         final_values
     }
 
     fn index_select_f32(source: &[f32], indices: &[u32]) -> Vec<f32> {
-        indices.iter()
-            .map(|&idx| source[idx as usize])
-            .collect()
+        indices.iter().map(|&idx| source[idx as usize]).collect()
     }
 
     // Parameterized comparison function
@@ -474,10 +475,11 @@ mod tests {
         let attention_baseline = dummy_attention(&mlp_outputs, cu_seq_lengths);
 
         // RadixMLP computation pipeline
-        let (compact_input_ids, compact_position_ids, scatter_indices, _fold_gather) = 
+        let (compact_input_ids, compact_position_ids, scatter_indices, _fold_gather) =
             compute_fold_and_scatter(input_ids, position_ids, cu_seq_lengths);
-        
-        let compact_embeddings = apply_positional_embeddings(&compact_input_ids, &compact_position_ids);
+
+        let compact_embeddings =
+            apply_positional_embeddings(&compact_input_ids, &compact_position_ids);
         let compact_mlp_outputs = dummy_mlp(&compact_embeddings);
         let unfolded_mlp_outputs = index_select_f32(&compact_mlp_outputs, &scatter_indices);
         let attention_radix = dummy_attention(&unfolded_mlp_outputs, cu_seq_lengths);
@@ -502,29 +504,42 @@ mod tests {
 
     fn assert_outputs_equal(result: &RadixMLPTestResult, test_name: &str, tolerance: f32) {
         assert_eq!(
-            result.baseline_output.len(), 
+            result.baseline_output.len(),
             result.radix_output.len(),
-            "{}: Output length mismatch", test_name
+            "{}: Output length mismatch",
+            test_name
         );
 
-        for (i, (baseline, radix)) in result.baseline_output.iter()
+        for (i, (baseline, radix)) in result
+            .baseline_output
+            .iter()
             .zip(result.radix_output.iter())
-            .enumerate() 
+            .enumerate()
         {
             assert!(
                 (baseline - radix).abs() < tolerance,
                 "{}: Mismatch at index {}: baseline={}, radix={}, diff={}",
-                test_name, i, baseline, radix, (baseline - radix).abs()
+                test_name,
+                i,
+                baseline,
+                radix,
+                (baseline - radix).abs()
             );
         }
     }
 
-    fn assert_compression_achieved(result: &RadixMLPTestResult, test_name: &str, expected_compression: bool) {
+    fn assert_compression_achieved(
+        result: &RadixMLPTestResult,
+        test_name: &str,
+        expected_compression: bool,
+    ) {
         if expected_compression {
             assert!(
                 result.compact_tokens < result.original_tokens,
                 "{}: Expected compression but got {} -> {} tokens",
-                test_name, result.original_tokens, result.compact_tokens
+                test_name,
+                result.original_tokens,
+                result.compact_tokens
             );
         } else {
             assert_eq!(
@@ -618,13 +633,18 @@ mod tests {
                 assert!(
                     (result.compression_ratio - expected_ratio).abs() < 1e-6,
                     "{}: Expected compression ratio {}, got {}",
-                    test_case.name, expected_ratio, result.compression_ratio
+                    test_case.name,
+                    expected_ratio,
+                    result.compression_ratio
                 );
             }
 
             println!(
                 "{}: {} -> {} tokens (ratio: {:.3})",
-                test_case.name, result.original_tokens, result.compact_tokens, result.compression_ratio
+                test_case.name,
+                result.original_tokens,
+                result.compact_tokens,
+                result.compression_ratio
             );
         }
     }
@@ -660,12 +680,16 @@ mod tests {
 
         for test_case in edge_cases {
             if test_case.input_ids.is_empty() {
-                let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
-                    compute_fold_and_scatter(&test_case.input_ids, &test_case.position_ids, &test_case.cu_seq_lengths);
+                let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
+                    compute_fold_and_scatter(
+                        &test_case.input_ids,
+                        &test_case.position_ids,
+                        &test_case.cu_seq_lengths,
+                    );
                 assert!(compact_input_ids.is_empty());
                 assert!(compact_position_ids.is_empty());
                 assert!(scatter_indices.is_empty());
-                assert!(fold_gather.is_empty()); 
+                assert!(fold_gather.is_empty());
                 continue;
             }
 
@@ -682,7 +706,9 @@ mod tests {
                 assert!(
                     (result.compression_ratio - expected_ratio).abs() < 1e-6,
                     "{}: Expected compression ratio {}, got {}",
-                    test_case.name, expected_ratio, result.compression_ratio
+                    test_case.name,
+                    expected_ratio,
+                    result.compression_ratio
                 );
             }
         }
@@ -735,16 +761,21 @@ mod tests {
         // Use println! so you also see this under --nocapture; include details in the panic too.
         println!(
             "compute_fold_and_scatter:\n  batch={}\n  seq_len={}\n  total_tokens={}\n  compact_tokens={}\n  ratio={:.3}\n  elapsed_ms={:.3}",
-            batch, seq_len, input_ids.len(), compact_ids.len(), ratio, dt_ms
+            batch,
+            seq_len,
+            input_ids.len(),
+            compact_ids.len(),
+            ratio,
+            dt_ms
         );
 
         // Intentionally fail so the timing and stats are printed in default test runs.
-        panic!(
-            "TIMING REPORT (intentional failure to show output): \
-             batch={}, seq_len={}, total_tokens={}, compact_tokens={}, ratio={:.3}, elapsed_ms={:.3}\n\
-             scatter_len={}, fold_len={}, compact_pos_len={}",
-            batch, seq_len, input_ids.len(), compact_ids.len(), ratio, dt_ms,
-            scatter.len(), fold.len(), compact_pos.len()
-        );
+        // panic!(
+        //     "TIMING REPORT (intentional failure to show output): \
+        //      batch={}, seq_len={}, total_tokens={}, compact_tokens={}, ratio={:.3}, elapsed_ms={:.3}\n\
+        //      scatter_len={}, fold_len={}, compact_pos_len={}",
+        //     batch, seq_len, input_ids.len(), compact_ids.len(), ratio, dt_ms,
+        //     scatter.len(), fold.len(), compact_pos.len()
+        // );
     }
 }
