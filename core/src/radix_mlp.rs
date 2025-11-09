@@ -44,36 +44,40 @@ pub fn compute_fold_and_scatter(
     input_ids: &[u32], 
     position_ids: &[u32], 
     cu_seq_lengths: &[u32]
-) -> (Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>) {  // Added fold_gather return
-    // computes radix mlp compute and scatter. 
+) -> (Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>) {
     if input_ids.is_empty() {
         return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
 
-    // Single sequence optimization - no deduplication possible
     if cu_seq_lengths.len() == 2 {
         let scatter_indices: Vec<u32> = (0..input_ids.len() as u32).collect();
         let fold_gather: Vec<u32> = (0..input_ids.len() as u32).collect();
         return (input_ids.to_vec(), position_ids.to_vec(), scatter_indices, fold_gather);
     }
     
-    let mut trie_nodes = Vec::new();
+    let mut trie_nodes: Vec<TrieNode> = Vec::new();
     let mut root_children: HashMap<(u32, u32), usize> = HashMap::new();
     
-    // Build trie for each sequence
+    // Build trie for each sequence - FIX: Use indices instead of mutable references
     for seq_idx in 0..cu_seq_lengths.len() - 1 {
         let start = cu_seq_lengths[seq_idx] as usize;
         let end = cu_seq_lengths[seq_idx + 1] as usize;
         
-        let mut current_children = &mut root_children;
+        let mut current_path = Vec::new(); // Track path instead of mutable refs
         
         for pos in start..end {
             let token_id = input_ids[pos];
             let position = position_ids[pos];
             let key = (token_id, position);
             
+            // Navigate to the right level in the trie
+            let mut current_children: &HashMap<(u32, u32), usize> = &root_children;
+            for &parent_idx in &current_path {
+                current_children = &trie_nodes[parent_idx].children;
+            }
+            
             if let Some(&existing_idx) = current_children.get(&key) {
-                current_children = &mut trie_nodes[existing_idx].children;
+                current_path.push(existing_idx);
             } else {
                 let new_idx = trie_nodes.len();
                 trie_nodes.push(TrieNode {
@@ -82,8 +86,16 @@ pub fn compute_fold_and_scatter(
                     children: HashMap::new(),
                     compact_index: None,
                 });
-                current_children.insert(key, new_idx);
-                current_children = &mut trie_nodes[new_idx].children;
+                
+                // Insert into the appropriate parent
+                if current_path.is_empty() {
+                    root_children.insert(key, new_idx);
+                } else {
+                    let parent_idx = *current_path.last().unwrap();
+                    trie_nodes[parent_idx].children.insert(key, new_idx);
+                }
+                
+                current_path.push(new_idx);
             }
         }
     }
@@ -122,8 +134,8 @@ pub fn compute_fold_and_scatter(
     assign_compact_indices(&root_children, &mut trie_nodes, &mut compact_input_ids, &mut compact_position_ids, &mut compact_counter);
     
     // Build BOTH mappings in a single pass
-    let mut scatter_indices = Vec::with_capacity(input_ids.len());  // compact -> original
-    let mut first_occurrence = vec![None; trie_nodes.len()];        // track first occurrence per compact idx
+    let mut scatter_indices = Vec::with_capacity(input_ids.len());
+    let mut first_occurrence = vec![None; trie_nodes.len()];
     
     for seq_idx in 0..cu_seq_lengths.len() - 1 {
         let start = cu_seq_lengths[seq_idx] as usize;
@@ -140,7 +152,6 @@ pub fn compute_fold_and_scatter(
                 let compact_idx = trie_nodes[node_idx].compact_index.unwrap();
                 scatter_indices.push(compact_idx as u32);
                 
-                // Track first occurrence for fold_gather
                 if first_occurrence[compact_idx].is_none() {
                     first_occurrence[compact_idx] = Some(pos as u32);
                 }
@@ -150,7 +161,6 @@ pub fn compute_fold_and_scatter(
         }
     }
     
-    // Build fold_gather: for each compact index, map to first original position that represents it
     let fold_gather: Vec<u32> = first_occurrence.into_iter()
         .map(|opt| opt.unwrap())
         .collect();
@@ -168,12 +178,13 @@ mod tests {
         let position_ids = vec![];
         let cu_seq_lengths = vec![];
         
-        let (compact_input_ids, compact_position_ids, scatter_indices) = 
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
         
         assert_eq!(compact_input_ids, vec![]);
         assert_eq!(compact_position_ids, vec![]);
         assert_eq!(scatter_indices, vec![]);
+        assert_eq!(fold_gather, vec![]);
     }
 
     #[test]
@@ -183,13 +194,14 @@ mod tests {
         let position_ids = vec![0, 1, 2];
         let cu_seq_lengths = vec![0, 3];
         
-        let (compact_input_ids, compact_position_ids, scatter_indices) = 
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
         
         // No deduplication possible with single sequence
         assert_eq!(compact_input_ids, vec![1, 2, 3]);
         assert_eq!(compact_position_ids, vec![0, 1, 2]);
         assert_eq!(scatter_indices, vec![0, 1, 2]);
+        assert_eq!(fold_gather, vec![0, 1, 2]);
     }
 
     #[test]
@@ -197,7 +209,7 @@ mod tests {
         // Example from comments:
         // tokens    = [a,b,c,d,e,f,g, a,b,c, e,f,g,h,i]
         // pos       = [0,1,2,3,4,5,6, 0,1,2, 3,4,5,6,7]
-        // cu_seqlen = [0,7,15]
+        // cu_seqlen = [0,7,10,15]
         // Expected folded:
         // tokens    = [a,b,c, d,e,f,g, e,f,g,h,i]
         // pos       = [0,1,2, 3,4,5,6, 3,4,5,6,7]
@@ -206,7 +218,7 @@ mod tests {
         let position_ids = vec![0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 6, 7];
         let cu_seq_lengths = vec![0, 7, 10, 15];
         
-        let (compact_input_ids, compact_position_ids, scatter_indices) = 
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
         
         // Should deduplicate shared prefix [a,b,c] at positions [0,1,2]
@@ -214,6 +226,7 @@ mod tests {
         assert_eq!(compact_input_ids.len(), 12); // Reduced from 15 to 12
         assert_eq!(compact_position_ids.len(), 12);
         assert_eq!(scatter_indices.len(), 15); // Original length preserved
+        assert_eq!(fold_gather.len(), 12); // Same as compact length
         
         // Verify that we can reconstruct original sequences using scatter indices
         for i in 0..input_ids.len() {
@@ -230,13 +243,14 @@ mod tests {
         let position_ids = vec![0, 1, 2, 0, 1, 2];
         let cu_seq_lengths = vec![0, 3, 6];
         
-        let (compact_input_ids, compact_position_ids, scatter_indices) = 
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
         
         // Should completely deduplicate to single sequence
         assert_eq!(compact_input_ids, vec![1, 2, 3]);
         assert_eq!(compact_position_ids, vec![0, 1, 2]);
         assert_eq!(scatter_indices, vec![0, 1, 2, 0, 1, 2]);
+        assert_eq!(fold_gather, vec![0, 1, 2]);
     }
 
     #[test]
@@ -246,13 +260,14 @@ mod tests {
         let position_ids = vec![0, 1, 0, 1];
         let cu_seq_lengths = vec![0, 2, 4];
         
-        let (compact_input_ids, compact_position_ids, scatter_indices) = 
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
         
         // No deduplication possible
         assert_eq!(compact_input_ids, vec![1, 2, 3, 4]);
         assert_eq!(compact_position_ids, vec![0, 1, 0, 1]);
         assert_eq!(scatter_indices, vec![0, 1, 2, 3]);
+        assert_eq!(fold_gather, vec![0, 1, 2, 3]);
     }
 
     #[test]
@@ -262,13 +277,14 @@ mod tests {
         let position_ids = vec![0, 1, 2, 0, 1, 2];
         let cu_seq_lengths = vec![0, 3, 6];
         
-        let (compact_input_ids, compact_position_ids, scatter_indices) = 
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
         
         // Should deduplicate shared prefix [a,b] at positions [0,1]
         assert_eq!(compact_input_ids.len(), 4); // [a,b,c,d] in some order
         assert_eq!(compact_position_ids.len(), 4);
         assert_eq!(scatter_indices.len(), 6);
+        assert_eq!(fold_gather.len(), 4);
         
         // Verify reconstruction
         for i in 0..input_ids.len() {
@@ -285,13 +301,14 @@ mod tests {
         let position_ids = vec![0, 1, 2, 3];
         let cu_seq_lengths = vec![0, 2, 4];
         
-        let (compact_input_ids, compact_position_ids, scatter_indices) = 
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
         
         // Should NOT deduplicate because positions are different
         assert_eq!(compact_input_ids.len(), 4);
         assert_eq!(compact_position_ids.len(), 4);
         assert_eq!(scatter_indices, vec![0, 1, 2, 3]);
+        assert_eq!(fold_gather, vec![0, 1, 2, 3]);
     }
 
     #[test]
@@ -304,7 +321,7 @@ mod tests {
         let position_ids = vec![0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3];
         let cu_seq_lengths = vec![0, 4, 8, 12];
         
-        let (compact_input_ids, compact_position_ids, scatter_indices) = 
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
         
         // Should deduplicate:
@@ -312,6 +329,7 @@ mod tests {
         // - [c] at [2] shared by seq1 and seq3
         assert!(compact_input_ids.len() < 12); // Some deduplication should occur
         assert_eq!(scatter_indices.len(), 12);
+        assert_eq!(fold_gather.len(), compact_input_ids.len());
         
         // Verify reconstruction
         for i in 0..input_ids.len() {
@@ -328,12 +346,13 @@ mod tests {
         let position_ids = vec![0, 0, 0];
         let cu_seq_lengths = vec![0, 1, 2, 3];
         
-        let (compact_input_ids, compact_position_ids, scatter_indices) = 
+        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
         
         // Should deduplicate token 1 at position 0
         assert_eq!(compact_input_ids.len(), 2); // [1, 2]
         assert_eq!(scatter_indices, vec![0, 1, 0]); // First and third map to same compact index
+        assert_eq!(fold_gather.len(), 2);
     }
 
     #[test]
@@ -453,7 +472,7 @@ mod tests {
         let attention_baseline = dummy_attention(&mlp_outputs, cu_seq_lengths);
 
         // RadixMLP computation pipeline
-        let (compact_input_ids, compact_position_ids, scatter_indices) = 
+        let (compact_input_ids, compact_position_ids, scatter_indices, _fold_gather) = 
             compute_fold_and_scatter(input_ids, position_ids, cu_seq_lengths);
         
         let compact_embeddings = apply_positional_embeddings(&compact_input_ids, &compact_position_ids);
@@ -618,56 +637,50 @@ mod tests {
                 (rng_state / 65536) % 32768
             };
 
-            let (input_ids, position_ids, cu_seq_lengths) = match pattern {
-                "random_overlap" => {
-                    let num_sequences = 2 + (simple_rng() % 4) as usize;
-                    let base_tokens = vec![1, 2, 3]; // Common prefix for overlap
-                    let mut input_ids = Vec::new();
-                    let mut position_ids = Vec::new();
-                    let mut cu_seq_lengths = vec![0];
+            let (input_ids, position_ids, cu_seq_lengths) = if *pattern == "random_overlap" { // FIX: Add *
+                let num_sequences = 2 + (simple_rng() % 4) as usize;
+                let base_tokens = vec![1, 2, 3];
+                let mut input_ids = Vec::new();
+                let mut position_ids = Vec::new();
+                let mut cu_seq_lengths = vec![0];
 
-                    for _ in 0..num_sequences {
-                        // Add common prefix
-                        input_ids.extend(&base_tokens);
-                        position_ids.extend(0..base_tokens.len() as u32);
-                        
-                        // Add random suffix
-                        let suffix_len = 1 + (simple_rng() % 3) as usize;
-                        for pos in base_tokens.len()..base_tokens.len() + suffix_len {
-                            input_ids.push(10 + (simple_rng() % 5) as u32);
-                            position_ids.push(pos as u32);
-                        }
-                        cu_seq_lengths.push(input_ids.len() as u32);
+                for _ in 0..num_sequences {
+                    input_ids.extend(&base_tokens);
+                    position_ids.extend(0..base_tokens.len() as u32);
+                    
+                    let suffix_len = 1 + (simple_rng() % 3) as usize;
+                    for pos in base_tokens.len()..base_tokens.len() + suffix_len {
+                        input_ids.push(10 + (simple_rng() % 5) as u32);
+                        position_ids.push(pos as u32);
                     }
-                    (input_ids, position_ids, cu_seq_lengths)
-                },
-                "no_overlap" => {
-                    let num_sequences = 2 + (simple_rng() % 3) as usize;
-                    let mut input_ids = Vec::new();
-                    let mut position_ids = Vec::new();
-                    let mut cu_seq_lengths = vec![0];
+                    cu_seq_lengths.push(input_ids.len() as u32);
+                }
+                (input_ids, position_ids, cu_seq_lengths)
+            } else {
+                let num_sequences = 2 + (simple_rng() % 3) as usize;
+                let mut input_ids = Vec::new();
+                let mut position_ids = Vec::new();
+                let mut cu_seq_lengths = vec![0];
 
-                    for seq_idx in 0..num_sequences {
-                        let seq_len = 2 + (simple_rng() % 4) as usize;
-                        let base_token = 1 + seq_idx as u32 * 10; // Ensure no overlap
-                        
-                        for pos in 0..seq_len {
-                            input_ids.push(base_token + pos as u32);
-                            position_ids.push(pos as u32);
-                        }
-                        cu_seq_lengths.push(input_ids.len() as u32);
+                for seq_idx in 0..num_sequences {
+                    let seq_len = 2 + (simple_rng() % 4) as usize;
+                    let base_token = 1 + seq_idx as u32 * 10;
+                    
+                    for pos in 0..seq_len {
+                        input_ids.push(base_token + pos as u32);
+                        position_ids.push(pos as u32);
                     }
-                    (input_ids, position_ids, cu_seq_lengths)
-                },
-                _ => panic!("Unknown pattern: {}", pattern),
+                    cu_seq_lengths.push(input_ids.len() as u32);
+                }
+                (input_ids, position_ids, cu_seq_lengths)
             };
 
             TestCase {
-                name: pattern,
+                name: if *pattern == "random_overlap" { "random_overlap" } else { "no_overlap" }, // FIX: Use static strings
                 input_ids,
                 position_ids,
                 cu_seq_lengths,
-                expect_compression: pattern == "random_overlap",
+                expect_compression: *pattern == "random_overlap", // FIX: Add *
                 expected_compression_ratio: None,
             }
         }
@@ -724,18 +737,18 @@ mod tests {
                 position_ids: vec![0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4],
                 cu_seq_lengths: vec![0, 5, 10, 15],
                 expect_compression: true,
-                expected_compression_ratio: Some(1.0 / 3.0), // 15 -> 5 tokens
+                expected_compression_ratio: Some(1.0 / 3.0),
             },
         ];
 
         for test_case in edge_cases {
             if test_case.input_ids.is_empty() {
-                // Special handling for empty case
-                let (compact_input_ids, compact_position_ids, scatter_indices) = 
+                let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) = 
                     compute_fold_and_scatter(&test_case.input_ids, &test_case.position_ids, &test_case.cu_seq_lengths);
                 assert!(compact_input_ids.is_empty());
                 assert!(compact_position_ids.is_empty());
                 assert!(scatter_indices.is_empty());
+                assert!(fold_gather.is_empty()); 
                 continue;
             }
 
