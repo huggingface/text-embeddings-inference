@@ -37,168 +37,138 @@ pub fn compute_fold_and_scatter(
     position_ids: &[u32],
     cu_seq_lengths: &[u32],
 ) -> (Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>) {
+    // Empty fast-path
     if input_ids.is_empty() {
         return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
 
-    // Fast path: single sequence -> no cross-sequence dedup possible
+    // Single-sequence fast-path: identity
     if cu_seq_lengths.len() == 2 {
         let n = input_ids.len() as u32;
         let ids: Vec<u32> = (0..n).collect();
         return (input_ids.to_vec(), position_ids.to_vec(), ids.clone(), ids);
     }
 
-    #[derive(Debug, Clone)]
-    struct TrieNode {
-        token_id: u32,
-        position: u32,
-        children: std::collections::HashMap<(u32, u32), usize>,
-        compact_index: Option<usize>,
+    #[inline]
+    fn make_key(token: u32, pos: u32) -> u64 {
+        // gigachad: we concat the u32's.
+        ((pos as u64) << 32) | (token as u64)
     }
 
-    use std::collections::HashMap;
-    let mut trie_nodes: Vec<TrieNode> = Vec::new();
-    let mut root_children: HashMap<(u32, u32), usize> = HashMap::new();
+    #[derive(Debug)]
+    struct Node {
+        token: u32,
+        pos: u32,
+        compact: u32,                                  // u32::MAX => not assigned yet
+        children_map: std::collections::HashMap<u64, usize>, // key -> child idx
+        children_list: Vec<usize>,                     // insertion order of children
+    }
 
-    // Build trie per sequence without keeping dangling borrows
-    for seq_idx in 0..cu_seq_lengths.len().saturating_sub(1) {
-        let start = cu_seq_lengths[seq_idx] as usize;
-        let end = cu_seq_lengths[seq_idx + 1] as usize;
+    let n = input_ids.len();
 
-        let mut path: Vec<usize> = Vec::new();
-        for pos in start..end {
-            let token_id = input_ids[pos];
-            let position = position_ids[pos];
-            let key = (token_id, position);
+    // Arena of nodes; index 0 is a synthetic root.
+    let mut nodes: Vec<Node> = Vec::with_capacity(n + 1);
+    nodes.push(Node {
+        token: 0,
+        pos: 0,
+        compact: u32::MAX,
+        children_map: std::collections::HashMap::new(),
+        children_list: Vec::new(),
+    });
 
-            let child_idx = if let Some(parent_idx) = path.last().copied() {
-                // Try to reuse an existing child under this parent
-                if let Some(&idx) = trie_nodes[parent_idx].children.get(&key) {
-                    idx
-                } else {
-                    // Create a new node and link it from the parent
-                    let new_idx = trie_nodes.len();
-                    trie_nodes.push(TrieNode {
-                        token_id,
-                        position,
-                        children: HashMap::new(),
-                        compact_index: None,
-                    });
-                    trie_nodes[parent_idx].children.insert(key, new_idx);
-                    new_idx
-                }
+    // Original-position -> node index
+    let mut orig_node_idx: Vec<usize> = Vec::with_capacity(n);
+
+    // Track first occurrence (original position) per node; align indices with `nodes`
+    let mut node_first_pos: Vec<u32> = Vec::with_capacity(n + 1);
+    node_first_pos.push(u32::MAX); // root
+
+    // -------- Build trie & record node for every original token --------
+    for s in 0..cu_seq_lengths.len().saturating_sub(1) {
+        let start = cu_seq_lengths[s] as usize;
+        let end = cu_seq_lengths[s + 1] as usize;
+
+        let mut parent = 0usize; // start from root
+        for i in start..end {
+            let t = input_ids[i];
+            let p = position_ids[i];
+            let k = make_key(t, p);
+
+            let child_idx = if let Some(&c) = nodes[parent].children_map.get(&k) {
+                c
             } else {
-                // At root
-                if let Some(&idx) = root_children.get(&key) {
-                    idx
-                } else {
-                    let new_idx = trie_nodes.len();
-                    trie_nodes.push(TrieNode {
-                        token_id,
-                        position,
-                        children: HashMap::new(),
-                        compact_index: None,
-                    });
-                    root_children.insert(key, new_idx);
-                    new_idx
-                }
+                let idx = nodes.len();
+                nodes[parent].children_map.insert(k, idx);
+                nodes[parent].children_list.push(idx);
+                nodes.push(Node {
+                    token: t,
+                    pos: p,
+                    compact: u32::MAX,
+                    children_map: std::collections::HashMap::new(),
+                    children_list: Vec::new(),
+                });
+                node_first_pos.push(u32::MAX);
+                idx
             };
 
-            path.push(child_idx);
+            // Record mapping for this original position
+            orig_node_idx.push(child_idx);
+
+            // First occurrence for fold_gather
+            if node_first_pos[child_idx] == u32::MAX {
+                node_first_pos[child_idx] = i as u32;
+            }
+
+            parent = child_idx;
         }
     }
 
-    // If no reduction, just return identity mappings
-    if trie_nodes.len() >= input_ids.len() {
-        let n = input_ids.len() as u32;
-        let ids: Vec<u32> = (0..n).collect();
+    // If no reduction across sequences, return identity mappings to satisfy tests.
+    if nodes.len() - 1 >= n {
+        let ids: Vec<u32> = (0..n as u32).collect();
         return (input_ids.to_vec(), position_ids.to_vec(), ids.clone(), ids);
     }
 
-    // Assign compact indices in a deterministic DFS: sort keys at each level
-    let mut compact_input_ids = Vec::with_capacity(trie_nodes.len());
-    let mut compact_position_ids = Vec::with_capacity(trie_nodes.len());
-    let mut counter = 0usize;
+    // -------- Assign compact indices with an iterative DFS in insertion order --------
+    let mut compact_input_ids: Vec<u32> = Vec::with_capacity(nodes.len() - 1);
+    let mut compact_position_ids: Vec<u32> = Vec::with_capacity(nodes.len() - 1);
 
-    fn assign_compact_indices(
-        children: &HashMap<(u32, u32), usize>,
-        trie_nodes: &mut [TrieNode],
-        out_tokens: &mut Vec<u32>,
-        out_pos: &mut Vec<u32>,
-        counter: &mut usize,
-    ) {
-        // Sort by (token_id, position) so order is stable across runs
-        let mut pairs: Vec<((u32, u32), usize)> =
-            children.iter().map(|(k, &v)| (*k, v)).collect();
-        pairs.sort_unstable_by_key(|(k, _)| *k);
-
-        for (_, node_idx) in pairs {
-            let node = &mut trie_nodes[node_idx];
-            node.compact_index = Some(*counter);
-            out_tokens.push(node.token_id);
-            out_pos.push(node.position);
-            *counter += 1;
-
-            // Recurse on a snapshot to avoid borrowing issues
-            let child_copy = node.children.clone();
-            assign_compact_indices(&child_copy, trie_nodes, out_tokens, out_pos, counter);
-        }
+    let mut stack: Vec<usize> = Vec::with_capacity(64);
+    // Push root children in reverse, so we pop in insertion order.
+    for &c in nodes[0].children_list.iter().rev() {
+        stack.push(c);
     }
 
-    assign_compact_indices(
-        &root_children,
-        &mut trie_nodes,
-        &mut compact_input_ids,
-        &mut compact_position_ids,
-        &mut counter,
-    );
+    let mut next: u32 = 0;
+    while let Some(idx) = stack.pop() {
+        if nodes[idx].compact == u32::MAX {
+            nodes[idx].compact = next;
+            compact_input_ids.push(nodes[idx].token);
+            compact_position_ids.push(nodes[idx].pos);
+            next += 1;
 
-        // Build scatter (for each original token -> compact index) and the first-occurrence gather
-    let mut scatter_indices = Vec::with_capacity(input_ids.len());
-    // Use the number of compact nodes we actually assigned
-    let mut first_occurrence: Vec<Option<u32>> = vec![None; counter];
-
-    for seq_idx in 0..cu_seq_lengths.len().saturating_sub(1) {
-        let start = cu_seq_lengths[seq_idx] as usize;
-        let end = cu_seq_lengths[seq_idx + 1] as usize;
-
-        // Track where we are in the trie while walking this sequence.
-        let mut parent: Option<usize> = None;
-
-        for pos in start..end {
-            let token_id = input_ids[pos];
-            let position = position_ids[pos];
-            let key = (token_id, position);
-
-            // Find the trie node for this (token, position) under the correct parent.
-            let node_idx = match parent {
-                None => *root_children
-                    .get(&key)
-                    .expect("Trie must contain root node for first token of sequence"),
-                Some(pidx) => *trie_nodes[pidx]
-                    .children
-                    .get(&key)
-                    .expect("Trie must contain child node for subsequent token"),
-            };
-
-            let compact_idx = trie_nodes[node_idx]
-                .compact_index
-                .expect("compact index assigned for every trie node");
-            scatter_indices.push(compact_idx as u32);
-
-            if first_occurrence[compact_idx].is_none() {
-                first_occurrence[compact_idx] = Some(pos as u32);
+            // Push children in reverse to preserve insertion order on pop.
+            for &c in nodes[idx].children_list.iter().rev() {
+                stack.push(c);
             }
-
-            // Advance within the same sequence
-            parent = Some(node_idx);
         }
     }
 
-    let fold_gather: Vec<u32> = first_occurrence
-        .into_iter()
-        .map(|x| x.expect("every compact node appears at least once"))
-        .collect();
+    // -------- Build scatter (orig -> compact) in O(n) --------
+    let mut scatter_indices: Vec<u32> = Vec::with_capacity(n);
+    for &ni in &orig_node_idx {
+        scatter_indices.push(nodes[ni].compact);
+    }
+
+    // -------- Build fold_gather using first-occurrence positions --------
+    let mut fold_gather: Vec<u32> = vec![0u32; compact_input_ids.len()];
+    for node_idx in 1..nodes.len() {
+        let first = node_first_pos[node_idx];
+        if first != u32::MAX {
+            let c = nodes[node_idx].compact as usize;
+            fold_gather[c] = first;
+        }
+    }
 
     (
         compact_input_ids,
@@ -752,5 +722,65 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn fail_and_report_time_large_batch() {
+        use std::time::Instant;
+
+        // Relevant-sized problem:
+        //  - batch = 32 sequences
+        //  - each sequence has a shared prefix of 128 tokens (max dedup)
+        //  - plus a unique tail of 200 tokens
+        //  -> total ~ 10,496 tokens
+        let batch: usize = 32;
+        let shared_prefix: usize = 128;
+        let tail_len: usize = 200;
+        let seq_len: usize = shared_prefix + tail_len;
+        let total_tokens: usize = batch * seq_len;
+
+        let mut input_ids: Vec<u32> = Vec::with_capacity(total_tokens);
+        let mut position_ids: Vec<u32> = Vec::with_capacity(total_tokens);
+        let mut cu_seq_lengths: Vec<u32> = Vec::with_capacity(batch + 1);
+        cu_seq_lengths.push(0);
+
+        for seq_idx in 0..batch {
+            // Shared prefix across all sequences: same tokens, same positions
+            for j in 0..shared_prefix {
+                let token = (j as u32 % 1000) + 1;
+                input_ids.push(token);
+                position_ids.push(j as u32);
+            }
+            // Unique tail per sequence to keep the problem realistic
+            for k in 0..tail_len {
+                let token = 1_000_000u32 + (seq_idx as u32) * 10_000 + (k as u32);
+                input_ids.push(token);
+                position_ids.push((shared_prefix + k) as u32);
+            }
+            cu_seq_lengths.push(input_ids.len() as u32);
+        }
+
+        let t0 = Instant::now();
+        let (compact_ids, compact_pos, scatter, fold) =
+            super::compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
+        let dt = t0.elapsed();
+        let dt_ms = dt.as_secs_f64() * 1000.0;
+
+        let ratio = (compact_ids.len() as f64) / (input_ids.len() as f64);
+
+        // Use println! so you also see this under --nocapture; include details in the panic too.
+        println!(
+            "compute_fold_and_scatter:\n  batch={}\n  seq_len={}\n  total_tokens={}\n  compact_tokens={}\n  ratio={:.3}\n  elapsed_ms={:.3}",
+            batch, seq_len, input_ids.len(), compact_ids.len(), ratio, dt_ms
+        );
+
+        // Intentionally fail so the timing and stats are printed in default test runs.
+        panic!(
+            "TIMING REPORT (intentional failure to show output): \
+             batch={}, seq_len={}, total_tokens={}, compact_tokens={}, ratio={:.3}, elapsed_ms={:.3}\n\
+             scatter_len={}, fold_len={}, compact_pos_len={}",
+            batch, seq_len, input_ids.len(), compact_ids.len(), ratio, dt_ms,
+            scatter.len(), fold.len(), compact_pos.len()
+        );
     }
 }
