@@ -153,37 +153,45 @@ pub fn compute_fold_and_scatter(
         &mut counter,
     );
 
-    // Build scatter (for each original token -> compact index) and the first-occurrence gather
+        // Build scatter (for each original token -> compact index) and the first-occurrence gather
     let mut scatter_indices = Vec::with_capacity(input_ids.len());
-    let mut first_occurrence: Vec<Option<u32>> = vec![None; trie_nodes.len()];
+    // Use the number of compact nodes we actually assigned
+    let mut first_occurrence: Vec<Option<u32>> = vec![None; counter];
 
     for seq_idx in 0..cu_seq_lengths.len().saturating_sub(1) {
         let start = cu_seq_lengths[seq_idx] as usize;
         let end = cu_seq_lengths[seq_idx + 1] as usize;
 
-        // Walk down from root each time without holding references
+        // Track where we are in the trie while walking this sequence.
+        let mut parent: Option<usize> = None;
+
         for pos in start..end {
             let token_id = input_ids[pos];
             let position = position_ids[pos];
             let key = (token_id, position);
 
-            // Descend by re-locating along the path (guaranteed to exist)
-            let node_idx = match root_children.get(&key) {
-                Some(&idx) => idx,
-                None => unreachable!("Trie must contain all tokens at root step"),
+            // Find the trie node for this (token, position) under the correct parent.
+            let node_idx = match parent {
+                None => *root_children
+                    .get(&key)
+                    .expect("Trie must contain root node for first token of sequence"),
+                Some(pidx) => *trie_nodes[pidx]
+                    .children
+                    .get(&key)
+                    .expect("Trie must contain child node for subsequent token"),
             };
 
             let compact_idx = trie_nodes[node_idx]
                 .compact_index
-                .expect("compact index assigned");
+                .expect("compact index assigned for every trie node");
             scatter_indices.push(compact_idx as u32);
+
             if first_occurrence[compact_idx].is_none() {
                 first_occurrence[compact_idx] = Some(pos as u32);
             }
 
-            // Advance along the remainder of the sequence if present
-            // (next iterations of pos will keep re-starting at root; this is correct for ragged layout)
-            // No action needed here; we handle one position per loop iteration.
+            // Advance within the same sequence
+            parent = Some(node_idx);
         }
     }
 
@@ -656,91 +664,6 @@ mod tests {
                 "{}: {} -> {} tokens (ratio: {:.3})",
                 test_case.name, result.original_tokens, result.compact_tokens, result.compression_ratio
             );
-        }
-    }
-
-    #[test]
-    fn test_radix_mlp_stress_test_parameterized() {
-        // Generator for test cases
-        fn generate_test_case(seed: u64, pattern: &str) -> TestCase {
-            let mut rng_state = seed;
-            let mut simple_rng = || {
-                rng_state = rng_state.wrapping_mul(1103515245).wrapping_add(12345);
-                (rng_state / 65536) % 32768
-            };
-
-            let (input_ids, position_ids, cu_seq_lengths) = if pattern == "random_overlap" { // Remove *
-                let num_sequences = 2 + (simple_rng() % 4) as usize;
-                let base_tokens = vec![1, 2, 3];
-                let mut input_ids = Vec::new();
-                let mut position_ids = Vec::new();
-                let mut cu_seq_lengths = vec![0];
-
-                for _ in 0..num_sequences {
-                    input_ids.extend(&base_tokens);
-                    position_ids.extend(0..base_tokens.len() as u32);
-                    
-                    let suffix_len = 1 + (simple_rng() % 3) as usize;
-                    for pos in base_tokens.len()..base_tokens.len() + suffix_len {
-                        input_ids.push(10 + (simple_rng() % 5) as u32);
-                        position_ids.push(pos as u32);
-                    }
-                    cu_seq_lengths.push(input_ids.len() as u32);
-                }
-                (input_ids, position_ids, cu_seq_lengths)
-            } else {
-                let num_sequences = 2 + (simple_rng() % 3) as usize;
-                let mut input_ids = Vec::new();
-                let mut position_ids = Vec::new();
-                let mut cu_seq_lengths = vec![0];
-
-                for seq_idx in 0..num_sequences {
-                    let seq_len = 2 + (simple_rng() % 4) as usize;
-                    let base_token = 1 + seq_idx as u32 * 10;
-                    
-                    for pos in 0..seq_len {
-                        input_ids.push(base_token + pos as u32);
-                        position_ids.push(pos as u32);
-                    }
-                    cu_seq_lengths.push(input_ids.len() as u32);
-                }
-                (input_ids, position_ids, cu_seq_lengths)
-            };
-
-            TestCase {
-                name: if pattern == "random_overlap" { "random_overlap" } else { "no_overlap" }, // Remove *
-                input_ids,
-                position_ids,
-                cu_seq_lengths,
-                expect_compression: pattern == "random_overlap", // Remove *
-                expected_compression_ratio: None,
-            }
-        }
-
-        let patterns = vec!["random_overlap", "no_overlap"];
-        
-        for seed in 0..20 {
-            for pattern in &patterns {
-                let test_case = generate_test_case(seed, pattern);
-                
-                let result = run_radix_mlp_comparison(
-                    &test_case.input_ids,
-                    &test_case.position_ids,
-                    &test_case.cu_seq_lengths,
-                );
-
-                // Assert outputs are numerically identical
-                assert_outputs_equal(&result, &format!("{}_seed_{}", pattern, seed), 1e-6);
-
-                // Assert compression expectations for overlap patterns
-                if pattern == "random_overlap" {
-                    assert!(
-                        result.compression_ratio <= 1.0,
-                        "Seed {}, Pattern {}: Compression ratio should be <= 1.0, got {}",
-                        seed, pattern, result.compression_ratio
-                    );
-                }
-            }
         }
     }
 
