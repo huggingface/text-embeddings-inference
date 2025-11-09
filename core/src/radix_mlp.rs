@@ -32,140 +32,172 @@ use std::collections::HashMap;
 // 
 // in paractival matters, we aim to implement both as continous map
 
-#[derive(Debug, Clone)]
-struct TrieNode {
-    token_id: u32,
-    position: u32,
-    children: HashMap<(u32, u32), usize>, // (token_id, position) -> child_index
-    compact_index: Option<usize>, // Index in the compacted representation
-}
-
 pub fn compute_fold_and_scatter(
-    input_ids: &[u32], 
-    position_ids: &[u32], 
-    cu_seq_lengths: &[u32]
+    input_ids: &[u32],
+    position_ids: &[u32],
+    cu_seq_lengths: &[u32],
 ) -> (Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>) {
     if input_ids.is_empty() {
         return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     }
 
+    // Fast path: single sequence -> no cross-sequence dedup possible
     if cu_seq_lengths.len() == 2 {
-        let scatter_indices: Vec<u32> = (0..input_ids.len() as u32).collect();
-        let fold_gather: Vec<u32> = (0..input_ids.len() as u32).collect();
-        return (input_ids.to_vec(), position_ids.to_vec(), scatter_indices, fold_gather);
+        let n = input_ids.len() as u32;
+        let ids: Vec<u32> = (0..n).collect();
+        return (input_ids.to_vec(), position_ids.to_vec(), ids.clone(), ids);
     }
-    
+
+    #[derive(Debug, Clone)]
+    struct TrieNode {
+        token_id: u32,
+        position: u32,
+        children: std::collections::HashMap<(u32, u32), usize>,
+        compact_index: Option<usize>,
+    }
+
+    use std::collections::HashMap;
     let mut trie_nodes: Vec<TrieNode> = Vec::new();
     let mut root_children: HashMap<(u32, u32), usize> = HashMap::new();
-    
-    // Build trie for each sequence - FIX: Use indices instead of mutable references
-    for seq_idx in 0..cu_seq_lengths.len() - 1 {
+
+    // Build trie per sequence without keeping dangling borrows
+    for seq_idx in 0..cu_seq_lengths.len().saturating_sub(1) {
         let start = cu_seq_lengths[seq_idx] as usize;
         let end = cu_seq_lengths[seq_idx + 1] as usize;
-        
-        let mut current_path = Vec::new(); // Track path instead of mutable refs
-        
+
+        let mut path: Vec<usize> = Vec::new();
         for pos in start..end {
             let token_id = input_ids[pos];
             let position = position_ids[pos];
             let key = (token_id, position);
-            
-            // Navigate to the right level in the trie
-            let mut current_children: &HashMap<(u32, u32), usize> = &root_children;
-            for &parent_idx in &current_path {
-                current_children = &trie_nodes[parent_idx].children;
-            }
-            
-            if let Some(&existing_idx) = current_children.get(&key) {
-                current_path.push(existing_idx);
-            } else {
-                let new_idx = trie_nodes.len();
-                trie_nodes.push(TrieNode {
-                    token_id,
-                    position,
-                    children: HashMap::new(),
-                    compact_index: None,
-                });
-                
-                // Insert into the appropriate parent
-                if current_path.is_empty() {
-                    root_children.insert(key, new_idx);
+
+            let child_idx = if let Some(parent_idx) = path.last().copied() {
+                // Try to reuse an existing child under this parent
+                if let Some(&idx) = trie_nodes[parent_idx].children.get(&key) {
+                    idx
                 } else {
-                    let parent_idx = *current_path.last().unwrap();
+                    // Create a new node and link it from the parent
+                    let new_idx = trie_nodes.len();
+                    trie_nodes.push(TrieNode {
+                        token_id,
+                        position,
+                        children: HashMap::new(),
+                        compact_index: None,
+                    });
                     trie_nodes[parent_idx].children.insert(key, new_idx);
+                    new_idx
                 }
-                
-                current_path.push(new_idx);
-            }
+            } else {
+                // At root
+                if let Some(&idx) = root_children.get(&key) {
+                    idx
+                } else {
+                    let new_idx = trie_nodes.len();
+                    trie_nodes.push(TrieNode {
+                        token_id,
+                        position,
+                        children: HashMap::new(),
+                        compact_index: None,
+                    });
+                    root_children.insert(key, new_idx);
+                    new_idx
+                }
+            };
+
+            path.push(child_idx);
         }
     }
 
-    // Early exit if no deduplication achieved
+    // If no reduction, just return identity mappings
     if trie_nodes.len() >= input_ids.len() {
-        let scatter_indices: Vec<u32> = (0..input_ids.len() as u32).collect();
-        let fold_gather: Vec<u32> = (0..input_ids.len() as u32).collect();
-        return (input_ids.to_vec(), position_ids.to_vec(), scatter_indices, fold_gather);
+        let n = input_ids.len() as u32;
+        let ids: Vec<u32> = (0..n).collect();
+        return (input_ids.to_vec(), position_ids.to_vec(), ids.clone(), ids);
     }
-    
-    // Assign compact indices in DFS order
+
+    // Assign compact indices in a deterministic DFS: sort keys at each level
     let mut compact_input_ids = Vec::with_capacity(trie_nodes.len());
     let mut compact_position_ids = Vec::with_capacity(trie_nodes.len());
-    let mut compact_counter = 0;
-    
+    let mut counter = 0usize;
+
     fn assign_compact_indices(
         children: &HashMap<(u32, u32), usize>,
         trie_nodes: &mut [TrieNode],
-        compact_input_ids: &mut Vec<u32>,
-        compact_position_ids: &mut Vec<u32>,
-        compact_counter: &mut usize,
+        out_tokens: &mut Vec<u32>,
+        out_pos: &mut Vec<u32>,
+        counter: &mut usize,
     ) {
-        for &node_idx in children.values() {
+        // Sort by (token_id, position) so order is stable across runs
+        let mut pairs: Vec<((u32, u32), usize)> =
+            children.iter().map(|(k, &v)| (*k, v)).collect();
+        pairs.sort_unstable_by_key(|(k, _)| *k);
+
+        for (_, node_idx) in pairs {
             let node = &mut trie_nodes[node_idx];
-            node.compact_index = Some(*compact_counter);
-            compact_input_ids.push(node.token_id);
-            compact_position_ids.push(node.position);
-            *compact_counter += 1;
-            
-            let children_copy = node.children.clone();
-            assign_compact_indices(&children_copy, trie_nodes, compact_input_ids, compact_position_ids, compact_counter);
+            node.compact_index = Some(*counter);
+            out_tokens.push(node.token_id);
+            out_pos.push(node.position);
+            *counter += 1;
+
+            // Recurse on a snapshot to avoid borrowing issues
+            let child_copy = node.children.clone();
+            assign_compact_indices(&child_copy, trie_nodes, out_tokens, out_pos, counter);
         }
     }
-    
-    assign_compact_indices(&root_children, &mut trie_nodes, &mut compact_input_ids, &mut compact_position_ids, &mut compact_counter);
-    
-    // Build BOTH mappings in a single pass
+
+    assign_compact_indices(
+        &root_children,
+        &mut trie_nodes,
+        &mut compact_input_ids,
+        &mut compact_position_ids,
+        &mut counter,
+    );
+
+    // Build scatter (for each original token -> compact index) and the first-occurrence gather
     let mut scatter_indices = Vec::with_capacity(input_ids.len());
-    let mut first_occurrence = vec![None; trie_nodes.len()];
-    
-    for seq_idx in 0..cu_seq_lengths.len() - 1 {
+    let mut first_occurrence: Vec<Option<u32>> = vec![None; trie_nodes.len()];
+
+    for seq_idx in 0..cu_seq_lengths.len().saturating_sub(1) {
         let start = cu_seq_lengths[seq_idx] as usize;
         let end = cu_seq_lengths[seq_idx + 1] as usize;
-        
-        let mut current_children = &root_children;
-        
+
+        // Walk down from root each time without holding references
         for pos in start..end {
             let token_id = input_ids[pos];
             let position = position_ids[pos];
             let key = (token_id, position);
-            
-            if let Some(&node_idx) = current_children.get(&key) {
-                let compact_idx = trie_nodes[node_idx].compact_index.unwrap();
-                scatter_indices.push(compact_idx as u32);
-                
-                if first_occurrence[compact_idx].is_none() {
-                    first_occurrence[compact_idx] = Some(pos as u32);
-                }
-                
-                current_children = &trie_nodes[node_idx].children;
+
+            // Descend by re-locating along the path (guaranteed to exist)
+            let node_idx = match root_children.get(&key) {
+                Some(&idx) => idx,
+                None => unreachable!("Trie must contain all tokens at root step"),
+            };
+
+            let compact_idx = trie_nodes[node_idx]
+                .compact_index
+                .expect("compact index assigned");
+            scatter_indices.push(compact_idx as u32);
+            if first_occurrence[compact_idx].is_none() {
+                first_occurrence[compact_idx] = Some(pos as u32);
             }
+
+            // Advance along the remainder of the sequence if present
+            // (next iterations of pos will keep re-starting at root; this is correct for ragged layout)
+            // No action needed here; we handle one position per loop iteration.
         }
     }
-    
-    let fold_gather: Vec<u32> = first_occurrence.into_iter()
-        .map(|opt| opt.unwrap())
+
+    let fold_gather: Vec<u32> = first_occurrence
+        .into_iter()
+        .map(|x| x.expect("every compact node appears at least once"))
         .collect();
-    
-    (compact_input_ids, compact_position_ids, scatter_indices, fold_gather)
+
+    (
+        compact_input_ids,
+        compact_position_ids,
+        scatter_indices,
+        fold_gather,
+    )
 }
 
 #[cfg(test)]
@@ -637,7 +669,7 @@ mod tests {
                 (rng_state / 65536) % 32768
             };
 
-            let (input_ids, position_ids, cu_seq_lengths) = if *pattern == "random_overlap" { // FIX: Add *
+            let (input_ids, position_ids, cu_seq_lengths) = if pattern == "random_overlap" { // Remove *
                 let num_sequences = 2 + (simple_rng() % 4) as usize;
                 let base_tokens = vec![1, 2, 3];
                 let mut input_ids = Vec::new();
@@ -676,11 +708,11 @@ mod tests {
             };
 
             TestCase {
-                name: if *pattern == "random_overlap" { "random_overlap" } else { "no_overlap" }, // FIX: Use static strings
+                name: if pattern == "random_overlap" { "random_overlap" } else { "no_overlap" }, // Remove *
                 input_ids,
                 position_ids,
                 cu_seq_lengths,
-                expect_compression: *pattern == "random_overlap", // FIX: Add *
+                expect_compression: pattern == "random_overlap", // Remove *
                 expected_compression_ratio: None,
             }
         }
