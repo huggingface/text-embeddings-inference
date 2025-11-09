@@ -6,6 +6,80 @@ use candle_nn::{Embedding, Module, VarBuilder};
 use candle_rotary::apply_rotary_inplace;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
+/// Helper struct to manage compact/unfold tensor operations
+/// if is not compact, all are operations are a no-op.
+struct CompactUnfoldTensors {
+    scatter_unfold: Option<Tensor>,
+    fold_gather: Option<Tensor>,
+    position_ids_compact: Tensor,
+}
+
+impl CompactUnfoldTensors {
+    /// Create compact/unfold tensors from batch data
+    fn from_batch(batch: &Batch, embeddings: &Embedding, device: &Device) -> Result<(Tensor, Self)> {
+        let shape = batch.input_ids.len();
+        
+        let (hidden_states, compact_tensors) = if let (Some(compact_ids), Some(compact_pos), Some(scatter), Some(fold)) = (
+            batch.compact_input_ids.as_ref(),
+            batch.compact_position_ids.as_ref(),
+            batch.scatter_unfold.as_ref(),
+            batch.fold_gather.as_ref(),
+        ) {
+            let m = compact_ids.len();
+            let compact_ids_t = Tensor::from_vec(compact_ids.clone(), m, device)?;
+            let emb_c = embeddings.forward(&compact_ids_t)?.contiguous()?;
+            let scatter_t = Tensor::from_vec(scatter.clone(), shape, device)?;
+            let fold_t = Tensor::from_vec(fold.clone(), m, device)?;
+            let position_ids_compact = Tensor::from_vec(compact_pos.clone(), m, device)?;
+            
+            (
+                emb_c,
+                CompactUnfoldTensors {
+                    scatter_unfold: Some(scatter_t),
+                    fold_gather: Some(fold_t),
+                    position_ids_compact,
+                }
+            )
+        } else {
+            let input_ids = Tensor::from_vec(batch.input_ids.clone(), shape, device)?;
+            let position_ids = Tensor::from_vec(batch.position_ids.clone(), shape, device)?;
+            let hidden_states = embeddings.forward(&input_ids)?.contiguous()?;
+            (
+                hidden_states,
+                CompactUnfoldTensors {
+                    scatter_unfold: None,
+                    fold_gather: None,
+                    position_ids_compact: position_ids,
+                }
+            )
+        };
+        
+        Ok((hidden_states, compact_tensors))
+    }
+    
+    /// Expand compact → original using `scatter_unfold`, if present.
+    #[inline]
+    fn scatter_unfold(&self, tensor: &Tensor) -> Result<Tensor> {
+        if let Some(scatter) = &self.scatter_unfold {
+            tensor.index_select(scatter, 0)?.contiguous()
+        } else {
+            Ok(tensor.clone())
+        }
+    }
+
+    /// Gather original → compact using `fold_gather`, if present.
+    /// Identity path: returns a shallow handle clone (no device copy).
+    #[inline]
+    fn fold_gather(&self, tensor: &Tensor) -> Result<Tensor> {
+        if let Some(gather) = &self.fold_gather {
+            tensor.index_select(gather, 0)?.contiguous()
+        } else {
+            Ok(tensor.clone())
+        }
+    }
+}
+}
+
 struct Qwen3Attention {
     q_proj: Linear,
     k_proj: Linear,
@@ -109,8 +183,7 @@ impl Qwen3Attention {
         cos: &Tensor,
         sin: &Tensor,
         max_s: usize,
-        scatter_unfold: Option<&Tensor>,
-        fold_gather: Option<&Tensor>,
+        compact_tensors: &CompactUnfoldTensors,
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
@@ -151,22 +224,10 @@ impl Qwen3Attention {
         // Apply RoPE in COMPACT space
         apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
 
-        // Expand Q, K, V to ORIGINAL layout for attention (shadow the variables)
-        let q = if let Some(scatter) = scatter_unfold {
-            q.index_select(scatter, 0)?.contiguous()?
-        } else {
-            q
-        };
-        let k = if let Some(scatter) = scatter_unfold {
-            k.index_select(scatter, 0)?.contiguous()?
-        } else {
-            k
-        };
-        let v = if let Some(scatter) = scatter_unfold {
-            v.index_select(scatter, 0)?.contiguous()?
-        } else {
-            v
-        };
+        // Expand Q, K, V to ORIGINAL layout for attention
+        let q = compact_tensors.scatter_unfold(&q)?;
+        let k = compact_tensors.scatter_unfold(&k)?;
+        let v = compact_tensors.scatter_unfold(&v)?;
 
         let attention = flash_attn_varlen(
             &q,
@@ -185,11 +246,7 @@ impl Qwen3Attention {
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
         // Compact attention output back to COMPACT layout before o_proj
-        let attention = if let Some(gather) = fold_gather {
-            attention.index_select(gather, 0)?.contiguous()?
-        } else {
-            attention
-        };
+        let attention = compact_tensors.fold_gather(&attention)?;
 
         self.o_proj.forward(&attention)
     }
@@ -289,8 +346,7 @@ impl Qwen3Layer {
         cos: &Tensor,
         sin: &Tensor,
         max_s: usize,
-        scatter_unfold: Option<&Tensor>,
-        fold_gather: Option<&Tensor>,
+        compact_tensors: &CompactUnfoldTensors,
     ) -> Result<(Tensor, Tensor)> {
         let _enter = self.span.enter();
 
@@ -302,8 +358,7 @@ impl Qwen3Layer {
             cos,
             sin,
             max_s,
-            scatter_unfold,
-            fold_gather,
+            compact_tensors,
         )?;
 
         let (normed_attn_res_output, attn_res) = self
@@ -395,48 +450,19 @@ impl FlashQwen3Model {
         let _enter = self.span.enter();
 
         let batch_size = batch.cumulative_seq_lengths.len() - 1;
-        let shape = batch.input_ids.len();
 
-        // Create Cuda tensors
+        // Create compact/unfold tensors and get embeddings
+        let (mut hidden_states, compact_tensors) = CompactUnfoldTensors::from_batch(&batch, &self.embeddings, &self.device)?;
+
         let cu_seqlens = Tensor::from_vec(
             batch.cumulative_seq_lengths.clone(),
             batch_size + 1,
             &self.device,
         )?;
 
-        let (mut hidden_states, scatter_unfold_t, fold_gather_t, position_ids_compact): (
-            Tensor,
-            Option<Tensor>,
-            Option<Tensor>,
-            Tensor,
-        ) = if let (Some(compact_ids), Some(compact_pos), Some(scatter), Some(fold)) = (
-            batch.compact_input_ids.as_ref(),
-            batch.compact_position_ids.as_ref(),
-            batch.scatter_unfold.as_ref(),
-            batch.fold_gather.as_ref(),
-        ) {
-            let m = compact_ids.len();
-            let compact_ids_t = Tensor::from_vec(compact_ids.clone(), m, &self.device)?;
-            let emb_c = self.embeddings.forward(&compact_ids_t)?.contiguous()?;
-            let scatter_t = Tensor::from_vec(scatter.clone(), shape, &self.device)?;
-            let fold_t = Tensor::from_vec(fold.clone(), m, &self.device)?;
-
-            let position_ids_compact = Tensor::from_vec(compact_pos.clone(), m, &self.device)?;
-            (emb_c, Some(scatter_t), Some(fold_t), position_ids_compact)
-        } else {
-            let input_ids = Tensor::from_vec(batch.input_ids, shape, &self.device)?;
-            let position_ids = Tensor::from_vec(batch.position_ids, shape, &self.device)?;
-            (
-                self.embeddings.forward(&input_ids)?.contiguous()?,
-                None,
-                None,
-                position_ids,
-            )
-        };
-
         // sin and cos are applied on the compact formation, therefore should be on the compact array
-        let cos = self.cos_cache.index_select(&position_ids_compact, 0)?;
-        let sin = self.sin_cache.index_select(&position_ids_compact, 0)?;
+        let cos = self.cos_cache.index_select(&compact_tensors.position_ids_compact, 0)?;
+        let sin = self.sin_cache.index_select(&compact_tensors.position_ids_compact, 0)?;
 
         let mut residual = None;
         for layer in &self.layers {
@@ -447,8 +473,7 @@ impl FlashQwen3Model {
                 &cos,
                 &sin,
                 batch.max_length as usize,
-                scatter_unfold_t.as_ref(),
-                fold_gather_t.as_ref(),
+                &compact_tensors,
             )?;
             hidden_states = h;
             residual = Some(r);
@@ -456,11 +481,8 @@ impl FlashQwen3Model {
 
         let (outputs, _) = self.norm.forward(&hidden_states, residual.as_ref())?;
 
-        let outputs = if let Some(scatter) = &scatter_unfold_t {
-            outputs.index_select(scatter, 0)?.contiguous()?
-        } else {
-            outputs
-        };
+        // Expand final outputs to original layout for pooling/raw extraction
+        let outputs = compact_tensors.scatter_unfold(&outputs)?;
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();
 
