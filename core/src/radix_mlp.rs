@@ -51,7 +51,6 @@ pub fn compute_fold_and_scatter(
 
     #[inline]
     fn make_key(token: u32, pos: u32) -> u64 {
-        // gigachad: we concat the u32's.
         ((pos as u64) << 32) | (token as u64)
     }
 
@@ -59,9 +58,8 @@ pub fn compute_fold_and_scatter(
     struct Node {
         token: u32,
         pos: u32,
-        compact: u32,                                  // u32::MAX => not assigned yet
-        children_map: std::collections::HashMap<u64, usize>, // key -> child idx
-        children_list: Vec<usize>,                     // insertion order of children
+        compact: u32,              // u32::MAX => not assigned yet
+        children: Vec<(u64, usize)>,
     }
 
     let n = input_ids.len();
@@ -72,8 +70,7 @@ pub fn compute_fold_and_scatter(
         token: 0,
         pos: 0,
         compact: u32::MAX,
-        children_map: std::collections::HashMap::new(),
-        children_list: Vec::new(),
+        children: Vec::new(),
     });
 
     // Original-position -> node index
@@ -94,20 +91,30 @@ pub fn compute_fold_and_scatter(
             let p = position_ids[i];
             let k = make_key(t, p);
 
-            let child_idx = if let Some(&c) = nodes[parent].children_map.get(&k) {
-                c
+            // 1) Immutable lookup first (no mutable borrow held while we might push)
+            let (found, val) = {
+                let children = &nodes[parent].children;
+                match children.binary_search_by_key(&k, |&(key, _)| key) {
+                    Ok(pos) => (true, children[pos].1), // existing child idx
+                    Err(pos) => (false, pos),           // insertion position
+                }
+            };
+
+            let child_idx = if found {
+                val
             } else {
+                let insert_pos = val;
+                // 2) Create new node (mut borrow of `nodes`, no child borrow alive)
                 let idx = nodes.len();
-                nodes[parent].children_map.insert(k, idx);
-                nodes[parent].children_list.push(idx);
                 nodes.push(Node {
                     token: t,
                     pos: p,
                     compact: u32::MAX,
-                    children_map: std::collections::HashMap::new(),
-                    children_list: Vec::new(),
+                    children: Vec::new(),
                 });
                 node_first_pos.push(u32::MAX);
+                // 3) Now re-borrow children mutably and insert
+                nodes[parent].children.insert(insert_pos, (k, idx));
                 idx
             };
 
@@ -123,19 +130,19 @@ pub fn compute_fold_and_scatter(
         }
     }
 
-    // If no reduction across sequences, return identity mappings to satisfy tests.
+    // If no reduction across sequences, return identity mappings.
     if nodes.len() - 1 >= n {
         let ids: Vec<u32> = (0..n as u32).collect();
         return (input_ids.to_vec(), position_ids.to_vec(), ids.clone(), ids);
     }
 
-    // -------- Assign compact indices with an iterative DFS in insertion order --------
+    // -------- Assign compact indices with an iterative DFS (ascending key order) --------
     let mut compact_input_ids: Vec<u32> = Vec::with_capacity(nodes.len() - 1);
     let mut compact_position_ids: Vec<u32> = Vec::with_capacity(nodes.len() - 1);
 
     let mut stack: Vec<usize> = Vec::with_capacity(64);
-    // Push root children in reverse, so we pop in insertion order.
-    for &c in nodes[0].children_list.iter().rev() {
+    // Push root children in reverse so pop() visits ascending order
+    for &(_, c) in nodes[0].children.iter().rev() {
         stack.push(c);
     }
 
@@ -147,8 +154,8 @@ pub fn compute_fold_and_scatter(
             compact_position_ids.push(nodes[idx].pos);
             next += 1;
 
-            // Push children in reverse to preserve insertion order on pop.
-            for &c in nodes[idx].children_list.iter().rev() {
+            // Push children in reverse key order
+            for &(_, c) in nodes[idx].children.iter().rev() {
                 stack.push(c);
             }
         }
