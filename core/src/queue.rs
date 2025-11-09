@@ -192,6 +192,13 @@ fn queue_blocking_task(
 
                         // Only use if we achieved meaningful compression
                         let compression_ratio = compact_ids.len() as f32 / input_ids.len() as f32;
+                        tracing::info!(
+                            "RadixMLP compression ratio: {:.2} ({} -> {})",
+                            compression_ratio,
+                            input_ids.len(),
+                            compact_ids.len()
+                        );
+                        metrics::histogram!("te_radix_mlp_compression_ratio").record(compression_ratio as f64);
                         if compression_ratio < 0.99 {
                             (
                                 Some(compact_ids),
