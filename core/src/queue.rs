@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use text_embeddings_backend::{BackendError, Batch};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{instrument, Span};
+use crate::radix_mlp;
 
 /// Queue entry
 #[derive(Debug)]
@@ -179,6 +180,27 @@ fn queue_blocking_task(
                     }
                 }
 
+                // Compute RadixMLP compact representation with BOTH mappings
+                let (compact_fold, compact_position_ids, scatter_unfold, fold_gather) = 
+                    if input_ids.len() > 0 && cu_seq_lengths.len() > 2 {
+                        let (compact_ids, compact_pos, scatter, fold) = 
+                            crate::radix_mlp::compute_fold_and_scatter(
+                                &input_ids, 
+                                &position_ids, 
+                                &cu_seq_lengths
+                            );
+                        
+                        // Only use if we achieved meaningful compression
+                        let compression_ratio = compact_ids.len() as f32 / input_ids.len() as f32;
+                        if compression_ratio < 0.99 {
+                            (Some(compact_ids), Some(compact_pos), Some(scatter), Some(fold))
+                        } else {
+                            (None, None, None, None)
+                        }
+                    } else {
+                        (None, None, None, None)
+                    };
+
                 let batch_size = metadata.len();
                 let next_batch = if metadata.is_empty() {
                     None
@@ -193,6 +215,10 @@ fn queue_blocking_task(
                             max_length,
                             pooled_indices,
                             raw_indices,
+                            compact_fold,
+                            compact_position_ids,
+                            scatter_unfold,
+                            fold_gather,  // Add the second mapping
                         },
                     ))
                 };

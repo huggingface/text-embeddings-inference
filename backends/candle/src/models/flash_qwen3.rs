@@ -109,6 +109,8 @@ impl Qwen3Attention {
         cos: &Tensor,
         sin: &Tensor,
         max_s: usize,
+        scatter_unfold: Option<&Tensor>,
+        fold_gather: Option<&Tensor>,
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
@@ -146,7 +148,25 @@ impl Qwen3Attention {
         let (q, _) = self.q_norm.forward(&q, None)?;
         let (k, _) = self.k_norm.forward(&k, None)?;
 
+        // Apply RoPE in COMPACT space
         apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
+
+        // Expand Q, K, V to ORIGINAL layout for attention (shadow the variables)
+        let q = if let Some(scatter) = scatter_unfold {
+            q.index_select(scatter, 0)?.contiguous()?
+        } else {
+            q
+        };
+        let k = if let Some(scatter) = scatter_unfold {
+            k.index_select(scatter, 0)?.contiguous()?
+        } else {
+            k
+        };
+        let v = if let Some(scatter) = scatter_unfold {
+            v.index_select(scatter, 0)?.contiguous()?
+        } else {
+            v
+        };
 
         let attention = flash_attn_varlen(
             &q,
@@ -163,6 +183,13 @@ impl Qwen3Attention {
             None,
         )?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
+
+        // Compact attention output back to COMPACT layout before o_proj
+        let attention = if let Some(gather) = fold_gather {
+            attention.index_select(gather, 0)?.contiguous()?
+        } else {
+            attention
+        };
 
         self.o_proj.forward(&attention)
     }
@@ -262,14 +289,22 @@ impl Qwen3Layer {
         cos: &Tensor,
         sin: &Tensor,
         max_s: usize,
+        scatter_unfold: Option<&Tensor>,
+        fold_gather: Option<&Tensor>,
     ) -> Result<(Tensor, Tensor)> {
         let _enter = self.span.enter();
 
         let (normed_hidden_states, res) = self.input_layer_norm.forward(hidden_states, residual)?;
 
-        let attn_output =
-            self.attention
-                .forward(&normed_hidden_states, cu_seqlens, cos, sin, max_s)?;
+        let attn_output = self.attention.forward(
+            &normed_hidden_states,
+            cu_seqlens,
+            cos,
+            sin,
+            max_s,
+            scatter_unfold,
+            fold_gather,
+        )?;
 
         let (normed_attn_res_output, attn_res) = self
             .post_attention_layer_norm
@@ -363,18 +398,37 @@ impl FlashQwen3Model {
         let shape = batch.input_ids.len();
 
         // Create Cuda tensors
-        let input_ids = Tensor::from_vec(batch.input_ids, shape, &self.device)?;
-        let position_ids = Tensor::from_vec(batch.position_ids, shape, &self.device)?;
         let cu_seqlens = Tensor::from_vec(
             batch.cumulative_seq_lengths.clone(),
             batch_size + 1,
             &self.device,
         )?;
 
-        let mut hidden_states = self.embeddings.forward(&input_ids)?;
+        let (mut hidden_states, scatter_unfold_t, fold_gather_t, position_ids_compact): (Tensor, Option<Tensor>, Option<Tensor>,  Tensor) =
+            if let (Some(compact_ids), Some(compact_pos), Some(scatter), Some(fold)) =
+                (batch.compact_input_ids.as_ref(),
+                 batch.compact_position_ids.as_ref(),
+                 batch.scatter_unfold.as_ref(),
+                 batch.fold_gather.as_ref())
+        {
+            let m = compact_ids.len();
+            let compact_ids_t = Tensor::from_vec(compact_ids.clone(), m, &self.device)?;
+            let emb_c = self.embeddings.forward(&compact_ids_t)?.contiguous()?;
+            let scatter_t = Tensor::from_vec(scatter.clone(), shape, &self.device)?;
+            let fold_t = Tensor::from_vec(fold.clone(), m, &self.device)?;
 
-        let cos = self.cos_cache.index_select(&position_ids, 0)?;
-        let sin = self.sin_cache.index_select(&position_ids, 0)?;
+            let position_ids_compact =
+                Tensor::from_vec(compact_pos.clone(), m, &self.device)?;
+            (emb_c, Some(scatter_t), Some(fold_t), position_ids_compact)
+        } else {
+            let input_ids = Tensor::from_vec(batch.input_ids, shape, &self.device)?;
+            let position_ids = Tensor::from_vec(batch.position_ids, shape, &self.device)?;
+            (self.embeddings.forward(&input_ids)?.contiguous()?, None, None, position_ids)
+        };
+
+        // sin and cos are applied on the compact formation, therefore should be on the compact array
+        let cos = self.cos_cache.index_select(&position_ids_compact, 0)?;
+        let sin = self.sin_cache.index_select(&position_ids_compact, 0)?;
 
         let mut residual = None;
         for layer in &self.layers {
@@ -385,13 +439,20 @@ impl FlashQwen3Model {
                 &cos,
                 &sin,
                 batch.max_length as usize,
+                scatter_unfold_t.as_ref(),
+                fold_gather_t.as_ref(),
             )?;
             hidden_states = h;
             residual = Some(r);
         }
 
         let (outputs, _) = self.norm.forward(&hidden_states, residual.as_ref())?;
-
+        
+        let outputs = if let Some(scatter) = &scatter_unfold_t {
+            outputs.index_select(scatter, 0)?.contiguous()?
+        } else {
+            outputs
+        };
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();
 
