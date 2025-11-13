@@ -194,9 +194,10 @@ impl<'__s> ToSchema<'__s> for PredictInput {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, ToSchema, Eq, Default)]
-#[serde(rename_all = "lowercase")]
 pub(crate) enum TruncationDirection {
+    #[serde(alias = "left", alias = "Left")]
     Left,
+    #[serde(alias = "right", alias = "Right")]
     #[default]
     Right,
 }
