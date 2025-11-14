@@ -557,6 +557,8 @@ You can build the CPU container with:
 docker build .
 ```
 
+### CUDA - Pre Blackwell architecture
+
 To build the CUDA containers, you need to know the compute cap of the GPU you will be using
 at runtime.
 
@@ -582,6 +584,39 @@ runtime_compute_cap=89
 runtime_compute_cap=90
 
 docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
+```
+
+### CUDA - Blackwell architecture
+
+To build the CUDA containers for the Blackwell architecture CUDA 12.9 is required, you need to use a different Dockerfile
+and set the compute cap to 120.
+This Dockerfile can still be used to build for previous architectures.
+
+Commands to build the container:
+
+```shell
+# Get submodule dependencies
+git submodule update --init
+
+# Example for Turing (T4, RTX 2000 series, ...)
+runtime_compute_cap=75
+
+# Example for A100
+runtime_compute_cap=80
+
+# Example for A10
+runtime_compute_cap=86
+
+# Example for Ada Lovelace (RTX 4000 series, ...)
+runtime_compute_cap=89
+
+# Example for H100
+runtime_compute_cap=90
+
+# Example for Blackwell (RTX 5000 series, ...)
+runtime_compute_cap=120
+
+docker build . -f Dockerfile-cuda-blackwell --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
 ```
 
 ### Apple M1/M2 arm64 architectures
