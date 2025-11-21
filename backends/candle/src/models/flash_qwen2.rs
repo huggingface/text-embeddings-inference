@@ -112,6 +112,8 @@ impl Qwen2Attention {
             max_s,
             self.softmax_scale,
             // TODO: Qwen2 models are generally not causal, this is a bug.
+            // e.g. https://huggingface.co/jinaai/jina-code-embeddings-0.5b
+            // breaks for this reason.
             false,
             None,
             None,
