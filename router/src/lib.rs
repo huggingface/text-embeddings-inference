@@ -147,6 +147,7 @@ pub async fn run(
     if config.model_type == "qwen2" && config.auto_map.as_ref().map_or(false, |m| {
         m.get("AutoModel") == Some(&"modeling_qwen.Qwen2Model".to_string())
     }) {
+        tracing::warn!("Model is detected as a Qwen2 model with remote code. Adding a post processor manually as the tokenizer.json does not contain a post processor.");
         let template = TemplateProcessing::builder()
             .try_single("$A:0 <|endoftext|>:0")
             .unwrap()
