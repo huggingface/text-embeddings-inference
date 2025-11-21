@@ -111,7 +111,7 @@ impl Qwen2Attention {
             max_s,
             max_s,
             self.softmax_scale,
-            false,
+            true,
             None,
             None,
         )?;
