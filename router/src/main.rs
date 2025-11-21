@@ -84,8 +84,8 @@ struct Args {
     ///
     /// Set the threshold for RadixMLP.
     /// If the compression ratio is lower than the threshold, RadixMLP will be used.
-    /// The default is 0.99 for most models, and 0.0 for bidirectional models.
-    #[clap(long, env, default_value = "0.99", value_parser = pct_parser)]
+    /// The default is 0.95 for most models, and 0.0 (force disabled) for bidirectional models.
+    #[clap(long, env, default_value = "0.95", value_parser = pct_parser)]
     radix_mlp_threshold: f32,
 
     /// Control the maximum number of inputs that a client can send in a single request
