@@ -54,6 +54,7 @@ pub async fn start_server(model_id: String, revision: Option<String>, dtype: DTy
             4,
             1024,
             None,
+            0.0,
             32,
             false,
             None,

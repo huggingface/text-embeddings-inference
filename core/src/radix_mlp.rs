@@ -6,6 +6,7 @@ pub fn compute_fold_and_scatter(
     input_ids: &[u32],
     position_ids: &[u32],
     cu_seq_lengths: &[u32],
+    pad_multiple_of_8: bool
 ) -> (Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>) {
     // Empty fast-path
     if input_ids.is_empty() {
@@ -98,6 +99,21 @@ pub fn compute_fold_and_scatter(
 
     // If no reduction happened, the streams equal identity (creation order == input order).
     // That already satisfies your tests, so just return what we built.
+
+    // Pad to a multiple of 8 for cublas performance if requested.
+    if pad_multiple_of_8 {
+        let current_len = compact_input_ids.len();
+        let remainder = current_len % 8;
+        if remainder != 0 {
+            let padding_needed = 8 - remainder;
+            for _ in 0..padding_needed {
+                compact_input_ids.push(0); // Pad with token 0
+                compact_position_ids.push(0); // Pad with position 0
+                fold_gather.push(0); // Pad with index 0
+            }
+        }
+    }
+
     (
         compact_input_ids,
         compact_position_ids,
@@ -112,17 +128,17 @@ mod tests {
 
     #[test]
     fn test_compute_fold_and_scatter_empty() {
-        let input_ids = vec![];
-        let position_ids = vec![];
-        let cu_seq_lengths = vec![];
+        let input_ids: Vec<u32> = vec![];
+        let position_ids: Vec<u32> = vec![];
+        let cu_seq_lengths: Vec<u32> = vec![];
 
         let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
 
-        assert_eq!(compact_input_ids, vec![]);
-        assert_eq!(compact_position_ids, vec![]);
-        assert_eq!(scatter_indices, vec![]);
-        assert_eq!(fold_gather, vec![]);
+        assert_eq!(compact_input_ids, vec![] as Vec<u32>);
+        assert_eq!(compact_position_ids, vec![] as Vec<u32>);
+        assert_eq!(scatter_indices, vec![] as Vec<u32>);
+        assert_eq!(fold_gather, vec![] as Vec<u32>);
     }
 
     #[test]
@@ -133,7 +149,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 3];
 
         let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
 
         // No deduplication possible with single sequence
         assert_eq!(compact_input_ids, vec![1, 2, 3]);
@@ -157,7 +173,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 7, 10, 15];
 
         let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
 
         // Should deduplicate shared prefix [a,b,c] at positions [0,1,2]
         // and shared subsequence [e,f,g] at positions [3,4,5]
@@ -182,7 +198,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 3, 6];
 
         let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
 
         // Should completely deduplicate to single sequence
         assert_eq!(compact_input_ids, vec![1, 2, 3]);
@@ -201,7 +217,7 @@ mod tests {
         let cu = vec![0, 4, 8];
 
         let (compact_ids, compact_pos, scatter, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu, false);
 
         // For each compact index, compute the minimal original position that maps to it.
         let mut mins = vec![u32::MAX; compact_ids.len()];
@@ -227,7 +243,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 2, 4];
 
         let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
 
         // No deduplication possible
         assert_eq!(compact_input_ids, vec![1, 2, 3, 4]);
@@ -244,7 +260,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 3, 6];
 
         let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
 
         // Should deduplicate shared prefix [a,b] at positions [0,1]
         assert_eq!(compact_input_ids.len(), 4); // [a,b,c,d] in some order
@@ -268,7 +284,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 2, 4];
 
         let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
 
         // Should NOT deduplicate because positions are different
         assert_eq!(compact_input_ids.len(), 4);
@@ -288,7 +304,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 4, 8, 12];
 
         let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
 
         // Should deduplicate:
         // - [a,b] at [0,1] shared by all three
@@ -313,7 +329,7 @@ mod tests {
         let cu_seq_lengths = vec![0, 1, 2, 3];
 
         let (compact_input_ids, _compact_position_ids, scatter_indices, fold_gather) =
-            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
 
         // Should deduplicate token 1 at position 0
         assert_eq!(compact_input_ids.len(), 2); // [1, 2]
@@ -328,10 +344,45 @@ mod tests {
         let position_ids = vec![0, 1, 2, 0, 1, 2];
         let cu_seq_lengths = vec![0, 3, 6];
 
-        let result1 = compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
-        let result2 = compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
+        let result1 = compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
+        let result2 = compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
 
         assert_eq!(result1, result2);
+    }
+
+    #[test]
+    fn test_padding_to_multiple_of_8() {
+        // Compact size will be 4, padding should bring it to 8.
+        let input_ids = vec![1, 2, 3, 1, 2, 4]; // compact: [1,2,3,4]
+        let position_ids = vec![0, 1, 2, 0, 1, 2];
+        let cu_seq_lengths = vec![0, 3, 6];
+
+        let (compact_input_ids, compact_position_ids, _scatter, fold_gather) =
+            compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, true);
+
+        assert_eq!(compact_input_ids.len(), 8, "Should be padded to 8");
+        assert_eq!(compact_position_ids.len(), 8, "Should be padded to 8");
+        assert_eq!(fold_gather.len(), 8, "Should be padded to 8");
+
+        // Check that the first part is correct
+        assert_eq!(&compact_input_ids[0..4], &[1, 2, 3, 4]);
+        // Check that padding is zeros
+        assert_eq!(&compact_input_ids[4..8], &[0, 0, 0, 0]);
+        assert_eq!(&compact_position_ids[4..8], &[0, 0, 0, 0]);
+        assert_eq!(&fold_gather[4..8], &[0, 0, 0, 0]);
+
+        // Test case where no padding is needed (compact size is already a multiple of 8)
+        // Let's create a case that compacts to 8 tokens
+        let input_ids_no_pad = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        let position_ids_no_pad = vec![0, 1, 2, 3, 4, 5, 6, 7];
+        let cu_seq_lengths_no_pad = vec![0, 8];
+        let (compact_ids_no_pad, _, _, _) = compute_fold_and_scatter(
+            &input_ids_no_pad,
+            &position_ids_no_pad,
+            &cu_seq_lengths_no_pad,
+            true,
+        );
+        assert_eq!(compact_ids_no_pad.len(), 8, "Should not be padded");
     }
 
     // also, add some tests that allow you to reconstruct. e.g. do a function where we do the following function.
@@ -440,7 +491,7 @@ mod tests {
 
         // RadixMLP computation pipeline
         let (compact_input_ids, compact_position_ids, scatter_indices, _fold_gather) =
-            compute_fold_and_scatter(input_ids, position_ids, cu_seq_lengths);
+            compute_fold_and_scatter(input_ids, position_ids, cu_seq_lengths, false);
 
         let compact_embeddings =
             apply_positional_embeddings(&compact_input_ids, &compact_position_ids);
@@ -649,6 +700,7 @@ mod tests {
                         &test_case.input_ids,
                         &test_case.position_ids,
                         &test_case.cu_seq_lengths,
+                        false,
                     );
                 assert!(compact_input_ids.is_empty());
                 assert!(compact_position_ids.is_empty());
@@ -716,7 +768,7 @@ mod tests {
 
         let t0 = Instant::now();
         let (compact_ids, _compact_pos, _scatter, _fold) =
-            super::compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
+            super::compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
         let dt = t0.elapsed();
         let dt_ms = dt.as_secs_f64() * 1000.0;
 
