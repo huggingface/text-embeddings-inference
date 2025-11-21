@@ -106,6 +106,9 @@ fn queue_blocking_task(
     mut queue_receiver: mpsc::Receiver<QueueCommand>,
 ) {
     let capacity = max_batch_requests.unwrap_or(max_concurrent_requests);
+    let radix_mlp_pad = std::env::var("RADIX_MLP_PAD")
+        .map(|s| s.to_lowercase() == "true")
+        .unwrap_or(false);
 
     let mut entries: VecDeque<Entry> = VecDeque::with_capacity(max_concurrent_requests);
 
@@ -191,7 +194,7 @@ fn queue_blocking_task(
                                 &input_ids,
                                 &position_ids,
                                 &cu_seq_lengths,
-                                false,
+                                radix_mlp_pad,
                             );
 
                         // Only use if we achieved meaningful compression
