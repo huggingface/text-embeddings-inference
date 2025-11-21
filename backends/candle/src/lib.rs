@@ -588,6 +588,10 @@ impl Backend for CandleBackend {
         self.model.is_padded()
     }
 
+    fn supports_radix_mlp(&self) -> bool {
+        self.model.supports_radix_mlp()
+    }
+
     fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError> {
         let batch_size = batch.len();
         let pooled_indices = batch.pooled_indices.clone();

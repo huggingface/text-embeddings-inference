@@ -378,8 +378,8 @@ impl FlashQwen3Model {
         let batch_size = batch.cumulative_seq_lengths.len() - 1;
 
         // Create compact/unfold tensors and get embeddings
-        let (mut hidden_states, compact_tensors) =
-            CompactUnfoldTensors::from_batch(&batch, &self.embeddings, &self.device)?;
+        let (input_ids, compact_tensors) = CompactUnfoldTensors::from_batch(&batch, &self.device)?;
+        let mut hidden_states = self.embeddings.forward(&input_ids)?.contiguous()?;
 
         let cu_seqlens = Tensor::from_vec(
             batch.cumulative_seq_lengths.clone(),
@@ -530,6 +530,10 @@ impl FlashQwen3Model {
 impl Model for FlashQwen3Model {
     fn is_padded(&self) -> bool {
         false
+    }
+
+    fn supports_radix_mlp(&self) -> bool {
+        true
     }
 
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {

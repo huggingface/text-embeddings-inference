@@ -46,6 +46,10 @@ pub trait Backend {
 
     fn is_padded(&self) -> bool;
 
+    fn supports_radix_mlp(&self) -> bool {
+        false
+    }
+
     fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError>;
 
     fn predict(&self, batch: Batch) -> Result<Predictions, BackendError>;

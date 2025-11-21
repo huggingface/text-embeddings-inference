@@ -98,6 +98,10 @@ pub use flash_qwen3::FlashQwen3Model;
 pub(crate) trait Model {
     fn is_padded(&self) -> bool;
 
+    fn supports_radix_mlp(&self) -> bool {
+        false
+    }
+
     fn embed(&self, _batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         candle::bail!("`embed` is not implemented for this model");
     }

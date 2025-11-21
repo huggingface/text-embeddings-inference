@@ -302,6 +302,7 @@ pub async fn run(
         || config.model_type == "distilbert"
         || config.model_type == "modernbert"
         || config.use_bidirectional_attention.unwrap_or(false)
+        || !backend.radix_mlp_supported
     {
         if radix_mlp_threshold > 0.0 {
             tracing::warn!("`--radix-mlp-threshold` is only supported for Causal LM's Qwen2.5, Qwen3 and LLaMA models. Disabling RadixMLP.");
@@ -310,6 +311,14 @@ pub async fn run(
     } else {
         radix_mlp_threshold
     };
+    if radix_mlp_threshold > 0.0 {
+        tracing::info!(
+            "RadixMLP enabled with compression ratio threshold: {}",
+            radix_mlp_threshold
+        );
+    } else {
+        tracing::info!("RadixMLP disabled");
+    }
 
     let queue = Queue::new(
         backend.padded_model,

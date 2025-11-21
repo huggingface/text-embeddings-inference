@@ -1,5 +1,8 @@
+// SPDX-License-Identifier: MIT
+// Published under RadixMLP by Michael Feil
+// Copyright (c) 2025 michaelfeil
+
 use candle::{Device, Result, Tensor};
-use candle_nn::{Embedding, Module};
 use text_embeddings_backend_core::Batch;
 
 /// Helper struct to manage compact/unfold tensor operations
@@ -12,14 +15,10 @@ pub struct CompactUnfoldTensors {
 
 impl CompactUnfoldTensors {
     /// Create compact/unfold tensors from batch data
-    pub fn from_batch(
-        batch: &Batch,
-        embeddings: &Embedding,
-        device: &Device,
-    ) -> Result<(Tensor, Self)> {
+    pub fn from_batch(batch: &Batch, device: &Device) -> Result<(Tensor, Self)> {
         let shape = batch.input_ids.len();
 
-        let (hidden_states, compact_tensors) =
+        let (input_ids, compact_tensors) =
             if let (Some(compact_ids), Some(compact_pos), Some(scatter), Some(fold)) = (
                 batch.compact_input_ids.as_ref(),
                 batch.compact_position_ids.as_ref(),
@@ -28,13 +27,12 @@ impl CompactUnfoldTensors {
             ) {
                 let m = compact_ids.len();
                 let compact_ids_t = Tensor::from_vec(compact_ids.clone(), m, device)?;
-                let emb_c = embeddings.forward(&compact_ids_t)?.contiguous()?;
                 let scatter_t = Tensor::from_vec(scatter.clone(), shape, device)?;
                 let fold_t = Tensor::from_vec(fold.clone(), m, device)?;
                 let position_ids_compact = Tensor::from_vec(compact_pos.clone(), m, device)?;
 
                 (
-                    emb_c,
+                    compact_ids_t,
                     CompactUnfoldTensors {
                         scatter_unfold: Some(scatter_t),
                         fold_gather: Some(fold_t),
@@ -44,9 +42,8 @@ impl CompactUnfoldTensors {
             } else {
                 let input_ids = Tensor::from_vec(batch.input_ids.clone(), shape, device)?;
                 let position_ids = Tensor::from_vec(batch.position_ids.clone(), shape, device)?;
-                let hidden_states = embeddings.forward(&input_ids)?.contiguous()?;
                 (
-                    hidden_states,
+                    input_ids,
                     CompactUnfoldTensors {
                         scatter_unfold: None,
                         fold_gather: None,
@@ -55,7 +52,7 @@ impl CompactUnfoldTensors {
                 )
             };
 
-        Ok((hidden_states, compact_tensors))
+        Ok((input_ids, compact_tensors))
     }
 
     /// Expand compact → original using `scatter_unfold`, if present.

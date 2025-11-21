@@ -185,7 +185,7 @@ fn queue_blocking_task(
 
                 // Compute RadixMLP compact representation with BOTH mappings
                 let (compact_input_ids, compact_position_ids, scatter_unfold, fold_gather) =
-                    if radix_mlp_threshold > 0.0 && !input_ids.is_empty() {
+                    if radix_mlp_threshold > 1e-6 && !input_ids.is_empty() {
                         let (compact_ids, compact_pos, scatter, fold) =
                             radix_mlp::compute_fold_and_scatter(
                                 &input_ids,

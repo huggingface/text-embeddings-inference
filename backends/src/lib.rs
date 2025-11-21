@@ -75,6 +75,7 @@ pub struct Backend {
     health_receiver: watch::Receiver<bool>,
     _backend_thread: Arc<BackendThread>,
     pub padded_model: bool,
+    pub radix_mlp_supported: bool,
     pub max_batch_size: Option<usize>,
     pub model_type: ModelType,
 }
@@ -105,6 +106,7 @@ impl Backend {
         )
         .await?;
         let padded_model = backend.is_padded();
+        let radix_mlp_supported = backend.supports_radix_mlp();
         let max_batch_size = backend.max_batch_size();
 
         let (health_sender, health_receiver) = watch::channel(false);
@@ -116,6 +118,7 @@ impl Backend {
             health_receiver,
             _backend_thread,
             padded_model,
+            radix_mlp_supported,
             max_batch_size,
             model_type,
         })

@@ -1,34 +1,6 @@
-// Transformer inference consists of two phases: \emph{prefill}, which processes all input tokens to initialize attention and MLP states, and \emph{decode}, which generates new tokens autoregressively. Prefill dominates runtime in stateless applications, where caching is either unavailable or reset between requests.
-
-// Systems such as FlashAttention~\citep{dao2022flashattention}, FlashInfer~\citep{zheng2024flashinfer}, and HydraGen~\citep{juravsky2024hydragen} accelerate attention computations using efficient memory layouts. However, the MLP component---typically 40–60\% of inference FLOPs---remains fully recomputed even when many inputs share identical hidden states.
-
-// We adopt the standard \emph{ragged layout} used in PyTorch and TensorRT-LLM:
-// \begin{verbatim}
-// tokens    = [a,b,c,d,e,f,g, a,b,c, e,f,g,h,i]
-// pos       = [0,1,2,3,4,5,6, 0,1,2, 3,4,5,6,7]
-// cu_seqlen = [0,7,15]
-// \end{verbatim}
-// This eliminates padding overhead but not redundant computation across sequences.
-
-// % ---------------------- APPROACH ------------------------
-// \section{Approach}
-// \subsection{Folded Layout Construction}
-// RadixMLP builds a prefix trie across sequences, identifying nodes with identical token and position pairs. Shared nodes are computed once, producing the \emph{folded layout}:
-// \begin{verbatim}
-// tokens    = [a,b,c, d,e,f,g, e,f,g,h,i]
-// pos       = [0,1,2, 3,4,5,6, 3,4,5,6,7]
-// cu_seqlen = [0,7,12]
-// \end{verbatim}
-// This reduces compute from 15 to 12 token evaluations in the example above.
-
-// \subsection{Fold and Scatter Operators}
-// Let $R$ denote the ragged layout and $C$ the folded layout.
-// \begin{verbatim}
-// fold_ids    = [0,1,2,3,4,5,6, 0,1,2,7,8,9,10,11]
-// scatter_ids = {0:[0,7], 1:[1,8], 2:[2,9], ...}
-// \end{verbatim}
-//
-// in paractival matters, we aim to implement both as continous map
+// SPDX-License-Identifier: MIT
+// Published under RadixMLP by Michael Feil
+// Copyright (c) 2025 michaelfeil
 
 pub fn compute_fold_and_scatter(
     input_ids: &[u32],
