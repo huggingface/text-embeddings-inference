@@ -50,6 +50,7 @@ pub async fn run(
     max_concurrent_requests: usize,
     max_batch_tokens: usize,
     max_batch_requests: Option<usize>,
+    radix_mlp_threshold: f32,
     max_client_batch_size: usize,
     auto_truncate: bool,
     default_prompt: Option<String>,
@@ -294,10 +295,27 @@ pub async fn run(
         .or(max_batch_requests);
 
     // Queue logic
+    let radix_mlp_threshold = if config.model_type == "bert"
+        || config.model_type == "xlm-roberta"
+        || config.model_type == "camembert"
+        || config.model_type == "roberta"
+        || config.model_type == "distilbert"
+        || config.model_type == "modernbert"
+        || config.use_bidirectional_attention.unwrap_or(false)
+    {
+        if radix_mlp_threshold > 0.0 {
+            tracing::warn!("`--radix-mlp-threshold` is only supported for Causal LM's Qwen2.5, Qwen3 and LLaMA models. Disabling RadixMLP.");
+        }
+        0.0
+    } else {
+        radix_mlp_threshold
+    };
+
     let queue = Queue::new(
         backend.padded_model,
         max_batch_tokens,
         max_batch_requests,
+        radix_mlp_threshold,
         max_concurrent_requests,
     );
 
@@ -449,6 +467,7 @@ pub struct ModelConfig {
     pub pad_token_id: usize,
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
+    pub use_bidirectional_attention: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

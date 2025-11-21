@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{BackendError, Batch};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{Span, instrument};
+use tracing::{instrument, Span};
 
 /// Queue entry
 #[derive(Debug)]
@@ -44,6 +44,7 @@ impl Queue {
         padded_model: bool,
         max_batch_tokens: usize,
         max_batch_requests: Option<usize>,
+        radix_mlp_threshold: f32,
         max_concurrent_requests: usize,
     ) -> Self {
         // Create channels
@@ -55,6 +56,7 @@ impl Queue {
                 padded_model,
                 max_batch_tokens,
                 max_batch_requests,
+                radix_mlp_threshold,
                 max_concurrent_requests,
                 queue_receiver,
             )
@@ -99,6 +101,7 @@ fn queue_blocking_task(
     padded_model: bool,
     max_batch_tokens: usize,
     max_batch_requests: Option<usize>,
+    radix_mlp_threshold: f32,
     max_concurrent_requests: usize,
     mut queue_receiver: mpsc::Receiver<QueueCommand>,
 ) {
@@ -182,7 +185,7 @@ fn queue_blocking_task(
 
                 // Compute RadixMLP compact representation with BOTH mappings
                 let (compact_input_ids, compact_position_ids, scatter_unfold, fold_gather) =
-                    if input_ids.len() > 0 && cu_seq_lengths.len() > 2 {
+                    if radix_mlp_threshold > 0.0 && !input_ids.is_empty() {
                         let (compact_ids, compact_pos, scatter, fold) =
                             radix_mlp::compute_fold_and_scatter(
                                 &input_ids,
@@ -198,8 +201,9 @@ fn queue_blocking_task(
                             input_ids.len(),
                             compact_ids.len()
                         );
-                        metrics::histogram!("te_radix_mlp_compression_ratio").record(compression_ratio as f64);
-                        if compression_ratio < 0.99 {
+                        metrics::histogram!("te_radix_mlp_compression_ratio")
+                            .record(compression_ratio as f64);
+                        if compression_ratio < radix_mlp_threshold {
                             (
                                 Some(compact_ids),
                                 Some(compact_pos),

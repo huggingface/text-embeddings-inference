@@ -340,7 +340,7 @@ mod tests {
         let position_ids = vec![0, 0, 0];
         let cu_seq_lengths = vec![0, 1, 2, 3];
 
-        let (compact_input_ids, compact_position_ids, scatter_indices, fold_gather) =
+        let (compact_input_ids, _compact_position_ids, scatter_indices, fold_gather) =
             compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
 
         // Should deduplicate token 1 at position 0
@@ -743,7 +743,7 @@ mod tests {
         }
 
         let t0 = Instant::now();
-        let (compact_ids, compact_pos, scatter, fold) =
+        let (compact_ids, _compact_pos, _scatter, _fold) =
             super::compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths);
         let dt = t0.elapsed();
         let dt_ms = dt.as_secs_f64() * 1000.0;
