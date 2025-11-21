@@ -116,6 +116,7 @@ impl Qwen2Attention {
             max_s,
             max_s,
             self.softmax_scale,
+            // TODO: Qwen2 models are generally not causal, this is a bug.
             false,
             None,
             None,
