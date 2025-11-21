@@ -141,9 +141,12 @@ pub async fn run(
         "tokenizer.json not found. text-embeddings-inference only supports fast tokenizers",
     );
     tokenizer.with_padding(None);
-    // Qwen2 updates the post processor manually instead of into the tokenizer.json...
+    // Old Qwen2  repos updates the post processor manually instead of into the tokenizer.json.
+    // Newer ones (https://huggingface.co/jinaai/jina-code-embeddings-0.5b/tree/main) have it in the tokenizer.json. This is to support both cases.
     // https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct/blob/main/tokenization_qwen.py#L246
-    if config.model_type == "qwen2" {
+    if config.model_type == "qwen2" && config.auto_map.as_ref().map_or(false, |m| {
+        m.get("AutoModel") == Some(&"modeling_qwen.Qwen2Model".to_string())
+    }) {
         let template = TemplateProcessing::builder()
             .try_single("$A:0 <|endoftext|>:0")
             .unwrap()
@@ -449,6 +452,7 @@ pub struct ModelConfig {
     pub pad_token_id: usize,
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
+    pub auto_map: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
