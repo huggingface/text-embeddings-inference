@@ -191,7 +191,7 @@ fn queue_blocking_task(
                                 &input_ids,
                                 &position_ids,
                                 &cu_seq_lengths,
-                                false
+                                false,
                             );
 
                         // Only use if we achieved meaningful compression
