@@ -623,6 +623,7 @@ async fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     }
 
     // Download weight files
+    // TODO: Parallelize all files.
     let mut safetensors_files = Vec::new();
     for n in safetensors_filenames {
         tracing::info!("Downloading `{}`", n);
