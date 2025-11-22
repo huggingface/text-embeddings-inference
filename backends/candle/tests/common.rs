@@ -85,7 +85,7 @@ impl Deref for SnapshotEmbeddings {
 
 impl From<Vec<Vec<f32>>> for SnapshotEmbeddings {
     fn from(value: Vec<Vec<f32>>) -> Self {
-        Self(value.into_iter().map(|v| SnapEmbedding(v)).collect())
+        Self(value.into_iter().map(SnapEmbedding).collect())
     }
 }
 
@@ -181,7 +181,7 @@ pub fn download_artifacts(
                 }
                 _ => {
                     for path in &paths {
-                        download_dense_module(&api_repo, &path)?;
+                        download_dense_module(&api_repo, path)?;
                     }
                     Some(paths)
                 }
@@ -350,5 +350,9 @@ pub fn batch(encodings: Vec<Encoding>, pooled_indices: Vec<u32>, raw_indices: Ve
         max_length,
         pooled_indices,
         raw_indices,
+        compact_input_ids: None,
+        compact_position_ids: None,
+        scatter_unfold: None,
+        fold_gather: None,
     }
 }
