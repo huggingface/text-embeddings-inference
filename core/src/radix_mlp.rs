@@ -450,7 +450,7 @@ mod tests {
         let n = 2047;
         let input_ids_3 = (0..n).collect::<Vec<u32>>();
         let position_ids_3 = (0..n).collect::<Vec<u32>>();
-        let cu_seq_lengths_3 = vec![0, n as u32];
+        let cu_seq_lengths_3 = vec![0, n];
         let (compact_ids_3, _, _, _) =
             compute_fold_and_scatter(&input_ids_3, &position_ids_3, &cu_seq_lengths_3, true);
         assert_eq!(compact_ids_3.len(), 2048, "Should pad from 2047 to 2048");
@@ -459,7 +459,7 @@ mod tests {
         let n = 1024;
         let input_ids_4 = (0..n).collect::<Vec<u32>>();
         let position_ids_4 = (0..n).collect::<Vec<u32>>();
-        let cu_seq_lengths_4 = vec![0, n as u32];
+        let cu_seq_lengths_4 = vec![0, n];
         let (compact_ids_4, _, _, _) =
             compute_fold_and_scatter(&input_ids_4, &position_ids_4, &cu_seq_lengths_4, true);
         assert_eq!(
@@ -687,24 +687,22 @@ mod tests {
                 result.original_tokens,
                 result.compact_tokens
             );
+        } else if pad_multiple_of_8 {
+            // With padding, we might not achieve compression if the compact size is already a multiple of 8.
+            assert!(
+                result.compact_tokens >= result.original_tokens,
+                "{}: Expected no compression (>=) but got {} -> {} tokens",
+                test_name,
+                result.original_tokens,
+                result.compact_tokens
+            );
         } else {
-            if pad_multiple_of_8 {
-                // With padding, we might not achieve compression if the compact size is already a multiple of 8.
-                assert!(
-                    result.compact_tokens >= result.original_tokens,
-                    "{}: Expected no compression (>=) but got {} -> {} tokens",
-                    test_name,
-                    result.original_tokens,
-                    result.compact_tokens
-                );
-            } else {
-                // Without padding, we should not have fewer tokens than original.
-                assert_eq!(
-                    result.compact_tokens, result.original_tokens,
-                    "{}: Expected no compression but got {} -> {} tokens",
-                    test_name, result.original_tokens, result.compact_tokens
-                );
-            }
+            // Without padding, we should not have fewer tokens than original.
+            assert_eq!(
+                result.compact_tokens, result.original_tokens,
+                "{}: Expected no compression but got {} -> {} tokens",
+                test_name, result.original_tokens, result.compact_tokens
+            );
         }
     }
 
