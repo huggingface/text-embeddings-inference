@@ -215,8 +215,10 @@ pub async fn run(
 
     tracing::info!("Maximum number of tokens per request: {max_input_length}");
 
-    let tokenization_workers = tokenization_workers.unwrap_or_else(num_cpus::get);
-
+    // fall-back to num_cpus - 1 to leave some CPU for the backend, and at most 64 workers.
+    let tokenization_workers =
+        tokenization_workers.unwrap_or_else(|| std::cmp::min(std::cmp::max(2, num_cpus::get() - 1), 64));
+        
     // Try to load new ST Config
     let mut new_st_config: Option<NewSTConfig> = None;
     let config_path = model_root.join("config_sentence_transformers.json");
