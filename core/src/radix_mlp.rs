@@ -2,11 +2,46 @@
 // Published under RadixMLP by Michael Feil
 // Copyright (c) 2025 michaelfeil
 
+/// Computes indices for RadixMLP-style folding and scattering to enable prefix-based computation sharing.
+///
+/// This function identifies shared prefixes among sequences in a batch. For a batch of token
+/// sequences, it produces a "compacted" representation containing only the unique subsequences
+/// encountered. It also generates index maps to "scatter" (unfold) results from the compact
+/// representation back to the original batch structure and to "gather" (fold) the original
+/// inputs into the compact form.
+///
+/// The core idea is to build a prefix tree (trie) over the sequences, where each node represents
+/// a unique `(token_id, position_id)` pair in a specific path. This allows deduplication of
+/// identical sub-sequences across the batch.
+///
+/// # Arguments
+///
+/// * `input_ids`: A flattened vector of token IDs for all sequences in the batch.
+/// * `position_ids`: A flattened vector of position IDs corresponding to each token in `input_ids`.
+/// * `cu_seq_lengths`: Cumulative sequence lengths, e.g., `[0, len_seq1, len_seq1 + len_seq2, ...]`.
+///   This defines the boundaries of each sequence in the flattened `input_ids` and `position_ids`.
+/// * `pad_multiple_of`: If `true`, the output compact vectors are padded to a multiple of 8 (for
+///   small tensors) or 64 (for larger ones) to improve performance on certain hardware (e.g., cuBLAS).
+///
+/// # Returns
+///
+/// A tuple containing four vectors:
+///
+/// 1. `compact_input_ids`: A vector of the unique token IDs, representing the compacted data.
+///    Each unique prefix path from the input sequences appears only once.
+/// 2. `compact_position_ids`: The corresponding position IDs for `compact_input_ids`.
+/// 3. `scatter_indices`: An index map to unfold data from the compact space to the original
+///    batch space. It has the same length as the original `input_ids`.
+///    `unfolded[i] = compact[scatter_indices[i]]`.
+/// 4. `fold_gather`: An index map to gather data from the original batch space to the compact
+///    space. It has the same length as the `compact_input_ids`. Each index points to the
+///    *first occurrence* of that unique `(token, position)` pair in the original `input_ids`.
+///    `compact[j] = original[fold_gather[j]]`.
 pub fn compute_fold_and_scatter(
     input_ids: &[u32],
     position_ids: &[u32],
     cu_seq_lengths: &[u32],
-    pad_multiple_of_8: bool,
+    pad_multiple_of: bool,
 ) -> (Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>) {
     // Empty fast-path
     if input_ids.is_empty() {
@@ -15,14 +50,58 @@ pub fn compute_fold_and_scatter(
 
     // Single-sequence fast-path: identity
     if cu_seq_lengths.len() == 2 {
-        let n = input_ids.len() as u32;
-        let ids: Vec<u32> = (0..n).collect();
-        return (input_ids.to_vec(), position_ids.to_vec(), ids.clone(), ids);
+        let mut compact_input_ids = input_ids.to_vec();
+        let mut compact_position_ids = position_ids.to_vec();
+        let mut fold_gather: Vec<u32> = (0..input_ids.len() as u32).collect();
+        let scatter_indices = fold_gather.clone();
+
+        if pad_multiple_of {
+            pad_to_multiple(
+                &mut compact_input_ids,
+                &mut compact_position_ids,
+                &mut fold_gather,
+            );
+        }
+
+        return (
+            compact_input_ids,
+            compact_position_ids,
+            scatter_indices,
+            fold_gather,
+        );
     }
 
     #[inline]
     fn make_key(token: u32, pos: u32) -> u64 {
         ((pos as u64) << 32) | (token as u64)
+    }
+
+    // Pad to a multiple of 8 or 64 for performance if requested.
+    #[inline]
+    fn pad_to_multiple(
+        compact_input_ids: &mut Vec<u32>,
+        compact_position_ids: &mut Vec<u32>,
+        fold_gather: &mut Vec<u32>,
+    ) {
+        let current_len = compact_input_ids.len();
+        if current_len == 0 {
+            return;
+        }
+
+        let multiple = if current_len < 1024 { 8 } else { 64 };
+        let remainder = current_len % multiple;
+
+        if remainder != 0 {
+            let padding_needed = multiple - remainder;
+            compact_input_ids.reserve(padding_needed);
+            compact_position_ids.reserve(padding_needed);
+            fold_gather.reserve(padding_needed);
+            for _ in 0..padding_needed {
+                compact_input_ids.push(0); // Pad with token 0
+                compact_position_ids.push(0); // Pad with position 0
+                fold_gather.push(0); // Pad with index 0
+            }
+        }
     }
 
     #[derive(Debug)]
@@ -101,17 +180,12 @@ pub fn compute_fold_and_scatter(
     // That already satisfies your tests, so just return what we built.
 
     // Pad to a multiple of 8 for cublas performance if requested.
-    if pad_multiple_of_8 {
-        let current_len = compact_input_ids.len();
-        let remainder = current_len % 8;
-        if remainder != 0 {
-            let padding_needed = 8 - remainder;
-            for _ in 0..padding_needed {
-                compact_input_ids.push(0); // Pad with token 0
-                compact_position_ids.push(0); // Pad with position 0
-                fold_gather.push(0); // Pad with index 0
-            }
-        }
+    if pad_multiple_of {
+        pad_to_multiple(
+            &mut compact_input_ids,
+            &mut compact_position_ids,
+            &mut fold_gather,
+        );
     }
 
     (
@@ -348,6 +422,51 @@ mod tests {
         let result2 = compute_fold_and_scatter(&input_ids, &position_ids, &cu_seq_lengths, false);
 
         assert_eq!(result1, result2);
+    }
+
+    #[test]
+    fn test_padding_logic() {
+        // Test case 1: Compact size < 1024, needs padding to multiple of 8
+        let input_ids_1 = vec![1, 2, 3, 1, 2, 4]; // compact size = 4
+        let position_ids_1 = vec![0, 1, 2, 0, 1, 2];
+        let cu_seq_lengths_1 = vec![0, 3, 6];
+        let (compact_ids_1, _, _, _) =
+            compute_fold_and_scatter(&input_ids_1, &position_ids_1, &cu_seq_lengths_1, true);
+        assert_eq!(compact_ids_1.len(), 8, "Should pad from 4 to 8");
+
+        // Test case 2: Compact size < 1024, already a multiple of 8
+        let input_ids_2 = (0..8).collect::<Vec<u32>>();
+        let position_ids_2 = (0..8).collect::<Vec<u32>>();
+        let cu_seq_lengths_2 = vec![0, 8];
+        let (compact_ids_2, _, _, _) =
+            compute_fold_and_scatter(&input_ids_2, &position_ids_2, &cu_seq_lengths_2, true);
+        assert_eq!(
+            compact_ids_2.len(),
+            8,
+            "Should not pad when already multiple of 8 and small input?"
+        );
+
+        // Test case 3: Compact size > 1024, needs padding to multiple of 64
+        let n = 2047;
+        let input_ids_3 = (0..n).collect::<Vec<u32>>();
+        let position_ids_3 = (0..n).collect::<Vec<u32>>();
+        let cu_seq_lengths_3 = vec![0, n as u32];
+        let (compact_ids_3, _, _, _) =
+            compute_fold_and_scatter(&input_ids_3, &position_ids_3, &cu_seq_lengths_3, true);
+        assert_eq!(compact_ids_3.len(), 2048, "Should pad from 2047 to 2048");
+
+        // Test case 4: Compact size > 1024, already a multiple of 64
+        let n = 1024;
+        let input_ids_4 = (0..n).collect::<Vec<u32>>();
+        let position_ids_4 = (0..n).collect::<Vec<u32>>();
+        let cu_seq_lengths_4 = vec![0, n as u32];
+        let (compact_ids_4, _, _, _) =
+            compute_fold_and_scatter(&input_ids_4, &position_ids_4, &cu_seq_lengths_4, true);
+        assert_eq!(
+            compact_ids_4.len(),
+            1024,
+            "Should not pad when already multiple of 64"
+        );
     }
 
     #[test]
