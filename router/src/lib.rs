@@ -217,7 +217,7 @@ pub async fn run(
 
     // fall-back to num_cpus - 1 to leave some CPU for the backend, and at most 64 workers.
     let tokenization_workers =
-        tokenization_workers.unwrap_or_else(|| std::cmp::min(std::cmp::max(2, num_cpus::get() - 1), 64));
+        tokenization_workers.unwrap_or_else(|| std::cmp::min(std::cmp::max(1, num_cpus::get() - 1), 64));
         
     // Try to load new ST Config
     let mut new_st_config: Option<NewSTConfig> = None;
