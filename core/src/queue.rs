@@ -207,7 +207,7 @@ fn queue_blocking_task(
                         );
                         metrics::histogram!("te_radix_mlp_compression_ratio")
                             .record(compression_ratio as f64);
-                        if radix_mlp_threshold < 1.0 && compression_ratio < radix_mlp_threshold {
+                        if radix_mlp_threshold >= 1.0 || compression_ratio < radix_mlp_threshold {
                             (
                                 Some(compact_ids),
                                 Some(compact_pos),
