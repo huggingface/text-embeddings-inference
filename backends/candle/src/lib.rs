@@ -380,6 +380,11 @@ impl CandleBackend {
                 }
             }
             #[cfg(feature = "cuda")]
+            (Config::DebertaV2(config), Device::Cuda(_)) => {
+                tracing::info!("Starting DebertaV2 model on {:?}", device);
+                Ok(Box::new(DebertaV2Model::load(vb, &config, model_type).s()?))
+            }
+            #[cfg(feature = "cuda")]
             (Config::DistilBert(config), Device::Cuda(_)) => {
                 if cfg!(feature = "flash-attn")
                     && dtype == DType::F16

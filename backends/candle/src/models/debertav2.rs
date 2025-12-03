@@ -544,7 +544,10 @@ impl DebertaV2DisentangledSelfAttention {
             let mut c2p_att = query_layer.matmul(&pos_key_layer.t()?)?;
 
             let c2p_pos = relative_pos
-                .broadcast_add(&Tensor::new(&[att_span as i64], &self.device)?.to_dtype(relative_pos.dtype())?)?
+                .broadcast_add(
+                    &Tensor::new(&[att_span as i64], &self.device)?
+                        .to_dtype(relative_pos.dtype())?,
+                )?
                 .clamp(0 as f32, (att_span * 2 - 1) as f32)?;
 
             c2p_att = c2p_att.gather(
@@ -1008,9 +1011,9 @@ impl DebertaV2Encoder {
 
         // Convert binary mask to additive bias: 0 for valid positions, large negative for masked
         let one = Tensor::ones_like(&attention_mask)?;
-        let bias = attention_mask
-            .broadcast_sub(&one)?
-            .broadcast_mul(&Tensor::new(&[10000.0_f32], &self.device)?.to_dtype(attention_mask.dtype())?)?;
+        let bias = attention_mask.broadcast_sub(&one)?.broadcast_mul(
+            &Tensor::new(&[10000.0_f32], &self.device)?.to_dtype(attention_mask.dtype())?,
+        )?;
 
         Ok(bias)
     }
