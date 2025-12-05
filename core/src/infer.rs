@@ -561,11 +561,13 @@ async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextB
                                 inference: inference_duration,
                             };
 
+                            let prediction = predictions.remove(&i).expect(
+                                "prediction not found in results. This is a backend bug.",
+                            );
                             let _ = m.response_tx.send(Ok(InferResult::Classification(
                                 ClassificationInferResponse {
-                                    results: predictions.remove(&i).expect(
-                                        "prediction not found in results. This is a backend bug.",
-                                    ),
+                                    results: prediction.scores,
+                                    pruned_text: prediction.pruned_text,
                                     metadata: infer_metadata,
                                 },
                             )));
@@ -642,6 +644,8 @@ pub(crate) enum InferResult {
 #[derive(Debug)]
 pub struct ClassificationInferResponse {
     pub results: Vec<f32>,
+    /// XProvence: pruned context text after removing irrelevant sentences
+    pub pruned_text: Option<String>,
     pub metadata: InferMetadata,
 }
 

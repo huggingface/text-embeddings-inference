@@ -5,7 +5,7 @@ use backend_grpc_client::Client;
 use nohash_hasher::BuildNoHashHasher;
 use std::collections::HashMap;
 use text_embeddings_backend_core::{
-    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool, Predictions,
+    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool, Prediction, Predictions,
 };
 use tokio::runtime::Runtime;
 
@@ -108,6 +108,11 @@ impl Backend for PythonBackend {
             ));
         }
         let batch_size = batch.len();
+
+        // XProvence: Get first raw query/text from batch (for single request)
+        let raw_query = batch.raw_queries.first().cloned().flatten();
+        let raw_text = batch.raw_texts.first().cloned().flatten();
+
         let results = self
             .tokio_runtime
             .block_on(self.backend_client.clone().predict(
@@ -116,15 +121,22 @@ impl Backend for PythonBackend {
                 batch.position_ids,
                 batch.cumulative_seq_lengths,
                 batch.max_length,
+                raw_query,
+                raw_text,
             ))
             .map_err(|err| BackendError::Inference(err.to_string()))?;
-        let raw_results: Vec<Vec<f32>> = results.into_iter().map(|r| r.values).collect();
 
         let mut predictions =
             HashMap::with_capacity_and_hasher(batch_size, BuildNoHashHasher::default());
 
-        for (i, r) in raw_results.into_iter().enumerate() {
-            predictions.insert(i, r);
+        for (i, score) in results.into_iter().enumerate() {
+            predictions.insert(
+                i,
+                Prediction {
+                    scores: score.values,
+                    pruned_text: score.pruned_text,
+                },
+            );
         }
 
         Ok(predictions)

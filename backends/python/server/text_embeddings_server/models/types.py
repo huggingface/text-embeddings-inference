@@ -36,6 +36,9 @@ class PaddedBatch(Batch):
     token_type_ids: torch.Tensor
     position_ids: torch.Tensor
     attention_mask: torch.Tensor
+    # XProvence: raw text for context pruning
+    raw_query: str = None
+    raw_text: str = None
 
     @classmethod
     @tracer.start_as_current_span("from_pb")
@@ -77,11 +80,17 @@ class PaddedBatch(Batch):
         # Move padded tensors all at once
         all_tensors = all_tensors.to(device)
 
+        # XProvence: Extract raw text if present in proto
+        raw_query = pb.raw_query if hasattr(pb, 'raw_query') and pb.raw_query else None
+        raw_text = pb.raw_text if hasattr(pb, 'raw_text') and pb.raw_text else None
+
         return PaddedBatch(
             input_ids=all_tensors[0],
             token_type_ids=all_tensors[1],
             position_ids=all_tensors[2],
             attention_mask=all_tensors[3],
+            raw_query=raw_query,
+            raw_text=raw_text,
         )
 
     def __len__(self):

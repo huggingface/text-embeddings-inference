@@ -266,6 +266,10 @@ pub(crate) struct Rank {
     pub text: Option<String>,
     #[schema(example = "1.0")]
     pub score: f32,
+    /// XProvence: pruned context with irrelevant sentences removed
+    #[schema(nullable = true, default = "null")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pruned_text: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]

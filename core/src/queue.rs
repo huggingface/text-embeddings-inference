@@ -129,6 +129,10 @@ fn queue_blocking_task(
                 let mut cu_seq_lengths = Vec::with_capacity(capacity);
                 cu_seq_lengths.push(0);
 
+                // XProvence: raw text vectors for context pruning
+                let mut raw_queries = Vec::with_capacity(capacity);
+                let mut raw_texts = Vec::with_capacity(capacity);
+
                 let mut current_tokens = 0;
                 let mut max_length = 0;
 
@@ -168,6 +172,10 @@ fn queue_blocking_task(
                     token_type_ids.extend(entry.encoding.token_type_ids);
                     position_ids.extend(entry.encoding.position_ids);
 
+                    // XProvence: collect raw texts for context pruning
+                    raw_queries.push(entry.encoding.raw_query);
+                    raw_texts.push(entry.encoding.raw_text);
+
                     current_tokens += entry_tokens;
                     metadata.push(entry.metadata);
                     cu_seq_lengths.push(current_tokens as u32);
@@ -193,6 +201,8 @@ fn queue_blocking_task(
                             max_length,
                             pooled_indices,
                             raw_indices,
+                            raw_queries,
+                            raw_texts,
                         },
                     ))
                 };
