@@ -59,6 +59,8 @@ impl Client {
             position_ids,
             max_length,
             cu_seq_lengths,
+            raw_query: None,
+            raw_text: None,
         })
         .inject_context();
         let response = self.stub.embed(request).await?.into_inner();

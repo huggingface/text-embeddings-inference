@@ -14,7 +14,7 @@ use serde::{de::Deserializer, Deserialize};
 use std::collections::HashMap;
 use std::path::Path;
 use text_embeddings_backend_core::{
-    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Predictions,
+    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Prediction, Predictions,
 };
 
 #[cfg(feature = "cuda")]
@@ -653,7 +653,10 @@ impl Backend for CandleBackend {
         let mut predictions =
             HashMap::with_capacity_and_hasher(batch_size, BuildNoHashHasher::default());
         for (i, r) in results.into_iter().enumerate() {
-            predictions.insert(i, r);
+            predictions.insert(i, Prediction {
+                scores: r,
+                pruned_text: None,
+            });
         }
 
         Ok(predictions)
