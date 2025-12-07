@@ -128,6 +128,13 @@ COPY --from=builder /usr/src/target/release/text-embeddings-router /usr/local/bi
 ENV PATH="/usr/local/bin:${PATH}"
 ENV PYTHONPATH="/opt/server:${PYTHONPATH}"
 
+# Download spacy model in final image (ensures it's available at runtime)
+# This is needed because spacy models may not be fully copied from builder stage
+RUN pip install --no-cache-dir spacy>=3.7.0 && \
+    python -m spacy download xx_sent_ud_sm && \
+    python -c "import spacy; spacy.load('xx_sent_ud_sm')" && \
+    echo "Spacy model verified successfully"
+
 WORKDIR /opt/server
 
 ENTRYPOINT ["text-embeddings-router"]
