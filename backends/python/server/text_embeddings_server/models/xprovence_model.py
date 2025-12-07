@@ -2,9 +2,8 @@ import os
 import torch
 
 from pathlib import Path
-from typing import Type, List
-from transformers import AutoModel, AutoConfig
-from huggingface_hub import snapshot_download
+from typing import Type, List, Optional
+from transformers import AutoModel
 from opentelemetry import trace
 from loguru import logger
 
@@ -17,6 +16,23 @@ tracer = trace.get_tracer(__name__)
 def _parse_bool(value: str) -> bool:
     """Parse boolean from string with common conventions."""
     return str(value).lower() in ("true", "1", "t", "yes", "on")
+
+
+def _extract_model_id(model_path_str: str) -> Optional[str]:
+    """Extract model_id from HF cache path format.
+
+    Converts paths like '/data/models--naver--xprovence-reranker-bgem3-v1/snapshots/...'
+    to 'naver/xprovence-reranker-bgem3-v1'
+    """
+    if "/models--" not in model_path_str:
+        return None
+
+    parts = model_path_str.split("/")
+    for part in parts:
+        if part.startswith("models--"):
+            # models--naver--xprovence-reranker-bgem3-v1 -> naver/xprovence-reranker-bgem3-v1
+            return part.replace("models--", "").replace("--", "/", 1)
+    return None
 
 
 class XProvenceModel(Model):
@@ -45,28 +61,31 @@ class XProvenceModel(Model):
         pool: str = "cls",
         trust_remote: bool = True,
     ):
-        # Download all model files including custom Python files for trust_remote_code
-        # The Rust router only downloads config/tokenizer/weights, but not custom modeling files
         model_path_str = str(model_path)
-        if model_path_str.startswith("/data/models--"):
-            # Extract model_id from HF cache path format: /data/models--org--name/...
-            # Convert "models--naver--xprovence-reranker-bgem3-v1" to "naver/xprovence-reranker-bgem3-v1"
-            parts = model_path_str.split("/")
-            for part in parts:
-                if part.startswith("models--"):
-                    model_id = part.replace("models--", "").replace("--", "/", 1)
-                    logger.info(f"XProvence: Downloading custom files for {model_id}")
-                    cache_dir = os.getenv("HUGGINGFACE_HUB_CACHE", "/data")
-                    snapshot_download(
-                        repo_id=model_id,
-                        cache_dir=cache_dir,
-                        local_files_only=False,
-                    )
-                    break
+        cache_dir = os.getenv("HUGGINGFACE_HUB_CACHE", "/data")
 
-        # Load config first with trust_remote_code to get the correct XProvenceConfig
-        config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
-        model = AutoModel.from_pretrained(model_path, config=config, trust_remote_code=True)
+        # Extract model_id from cache path for proper trust_remote_code handling
+        model_id = _extract_model_id(model_path_str)
+
+        if model_id:
+            # Use model_id directly with AutoModel.from_pretrained
+            # This ensures:
+            # 1. All custom Python files (modeling_*.py) are downloaded
+            # 2. The correct XProvenceConfig is loaded via model class's config_class attribute
+            # 3. No config class mismatch (unlike passing config from AutoConfig.from_pretrained)
+            logger.info(f"XProvence: Loading {model_id} with trust_remote_code=True")
+            model = AutoModel.from_pretrained(
+                model_id,
+                trust_remote_code=True,
+                cache_dir=cache_dir,
+            )
+        else:
+            # Fallback for local paths not in HF cache format
+            logger.info(f"XProvence: Loading from local path {model_path}")
+            model = AutoModel.from_pretrained(
+                model_path,
+                trust_remote_code=True,
+            )
 
         if dtype == torch.bfloat16:
             logger.info("XProvence: using float32 instead of bfloat16 for process() compatibility")
