@@ -124,24 +124,13 @@ impl From<Batch> for text_embeddings_backend_core::Batch {
 }
 
 /// Sets up the backend and batch data needed for the benchmark.
-fn setup() -> Result<(CandleBackend, Batch, Batch, Batch)> {
-    // 1. Setup backend
-    let model_root = download_artifacts("Qwen/Qwen3-Embedding-4B", None)?;
-    println!("Model downloaded to {:?}", model_root);
-    let backend = CandleBackend::new(
-        &model_root,
-        "float16".to_string(),
-        ModelType::Embedding(Pool::LastToken),
-        None,
-    )?;
-    println!("Backend initialized");
-
+fn setup(
+    _backend: &CandleBackend,
+    batch_size: usize,
+    shared_prefix_len: usize,
+    unique_suffix_len: usize,
+) -> Result<(Batch, Batch, Batch)> {
     // 2. Create benchmark batch
-    // Batch size of 32, 500 shared prefix, 500 unique suffix per sequence
-    // Radix tree structure: 500x1 (shared), then 32x500 (unique tails)
-    let batch_size: usize = 32;
-    let shared_prefix_len: usize = 500;
-    let unique_suffix_len: usize = 500;
     let shared_prefix_ids: Vec<u32> = vec![1; shared_prefix_len];
 
     let mut all_input_ids = Vec::new();
@@ -183,7 +172,9 @@ fn setup() -> Result<(CandleBackend, Batch, Batch, Batch)> {
         );
 
     println!(
-        "RadixMLP compression: {} original tokens -> {} compact tokens ({:.1}% reduction)",
+        "RadixMLP compression (prefix={}, suffix={}): {} original tokens -> {} compact tokens ({:.1}% reduction)",
+        shared_prefix_len,
+        unique_suffix_len,
         all_input_ids.len(),
         compact_input_ids.len(),
         (1.0 - compact_input_ids.len() as f64 / all_input_ids.len() as f64) * 100.0
@@ -236,78 +227,105 @@ fn setup() -> Result<(CandleBackend, Batch, Batch, Batch)> {
         fold_gather: None,
     };
 
-    Ok((
-        backend,
-        enabled_batch,
-        disabled_batch,
-        enabled_batch_unpadded,
-    ))
+    Ok((enabled_batch, disabled_batch, enabled_batch_unpadded))
 }
 
 /// The main benchmark function.
 fn bench_radix_mlp(c: &mut Criterion) {
-    let (backend, enabled_batch, disabled_batch, enabled_batch_unpadded) =
-        setup().expect("Failed to set up benchmark");
+    // 1. Setup backend
+    let model_root = download_artifacts("Qwen/Qwen3-Embedding-0.6B", None)
+        .expect("Failed to download artifacts");
+    println!("Model downloaded to {:?}", model_root);
+    let backend = CandleBackend::new(
+        &model_root,
+        "float16".to_string(),
+        ModelType::Embedding(Pool::LastToken),
+        None,
+    )
+    .expect("Could not start backend");
+    println!("Backend initialized");
 
-    // --- Correctness Check ---
-    // Run once before benchmarking to ensure outputs are identical.
-    let radix_result = backend.embed(enabled_batch.clone().into()).unwrap();
-    let regular_result = backend.embed(disabled_batch.clone().into()).unwrap();
+    let batch_size = 32;
+    let size_configs = [(512, 256), (512, 512), (1024, 1024)];
 
-    // Extract embeddings from the results (IntMap<usize, Embedding>)
-    let radix_vecs: Vec<Vec<f32>> = (0..16)
-        .map(|i| match radix_result.get(&i).unwrap() {
-            text_embeddings_backend_core::Embedding::Pooled(v) => v.clone(),
-            text_embeddings_backend_core::Embedding::All(vecs) => vecs.last().unwrap().clone(),
-        })
-        .collect();
-    let regular_vecs: Vec<Vec<f32>> = (0..16)
-        .map(|i| match regular_result.get(&i).unwrap() {
-            text_embeddings_backend_core::Embedding::Pooled(v) => v.clone(),
-            text_embeddings_backend_core::Embedding::All(vecs) => vecs.last().unwrap().clone(),
-        })
-        .collect();
+    for (shared_prefix_len, unique_suffix_len) in size_configs {
+        let (enabled_batch, disabled_batch, enabled_batch_unpadded) = setup(
+            &backend,
+            batch_size,
+            shared_prefix_len,
+            unique_suffix_len,
+        )
+        .expect("Failed to set up benchmark");
 
-    assert_eq!(radix_vecs.len(), regular_vecs.len());
-    for i in 0..radix_vecs.len() {
-        let diff: f32 = radix_vecs[i]
-            .iter()
-            .zip(regular_vecs[i].iter())
-            .map(|(a, b)| (a - b).abs())
-            .sum();
-        assert!(
-            diff < 1e-2,
-            "Correctness check failed: Embeddings for item {} differ by {}",
-            i,
-            diff
+        // --- Correctness Check ---
+        let radix_result = backend.embed(enabled_batch.clone().into()).unwrap();
+        let regular_result = backend.embed(disabled_batch.clone().into()).unwrap();
+
+        let radix_vecs: Vec<Vec<f32>> = (0..batch_size)
+            .map(|i| match radix_result.get(&i).unwrap() {
+                text_embeddings_backend_core::Embedding::Pooled(v) => v.clone(),
+                text_embeddings_backend_core::Embedding::All(vecs) => vecs.last().unwrap().clone(),
+            })
+            .collect();
+        let regular_vecs: Vec<Vec<f32>> = (0..batch_size)
+            .map(|i| match regular_result.get(&i).unwrap() {
+                text_embeddings_backend_core::Embedding::Pooled(v) => v.clone(),
+                text_embeddings_backend_core::Embedding::All(vecs) => vecs.last().unwrap().clone(),
+            })
+            .collect();
+
+        assert_eq!(radix_vecs.len(), regular_vecs.len());
+        for i in 0..radix_vecs.len() {
+            let diff: f32 = radix_vecs[i]
+                .iter()
+                .zip(regular_vecs[i].iter())
+                .map(|(a, b)| (a - b).abs())
+                .sum();
+            assert!(
+                diff < 1e-2,
+                "Correctness check failed for size ({}, {}): Embeddings for item {} differ by {}",
+                shared_prefix_len,
+                unique_suffix_len,
+                i,
+                diff
+            );
+        }
+        println!(
+            "Correctness check passed for size ({}, {}). Starting benchmark...",
+            shared_prefix_len, unique_suffix_len
         );
+        // --- End Correctness Check ---
+
+        let mut group = c.benchmark_group(&format!(
+            "RadixMLP Speedup (prefix: {}, suffix: {})",
+            shared_prefix_len, unique_suffix_len
+        ));
+        group
+            .sample_size(10)
+            .warm_up_time(std::time::Duration::from_secs(3))
+            .measurement_time(std::time::Duration::from_secs(15));
+
+        // Benchmark WITH RadixMLP enabled (uses shared prefix computation)
+        group.bench_function("radix_mlp_enabled", |b| {
+            b.iter(|| backend.embed(enabled_batch.clone().into()).unwrap())
+        });
+
+        // Benchmark WITH RadixMLP enabled but without padding (uses shared prefix computation)
+        group.bench_function("radix_mlp_enabled_unpadded", |b| {
+            b.iter(|| {
+                backend
+                    .embed(enabled_batch_unpadded.clone().into())
+                    .unwrap()
+            })
+        });
+
+        // Benchmark WITHOUT RadixMLP (standard full computation)
+        group.bench_function("radix_mlp_disabled", |b| {
+            b.iter(|| backend.embed(disabled_batch.clone().into()).unwrap())
+        });
+
+        group.finish();
     }
-    println!("Correctness check passed. Starting benchmark...");
-    // --- End Correctness Check ---
-
-    let mut group = c.benchmark_group("RadixMLP Speedup");
-    group.sample_size(25);
-
-    // Benchmark WITH RadixMLP enabled (uses shared prefix computation)
-    group.bench_function("radix_mlp_enabled", |b| {
-        b.iter(|| backend.embed(enabled_batch.clone().into()).unwrap())
-    });
-
-    // Benchmark WITH RadixMLP enabled but without padding (uses shared prefix computation)
-    group.bench_function("radix_mlp_enabled_unpadded", |b| {
-        b.iter(|| {
-            backend
-                .embed(enabled_batch_unpadded.clone().into())
-                .unwrap()
-        })
-    });
-
-    // Benchmark WITHOUT RadixMLP (standard full computation)
-    group.bench_function("radix_mlp_disabled", |b| {
-        b.iter(|| backend.embed(disabled_batch.clone().into()).unwrap())
-    });
-
-    group.finish();
 }
 
 criterion_group!(benches, bench_radix_mlp);
