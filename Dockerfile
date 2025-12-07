@@ -96,7 +96,7 @@ RUN pip install --no-cache-dir torch==2.5.1 --index-url https://download.pytorch
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir .
 
 # =============================================================================
 # Stage 5: Final Image
@@ -120,6 +120,7 @@ RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
     ln -sf /usr/bin/python3.10 /usr/bin/python3
 
 COPY --from=python-builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
+COPY --from=python-builder /usr/local/bin/python-text-embeddings-server /usr/local/bin/python-text-embeddings-server
 COPY --from=python-builder /opt/server /opt/server
 
 COPY --from=builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
