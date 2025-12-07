@@ -3,7 +3,8 @@ import torch
 
 from pathlib import Path
 from typing import Type, List, Optional
-from transformers import AutoModel
+from transformers.dynamic_module_utils import get_class_from_dynamic_module
+from huggingface_hub import hf_hub_download
 from opentelemetry import trace
 from loguru import logger
 
@@ -68,21 +69,32 @@ class XProvenceModel(Model):
         model_id = _extract_model_id(model_path_str)
 
         if model_id:
-            # Use model_id directly with AutoModel.from_pretrained
-            # This ensures:
-            # 1. All custom Python files (modeling_*.py) are downloaded
-            # 2. The correct XProvenceConfig is loaded via model class's config_class attribute
-            # 3. No config class mismatch (unlike passing config from AutoConfig.from_pretrained)
-            logger.info(f"XProvence: Loading {model_id} with trust_remote_code=True")
-            model = AutoModel.from_pretrained(
+            # Directly import the custom model class to avoid AutoModel's config class mismatch
+            # AutoModel.from_pretrained internally loads config which causes XLMRobertaConfig
+            # to be registered, conflicting with the model's expected XProvenceConfig
+            logger.info(f"XProvence: Loading custom model class for {model_id}")
+
+            # Get the custom model class directly from the dynamic module
+            model_class = get_class_from_dynamic_module(
+                "modeling_xprovence_hf.XProvenceForSequenceClassification",
+                model_id,
+                cache_dir=cache_dir,
+            )
+
+            # Load using the custom class directly - this uses the correct config_class
+            model = model_class.from_pretrained(
                 model_id,
                 trust_remote_code=True,
                 cache_dir=cache_dir,
             )
         else:
-            # Fallback for local paths not in HF cache format
+            # Fallback for local paths - try to import from local path
             logger.info(f"XProvence: Loading from local path {model_path}")
-            model = AutoModel.from_pretrained(
+            model_class = get_class_from_dynamic_module(
+                "modeling_xprovence_hf.XProvenceForSequenceClassification",
+                model_path,
+            )
+            model = model_class.from_pretrained(
                 model_path,
                 trust_remote_code=True,
             )
