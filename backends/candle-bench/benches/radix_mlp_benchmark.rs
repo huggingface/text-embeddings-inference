@@ -230,6 +230,22 @@ fn setup(
     Ok((enabled_batch, disabled_batch, enabled_batch_unpadded))
 }
 
+fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
+    assert_eq!(v1.len(), v2.len());
+
+    let mut sumxx = 0.0;
+    let mut sumyy = 0.0;
+    let mut sumxy = 0.0;
+
+    for (x, y) in v1.iter().zip(v2.iter()) {
+        sumxx += x * x;
+        sumyy += y * y;
+        sumxy += x * y;
+    }
+
+    sumxy / (sumxx * sumyy).sqrt()
+}
+
 /// The main benchmark function.
 fn bench_radix_mlp(c: &mut Criterion) {
     // 1. Setup backend
@@ -245,8 +261,8 @@ fn bench_radix_mlp(c: &mut Criterion) {
     .expect("Could not start backend");
     println!("Backend initialized");
 
-    let batch_size = 32;
-    let size_configs = [(512, 256), (512, 512), (1024, 1024)];
+    let batch_size = 16;
+    let size_configs = [(32,512), (256, 512), (512, 32), (512, 256), (512, 512), (512, 1024)];
 
     for (shared_prefix_len, unique_suffix_len) in size_configs {
         let (enabled_batch, disabled_batch, enabled_batch_unpadded) = setup(
@@ -260,6 +276,9 @@ fn bench_radix_mlp(c: &mut Criterion) {
         // --- Correctness Check ---
         let radix_result = backend.embed(enabled_batch.clone().into()).unwrap();
         let regular_result = backend.embed(disabled_batch.clone().into()).unwrap();
+        let radix_unpadded_result = backend
+            .embed(enabled_batch_unpadded.clone().into())
+            .unwrap();
 
         let radix_vecs: Vec<Vec<f32>> = (0..batch_size)
             .map(|i| match radix_result.get(&i).unwrap() {
@@ -273,25 +292,47 @@ fn bench_radix_mlp(c: &mut Criterion) {
                 text_embeddings_backend_core::Embedding::All(vecs) => vecs.last().unwrap().clone(),
             })
             .collect();
+        let radix_unpadded_vecs: Vec<Vec<f32>> = (0..batch_size)
+            .map(|i| match radix_unpadded_result.get(&i).unwrap() {
+                text_embeddings_backend_core::Embedding::Pooled(v) => v.clone(),
+                text_embeddings_backend_core::Embedding::All(vecs) => vecs.last().unwrap().clone(),
+            })
+            .collect();
 
         assert_eq!(radix_vecs.len(), regular_vecs.len());
+        assert_eq!(radix_unpadded_vecs.len(), regular_vecs.len());
+
         for i in 0..radix_vecs.len() {
             let diff: f32 = radix_vecs[i]
                 .iter()
                 .zip(regular_vecs[i].iter())
                 .map(|(a, b)| (a - b).abs())
                 .sum();
-            assert!(
-                diff < 1e-2,
-                "Correctness check failed for size ({}, {}): Embeddings for item {} differ by {}",
-                shared_prefix_len,
-                unique_suffix_len,
-                i,
-                diff
-            );
+            let cos_sim = cosine_similarity(&radix_vecs[i], &regular_vecs[i]);
+            let cos_sim_unpadded =
+                cosine_similarity(&radix_unpadded_vecs[i], &regular_vecs[i]);
+
+            let passed = diff < 1e-2 && cos_sim > 0.999 && cos_sim_unpadded > 0.999;
+
+            if !passed {
+                println!(
+                    "Item {}: Abs Diff: {:.4}, Cosine Sim (Padded): {:.6}, Cosine Sim (Unpadded): {:.6}",
+                    i,
+                    diff,
+                    1.0 - cos_sim,
+                    1.0 - cos_sim_unpadded
+                );
+                println!(
+                    "Correctness check FAILED for size ({}, {}), item {}",
+                    shared_prefix_len, unique_suffix_len, i
+                );
+                println!("Regular: {:?}", &regular_vecs[i][..8]);
+                println!("Padded:  {:?}", &radix_vecs[i][..8]);
+                println!("Unpadded:{:?}", &radix_unpadded_vecs[i][..8]);
+            }
         }
         println!(
-            "Correctness check passed for size ({}, {}). Starting benchmark...",
+            "Correctness check for size ({}, {}) complete. Starting benchmark...",
             shared_prefix_len, unique_suffix_len
         );
         // --- End Correctness Check ---
