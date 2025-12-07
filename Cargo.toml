@@ -2,6 +2,7 @@
 members = [
     "backends",
     "backends/candle",
+    "backends/candle-bench",
     "backends/ort",
     "backends/core",
     "backends/python",
