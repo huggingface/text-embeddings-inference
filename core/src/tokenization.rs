@@ -374,6 +374,12 @@ fn encode_input(
     prompts: Option<&HashMap<String, String>>,
     tokenizer: &mut Tokenizer,
 ) -> Result<ValidEncoding, TextEmbeddingsError> {
+    // XProvence: Extract raw query and text before tokenization (for Dual inputs)
+    let (raw_query, raw_text) = match &inputs {
+        EncodingInput::Dual(query, text) => (Some(query.clone()), Some(text.clone())),
+        _ => (None, None),
+    };
+
     // Default truncation params
     let truncate_params = truncate.then_some(TruncationParams {
         direction: truncation_direction,
@@ -406,6 +412,8 @@ fn encode_input(
         token_type_ids: encoding.get_type_ids().to_vec(),
         position_ids: (position_offset as u32..(seq_len + position_offset) as u32)
             .collect::<Vec<_>>(),
+        raw_query,
+        raw_text,
     })
 }
 
@@ -414,6 +422,10 @@ pub struct ValidEncoding {
     pub input_ids: Vec<u32>,
     pub token_type_ids: Vec<u32>,
     pub position_ids: Vec<u32>,
+    /// XProvence: raw query text for context pruning (from Dual input)
+    pub raw_query: Option<String>,
+    /// XProvence: raw context text for context pruning (from Dual input)
+    pub raw_text: Option<String>,
 }
 
 #[derive(Debug)]

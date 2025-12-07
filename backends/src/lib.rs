@@ -223,6 +223,8 @@ impl Backend {
             max_length: tmp_length,
             pooled_indices,
             raw_indices: vec![],
+            raw_queries: vec![],
+            raw_texts: vec![],
         }
     }
 
@@ -280,6 +282,8 @@ impl Backend {
             max_length,
             pooled_indices,
             raw_indices: vec![],
+            raw_queries: vec![],
+            raw_texts: vec![],
         };
 
         match &self.model_type {
@@ -314,6 +318,8 @@ impl Backend {
                 max_length: 1,
                 pooled_indices: vec![0],
                 raw_indices: vec![],
+                raw_queries: vec![],
+                raw_texts: vec![],
             };
             match &self.model_type {
                 ModelType::Classifier => self.predict(batch).await.map(|_| ()),

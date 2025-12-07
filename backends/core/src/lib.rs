@@ -14,6 +14,10 @@ pub struct Batch {
     pub max_length: u32,
     pub pooled_indices: Vec<u32>,
     pub raw_indices: Vec<u32>,
+    /// XProvence: raw query texts for context pruning
+    pub raw_queries: Vec<Option<String>>,
+    /// XProvence: raw context texts for context pruning
+    pub raw_texts: Vec<Option<String>>,
 }
 
 impl Batch {
@@ -32,7 +36,16 @@ pub enum Embedding {
 }
 
 pub type Embeddings = IntMap<usize, Embedding>;
-pub type Predictions = IntMap<usize, Vec<f32>>;
+
+/// XProvence: Prediction result containing scores and optional pruned text
+#[derive(Debug, Clone)]
+pub struct Prediction {
+    pub scores: Vec<f32>,
+    /// XProvence: pruned context text after removing irrelevant sentences
+    pub pruned_text: Option<String>,
+}
+
+pub type Predictions = IntMap<usize, Prediction>;
 
 pub trait Backend {
     fn health(&self) -> Result<(), BackendError>;

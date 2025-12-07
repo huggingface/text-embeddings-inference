@@ -59,6 +59,8 @@ impl Client {
             position_ids,
             max_length,
             cu_seq_lengths,
+            raw_queries: vec![],
+            raw_texts: vec![],
         })
         .inject_context();
         let response = self.stub.embed(request).await?.into_inner();
@@ -73,6 +75,8 @@ impl Client {
         position_ids: Vec<u32>,
         cu_seq_lengths: Vec<u32>,
         max_length: u32,
+        raw_queries: Vec<String>,
+        raw_texts: Vec<String>,
     ) -> Result<Vec<Score>> {
         let request = tonic::Request::new(EmbedRequest {
             input_ids,
@@ -80,6 +84,8 @@ impl Client {
             position_ids,
             max_length,
             cu_seq_lengths,
+            raw_queries,
+            raw_texts,
         })
         .inject_context();
         let response = self.stub.predict(request).await?.into_inner();

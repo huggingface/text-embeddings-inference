@@ -396,7 +396,8 @@ fn get_backend_model_type(
             return Ok(text_embeddings_backend::ModelType::Embedding(
                 text_embeddings_backend::Pool::Splade,
             ));
-        } else if arch.ends_with("Classification") {
+        } else if arch.ends_with("Classification") || arch == "XProvence" {
+            // XProvence is a reranker model for context pruning
             if pooling.is_some() {
                 tracing::warn!(
                     "`--pooling` arg is set but model is a classifier. Ignoring `--pooling` arg."

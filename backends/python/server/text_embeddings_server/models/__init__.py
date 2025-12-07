@@ -1,4 +1,5 @@
 import os
+import json
 import torch
 
 from loguru import logger
@@ -11,10 +12,37 @@ from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.masked_model import MaskedLanguageModel
 from text_embeddings_server.models.default_model import DefaultModel
 from text_embeddings_server.models.classification_model import ClassificationModel
-from text_embeddings_server.models.jinaBert_model import FlashJinaBert
-from text_embeddings_server.models.flash_mistral import FlashMistral
-from text_embeddings_server.models.flash_qwen3 import FlashQwen3
+from text_embeddings_server.models.xprovence_model import XProvenceModel
 from text_embeddings_server.utils.device import get_device, use_ipex
+
+
+def _is_xprovence_model(model_path: Path) -> bool:
+    """Check if model is XProvence by reading config.json directly.
+
+    This avoids calling AutoConfig.from_pretrained which can pollute
+    transformers' internal registry and cause config class conflicts.
+    """
+    config_path = model_path / "config.json"
+    if not config_path.exists():
+        return False
+
+    try:
+        with open(config_path, "r") as f:
+            config = json.load(f)
+        architectures = config.get("architectures", [])
+        return any("XProvence" in arch for arch in architectures)
+    except Exception:
+        return False
+
+FlashJinaBert = None
+FlashMistral = None
+FlashQwen3 = None
+try:
+    from text_embeddings_server.models.jinaBert_model import FlashJinaBert
+    from text_embeddings_server.models.flash_mistral import FlashMistral
+    from text_embeddings_server.models.flash_qwen3 import FlashQwen3
+except ImportError as e:
+    logger.warning(f"Flash attention models not available: {e}")
 
 __all__ = ["Model"]
 
@@ -73,16 +101,22 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
     device = get_device()
     logger.info(f"backend device: {device}")
 
+    # Check for XProvence BEFORE calling AutoConfig.from_pretrained
+    # to avoid polluting transformers' internal config registry
+    if _is_xprovence_model(model_path):
+        logger.info("Detected XProvence model for context pruning")
+        return XProvenceModel(model_path, device, datatype, trust_remote=True)
+
     config = AutoConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
 
     if (
-        hasattr(config, "auto_map")
+        FlashJinaBert is not None
+        and hasattr(config, "auto_map")
         and isinstance(config.auto_map, dict)
         and "AutoModel" in config.auto_map
         and config.auto_map["AutoModel"]
         == "jinaai/jina-bert-v2-qk-post-norm--modeling_bert.JinaBertModel"
     ):
-        # Add specific offline modeling for model "jinaai/jina-embeddings-v2-base-code" which uses "autoMap" to reference code in other repository
         return create_model(FlashJinaBert, model_path, device, datatype)
 
     if config.model_type == "bert":
@@ -116,19 +150,18 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
         else:
             return create_model(DefaultModel, model_path, device, datatype, pool)
 
-    if config.model_type == "mistral" and device.type == "hpu":
+    if FlashMistral is not None and config.model_type == "mistral" and device.type == "hpu":
         try:
             return create_model(FlashMistral, model_path, device, datatype, pool)
         except FileNotFoundError:
             return create_model(DefaultModel, model_path, device, datatype, pool)
 
-    if config.model_type == "qwen3" and device.type == "hpu":
+    if FlashQwen3 is not None and config.model_type == "qwen3" and device.type == "hpu":
         try:
             return create_model(FlashQwen3, model_path, device, datatype, pool)
         except FileNotFoundError:
             return create_model(DefaultModel, model_path, device, datatype, pool)
 
-    # Default case
     if config.architectures[0].endswith("Classification"):
         return create_model(ClassificationModel, model_path, device, datatype)
     elif config.architectures[0].endswith("ForMaskedLM") and pool == "splade":

@@ -361,13 +361,16 @@ async fn rerank(
             .map_err(ErrorResponse::from)?;
 
         let score = response.results[0];
+        // XProvence: extract pruned_text from response
+        let pruned_text = response.pruned_text;
 
-        Ok::<(usize, Duration, Duration, Duration, f32), ErrorResponse>((
+        Ok::<(usize, Duration, Duration, Duration, f32, Option<String>), ErrorResponse>((
             response.metadata.prompt_tokens,
             response.metadata.tokenization,
             response.metadata.queue,
             response.metadata.inference,
             score,
+            pruned_text,
         ))
     };
 
@@ -410,7 +413,7 @@ async fn rerank(
         let results = join_all(futures)
             .await
             .into_iter()
-            .collect::<Result<Vec<(usize, Duration, Duration, Duration, f32)>, ErrorResponse>>()?;
+            .collect::<Result<Vec<(usize, Duration, Duration, Duration, f32, Option<String>)>, ErrorResponse>>()?;
 
         let mut ranks = Vec::with_capacity(batch_size);
         let mut total_tokenization_time = 0;
@@ -430,6 +433,9 @@ async fn rerank(
             };
 
             let score = r.4;
+            // XProvence: extract pruned_text from result
+            let pruned_text = r.5;
+
             // Check that s is not NaN or the partial_cmp below will panic
             if score.is_nan() {
                 Err(ErrorResponse {
@@ -438,7 +444,7 @@ async fn rerank(
                 })?;
             }
 
-            ranks.push(Rank { index, text, score })
+            ranks.push(Rank { index, text, score, pruned_text })
         }
 
         // Reverse sort

@@ -1,14 +1,35 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1.85-bookworm AS chef
-WORKDIR /usr/src
+# Dockerfile for TEI with Python backend and CUDA support
+# Supports: L40s (sm_89), RTX 3090 (sm_86)
+
+# =============================================================================
+# Stage 1: Rust Builder
+# =============================================================================
+FROM nvidia/cuda:12.4.0-devel-ubuntu22.04 AS rust-builder
 
 ENV SCCACHE=0.10.0
 ENV RUSTC_WRAPPER=/usr/local/bin/sccache
+ENV PATH="/root/.cargo/bin:${PATH}"
+ENV CARGO_CHEF=0.1.71
 
-# Donwload, configure sccache
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    curl \
+    libssl-dev \
+    pkg-config \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sccache-v$SCCACHE-x86_64-unknown-linux-musl.tar.gz | tar -xzv --strip-components=1 -C /usr/local/bin sccache-v$SCCACHE-x86_64-unknown-linux-musl/sccache && \
     chmod +x /usr/local/bin/sccache
 
-FROM chef AS planner
+RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
+RUN cargo install cargo-chef --version $CARGO_CHEF --locked
+
+# =============================================================================
+# Stage 2: Recipe Planner
+# =============================================================================
+FROM rust-builder AS planner
+
+WORKDIR /usr/src
 
 COPY backends backends
 COPY core core
@@ -16,34 +37,21 @@ COPY router router
 COPY Cargo.toml ./
 COPY Cargo.lock ./
 
-RUN cargo chef prepare  --recipe-path recipe.json
+RUN cargo chef prepare --recipe-path recipe.json
 
-FROM chef AS builder
+# =============================================================================
+# Stage 3: Dependency Builder
+# =============================================================================
+FROM rust-builder AS builder
 
 ARG GIT_SHA
 ARG DOCKER_LABEL
 
-# sccache specific variables
-ARG SCCACHE_GHA_ENABLED
-
-RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
-    | gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null && \
-    echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | \
-    tee /etc/apt/sources.list.d/oneAPI.list
-
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    intel-oneapi-mkl-devel=2024.0.0-49656 \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN echo "int mkl_serv_intel_cpu_true() {return 1;}" > fakeintel.c && \
-    gcc -shared -fPIC -o libfakeintel.so fakeintel.c
+WORKDIR /usr/src
 
 COPY --from=planner /usr/src/recipe.json recipe.json
 
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    cargo chef cook --release --features ort,candle,mkl,static-linking --no-default-features --recipe-path recipe.json && sccache -s
+RUN cargo chef cook --release --features python --features http --recipe-path recipe.json && sccache -s
 
 COPY backends backends
 COPY core core
@@ -51,73 +59,83 @@ COPY router router
 COPY Cargo.toml ./
 COPY Cargo.lock ./
 
-FROM builder AS http-builder
+RUN cargo build --release --bin text-embeddings-router -F python -F http --no-default-features && sccache -s
 
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    cargo build --release --bin text-embeddings-router --features ort,candle,mkl,static-linking,http --no-default-features && sccache -s
+# =============================================================================
+# Stage 4: Python Environment
+# =============================================================================
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04 AS python-builder
 
-FROM builder AS grpc-builder
+ENV DEBIAN_FRONTEND=noninteractive
 
-RUN PROTOC_ZIP=protoc-21.12-linux-x86_64.zip && \
-    curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v21.12/$PROTOC_ZIP && \
-    unzip -o $PROTOC_ZIP -d /usr/local bin/protoc && \
-    unzip -o $PROTOC_ZIP -d /usr/local 'include/*' && \
-    rm -f $PROTOC_ZIP
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 \
+    python3.10-dev \
+    python3-pip \
+    git \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY proto proto
+RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
+    ln -sf /usr/bin/python3.10 /usr/bin/python3
 
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    cargo build --release --bin text-embeddings-router --features ort,candle,mkl,static-linking,grpc --no-default-features && sccache -s
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-FROM debian:bookworm-slim AS base
+WORKDIR /opt/server
 
-ENV HUGGINGFACE_HUB_CACHE=/data \
-    PORT=80 \
-    MKL_ENABLE_INSTRUCTIONS=AVX512_E4 \
-    RAYON_NUM_THREADS=8 \
-    LD_PRELOAD=/usr/local/libfakeintel.so \
-    LD_LIBRARY_PATH=/usr/local/lib
+COPY backends/proto /opt/proto
+COPY backends/python/server /opt/server
 
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    libomp-dev \
+RUN pip install grpcio-tools==1.62.2 mypy-protobuf==3.6.0 'types-protobuf' --no-cache-dir && \
+    mkdir -p text_embeddings_server/pb && \
+    python -m grpc_tools.protoc -I/opt/proto --python_out=text_embeddings_server/pb \
+        --grpc_python_out=text_embeddings_server/pb --mypy_out=text_embeddings_server/pb /opt/proto/embed.proto && \
+    find text_embeddings_server/pb/ -type f -name "*.py" -print0 -exec sed -i -e 's/^\(import.*pb2\)/from . \1/g' {} \; && \
+    touch text_embeddings_server/pb/__init__.py
+
+RUN pip install --no-cache-dir torch==2.5.1 --index-url https://download.pytorch.org/whl/cu124
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+RUN pip install --no-cache-dir .
+
+# =============================================================================
+# Stage 5: Final Image
+# =============================================================================
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV HUGGINGFACE_HUB_CACHE=/data
+ENV PORT=80
+ENV TQDM_DISABLE=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 \
+    python3-pip \
     ca-certificates \
     libssl-dev \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy a lot of the Intel shared objects because of the mkl_serv_intel_cpu_true patch...
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_intel_lp64.so.2 /usr/local/lib/libmkl_intel_lp64.so.2
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_intel_thread.so.2 /usr/local/lib/libmkl_intel_thread.so.2
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_core.so.2 /usr/local/lib/libmkl_core.so.2
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_vml_def.so.2 /usr/local/lib/libmkl_vml_def.so.2
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_def.so.2 /usr/local/lib/libmkl_def.so.2
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_vml_avx2.so.2 /usr/local/lib/libmkl_vml_avx2.so.2
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_vml_avx512.so.2 /usr/local/lib/libmkl_vml_avx512.so.2
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_avx2.so.2 /usr/local/lib/libmkl_avx2.so.2
-COPY --from=builder /opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_avx512.so.2 /usr/local/lib/libmkl_avx512.so.2
-COPY --from=builder /usr/src/libfakeintel.so /usr/local/libfakeintel.so
+RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
+    ln -sf /usr/bin/python3.10 /usr/bin/python3
 
-FROM base AS grpc
+COPY --from=python-builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
+COPY --from=python-builder /usr/local/bin/python-text-embeddings-server /usr/local/bin/python-text-embeddings-server
+COPY --from=python-builder /opt/server /opt/server
 
-COPY --from=grpc-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
+COPY --from=builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
 
-ENTRYPOINT ["text-embeddings-router"]
-CMD ["--json-output"]
+ENV PATH="/usr/local/bin:${PATH}"
+ENV PYTHONPATH="/opt/server:${PYTHONPATH}"
 
-FROM base AS http
+# Download spacy model in final image (ensures it's available at runtime)
+# This is needed because spacy models may not be fully copied from builder stage
+RUN pip install --no-cache-dir spacy>=3.7.0 && \
+    python -m spacy download xx_sent_ud_sm && \
+    python -c "import spacy; spacy.load('xx_sent_ud_sm')" && \
+    echo "Spacy model verified successfully"
 
-COPY --from=http-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
-
-# Amazon SageMaker compatible image
-FROM http AS sagemaker
-COPY --chmod=775 sagemaker-entrypoint.sh entrypoint.sh
-
-ENTRYPOINT ["./entrypoint.sh"]
-
-# Default image
-FROM http
+WORKDIR /opt/server
 
 ENTRYPOINT ["text-embeddings-router"]
 CMD ["--json-output"]

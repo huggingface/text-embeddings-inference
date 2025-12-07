@@ -3,7 +3,8 @@ import math
 import torch
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import List, Optional
 from opentelemetry import trace
 
 from text_embeddings_server.pb import embed_pb2
@@ -36,6 +37,9 @@ class PaddedBatch(Batch):
     token_type_ids: torch.Tensor
     position_ids: torch.Tensor
     attention_mask: torch.Tensor
+    # XProvence: raw texts for context pruning (one per batch item)
+    raw_queries: Optional[List[str]] = None
+    raw_texts: Optional[List[str]] = None
 
     @classmethod
     @tracer.start_as_current_span("from_pb")
@@ -77,11 +81,17 @@ class PaddedBatch(Batch):
         # Move padded tensors all at once
         all_tensors = all_tensors.to(device)
 
+        # XProvence: Extract repeated raw_queries/raw_texts from proto
+        raw_queries = list(pb.raw_queries) if pb.raw_queries else None
+        raw_texts = list(pb.raw_texts) if pb.raw_texts else None
+
         return PaddedBatch(
             input_ids=all_tensors[0],
             token_type_ids=all_tensors[1],
             position_ids=all_tensors[2],
             attention_mask=all_tensors[3],
+            raw_queries=raw_queries,
+            raw_texts=raw_texts,
         )
 
     def __len__(self):
