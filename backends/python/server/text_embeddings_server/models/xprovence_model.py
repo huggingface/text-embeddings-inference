@@ -165,9 +165,19 @@ class XProvenceModel(Model):
         """
         batch_size = len(batch)
 
+        # Debug: log raw_query/raw_text availability
+        has_query = batch.raw_query is not None
+        has_text = batch.raw_text is not None
+        logger.info(
+            f"XProvence predict: batch_size={batch_size}, "
+            f"has_raw_query={has_query}, has_raw_text={has_text}"
+        )
+
         if batch_size == 1 and batch.raw_query and batch.raw_text:
+            logger.info("XProvence: Using process() for context pruning")
             return self._predict_with_pruning(batch.raw_query, batch.raw_text)
 
+        logger.info("XProvence: Using standard forward pass (no raw_query/raw_text)")
         return self._predict_standard(batch)
 
     def _predict_with_pruning(self, raw_query: str, raw_text: str) -> List[Score]:
