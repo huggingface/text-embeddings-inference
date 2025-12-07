@@ -21,10 +21,10 @@ message EmbedRequest {
     repeated uint32 cu_seq_lengths = 4;
     /// Length of the longest request
     uint32 max_length = 5;
-    /// XProvence: raw query text for context pruning
-    optional string raw_query = 6;
-    /// XProvence: raw context text for context pruning
-    optional string raw_text = 7;
+    /// XProvence: raw query texts for context pruning (one per batch item)
+    repeated string raw_queries = 6;
+    /// XProvence: raw context texts for context pruning (one per batch item)
+    repeated string raw_texts = 7;
 }
 
 message Embedding {

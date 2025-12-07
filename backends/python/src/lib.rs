@@ -109,9 +109,17 @@ impl Backend for PythonBackend {
         }
         let batch_size = batch.len();
 
-        // XProvence: Get first raw query/text from batch (for single request)
-        let raw_query = batch.raw_queries.first().cloned().flatten();
-        let raw_text = batch.raw_texts.first().cloned().flatten();
+        // XProvence: Collect all raw queries/texts for the batch (one per item)
+        let raw_queries: Vec<String> = batch
+            .raw_queries
+            .into_iter()
+            .map(|q| q.unwrap_or_default())
+            .collect();
+        let raw_texts: Vec<String> = batch
+            .raw_texts
+            .into_iter()
+            .map(|t| t.unwrap_or_default())
+            .collect();
 
         let results = self
             .tokio_runtime
@@ -121,8 +129,8 @@ impl Backend for PythonBackend {
                 batch.position_ids,
                 batch.cumulative_seq_lengths,
                 batch.max_length,
-                raw_query,
-                raw_text,
+                raw_queries,
+                raw_texts,
             ))
             .map_err(|err| BackendError::Inference(err.to_string()))?;
 

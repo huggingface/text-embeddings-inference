@@ -159,25 +159,45 @@ class XProvenceModel(Model):
         """
         XProvence prediction with context pruning support.
 
-        For single-item batches with raw_query/raw_text available,
-        uses XProvence's process() method for sentence-level pruning.
+        For batches with raw_queries/raw_texts available (one per item),
+        uses XProvence's process() method for sentence-level pruning on each pair.
         Otherwise falls back to standard forward pass.
         """
         batch_size = len(batch)
 
-        # Debug: log raw_query/raw_text availability
-        has_query = batch.raw_query is not None
-        has_text = batch.raw_text is not None
-        logger.info(
-            f"XProvence predict: batch_size={batch_size}, "
-            f"has_raw_query={has_query}, has_raw_text={has_text}"
+        # Check if we have raw data for the full batch
+        has_raw_data = (
+            batch.raw_queries is not None
+            and batch.raw_texts is not None
+            and len(batch.raw_queries) == batch_size
+            and len(batch.raw_texts) == batch_size
         )
 
-        if batch_size == 1 and batch.raw_query and batch.raw_text:
-            logger.info("XProvence: Using process() for context pruning")
-            return self._predict_with_pruning(batch.raw_query, batch.raw_text)
+        logger.info(
+            f"XProvence predict: batch_size={batch_size}, "
+            f"has_raw_queries={batch.raw_queries is not None}, "
+            f"has_raw_texts={batch.raw_texts is not None}, "
+            f"has_full_raw_data={has_raw_data}"
+        )
 
-        logger.info("XProvence: Using standard forward pass (no raw_query/raw_text)")
+        if has_raw_data:
+            logger.info(f"XProvence: Processing batch of {batch_size} with pruning")
+            results = []
+            for i in range(batch_size):
+                query = batch.raw_queries[i]
+                text = batch.raw_texts[i]
+
+                # Verify we have valid strings (not empty)
+                if query and text:
+                    scores = self._predict_with_pruning(query, text)
+                    results.append(scores[0])
+                else:
+                    # Empty string fallback - use standard forward pass result
+                    logger.warning(f"XProvence: Empty query/text at index {i}, using 0.0")
+                    results.append(Score(values=[0.0], pruned_text=None))
+            return results
+
+        logger.info("XProvence: Using standard forward pass (no raw_queries/raw_texts)")
         return self._predict_standard(batch)
 
     def _predict_with_pruning(self, raw_query: str, raw_text: str) -> List[Score]:
