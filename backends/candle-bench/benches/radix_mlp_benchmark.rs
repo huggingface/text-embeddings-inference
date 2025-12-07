@@ -261,7 +261,7 @@ fn bench_radix_mlp(c: &mut Criterion) {
     .expect("Could not start backend");
     println!("Backend initialized");
 
-    let batch_size = 16;
+    let batch_size = 32;
     let size_configs = [(32,512), (256, 512), (512, 32), (512, 256), (512, 512), (512, 1024)];
 
     for (shared_prefix_len, unique_suffix_len) in size_configs {
