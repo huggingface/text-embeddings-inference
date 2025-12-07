@@ -1,4 +1,5 @@
 import os
+import json
 import torch
 
 from loguru import logger
@@ -13,6 +14,25 @@ from text_embeddings_server.models.default_model import DefaultModel
 from text_embeddings_server.models.classification_model import ClassificationModel
 from text_embeddings_server.models.xprovence_model import XProvenceModel
 from text_embeddings_server.utils.device import get_device, use_ipex
+
+
+def _is_xprovence_model(model_path: Path) -> bool:
+    """Check if model is XProvence by reading config.json directly.
+
+    This avoids calling AutoConfig.from_pretrained which can pollute
+    transformers' internal registry and cause config class conflicts.
+    """
+    config_path = model_path / "config.json"
+    if not config_path.exists():
+        return False
+
+    try:
+        with open(config_path, "r") as f:
+            config = json.load(f)
+        architectures = config.get("architectures", [])
+        return any("XProvence" in arch for arch in architectures)
+    except Exception:
+        return False
 
 FlashJinaBert = None
 FlashMistral = None
@@ -81,15 +101,13 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
     device = get_device()
     logger.info(f"backend device: {device}")
 
-    config = AutoConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
-
-    if (
-        hasattr(config, "architectures")
-        and config.architectures
-        and "XProvence" in config.architectures[0]
-    ):
+    # Check for XProvence BEFORE calling AutoConfig.from_pretrained
+    # to avoid polluting transformers' internal config registry
+    if _is_xprovence_model(model_path):
         logger.info("Detected XProvence model for context pruning")
         return XProvenceModel(model_path, device, datatype, trust_remote=True)
+
+    config = AutoConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
 
     if (
         FlashJinaBert is not None
