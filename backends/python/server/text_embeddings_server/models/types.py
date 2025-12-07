@@ -81,8 +81,18 @@ class PaddedBatch(Batch):
         all_tensors = all_tensors.to(device)
 
         # XProvence: Extract raw text if present in proto
-        raw_query = pb.raw_query if hasattr(pb, 'raw_query') and pb.raw_query else None
-        raw_text = pb.raw_text if hasattr(pb, 'raw_text') and pb.raw_text else None
+        # Use HasField for proto3 optional fields to properly detect if they were set
+        raw_query = None
+        raw_text = None
+        if hasattr(pb, 'HasField'):
+            if pb.HasField('raw_query'):
+                raw_query = pb.raw_query
+            if pb.HasField('raw_text'):
+                raw_text = pb.raw_text
+        else:
+            # Fallback for older proto versions
+            raw_query = pb.raw_query if pb.raw_query else None
+            raw_text = pb.raw_text if pb.raw_text else None
 
         return PaddedBatch(
             input_ids=all_tensors[0],
