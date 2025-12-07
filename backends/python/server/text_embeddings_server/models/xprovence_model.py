@@ -3,7 +3,7 @@ import torch
 
 from pathlib import Path
 from typing import Type, List
-from transformers import AutoModel
+from transformers import AutoModel, AutoConfig
 from huggingface_hub import snapshot_download
 from opentelemetry import trace
 from loguru import logger
@@ -64,7 +64,9 @@ class XProvenceModel(Model):
                     )
                     break
 
-        model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
+        # Load config first with trust_remote_code to get the correct XProvenceConfig
+        config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+        model = AutoModel.from_pretrained(model_path, config=config, trust_remote_code=True)
 
         if dtype == torch.bfloat16:
             logger.info("XProvence: using float32 instead of bfloat16 for process() compatibility")
