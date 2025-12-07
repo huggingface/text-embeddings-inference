@@ -164,41 +164,85 @@ class XProvenceModel(Model):
         Otherwise falls back to standard forward pass.
         """
         batch_size = len(batch)
+        raw_queries = batch.raw_queries or []
+        raw_texts = batch.raw_texts or []
 
-        # Check if we have raw data for the full batch
-        has_raw_data = (
-            batch.raw_queries is not None
-            and batch.raw_texts is not None
-            and len(batch.raw_queries) == batch_size
-            and len(batch.raw_texts) == batch_size
-        )
+        # Broadcasting: 1 query → N texts (common reranking pattern)
+        if len(raw_queries) == 1 and len(raw_texts) == batch_size and batch_size > 1:
+            logger.info(f"XProvence: Broadcasting single query to {batch_size} texts")
+            raw_queries = raw_queries * batch_size
 
-        logger.info(
-            f"XProvence predict: batch_size={batch_size}, "
-            f"has_raw_queries={batch.raw_queries is not None}, "
-            f"has_raw_texts={batch.raw_texts is not None}, "
-            f"has_full_raw_data={has_raw_data}"
-        )
+        # Check for dimension mismatch with explicit warning
+        if len(raw_queries) != batch_size or len(raw_texts) != batch_size:
+            if raw_queries or raw_texts:
+                logger.warning(
+                    f"XProvence: Dimension mismatch - batch_size={batch_size}, "
+                    f"raw_queries={len(raw_queries)}, raw_texts={len(raw_texts)}. "
+                    f"Falling back to standard inference (no pruned_text)."
+                )
+            return self._predict_standard(batch)
 
-        if has_raw_data:
-            logger.info(f"XProvence: Processing batch of {batch_size} with pruning")
-            results = []
-            for i in range(batch_size):
-                query = batch.raw_queries[i]
-                text = batch.raw_texts[i]
+        # Process batch with pruning (optimized)
+        logger.info(f"XProvence: Processing {batch_size} pairs with pruning")
+        return self._predict_batch_with_pruning(raw_queries, raw_texts)
 
-                # Verify we have valid strings (not empty)
-                if query and text:
-                    scores = self._predict_with_pruning(query, text)
-                    results.append(scores[0])
-                else:
-                    # Empty string fallback - use standard forward pass result
-                    logger.warning(f"XProvence: Empty query/text at index {i}, using 0.0")
-                    results.append(Score(values=[0.0], pruned_text=None))
-            return results
+    def _predict_batch_with_pruning(
+        self, raw_queries: List[str], raw_texts: List[str]
+    ) -> List[Score]:
+        """
+        Optimized batch processing with pruning.
 
-        logger.info("XProvence: Using standard forward pass (no raw_queries/raw_texts)")
-        return self._predict_standard(batch)
+        Uses inference_mode and batched dtype handling to reduce per-item overhead.
+        Note: XProvence process() is inherently per-pair for sentence-level analysis.
+        """
+        batch_size = len(raw_queries)
+        results = []
+
+        # Suppress progress bars once for entire batch
+        os.environ["TQDM_DISABLE"] = "1"
+
+        # Use inference_mode for better performance (no grad tracking)
+        with torch.inference_mode():
+            original_dtype = torch.get_default_dtype()
+            torch.set_default_dtype(torch.float32)
+
+            try:
+                for i in range(batch_size):
+                    query = raw_queries[i]
+                    text = raw_texts[i]
+
+                    if not query or not text:
+                        logger.warning(
+                            f"XProvence: Empty query/text at index {i}, score=0.0"
+                        )
+                        results.append(Score(values=[0.0], pruned_text=None))
+                        continue
+
+                    try:
+                        output = self.model.process(
+                            query,
+                            text,
+                            threshold=self.threshold,
+                            always_select_title=self.always_select_title,
+                        )
+
+                        score = float(output["reranking_score"])
+                        pruned = output["pruned_context"]
+
+                        logger.debug(
+                            f"XProvence [{i}]: score={score:.4f}, "
+                            f"len={len(text)}→{len(pruned)}"
+                        )
+                        results.append(Score(values=[score], pruned_text=pruned))
+
+                    except Exception as e:
+                        logger.error(f"XProvence process() failed at index {i}: {e}")
+                        results.append(Score(values=[0.0], pruned_text=None))
+
+            finally:
+                torch.set_default_dtype(original_dtype)
+
+        return results
 
     def _predict_with_pruning(self, raw_query: str, raw_text: str) -> List[Score]:
         """
