@@ -137,12 +137,11 @@ fn setup() -> Result<(CandleBackend, Batch, Batch, Batch)> {
     println!("Backend initialized");
 
     // 2. Create benchmark batch
-    // Batch size of 16, 1024 shared prefix, 1024 unique suffix per sequence
-    // Radix tree structure: 1024x1 (shared), then 16x1024 (unique tails)
-    let batch_size: usize = 16;
-    let shared_prefix_len: usize = 1000;
-    let unique_suffix_len: usize = 1000;
-
+    // Batch size of 32, 500 shared prefix, 500 unique suffix per sequence
+    // Radix tree structure: 500x1 (shared), then 32x500 (unique tails)
+    let batch_size: usize = 32;
+    let shared_prefix_len: usize = 500;
+    let unique_suffix_len: usize = 500;
     let shared_prefix_ids: Vec<u32> = vec![1; shared_prefix_len];
 
     let mut all_input_ids = Vec::new();
@@ -287,6 +286,7 @@ fn bench_radix_mlp(c: &mut Criterion) {
     // --- End Correctness Check ---
 
     let mut group = c.benchmark_group("RadixMLP Speedup");
+    group.sample_size(25);
 
     // Benchmark WITH RadixMLP enabled (uses shared prefix computation)
     group.bench_function("radix_mlp_enabled", |b| {
