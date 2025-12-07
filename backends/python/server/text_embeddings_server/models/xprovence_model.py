@@ -4,6 +4,7 @@ import torch
 from pathlib import Path
 from typing import Type, List
 from transformers import AutoModel
+from huggingface_hub import snapshot_download
 from opentelemetry import trace
 from loguru import logger
 
@@ -44,6 +45,25 @@ class XProvenceModel(Model):
         pool: str = "cls",
         trust_remote: bool = True,
     ):
+        # Download all model files including custom Python files for trust_remote_code
+        # The Rust router only downloads config/tokenizer/weights, but not custom modeling files
+        model_path_str = str(model_path)
+        if model_path_str.startswith("/data/models--"):
+            # Extract model_id from HF cache path format: /data/models--org--name/...
+            # Convert "models--naver--xprovence-reranker-bgem3-v1" to "naver/xprovence-reranker-bgem3-v1"
+            parts = model_path_str.split("/")
+            for part in parts:
+                if part.startswith("models--"):
+                    model_id = part.replace("models--", "").replace("--", "/", 1)
+                    logger.info(f"XProvence: Downloading custom files for {model_id}")
+                    cache_dir = os.getenv("HUGGINGFACE_HUB_CACHE", "/data")
+                    snapshot_download(
+                        repo_id=model_id,
+                        cache_dir=cache_dir,
+                        local_files_only=False,
+                    )
+                    break
+
         model = AutoModel.from_pretrained(model_path, trust_remote_code=True)
 
         if dtype == torch.bfloat16:
