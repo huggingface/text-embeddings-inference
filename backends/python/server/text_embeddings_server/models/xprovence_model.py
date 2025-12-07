@@ -76,7 +76,7 @@ class XProvenceModel(Model):
 
             # Get the custom model class directly from the dynamic module
             model_class = get_class_from_dynamic_module(
-                "modeling_xprovence_hf.XProvenceForSequenceClassification",
+                "modeling_xprovence_hf.XProvence",
                 model_id,
                 cache_dir=cache_dir,
             )
@@ -91,7 +91,7 @@ class XProvenceModel(Model):
             # Fallback for local paths - try to import from local path
             logger.info(f"XProvence: Loading from local path {model_path}")
             model_class = get_class_from_dynamic_module(
-                "modeling_xprovence_hf.XProvenceForSequenceClassification",
+                "modeling_xprovence_hf.XProvence",
                 model_path,
             )
             model = model_class.from_pretrained(
