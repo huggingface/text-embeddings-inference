@@ -258,7 +258,7 @@ fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
 /// The main benchmark function.
 fn bench_radix_mlp(c: &mut Criterion) {
     // 1. Setup backend
-    let model_root = download_artifacts("Qwen/Qwen3-Embedding-0.6B", None)
+    let model_root = download_artifacts("Qwen/Qwen3-Embedding-8B", None)
         .expect("Failed to download artifacts");
     println!("Model downloaded to {:?}", model_root);
     let backend = CandleBackend::new(
