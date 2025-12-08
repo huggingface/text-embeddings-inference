@@ -54,6 +54,7 @@ candle-layer-norm = { version = "0.0.1" }
 candle-rotary = { version = "0.0.1" }
 candle-flash-attn-v1 = { version = "0.0.1" }
 half = { version = "2.3.1", features = ["num-traits"] }
+candle-index-select-cu = { git = "https://github.com/michaelfeil/candle-index-select-cu", rev = "1346a1dce03961629cb31e21ebf88c0c31da0d39", default-features = false, features = ["cuda-11"] }
 
 [patch.crates-io]
 cudarc = { git = "https://github.com/Narsil/cudarc" , rev = "8b4f18b4bcd5e4b1a9daf40abc3a2e27f83f06e9"}

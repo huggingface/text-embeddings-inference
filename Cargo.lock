@@ -586,6 +586,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "candle-index-select-cu"
+version = "0.1.0"
+source = "git+https://github.com/michaelfeil/candle-index-select-cu?rev=1346a1dce03961629cb31e21ebf88c0c31da0d39#1346a1dce03961629cb31e21ebf88c0c31da0d39"
+dependencies = [
+ "anyhow",
+ "candle-core",
+ "half",
+ "num_cpus",
+ "rayon",
+]
+
+[[package]]
 name = "candle-kernels"
 version = "0.8.4"
 source = "git+https://github.com/huggingface/candle?rev=6381023982251959a2c9bab7378b3013304e192b#6381023982251959a2c9bab7378b3013304e192b"
@@ -4643,6 +4655,7 @@ dependencies = [
  "candle-cublaslt",
  "candle-flash-attn",
  "candle-flash-attn-v1",
+ "candle-index-select-cu",
  "candle-layer-norm",
  "candle-nn",
  "candle-rotary",
