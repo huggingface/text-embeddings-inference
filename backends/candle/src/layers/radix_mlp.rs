@@ -2,6 +2,7 @@
 // Published under RadixMLP by Michael Feil
 // Copyright (c) 2025 michaelfeil
 
+use crate::layers::index_select::index_select;
 use candle::{Device, Result, Tensor};
 use text_embeddings_backend_core::Batch;
 
@@ -63,7 +64,7 @@ impl CompactUnfoldTensors {
     #[inline]
     pub fn scatter_unfold(&self, tensor: &Tensor) -> Result<Tensor> {
         if let Some(scatter) = &self.scatter_unfold {
-            tensor.index_select(scatter, 0)?.contiguous()
+            index_select(tensor, scatter, 0)
         } else {
             Ok(tensor.clone())
         }
@@ -74,7 +75,7 @@ impl CompactUnfoldTensors {
     #[inline]
     pub fn fold_gather(&self, tensor: &Tensor) -> Result<Tensor> {
         if let Some(gather) = &self.fold_gather {
-            tensor.index_select(gather, 0)?.contiguous()
+            Ok(index_select(tensor, gather, 0)?)
         } else {
             Ok(tensor.clone())
         }

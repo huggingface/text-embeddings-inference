@@ -258,8 +258,8 @@ fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
 /// The main benchmark function.
 fn bench_radix_mlp(c: &mut Criterion) {
     // 1. Setup backend
-    let model_root = download_artifacts("Qwen/Qwen3-Embedding-8B", None)
-        .expect("Failed to download artifacts");
+    let model_root =
+        download_artifacts("Qwen/Qwen3-Embedding-4B", None).expect("Failed to download artifacts");
     println!("Model downloaded to {:?}", model_root);
     let backend = CandleBackend::new(
         &model_root,
@@ -274,6 +274,7 @@ fn bench_radix_mlp(c: &mut Criterion) {
     let size_configs = [
         // 256 suffix sizes
         (1, 256),
+        (16, 256),
         (32, 256),
         (128, 256),
         (256, 256),
@@ -380,9 +381,9 @@ fn bench_radix_mlp(c: &mut Criterion) {
             shared_prefix_len, unique_suffix_len
         ));
         group
-            .sample_size(10)
+            .sample_size(15)
             .warm_up_time(std::time::Duration::from_secs(3))
-            .measurement_time(std::time::Duration::from_secs(15));
+            .measurement_time(std::time::Duration::from_secs(30));
 
         // Benchmark WITH RadixMLP enabled (uses shared prefix computation)
         group.bench_function("radix_mlp_enabled", |b| {

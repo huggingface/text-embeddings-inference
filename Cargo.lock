@@ -588,7 +588,7 @@ dependencies = [
 [[package]]
 name = "candle-index-select-cu"
 version = "0.1.0"
-source = "git+https://github.com/michaelfeil/candle-index-select-cu?rev=1346a1dce03961629cb31e21ebf88c0c31da0d39#1346a1dce03961629cb31e21ebf88c0c31da0d39"
+source = "git+https://github.com/michaelfeil/candle-index-select-cu?rev=4fc425654d13113ac9c7508706f61918b0c35ac2#4fc425654d13113ac9c7508706f61918b0c35ac2"
 dependencies = [
  "anyhow",
  "candle-core",
