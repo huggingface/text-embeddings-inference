@@ -271,16 +271,29 @@ fn bench_radix_mlp(c: &mut Criterion) {
     println!("Backend initialized");
 
     let batch_size = 32;
-    let size_configs = [(32, 512), (256, 512), (512, 32), (512, 256), (512, 512), (512, 1024)];
+    let size_configs = [
+        // 256 suffix sizes
+        (1, 256),
+        (32, 256),
+        (128, 256),
+        (256, 256),
+        (512, 256),
+        (1024, 256),
+        (2048, 256),
+        // 1024 suffix sizes
+        (1, 1024),
+        (32, 1024),
+        (128, 1024),
+        (256, 1024),
+        (512, 1024),
+        (1024, 1024),
+        (2048, 1024),
+    ];
 
     for (shared_prefix_len, unique_suffix_len) in size_configs {
-        let (enabled_batch, disabled_batch, enabled_batch_unpadded) = setup(
-            &backend,
-            batch_size,
-            shared_prefix_len,
-            unique_suffix_len,
-        )
-        .expect("Failed to set up benchmark");
+        let (enabled_batch, disabled_batch, enabled_batch_unpadded) =
+            setup(&backend, batch_size, shared_prefix_len, unique_suffix_len)
+                .expect("Failed to set up benchmark");
 
         // --- Correctness Check ---
         let radix_result = backend.embed(enabled_batch.clone().into()).unwrap();
@@ -308,7 +321,8 @@ fn bench_radix_mlp(c: &mut Criterion) {
             })
             .collect();
 
-        let normalized_radix_vecs: Vec<Vec<f32>> = radix_vecs.iter().map(|v| normalize(v)).collect();
+        let normalized_radix_vecs: Vec<Vec<f32>> =
+            radix_vecs.iter().map(|v| normalize(v)).collect();
         let normalized_regular_vecs: Vec<Vec<f32>> =
             regular_vecs.iter().map(|v| normalize(v)).collect();
         let normalized_radix_unpadded_vecs: Vec<Vec<f32>> =
@@ -324,8 +338,7 @@ fn bench_radix_mlp(c: &mut Criterion) {
                 .map(|(a, b)| (a - b).abs())
                 .reduce(f32::max)
                 .unwrap_or(0.0);
-            let cos_sim =
-                cosine_similarity(&normalized_radix_vecs[i], &normalized_regular_vecs[i]);
+            let cos_sim = cosine_similarity(&normalized_radix_vecs[i], &normalized_regular_vecs[i]);
             let cos_sim_unpadded = cosine_similarity(
                 &normalized_radix_unpadded_vecs[i],
                 &normalized_regular_vecs[i],
@@ -345,7 +358,10 @@ fn bench_radix_mlp(c: &mut Criterion) {
                     "Correctness check FAILED for size ({}, {}), item {}",
                     shared_prefix_len, unique_suffix_len, i
                 );
-                println!("Regular (normalized): {:?}", &normalized_regular_vecs[i][..8]);
+                println!(
+                    "Regular (normalized): {:?}",
+                    &normalized_regular_vecs[i][..8]
+                );
                 println!("Padded (normalized):  {:?}", &normalized_radix_vecs[i][..8]);
                 println!(
                     "Unpadded (normalized):{:?}",
