@@ -612,14 +612,16 @@ async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiErro
     }
 
     // Download weight files
-    let mut handles = Vec::with_capacity(safetensors_filenames.len());
-    for n in safetensors_filenames {
-        let api = Arc::clone(&api);
-        handles.push(tokio::spawn(async move {
-            tracing::info!("Downloading `{}`", n);
-            api.get(&n).await
-        }));
-    }
+    let handles: Vec<_> = safetensors_filenames
+        .into_iter()
+        .map(|n| {
+            let api = Arc::clone(&api);
+            tokio::spawn(async move {
+                tracing::info!("Downloading `{}`", n);
+                api.get(&n).await
+            })
+        })
+        .collect();
 
     let mut safetensors_files = Vec::with_capacity(handles.len());
     for handle in handles {
