@@ -15,6 +15,7 @@ struct Qwen2Attention {
     attention_head_size: usize,
 
     softmax_scale: f32,
+    is_causal: bool,
 
     span: tracing::Span,
 }
@@ -66,6 +67,7 @@ impl Qwen2Attention {
             num_key_value_heads,
             attention_head_size,
             softmax_scale,
+            is_causal: config.is_causal,
             span: tracing::span!(tracing::Level::TRACE, "attention"),
         })
     }
@@ -111,7 +113,7 @@ impl Qwen2Attention {
             max_s,
             max_s,
             self.softmax_scale,
-            false,
+            self.is_causal,
             None,
             None,
         )?;
