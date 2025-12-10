@@ -5,6 +5,7 @@ use crate::models::Model;
 use candle::{DType, Device, IndexOp, Result, Tensor, D};
 use candle_nn::{Embedding, Module, VarBuilder};
 use serde::Deserialize;
+use std::collections::HashMap;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -24,6 +25,7 @@ pub struct Qwen3Config {
     pub sliding_window: Option<usize>,
     pub use_sliding_window: bool,
     pub eos_token_id: usize,
+    pub id2label: Option<HashMap<String, String>>,
 }
 
 struct Qwen3Attention {
@@ -375,6 +377,54 @@ impl Qwen3Layer {
     }
 }
 
+pub struct Qwen3ClassificationHead {
+    classifier: Linear,
+    span: tracing::Span,
+}
+
+impl Qwen3ClassificationHead {
+    pub fn load(vb: VarBuilder, config: &Qwen3Config) -> Result<Self> {
+        let n_classes = match &config.id2label {
+            None => candle::bail!("`id2label` must be set for classifier models"),
+            Some(id2label) => id2label.len(),
+        };
+
+        // Try different common classification head layer names
+        // The tomaarsen/Qwen3-Reranker models have score.weight at the top level with no bias
+        let classifier = if let Ok(weight) = vb.get((n_classes, config.hidden_size), "score.weight") {
+            // No bias for score layer in converted Qwen3 rerankers
+            Linear::new(weight, None, None)
+        } else if let (Ok(weight), Ok(bias)) = (
+            vb.pp("classifier").get((n_classes, config.hidden_size), "weight"),
+            vb.pp("classifier").get(n_classes, "bias")
+        ) {
+            Linear::new(weight, Some(bias), None)
+        } else if let (Ok(weight), Ok(bias)) = (
+            vb.pp("score").get((n_classes, config.hidden_size), "weight"),
+            vb.pp("score").get(n_classes, "bias")
+        ) {
+            Linear::new(weight, Some(bias), None)
+        } else if let (Ok(weight), Ok(bias)) = (
+            vb.get((n_classes, config.hidden_size), "classifier.weight"),
+            vb.get(n_classes, "classifier.bias")
+        ) {
+            Linear::new(weight, Some(bias), None)
+        } else {
+            candle::bail!("Could not find classification head weights. Tried: score.weight, classifier.weight");
+        };
+
+        Ok(Self {
+            classifier,
+            span: tracing::span!(tracing::Level::TRACE, "classification_head"),
+        })
+    }
+
+    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+        self.classifier.forward(hidden_states)
+    }
+}
+
 pub struct Qwen3Model {
     embeddings: Embedding,
     layers: Vec<Qwen3Layer>,
@@ -382,6 +432,7 @@ pub struct Qwen3Model {
     rotary_cache: (Tensor, Tensor),
     rotary_dim: usize,
     pool: Pool,
+    classification_head: Option<Qwen3ClassificationHead>,
     num_attention_heads: usize,
     pad_token_id: u32,
 
@@ -393,11 +444,12 @@ pub struct Qwen3Model {
 
 impl Qwen3Model {
     pub fn load(vb: VarBuilder, config: &Qwen3Config, model_type: ModelType) -> Result<Self> {
-        let pool = match model_type {
+        let (pool, classification_head) = match model_type {
             ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for Qwen3")
+                let classification_head = Some(Qwen3ClassificationHead::load(vb.clone(), config)?);
+                (Pool::LastToken, classification_head) 
             }
-            ModelType::Embedding(pool) => pool,
+            ModelType::Embedding(pool) => (pool, None),
         };
 
         // The Qwen3-Reranker models contain the `model` key
@@ -436,6 +488,7 @@ impl Qwen3Model {
             rotary_cache,
             rotary_dim,
             pool,
+            classification_head,
             pad_token_id: config.eos_token_id as u32,
             num_attention_heads: config.num_attention_heads,
             dtype: vb.dtype(),
@@ -699,5 +752,17 @@ impl Model for Qwen3Model {
 
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
+    }
+
+    fn predict(&self, batch: Batch) -> Result<Tensor> {
+        match &self.classification_head {
+            None => candle::bail!("`predict` is not implemented for this model"),
+            Some(classification_head) => {
+                let (pooled_embeddings, _raw_embeddings) = self.forward(batch)?;
+                let pooled_embeddings =
+                    pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
+                classification_head.forward(&pooled_embeddings)
+            }
+        }
     }
 }
