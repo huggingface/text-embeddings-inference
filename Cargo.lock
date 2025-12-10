@@ -564,6 +564,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "candle-index-select-cu"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d776145d1dfa52ab0c254ec678ae7765a120ee0bab999dbfea95d648c883a47b"
+dependencies = [
+ "anyhow",
+ "candle-core",
+ "half",
+ "num_cpus",
+ "rayon",
+]
+
+[[package]]
 name = "candle-kernels"
 version = "0.8.4"
 source = "git+https://github.com/huggingface/candle?rev=6381023982251959a2c9bab7378b3013304e192b#6381023982251959a2c9bab7378b3013304e192b"
@@ -4501,6 +4514,7 @@ dependencies = [
  "candle-cublaslt",
  "candle-flash-attn",
  "candle-flash-attn-v1",
+ "candle-index-select-cu",
  "candle-layer-norm",
  "candle-nn",
  "candle-rotary",
