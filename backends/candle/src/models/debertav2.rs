@@ -244,6 +244,7 @@ pub struct DebertaV2DisentangledSelfAttention {
     pos_query_proj: Option<Linear>,
     is_c2p_attn: bool,
     is_p2c_attn: bool,
+    base_scale: Tensor,
     span: tracing::Span,
 }
 
@@ -313,6 +314,10 @@ impl DebertaV2DisentangledSelfAttention {
 
         let device = vb.device().clone();
 
+        // Pre-compute base scale tensor to avoid recreating it on every forward pass
+        // q_size equals attention_head_size, so we compute sqrt(attention_head_size) once
+        let base_scale = Tensor::new(&[attention_head_size as f32], &device)?.sqrt()?;
+
         Ok(Self {
             num_attention_heads,
             query_proj,
@@ -328,6 +333,7 @@ impl DebertaV2DisentangledSelfAttention {
             pos_query_proj,
             is_c2p_attn,
             is_p2c_attn,
+            base_scale,
             span: tracing::span!(tracing::Level::TRACE, "attention"),
         })
     }
@@ -360,10 +366,11 @@ impl DebertaV2DisentangledSelfAttention {
             scale_factor += 1;
         }
 
-        let scale = {
-            let q_size = query_layer.dim(D::Minus1)?;
-            Tensor::new(&[(q_size * scale_factor) as f32], &self.device)?.sqrt()?
-        };
+        // Use pre-computed base_scale and multiply by sqrt(scale_factor)
+        // This is mathematically equivalent to sqrt(q_size * scale_factor)
+        let scale = self
+            .base_scale
+            .broadcast_mul(&Tensor::new(&[(scale_factor as f32).sqrt()], &self.device)?)?;
 
         let mut attention_scores: Tensor = {
             let key_layer_transposed = key_layer.t()?;
