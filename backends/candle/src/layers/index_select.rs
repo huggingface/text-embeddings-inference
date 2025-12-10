@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT
+// Published under RadixMLP by Michael Feil
+// Copyright (c) 2025 michaelfeil
+
+use candle::{Result, Tensor};
+#[cfg(feature = "cuda")]
+use candle_index_select_cu;
+
+#[inline]
+pub fn index_select(tensor: &Tensor, ids: &Tensor, dim: usize) -> Result<Tensor> {
+    #[cfg(not(feature = "cuda"))]
+    {
+        tensor.index_select(ids, dim)
+    }
+    #[cfg(feature = "cuda")]
+    {
+        candle_index_select_cu::index_select(tensor, ids, dim)
+    }
+}
