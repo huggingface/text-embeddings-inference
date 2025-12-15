@@ -1,6 +1,7 @@
 pub mod download;
 pub mod infer;
 pub mod queue;
+pub mod radix_mlp;
 pub mod tokenization;
 
 use text_embeddings_backend::BackendError;

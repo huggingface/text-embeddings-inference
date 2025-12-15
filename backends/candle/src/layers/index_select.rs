@@ -1,4 +1,7 @@
-// SPDX-License-Identifier: MIT or Apache-2.0
+// SPDX-License-Identifier: MIT
+// Published under RadixMLP by Michael Feil
+// Copyright (c) 2025 michaelfeil
+
 // First Published under RadixMLP and https://github.com/michaelfeil/candle-index-select-cu by Michael Feil
 
 use candle::{Result, Tensor};
