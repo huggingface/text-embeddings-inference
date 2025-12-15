@@ -2,6 +2,8 @@
 // Published under RadixMLP by Michael Feil
 // Copyright (c) 2025 michaelfeil
 
+// First Published under RadixMLP and https://github.com/michaelfeil/candle-index-select-cu by Michael Feil
+
 use candle::{Result, Tensor};
 #[cfg(feature = "cuda")]
 use candle_index_select_cu;

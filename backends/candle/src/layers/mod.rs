@@ -1,5 +1,6 @@
 #[allow(dead_code, unused)]
 mod cublaslt;
+mod index_select;
 mod layer_norm;
 mod linear;
 mod radix_mlp;

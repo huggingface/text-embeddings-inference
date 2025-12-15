@@ -51,6 +51,7 @@ candle-transformers = { version = "0.8" }
 candle-flash-attn = { version = "0.8" }
 candle-cublaslt = { version = "0.0.1" }
 candle-layer-norm = { version = "0.0.1" }
+candle-index-select-cu =  { version = "0.0.1", features = ["cuda-11"], default-features = false }
 candle-rotary = { version = "0.0.1" }
 candle-flash-attn-v1 = { version = "0.0.1" }
 half = { version = "2.3.1", features = ["num-traits"] }

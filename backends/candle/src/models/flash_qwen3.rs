@@ -1,5 +1,5 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{get_cos_sin, get_inv_freqs, CompactUnfoldTensors, HiddenAct, Linear, RMSNorm};
+use crate::layers::{get_cos_sin, get_inv_freqs, index_select, CompactUnfoldTensors, HiddenAct, Linear, RMSNorm};
 use crate::models::{Model, Qwen3Config};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
@@ -388,12 +388,12 @@ impl FlashQwen3Model {
         )?;
 
         // sin and cos are applied on the compact formation, therefore should be on the compact array
-        let cos = self
-            .cos_cache
-            .index_select(&compact_tensors.position_ids_compact, 0)?;
-        let sin = self
-            .sin_cache
-            .index_select(&compact_tensors.position_ids_compact, 0)?;
+        let cos = index_select(self.cos_cache           ,&compact_tensors.position_ids_compact, 0)?;
+        let sin = 
+            index_select(self            .sin_cache, &compact_tensors.position_ids_compact, 0)?;
+
+        let cos = index_select(&self.cos_cache, &position_ids, 0)?;
+        let sin = index_select(&self.sin_cache, &position_ids, 0)?;
 
         let mut residual = None;
         for layer in &self.layers {
@@ -443,11 +443,11 @@ impl FlashQwen3Model {
                             )?;
 
                             // Only select indices that requires pooling
-                            indices = indices.index_select(&pooled_indices, 0)?
+                            indices = index_select(&indices, &pooled_indices, 0)?
                         }
 
                         // Select tokens
-                        Some(outputs.index_select(&indices, 0)?)
+                        Some(index_select(&outputs, &indices, 0)?)
                     } else {
                         Some(
                             match self.pool {
@@ -515,7 +515,7 @@ impl FlashQwen3Model {
                     Tensor::from_vec(final_indices, final_indices_length, &self.device)?;
 
                 // Select the tokens with final indices
-                Some(outputs.index_select(&final_indices, 0)?)
+                Some(index_select(&outputs, &final_indices, 0)?)
             } else {
                 Some(outputs)
             }

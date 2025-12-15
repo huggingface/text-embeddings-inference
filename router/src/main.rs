@@ -23,12 +23,14 @@ fn pct_parser(s: &str) -> Result<f32, String> {
 #[derive(Parser, Redact)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    /// The name of the model to load.
-    /// Can be a MODEL_ID as listed on <https://hf.co/models> like
-    /// `BAAI/bge-large-en-v1.5`.
-    /// Or it can be a local directory containing the necessary files
-    /// as saved by `save_pretrained(...)` methods of transformers
-    #[clap(default_value = "BAAI/bge-large-en-v1.5", long, env)]
+    /// The Hugging Face model ID, can be any model listed on <https://huggingface.co/models> with
+    /// the `text-embeddings-inference` tag (meaning it's compatible with Text Embeddings
+    /// Inference)
+    ///
+    /// Alternatively, the specified ID can also be a path to a local directory containing the
+    /// necessary model files saved by the `save_pretrained(...)` methods of either Transformers or
+    /// Sentence Transformers.
+    #[clap(long, env)]
     #[redact(partial)]
     model_id: String,
 
