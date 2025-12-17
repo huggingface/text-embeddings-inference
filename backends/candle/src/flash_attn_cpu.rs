@@ -291,6 +291,14 @@ fn create_alibi_bias_batch(
 
 #[cfg(test)]
 mod tests {
+    // to properly test against GPU implementation
+    /// Cargo.toml add in testing section:
+    /// [dev-dependencies]
+    /// cudarc = { workspace = true, features = ["dynamic-linking"], default-features = false }
+    /// 
+    /// and run `./backends/candle# cargo test flash_attn_cpu --lib --features cuda,flash-attn`
+    /// or `./backends/candle# cargo test flash_attn_cpu --lib` for CPU-only tests (cuda ones marked as passed)
+
     use super::*;
     use candle::{DType, Device, IndexOp, Tensor};
     use rand::prelude::*;
