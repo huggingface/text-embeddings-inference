@@ -37,7 +37,7 @@ pub(crate) fn flash_attn_varlen(
     let device = q.device();
 
     // Use CPU fallback only when on CPU device
-    if matches!(device, candle::Device::Cpu(_)) {
+    if matches!(device, candle::Device::Cpu) {
         return crate::flash_attn_cpu::flash_attn_varlen_cpu(
             q,
             k,
@@ -47,7 +47,7 @@ pub(crate) fn flash_attn_varlen(
             seqlens_k,
             max_seqlen_q,
             max_seqlen_k,
-            softmax_scale,
+            softmax_scale.into(),
             causal,
             window_size_left,
             window_size_right,

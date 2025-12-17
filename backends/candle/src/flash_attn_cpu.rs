@@ -346,7 +346,8 @@ mod tests {
         }
 
         let cpu_device = Device::Cpu;
-        let gpu_device = Device::new_cuda(0)?;
+        #[cfg(feature = "cuda")]
+        #[cfg(feature = "cuda")] let gpu_device = Device::new_cuda(0)?;
 
         let test_cases = vec![
             (1, 8, 64, 32), // batch_size, num_heads, head_dim, max_seq_len
@@ -382,15 +383,15 @@ mod tests {
                 None,
             )?;
 
-            // Move to GPU only when we're actually going to use it
-            let q_gpu = q_cpu.to_device(&gpu_device)?;
-            let k_gpu = k_cpu.to_device(&gpu_device)?;
-            let v_gpu = v_cpu.to_device(&gpu_device)?;
-            let seqlens_q_gpu = seqlens_q_cpu.to_device(&gpu_device)?;
-            let seqlens_k_gpu = seqlens_k_cpu.to_device(&gpu_device)?;
-
             #[cfg(feature = "cuda")]
             {
+                // Move to GPU only when we're actually going to use it
+                let q_gpu = q_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+                let k_gpu = k_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+                let v_gpu = v_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+                let seqlens_q_gpu = seqlens_q_cpu.to_device(&gpu_device)?;
+                let seqlens_k_gpu = seqlens_k_cpu.to_device(&gpu_device)?;
+
                 let gpu_result = crate::flash_attn::flash_attn_varlen(
                     &q_gpu,
                     &k_gpu,
@@ -406,8 +407,8 @@ mod tests {
                     None,
                 )?;
 
-                // Move GPU result back to CPU for comparison
-                let gpu_result_cpu = gpu_result.to_device(&cpu_device)?;
+                // Move GPU result back to CPU and cast to f32 for comparison
+                let gpu_result_cpu = gpu_result.to_device(&cpu_device)?.to_dtype(candle::DType::F32)?;
 
                 let distance = tensor_distance(&cpu_result, &gpu_result_cpu)?;
                 println!("  Non-causal distance: {:.6}", distance);
@@ -432,15 +433,15 @@ mod tests {
                 None,
             )?;
 
-            // Move to GPU only when we're actually going to use it
-            let q_gpu = q_cpu.to_device(&gpu_device)?;
-            let k_gpu = k_cpu.to_device(&gpu_device)?;
-            let v_gpu = v_cpu.to_device(&gpu_device)?;
-            let seqlens_q_gpu = seqlens_q_cpu.to_device(&gpu_device)?;
-            let seqlens_k_gpu = seqlens_k_cpu.to_device(&gpu_device)?;
-
             #[cfg(feature = "cuda")]
             {
+                // Move to GPU only when we're actually going to use it
+                let q_gpu = q_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+                let k_gpu = k_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+                let v_gpu = v_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+                let seqlens_q_gpu = seqlens_q_cpu.to_device(&gpu_device)?;
+                let seqlens_k_gpu = seqlens_k_cpu.to_device(&gpu_device)?;
+
                 let gpu_result_causal = crate::flash_attn::flash_attn_varlen(
                     &q_gpu,
                     &k_gpu,
@@ -456,7 +457,7 @@ mod tests {
                     None,
                 )?;
 
-                let gpu_result_causal_cpu = gpu_result_causal.to_device(&cpu_device)?;
+                let gpu_result_causal_cpu = gpu_result_causal.to_device(&cpu_device)?.to_dtype(candle::DType::F32)?;
 
                 let distance_causal = tensor_distance(&cpu_result_causal, &gpu_result_causal_cpu)?;
                 println!("  Causal distance: {:.6}", distance_causal);
@@ -486,7 +487,7 @@ mod tests {
         }
 
         let cpu_device = Device::Cpu;
-        let gpu_device = Device::new_cuda(0)?;
+        #[cfg(feature = "cuda")] let gpu_device = Device::new_cuda(0)?;
 
         let batch_size = 1;
         let num_heads = 8;
@@ -505,7 +506,7 @@ mod tests {
         let softmax_scale = 1.0 / (head_dim as f64).sqrt();
 
         // Test CPU implementation with ALiBi
-        let cpu_result = flash_attn_varlen_cpu(
+        #[cfg(feature = "cuda")] let cpu_result = flash_attn_varlen_cpu(
             &q_cpu,
             &k_cpu,
             &v_cpu,
@@ -520,17 +521,17 @@ mod tests {
             None,
         )?;
 
-        // Move to GPU only when we're actually going to use it
-        let q_gpu = q_cpu.to_device(&gpu_device)?;
-        let k_gpu = k_cpu.to_device(&gpu_device)?;
-        let v_gpu = v_cpu.to_device(&gpu_device)?;
-        let seqlens_q_gpu = seqlens_q_cpu.to_device(&gpu_device)?;
-        let seqlens_k_gpu = seqlens_k_cpu.to_device(&gpu_device)?;
-        let alibi_slopes_gpu = alibi_slopes_cpu.to_device(&gpu_device)?;
-
-        // Test GPU implementation with ALiBi (only supported with flash-attn v2)
         #[cfg(feature = "cuda")]
         {
+            // Move to GPU only when we're actually going to use it
+            let q_gpu = q_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+            let k_gpu = k_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+            let v_gpu = v_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+            let seqlens_q_gpu = seqlens_q_cpu.to_device(&gpu_device)?;
+            let seqlens_k_gpu = seqlens_k_cpu.to_device(&gpu_device)?;
+            let alibi_slopes_gpu = alibi_slopes_cpu.to_device(&gpu_device)?;
+
+            // Test GPU implementation with ALiBi (only supported with flash-attn v2)
             let gpu_result = crate::flash_attn::flash_attn_varlen(
                 &q_gpu,
                 &k_gpu,
@@ -546,7 +547,7 @@ mod tests {
                 None,
             )?;
 
-            let gpu_result_cpu = gpu_result.to_device(&cpu_device)?;
+            let gpu_result_cpu = gpu_result.to_device(&cpu_device)?.to_dtype(candle::DType::F32)?;
 
             let distance = tensor_distance(&cpu_result, &gpu_result_cpu)?;
             println!("ALiBi distance: {:.6}", distance);
@@ -565,7 +566,7 @@ mod tests {
         skip_test_if!(!flash_attn_enabled, "flash-attn feature not enabled");
 
         let cpu_device = Device::Cpu;
-        let gpu_device = Device::new_cuda(0)?;
+        #[cfg(feature = "cuda")] let gpu_device = Device::new_cuda(0)?;
 
         let batch_size = 1;
         let num_heads = 8;
@@ -595,16 +596,16 @@ mod tests {
             Some(window_right),
         )?;
 
-        // Move to GPU only when we're actually going to use it
-        let q_gpu = q_cpu.to_device(&gpu_device)?;
-        let k_gpu = k_cpu.to_device(&gpu_device)?;
-        let v_gpu = v_cpu.to_device(&gpu_device)?;
-        let seqlens_q_gpu = seqlens_q_cpu.to_device(&gpu_device)?;
-        let seqlens_k_gpu = seqlens_k_cpu.to_device(&gpu_device)?;
-
-        // Test GPU implementation with windowing (only supported with flash-attn v2)
         #[cfg(feature = "cuda")]
         {
+            // Move to GPU only when we're actually going to use it
+            let q_gpu = q_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+            let k_gpu = k_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+            let v_gpu = v_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+            let seqlens_q_gpu = seqlens_q_cpu.to_device(&gpu_device)?;
+            let seqlens_k_gpu = seqlens_k_cpu.to_device(&gpu_device)?;
+
+            // Test GPU implementation with windowing (only supported with flash-attn v2)
             let gpu_result = crate::flash_attn::flash_attn_varlen(
                 &q_gpu,
                 &k_gpu,
@@ -620,7 +621,7 @@ mod tests {
                 Some(window_right),
             )?;
 
-            let gpu_result_cpu = gpu_result.to_device(&cpu_device)?;
+            let gpu_result_cpu = gpu_result.to_device(&cpu_device)?.to_dtype(candle::DType::F32)?;
 
             let distance = tensor_distance(&cpu_result, &gpu_result_cpu)?;
             println!("Windowing distance: {:.6}", distance);
