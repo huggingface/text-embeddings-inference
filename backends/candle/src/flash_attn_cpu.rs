@@ -1,4 +1,4 @@
-use candle::{IndexOp, Tensor};
+use candle::{Tensor};
 
 /// CPU fallback implementation for variable length flash attention
 /// This implements standard attention computation for CPU and supports all model types
@@ -52,33 +52,27 @@ pub fn flash_attn_varlen_cpu(
     let batch_size = seqlens_q.dims()[0];
     let mut outputs = Vec::new();
 
+    // Pre-compute cumulative sequence lengths to avoid O(n²) nested loops
+    let seqlens_q_vec = seqlens_q.to_vec1::<u32>()?;
+    let seqlens_k_vec = seqlens_k.to_vec1::<u32>()?;
+    let mut cumsum_q = vec![0usize; batch_size + 1];
+    let mut cumsum_k = vec![0usize; batch_size + 1];
     for i in 0..batch_size {
-        let seq_len_q = seqlens_q.i(i)?.to_scalar::<u32>()? as usize;
-        let seq_len_k = seqlens_k.i(i)?.to_scalar::<u32>()? as usize;
+        cumsum_q[i + 1] = cumsum_q[i] + seqlens_q_vec[i] as usize;
+        cumsum_k[i + 1] = cumsum_k[i] + seqlens_k_vec[i] as usize;
+    }
+
+    for i in 0..batch_size {
+        let seq_len_q = seqlens_q_vec[i] as usize;
+        let seq_len_k = seqlens_k_vec[i] as usize;
 
         if seq_len_q == 0 || seq_len_k == 0 {
             continue;
         }
 
-        // Calculate start positions based on cumulative sequence lengths
-        let start_q = if i == 0 {
-            0
-        } else {
-            let mut sum = 0;
-            for j in 0..i {
-                sum += seqlens_q.i(j)?.to_scalar::<u32>().unwrap_or(0) as usize;
-            }
-            sum
-        };
-        let start_k = if i == 0 {
-            0
-        } else {
-            let mut sum = 0;
-            for j in 0..i {
-                sum += seqlens_k.i(j)?.to_scalar::<u32>().unwrap_or(0) as usize;
-            }
-            sum
-        };
+        // Use pre-computed cumulative sequence lengths (O(1) lookup)
+        let start_q = cumsum_q[i];
+        let start_k = cumsum_k[i];
 
         // Extract Q, K, V for this sequence
         let q_seq = q.narrow(0, start_q, seq_len_q)?; // [seq_len_q, num_heads, head_dim]
