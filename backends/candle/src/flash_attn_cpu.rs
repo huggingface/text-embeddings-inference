@@ -1,4 +1,4 @@
-use candle::{Tensor};
+use candle::Tensor;
 
 /// CPU fallback implementation for variable length flash attention
 /// This implements standard attention computation for CPU and supports all model types
@@ -260,6 +260,7 @@ fn create_alibi_bias_batch(
 mod tests {
     use super::*;
     use candle::{DType, Device, IndexOp, Tensor};
+    use candle_nn::ops::softmax;
     use rand::prelude::*;
 
     /// Helper macro to skip tests with clear messaging
@@ -329,8 +330,6 @@ mod tests {
     fn test_flash_attn_cpu_vs_gpu_basic() -> Result<(), candle::Error> {
         if !candle::utils::cuda_is_available() {
             println!("Skipping GPU test: CUDA not available");
-            // Mark as skipped by returning early - test runner will show this as passed
-            // but with the skip message above
             return Ok(());
         }
 
@@ -341,7 +340,6 @@ mod tests {
         }
 
         let cpu_device = Device::Cpu;
-        #[cfg(feature = "cuda")]
         #[cfg(feature = "cuda")]
         let gpu_device = Device::new_cuda(0)?;
 
@@ -357,13 +355,12 @@ mod tests {
                 batch_size, num_heads, head_dim, max_seq_len
             );
 
-            // Create test tensors on CPU
             let (q_cpu, k_cpu, v_cpu, seqlens_q_cpu, seqlens_k_cpu) =
                 create_test_tensors(batch_size, num_heads, head_dim, max_seq_len, &cpu_device)?;
 
             let softmax_scale = 1.0 / (head_dim as f64).sqrt();
 
-            // Test non-causal attention
+            // CPU expects lengths (your cpu impl uses to_vec1 and builds cumsums)
             let cpu_result = flash_attn_varlen_cpu(
                 &q_cpu,
                 &k_cpu,
@@ -381,46 +378,42 @@ mod tests {
 
             #[cfg(feature = "cuda")]
             {
-                // Move to GPU only when we're actually going to use it
+                // GPU expects cu_seqlens (len=B+1). This is the bug causing len>=2 errors.
+                let cu_q_cpu = seqlens_to_cu_seqlens_tensor(&seqlens_q_cpu)?;
+                let cu_k_cpu = seqlens_to_cu_seqlens_tensor(&seqlens_k_cpu)?;
+                let max_q = max_len_from_seqlens(&seqlens_q_cpu)?;
+                let max_k = max_len_from_seqlens(&seqlens_k_cpu)?;
+
                 let q_gpu = q_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
                 let k_gpu = k_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
                 let v_gpu = v_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
-                let seqlens_q_gpu = seqlens_q_cpu.to_device(&gpu_device)?;
-                let seqlens_k_gpu = seqlens_k_cpu.to_device(&gpu_device)?;
+                let cu_q_gpu = cu_q_cpu.to_device(&gpu_device)?;
+                let cu_k_gpu = cu_k_cpu.to_device(&gpu_device)?;
 
                 let gpu_result = crate::flash_attn::flash_attn_varlen(
                     &q_gpu,
                     &k_gpu,
                     &v_gpu,
                     None,
-                    &seqlens_q_gpu,
-                    &seqlens_k_gpu,
-                    max_seq_len,
-                    max_seq_len,
+                    &cu_q_gpu,
+                    &cu_k_gpu,
+                    max_q,
+                    max_k,
                     softmax_scale as f32,
                     false,
                     None,
                     None,
                 )?;
 
-                // Move GPU result back to CPU and cast to f32 for comparison
                 let gpu_result_cpu = gpu_result
                     .to_device(&cpu_device)?
                     .to_dtype(candle::DType::F32)?;
-
                 let distance = tensor_distance(&cpu_result, &gpu_result_cpu)?;
                 println!("  Non-causal distance: {:.6}", distance);
-
-                // Assert that the distance is small (allowing for numerical differences)
                 assert!(distance < 1e-4, "Distance too large: {:.6}", distance);
             }
-            #[cfg(not(feature = "cuda"))]
-            {
-                println!("Skipping GPU comparison: CUDA feature not enabled");
-                let _unused = cpu_result;
-            }
 
-            // Test causal attention
+            // Causal
             let cpu_result_causal = flash_attn_varlen_cpu(
                 &q_cpu,
                 &k_cpu,
@@ -438,22 +431,26 @@ mod tests {
 
             #[cfg(feature = "cuda")]
             {
-                // Move to GPU only when we're actually going to use it
+                let cu_q_cpu = seqlens_to_cu_seqlens_tensor(&seqlens_q_cpu)?;
+                let cu_k_cpu = seqlens_to_cu_seqlens_tensor(&seqlens_k_cpu)?;
+                let max_q = max_len_from_seqlens(&seqlens_q_cpu)?;
+                let max_k = max_len_from_seqlens(&seqlens_k_cpu)?;
+
                 let q_gpu = q_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
                 let k_gpu = k_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
                 let v_gpu = v_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
-                let seqlens_q_gpu = seqlens_q_cpu.to_device(&gpu_device)?;
-                let seqlens_k_gpu = seqlens_k_cpu.to_device(&gpu_device)?;
+                let cu_q_gpu = cu_q_cpu.to_device(&gpu_device)?;
+                let cu_k_gpu = cu_k_cpu.to_device(&gpu_device)?;
 
                 let gpu_result_causal = crate::flash_attn::flash_attn_varlen(
                     &q_gpu,
                     &k_gpu,
                     &v_gpu,
                     None,
-                    &seqlens_q_gpu,
-                    &seqlens_k_gpu,
-                    max_seq_len,
-                    max_seq_len,
+                    &cu_q_gpu,
+                    &cu_k_gpu,
+                    max_q,
+                    max_k,
                     softmax_scale as f32,
                     true,
                     None,
@@ -466,17 +463,11 @@ mod tests {
 
                 let distance_causal = tensor_distance(&cpu_result_causal, &gpu_result_causal_cpu)?;
                 println!("  Causal distance: {:.6}", distance_causal);
-
                 assert!(
                     distance_causal < 1e-4,
                     "Causal distance too large: {:.6}",
                     distance_causal
                 );
-            }
-            #[cfg(not(feature = "cuda"))]
-            {
-                println!("Skipping GPU comparison: CUDA feature not enabled");
-                let _unused = cpu_result_causal;
             }
         }
 
@@ -508,7 +499,7 @@ mod tests {
         let (q_cpu, k_cpu, v_cpu, seqlens_q_cpu, seqlens_k_cpu) =
             create_test_tensors(batch_size, num_heads, head_dim, max_seq_len, &cpu_device)?;
 
-        // Create ALiBi slopes
+        // ALiBi slopes
         let alibi_slopes_data: Vec<f32> = (0..num_heads)
             .map(|i| 2.0f32.powi(-(i as i32 + 1)))
             .collect();
@@ -516,7 +507,6 @@ mod tests {
 
         let softmax_scale = 1.0 / (head_dim as f64).sqrt();
 
-        // Test CPU implementation with ALiBi
         let cpu_result = flash_attn_varlen_cpu(
             &q_cpu,
             &k_cpu,
@@ -534,24 +524,28 @@ mod tests {
 
         #[cfg(feature = "cuda")]
         {
-            // Move to GPU only when we're actually going to use it
+            // Convert lengths -> cu_seqlens for GPU
+            let cu_q_cpu = seqlens_to_cu_seqlens_tensor(&seqlens_q_cpu)?;
+            let cu_k_cpu = seqlens_to_cu_seqlens_tensor(&seqlens_k_cpu)?;
+            let max_q = max_len_from_seqlens(&seqlens_q_cpu)?;
+            let max_k = max_len_from_seqlens(&seqlens_k_cpu)?;
+
             let q_gpu = q_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
             let k_gpu = k_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
             let v_gpu = v_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
-            let seqlens_q_gpu = seqlens_q_cpu.to_device(&gpu_device)?;
-            let seqlens_k_gpu = seqlens_k_cpu.to_device(&gpu_device)?;
+            let cu_q_gpu = cu_q_cpu.to_device(&gpu_device)?;
+            let cu_k_gpu = cu_k_cpu.to_device(&gpu_device)?;
             let alibi_slopes_gpu = alibi_slopes_cpu.to_device(&gpu_device)?;
 
-            // Test GPU implementation with ALiBi (only supported with flash-attn v2)
             let gpu_result = crate::flash_attn::flash_attn_varlen(
                 &q_gpu,
                 &k_gpu,
                 &v_gpu,
                 Some(&alibi_slopes_gpu),
-                &seqlens_q_gpu,
-                &seqlens_k_gpu,
-                max_seq_len,
-                max_seq_len,
+                &cu_q_gpu,
+                &cu_k_gpu,
+                max_q,
+                max_k,
                 softmax_scale as f32,
                 false,
                 None,
@@ -561,16 +555,9 @@ mod tests {
             let gpu_result_cpu = gpu_result
                 .to_device(&cpu_device)?
                 .to_dtype(candle::DType::F32)?;
-
             let distance = tensor_distance(&cpu_result, &gpu_result_cpu)?;
             println!("ALiBi distance: {:.6}", distance);
-
             assert!(distance < 1e-4, "ALiBi distance too large: {:.6}", distance);
-        }
-        #[cfg(not(feature = "cuda"))]
-        {
-            println!("Skipping GPU comparison: CUDA feature not enabled");
-            let _unused = cpu_result;
         }
 
         Ok(())
@@ -599,7 +586,6 @@ mod tests {
         let window_left = 8;
         let window_right = 8;
 
-        // Test CPU implementation with windowing
         let cpu_result = flash_attn_varlen_cpu(
             &q_cpu,
             &k_cpu,
@@ -617,23 +603,27 @@ mod tests {
 
         #[cfg(feature = "cuda")]
         {
-            // Move to GPU only when we're actually going to use it
+            // Convert lengths -> cu_seqlens for GPU
+            let cu_q_cpu = seqlens_to_cu_seqlens_tensor(&seqlens_q_cpu)?;
+            let cu_k_cpu = seqlens_to_cu_seqlens_tensor(&seqlens_k_cpu)?;
+            let max_q = max_len_from_seqlens(&seqlens_q_cpu)?;
+            let max_k = max_len_from_seqlens(&seqlens_k_cpu)?;
+
             let q_gpu = q_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
             let k_gpu = k_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
             let v_gpu = v_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
-            let seqlens_q_gpu = seqlens_q_cpu.to_device(&gpu_device)?;
-            let seqlens_k_gpu = seqlens_k_cpu.to_device(&gpu_device)?;
+            let cu_q_gpu = cu_q_cpu.to_device(&gpu_device)?;
+            let cu_k_gpu = cu_k_cpu.to_device(&gpu_device)?;
 
-            // Test GPU implementation with windowing (only supported with flash-attn v2)
             let gpu_result = crate::flash_attn::flash_attn_varlen(
                 &q_gpu,
                 &k_gpu,
                 &v_gpu,
                 None,
-                &seqlens_q_gpu,
-                &seqlens_k_gpu,
-                max_seq_len,
-                max_seq_len,
+                &cu_q_gpu,
+                &cu_k_gpu,
+                max_q,
+                max_k,
                 softmax_scale as f32,
                 false,
                 Some(window_left),
@@ -643,20 +633,13 @@ mod tests {
             let gpu_result_cpu = gpu_result
                 .to_device(&cpu_device)?
                 .to_dtype(candle::DType::F32)?;
-
             let distance = tensor_distance(&cpu_result, &gpu_result_cpu)?;
             println!("Windowing distance: {:.6}", distance);
-
             assert!(
                 distance < 1e-4,
                 "Windowing distance too large: {:.6}",
                 distance
             );
-        }
-        #[cfg(not(feature = "cuda"))]
-        {
-            println!("Skipping GPU comparison: CUDA feature not enabled");
-            let _unused = cpu_result;
         }
 
         Ok(())
@@ -1019,6 +1002,240 @@ mod tests {
         }
         Tensor::cat(&outs, 0)
     }
+    type CResult<T> = std::result::Result<T, candle::Error>;
+
+    // Convert per-sequence lengths [B] into FlashAttention-style cu_seqlens [B+1]:
+    ///   cu[0]=0, cu[i+1]=cu[i]+seqlens[i]
+    fn seqlens_to_cu_seqlens_tensor(seqlens: &Tensor) -> Result<Tensor, candle::Error> {
+        let device = seqlens.device();
+        let lens = seqlens.to_vec1::<u32>()?;
+
+        let mut cu = Vec::<u32>::with_capacity(lens.len() + 1);
+        cu.push(0);
+
+        let mut acc: u32 = 0;
+        for &l in &lens {
+            acc = acc.saturating_add(l);
+            cu.push(acc);
+        }
+
+        Tensor::from_vec(cu, lens.len() + 1, device)
+    }
+
+    /// Max length from a [B] seqlens tensor.
+    fn max_len_from_seqlens(seqlens: &Tensor) -> Result<usize, candle::Error> {
+        let lens = seqlens.to_vec1::<u32>()?;
+        Ok(lens.into_iter().max().unwrap_or(0) as usize)
+    }
+
+    fn total_len(lengths: &[usize]) -> usize {
+        lengths.iter().sum()
+    }
+
+    fn max_len(lengths: &[usize]) -> usize {
+        lengths.iter().copied().max().unwrap_or(0)
+    }
+
+    /// Pack a padded [B, S, H, D] tensor into varlen [T, H, D] by concatenating each batch's valid prefix.
+    fn pack_bshd_to_thd(x: &Tensor, lengths: &[usize]) -> CResult<Tensor> {
+        let mut chunks: Vec<Tensor> = Vec::with_capacity(lengths.len());
+        for (b, &l) in lengths.iter().enumerate() {
+            if l == 0 {
+                continue;
+            }
+            let xb = x.i((b, 0..l, .., ..))?; // [l, H, D]
+            chunks.push(xb);
+        }
+
+        if chunks.is_empty() {
+            let h = x.dims()[2];
+            let d = x.dims()[3];
+            Tensor::zeros((0usize, h, d), x.dtype(), x.device())
+        } else {
+            let refs: Vec<&Tensor> = chunks.iter().collect();
+            Tensor::cat(&refs, 0)
+        }
+    }
+
+    /// Unpack varlen [T, H, D] back into padded [B, Smax, H, D], filling invalid positions with 0.
+    /// NOTE: we avoid in-place slice writes (Candle Tensor::copy() is not an assignment op).
+    fn unpack_thd_to_bshd(x_thd: &Tensor, lengths: &[usize], smax: usize) -> CResult<Tensor> {
+        let bsz = lengths.len();
+        let h = x_thd.dims()[1];
+        let d = x_thd.dims()[2];
+        let dev = x_thd.device();
+        let dtype = x_thd.dtype();
+
+        let mut out_batches: Vec<Tensor> = Vec::with_capacity(bsz);
+
+        let mut offset = 0usize;
+        for &l in lengths.iter() {
+            let chunk = if l == 0 {
+                Tensor::zeros((0usize, h, d), dtype, dev)?
+            } else {
+                x_thd.i((offset..offset + l, .., ..))? // [l, H, D]
+            };
+
+            let padded = if l == smax {
+                chunk
+            } else {
+                let pad = Tensor::zeros((smax - l, h, d), dtype, dev)?;
+                Tensor::cat(&[&chunk, &pad], 0)?
+            };
+
+            out_batches.push(padded.unsqueeze(0)?); // [1, Smax, H, D]
+            offset += l;
+        }
+
+        let refs: Vec<&Tensor> = out_batches.iter().collect();
+        Tensor::cat(&refs, 0) // [B, Smax, H, D]
+    }
+
+    /// Build an additive mask [Lq, Lk] with 0 for allowed and -INF for disallowed.
+    fn build_additive_mask(
+        lq: usize,
+        lk: usize,
+        causal: bool,
+        window: Option<(usize, usize)>,
+    ) -> Vec<f32> {
+        let neg_inf = -1e9f32;
+        let mut mask = vec![0f32; lq * lk];
+
+        for iq in 0..lq {
+            let (mut lo, mut hi) = (0isize, (lk as isize) - 1);
+
+            if causal {
+                hi = hi.min(iq as isize);
+            }
+            if let Some((left, right)) = window {
+                lo = lo.max(iq as isize - left as isize);
+                hi = hi.min(iq as isize + right as isize);
+            }
+
+            for ik in 0..lk {
+                let allowed = (ik as isize) >= lo && (ik as isize) <= hi;
+                if !allowed {
+                    mask[iq * lk + ik] = neg_inf;
+                }
+            }
+        }
+
+        mask
+    }
+
+    /// Padded reference attention for "full inference" (no KV cache).
+    /// q: [B,S,Hq,D], k/v: [B,S,Hk,D] (Hq==Hk for MHA; Hq>Hk for GQA).
+    /// Returns: [B,S,Hq,D], with invalid positions zero-padded.
+    fn attention_reference_padded(
+        q: &Tensor,
+        k: &Tensor,
+        v: &Tensor,
+        lengths: &[usize],
+        causal: bool,
+        window: Option<(usize, usize)>,
+        softmax_scale: Option<f32>,
+    ) -> CResult<Tensor> {
+        let dev = q.device();
+        let dtype = q.dtype();
+        let bsz = lengths.len();
+        let smax = q.dims()[1];
+        let hq = q.dims()[2];
+        let d = q.dims()[3];
+        let hk = k.dims()[2];
+
+        let scale = softmax_scale.unwrap_or_else(|| 1.0f32 / (d as f32).sqrt());
+
+        // Build each batch output, then stack (avoids in-place writes).
+        let mut out_batches: Vec<Tensor> = Vec::with_capacity(bsz);
+
+        for b in 0..bsz {
+            let l = lengths[b];
+            if l == 0 {
+                out_batches.push(Tensor::zeros((1usize, smax, hq, d), dtype, dev)?);
+                continue;
+            }
+
+            let qb = q.i((b, 0..l, .., ..))?; // [L,Hq,D]
+            let kb = k.i((b, 0..l, .., ..))?; // [L,Hk,D]
+            let vb = v.i((b, 0..l, .., ..))?; // [L,Hk,D]
+
+            let qb = qb.permute((1, 0, 2))?; // [Hq,L,D]
+            let kb = kb.permute((1, 2, 0))?; // [Hk,D,L]
+            let vb = vb.permute((1, 0, 2))?; // [Hk,L,D]
+
+            // GQA mapping: q_head -> kv_head
+            if hq % hk != 0 {
+                return Err(candle::Error::msg("GQA requires Hq % Hk == 0"));
+            }
+            let group = hq / hk;
+
+            let mut out_heads: Vec<Tensor> = Vec::with_capacity(hq);
+
+            for hqi in 0..hq {
+                let hki = hqi / group;
+
+                let qh = qb.i((hqi, .., ..))?.unsqueeze(0)?; // [1,L,D]
+                let kh = kb.i((hki, .., ..))?.unsqueeze(0)?; // [1,D,L]
+                let vh = vb.i((hki, .., ..))?.unsqueeze(0)?; // [1,L,D]
+
+                // scores: [1,L,L]
+                let scores = qh.matmul(&kh)?.affine(scale as f64, 0.0)?; // scalar multiply via affine  [oai_citation:3‡Docs.rs](https://docs.rs/candle-core/latest/candle_core/struct.Tensor.html?utm_source=chatgpt.com)
+
+                let mask_vec = build_additive_mask(l, l, causal, window);
+                let mask = Tensor::from_vec(mask_vec, (l, l), dev)?
+                    .to_dtype(DType::F32)?
+                    .unsqueeze(0)?; // [1,L,L]
+
+                // scores_f32 + mask
+                let scores = scores.to_dtype(DType::F32)?.broadcast_add(&mask)?; // safe add  [oai_citation:4‡Docs.rs](https://docs.rs/candle-core/latest/candle_core/struct.Tensor.html?utm_source=chatgpt.com)
+
+                let probs = softmax(&scores, 2usize)?; //  [oai_citation:5‡Docs.rs](https://docs.rs/candle-nn/latest/candle_nn/ops/fn.softmax.html?utm_source=chatgpt.com)
+
+                let out_h = probs.matmul(&vh.to_dtype(DType::F32)?)?; // [1,L,D]
+                out_heads.push(out_h.to_dtype(dtype)?); // [1,L,D] in original dtype
+            }
+
+            // out_heads: hq * [1,L,D] -> cat on dim0 => [Hq,L,D] -> permute => [L,Hq,D]
+            let refs: Vec<&Tensor> = out_heads.iter().collect();
+            let out_hld = Tensor::cat(&refs, 0)?; // [Hq,L,D]
+            let out_lhd = out_hld.permute((1, 0, 2))?; // [L,Hq,D]
+
+            // Pad to Smax along seq dim
+            let padded = if l == smax {
+                out_lhd
+            } else {
+                let pad = Tensor::zeros((smax - l, hq, d), dtype, dev)?;
+                Tensor::cat(&[&out_lhd, &pad], 0)?
+            };
+
+            out_batches.push(padded.unsqueeze(0)?); // [1,Smax,Hq,D]
+        }
+
+        let refs: Vec<&Tensor> = out_batches.iter().collect();
+        Tensor::cat(&refs, 0) // [B,Smax,Hq,D]
+    }
+
+    fn max_abs_and_rel(a: &Tensor, b: &Tensor) -> CResult<(f32, f32)> {
+        let diff = (a - b)?.abs()?;
+        let max_abs = diff.max_all()?.to_scalar::<f32>()?;
+
+        // denom = |b| + eps, using affine for scalar add
+        let denom = b.abs()?.affine(1.0, 1e-6)?; //  [oai_citation:6‡Docs.rs](https://docs.rs/candle-core/latest/candle_core/struct.Tensor.html?utm_source=chatgpt.com)
+        let rel = diff.broadcast_div(&denom)?; //  [oai_citation:7‡Docs.rs](https://docs.rs/candle-core/latest/candle_core/struct.Tensor.html?utm_source=chatgpt.com)
+        let max_rel = rel.max_all()?.to_scalar::<f32>()?;
+
+        Ok((max_abs, max_rel))
+    }
+
+    fn assert_allclose(a: &Tensor, b: &Tensor, atol: f32, rtol: f32, context: &str) -> CResult<()> {
+        let (max_abs, max_rel) = max_abs_and_rel(a, b)?;
+        if max_abs > atol && max_rel > rtol {
+            candle::bail!(
+                "{context}: allclose failed max_abs={max_abs:.6} max_rel={max_rel:.6} (atol={atol} rtol={rtol})"
+            );
+        }
+        Ok(())
+    }
 
     fn make_varlen_inputs(
         batch_size: usize,
@@ -1126,55 +1343,57 @@ mod tests {
     #[test]
     fn test_varlen_matches_padded_reference_causal() -> Result<(), candle::Error> {
         let device = Device::Cpu;
-        let (batch_size, num_heads, num_kv_heads, head_dim, max_seq) = (4, 8, 8, 64, 64);
+        let (_, num_heads, num_kv_heads, head_dim, max_seq) = (4, 8, 8, 64, 64);
 
-        let (q, k, v, seqlens_q, seqlens_k, max_q, max_k) = make_varlen_inputs(
-            batch_size,
-            num_heads,
-            num_kv_heads,
-            head_dim,
-            max_seq,
-            &device,
-        )?;
+        for batch_size in [1, 2, 4] {
+            let (q, k, v, seqlens_q, seqlens_k, max_q, max_k) = make_varlen_inputs(
+                batch_size,
+                num_heads,
+                num_kv_heads,
+                head_dim,
+                max_seq,
+                &device,
+            )?;
 
-        let softmax_scale = 1.0 / (head_dim as f64).sqrt();
+            let softmax_scale = 1.0 / (head_dim as f64).sqrt();
 
-        let out_var = flash_attn_varlen_cpu(
-            &q,
-            &k,
-            &v,
-            None,
-            &seqlens_q,
-            &seqlens_k,
-            max_q,
-            max_k,
-            softmax_scale,
-            true,
-            None,
-            None,
-        )?;
+            let out_var = flash_attn_varlen_cpu(
+                &q,
+                &k,
+                &v,
+                None,
+                &seqlens_q,
+                &seqlens_k,
+                max_q,
+                max_k,
+                softmax_scale,
+                true,
+                None,
+                None,
+            )?;
 
-        let out_ref = reference_padded_attention(
-            &q,
-            &k,
-            &v,
-            None,
-            &seqlens_q,
-            &seqlens_k,
-            max_q,
-            max_k,
-            softmax_scale,
-            true,
-            None,
-            None,
-        )?;
+            let out_ref = reference_padded_attention(
+                &q,
+                &k,
+                &v,
+                None,
+                &seqlens_q,
+                &seqlens_k,
+                max_q,
+                max_k,
+                softmax_scale,
+                true,
+                None,
+                None,
+            )?;
 
-        let mae = max_abs_diff(&out_var, &out_ref)?;
-        let e = rmse(&out_var, &out_ref)?;
-        println!("causal: max_abs_diff={:.6e}, rmse={:.6e}", mae, e);
+            let mae = max_abs_diff(&out_var, &out_ref)?;
+            let e = rmse(&out_var, &out_ref)?;
+            println!("causal: max_abs_diff={:.6e}, rmse={:.6e}", mae, e);
 
-        assert!(mae < 1e-4, "max_abs_diff too large: {:.6e}", mae);
-        assert!(e < 1e-4, "rmse too large: {:.6e}", e);
+            assert!(mae < 1e-4, "max_abs_diff too large: {:.6e}", mae);
+            assert!(e < 1e-4, "rmse too large: {:.6e}", e);
+        }
         Ok(())
     }
 
