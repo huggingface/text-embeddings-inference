@@ -4525,6 +4525,7 @@ dependencies = [
  "is_close",
  "memmap2",
  "nohash-hasher",
+ "rand 0.8.5",
  "safetensors",
  "serde",
  "serde_json",

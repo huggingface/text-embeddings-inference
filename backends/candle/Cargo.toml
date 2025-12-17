@@ -34,6 +34,7 @@ hf-hub = { workspace = true, features = ["ureq"] }
 anyhow = { workspace = true }
 tokenizers = { workspace = true }
 serial_test = { workspace = true }
+rand = "0.8"
 
 [build-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
