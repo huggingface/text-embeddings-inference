@@ -597,10 +597,12 @@ impl Backend for CandleBackend {
             // michaelfeil: ideally, we should sleep here for 1.0s/5.0s to allow k8s to detect healthcheck failure
             // without queuing further work on a possibly broken device by blocking the backend.
             // and sending 429s in the meantime.
+            tracing::error!("Device {:?} healthcheck failed: expected [2.0], got {v:?}", self.device);
             return Err(BackendError::Inference(format!(
                 "device healthcheck failed: expected [2.0], got {v:?}"
             )));
         }
+        tracing::debug!("Device {:?} healthcheck passed", self.device);
 
         Ok(())
     }
