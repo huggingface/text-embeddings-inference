@@ -584,16 +584,17 @@ impl Backend for CandleBackend {
         // Simple healthcheck by performing a trivial operation
         // backend is almost unfailable, but e.g. Cuda OOM or cuda "device fallen off the bus"
         // can be detected this way
-        use candle_core::Tensor;
+        use candle::Tensor;
 
         // 1) enqueue a trivial op on the current device
         let x = Tensor::new(&[1f32], &self.device).e()?;
-        let y = (&x * 2f32).e()?;
+        let z = Tensor::new(&[2f32], &self.device).e()?;
+        let y = (&x * &z).e()?;
 
-        // 2) force completion + surface async CUDA errors by reading back
+        // 2) move storage to CPU to surface async CUDA errors by reading back
         let v = y.to_vec1::<f32>().e()?;
         if v.len() != 1 || (v[0] - 2.0).abs() > 1e-6 {
-            // ideally, we should sleep here for 1.0s to allow k8s to detect healthcheck failure
+            // michaelfeil: ideally, we should sleep here for 1.0s/5.0s to allow k8s to detect healthcheck failure
             // without queuing further work on a possibly broken device by blocking the backend.
             // and sending 429s in the meantime.
             return Err(BackendError::Inference(format!(
