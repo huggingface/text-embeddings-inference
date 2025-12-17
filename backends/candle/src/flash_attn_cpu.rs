@@ -3,6 +3,7 @@ use candle::{IndexOp, Tensor};
 /// CPU fallback implementation for variable length flash attention
 /// This implements standard attention computation for CPU and supports all model types
 /// actually not "flash" fused, but using no-padding will lower memory usage and flops on CPU
+#[allow(dead_code)]
 pub fn flash_attn_varlen_cpu(
     q: &Tensor,
     k: &Tensor,
@@ -347,7 +348,8 @@ mod tests {
 
         let cpu_device = Device::Cpu;
         #[cfg(feature = "cuda")]
-        #[cfg(feature = "cuda")] let gpu_device = Device::new_cuda(0)?;
+        #[cfg(feature = "cuda")]
+        let gpu_device = Device::new_cuda(0)?;
 
         let test_cases = vec![
             (1, 8, 64, 32), // batch_size, num_heads, head_dim, max_seq_len
@@ -408,13 +410,20 @@ mod tests {
                 )?;
 
                 // Move GPU result back to CPU and cast to f32 for comparison
-                let gpu_result_cpu = gpu_result.to_device(&cpu_device)?.to_dtype(candle::DType::F32)?;
+                let gpu_result_cpu = gpu_result
+                    .to_device(&cpu_device)?
+                    .to_dtype(candle::DType::F32)?;
 
                 let distance = tensor_distance(&cpu_result, &gpu_result_cpu)?;
                 println!("  Non-causal distance: {:.6}", distance);
 
                 // Assert that the distance is small (allowing for numerical differences)
                 assert!(distance < 1e-4, "Distance too large: {:.6}", distance);
+            }
+            #[cfg(not(feature = "cuda"))]
+            {
+                println!("Skipping GPU comparison: CUDA feature not enabled");
+                let _unused = cpu_result;
             }
 
             // Test causal attention
@@ -457,7 +466,9 @@ mod tests {
                     None,
                 )?;
 
-                let gpu_result_causal_cpu = gpu_result_causal.to_device(&cpu_device)?.to_dtype(candle::DType::F32)?;
+                let gpu_result_causal_cpu = gpu_result_causal
+                    .to_device(&cpu_device)?
+                    .to_dtype(candle::DType::F32)?;
 
                 let distance_causal = tensor_distance(&cpu_result_causal, &gpu_result_causal_cpu)?;
                 println!("  Causal distance: {:.6}", distance_causal);
@@ -467,6 +478,11 @@ mod tests {
                     "Causal distance too large: {:.6}",
                     distance_causal
                 );
+            }
+            #[cfg(not(feature = "cuda"))]
+            {
+                println!("Skipping GPU comparison: CUDA feature not enabled");
+                let _unused = cpu_result_causal;
             }
         }
 
@@ -487,7 +503,8 @@ mod tests {
         }
 
         let cpu_device = Device::Cpu;
-        #[cfg(feature = "cuda")] let gpu_device = Device::new_cuda(0)?;
+        #[cfg(feature = "cuda")]
+        let gpu_device = Device::new_cuda(0)?;
 
         let batch_size = 1;
         let num_heads = 8;
@@ -506,7 +523,7 @@ mod tests {
         let softmax_scale = 1.0 / (head_dim as f64).sqrt();
 
         // Test CPU implementation with ALiBi
-        #[cfg(feature = "cuda")] let cpu_result = flash_attn_varlen_cpu(
+        let cpu_result = flash_attn_varlen_cpu(
             &q_cpu,
             &k_cpu,
             &v_cpu,
@@ -547,12 +564,19 @@ mod tests {
                 None,
             )?;
 
-            let gpu_result_cpu = gpu_result.to_device(&cpu_device)?.to_dtype(candle::DType::F32)?;
+            let gpu_result_cpu = gpu_result
+                .to_device(&cpu_device)?
+                .to_dtype(candle::DType::F32)?;
 
             let distance = tensor_distance(&cpu_result, &gpu_result_cpu)?;
             println!("ALiBi distance: {:.6}", distance);
 
             assert!(distance < 1e-4, "ALiBi distance too large: {:.6}", distance);
+        }
+        #[cfg(not(feature = "cuda"))]
+        {
+            println!("Skipping GPU comparison: CUDA feature not enabled");
+            let _unused = cpu_result;
         }
 
         Ok(())
@@ -566,7 +590,8 @@ mod tests {
         skip_test_if!(!flash_attn_enabled, "flash-attn feature not enabled");
 
         let cpu_device = Device::Cpu;
-        #[cfg(feature = "cuda")] let gpu_device = Device::new_cuda(0)?;
+        #[cfg(feature = "cuda")]
+        let gpu_device = Device::new_cuda(0)?;
 
         let batch_size = 1;
         let num_heads = 8;
@@ -621,7 +646,9 @@ mod tests {
                 Some(window_right),
             )?;
 
-            let gpu_result_cpu = gpu_result.to_device(&cpu_device)?.to_dtype(candle::DType::F32)?;
+            let gpu_result_cpu = gpu_result
+                .to_device(&cpu_device)?
+                .to_dtype(candle::DType::F32)?;
 
             let distance = tensor_distance(&cpu_result, &gpu_result_cpu)?;
             println!("Windowing distance: {:.6}", distance);
@@ -631,6 +658,11 @@ mod tests {
                 "Windowing distance too large: {:.6}",
                 distance
             );
+        }
+        #[cfg(not(feature = "cuda"))]
+        {
+            println!("Skipping GPU comparison: CUDA feature not enabled");
+            let _unused = cpu_result;
         }
 
         Ok(())
