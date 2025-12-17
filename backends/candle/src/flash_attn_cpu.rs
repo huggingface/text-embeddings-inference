@@ -1706,6 +1706,7 @@ mod tests {
 
     // Convert per-sequence lengths [B] into FlashAttention-style cu_seqlens [B+1]:
     ///   cu[0]=0, cu[i+1]=cu[i]+seqlens[i]
+    #[allow(dead_code)]
     fn seqlens_to_cu_seqlens_tensor(seqlens: &Tensor) -> Result<Tensor, candle::Error> {
         let device = seqlens.device();
         let lens = seqlens.to_vec1::<u32>()?;
