@@ -318,6 +318,584 @@ mod tests {
         Ok((q, k, v, seqlens_q_tensor, seqlens_k_tensor))
     }
 
+    fn make_varlen_inputs_prefill(
+        batch_size: usize,
+        num_heads: usize,
+        num_kv_heads: usize,
+        head_dim: usize,
+        max_seq: usize,
+        device: &Device,
+    ) -> Result<(Tensor, Tensor, Tensor, Tensor, Tensor, usize, usize), candle::Error> {
+        let mut rng = StdRng::seed_from_u64(456);
+
+        let mut seqlens = Vec::<u32>::with_capacity(batch_size);
+        let mut total = 0usize;
+        let mut max_l = 0usize;
+
+        for _ in 0..batch_size {
+            let l = rng.gen_range(4..=max_seq);
+            seqlens.push(l as u32);
+            total += l;
+            max_l = max_l.max(l);
+        }
+
+        // Q: [total, Hq, D], K/V: [total, Hk, D]
+        let q_data: Vec<f32> = (0..total * num_heads * head_dim)
+            .map(|_| rng.gen_range(-1.0..1.0))
+            .collect();
+        let k_data: Vec<f32> = (0..total * num_kv_heads * head_dim)
+            .map(|_| rng.gen_range(-1.0..1.0))
+            .collect();
+        let v_data: Vec<f32> = (0..total * num_kv_heads * head_dim)
+            .map(|_| rng.gen_range(-1.0..1.0))
+            .collect();
+
+        let q = Tensor::from_vec(q_data, (total, num_heads, head_dim), device)?;
+        let k = Tensor::from_vec(k_data, (total, num_kv_heads, head_dim), device)?;
+        let v = Tensor::from_vec(v_data, (total, num_kv_heads, head_dim), device)?;
+
+        let seqlens_q = Tensor::from_vec(seqlens.clone(), batch_size, device)?;
+        let seqlens_k = Tensor::from_vec(seqlens, batch_size, device)?;
+
+        // max_q == max_k == max_l for prefill
+        Ok((q, k, v, seqlens_q, seqlens_k, max_l, max_l))
+    }
+
+    #[test]
+    fn test_prefill_varlen_matches_padded_reference_noncausal() -> Result<(), candle::Error> {
+        let device = Device::Cpu;
+        let (batch_size, num_heads, num_kv_heads, head_dim, max_seq) = (4, 8, 8, 64, 64);
+
+        let (q, k, v, seqlens_q, seqlens_k, max_q, max_k) = make_varlen_inputs_prefill(
+            batch_size,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            max_seq,
+            &device,
+        )?;
+
+        let softmax_scale = 1.0 / (head_dim as f64).sqrt();
+
+        let out_var = flash_attn_varlen_cpu(
+            &q,
+            &k,
+            &v,
+            None,
+            &seqlens_q,
+            &seqlens_k,
+            max_q,
+            max_k,
+            softmax_scale,
+            false,
+            None,
+            None,
+        )?;
+        let out_ref = reference_padded_attention(
+            &q,
+            &k,
+            &v,
+            None,
+            &seqlens_q,
+            &seqlens_k,
+            max_q,
+            max_k,
+            softmax_scale,
+            false,
+            None,
+            None,
+        )?;
+
+        let mae = max_abs_diff(&out_var, &out_ref)?;
+        let e = rmse(&out_var, &out_ref)?;
+        println!(
+            "prefill noncausal: max_abs_diff={:.6e}, rmse={:.6e}",
+            mae, e
+        );
+
+        assert!(mae < 1e-4);
+        assert!(e < 1e-4);
+        Ok(())
+    }
+
+    #[test]
+    fn test_prefill_varlen_matches_padded_reference_causal() -> Result<(), candle::Error> {
+        let device = Device::Cpu;
+        let (batch_size, num_heads, num_kv_heads, head_dim, max_seq) = (4, 8, 8, 64, 64);
+
+        let (q, k, v, seqlens_q, seqlens_k, max_q, max_k) = make_varlen_inputs_prefill(
+            batch_size,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            max_seq,
+            &device,
+        )?;
+
+        let softmax_scale = 1.0 / (head_dim as f64).sqrt();
+
+        let out_var = flash_attn_varlen_cpu(
+            &q,
+            &k,
+            &v,
+            None,
+            &seqlens_q,
+            &seqlens_k,
+            max_q,
+            max_k,
+            softmax_scale,
+            true,
+            None,
+            None,
+        )?;
+        let out_ref = reference_padded_attention(
+            &q,
+            &k,
+            &v,
+            None,
+            &seqlens_q,
+            &seqlens_k,
+            max_q,
+            max_k,
+            softmax_scale,
+            true,
+            None,
+            None,
+        )?;
+
+        let mae = max_abs_diff(&out_var, &out_ref)?;
+        let e = rmse(&out_var, &out_ref)?;
+        println!("prefill causal: max_abs_diff={:.6e}, rmse={:.6e}", mae, e);
+
+        assert!(mae < 1e-4);
+        assert!(e < 1e-4);
+        Ok(())
+    }
+
+    #[test]
+    fn test_prefill_varlen_matches_padded_reference_gqa() -> Result<(), candle::Error> {
+        let device = Device::Cpu;
+        // GQA prefill: Hq > Hk, but seq lengths identical between Q and K
+        let (batch_size, num_heads, num_kv_heads, head_dim, max_seq) = (3, 12, 4, 64, 64);
+
+        let (q, k, v, seqlens_q, seqlens_k, max_q, max_k) = make_varlen_inputs_prefill(
+            batch_size,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            max_seq,
+            &device,
+        )?;
+
+        let softmax_scale = 1.0 / (head_dim as f64).sqrt();
+
+        let out_var = flash_attn_varlen_cpu(
+            &q,
+            &k,
+            &v,
+            None,
+            &seqlens_q,
+            &seqlens_k,
+            max_q,
+            max_k,
+            softmax_scale,
+            false,
+            None,
+            None,
+        )?;
+        let out_ref = reference_padded_attention(
+            &q,
+            &k,
+            &v,
+            None,
+            &seqlens_q,
+            &seqlens_k,
+            max_q,
+            max_k,
+            softmax_scale,
+            false,
+            None,
+            None,
+        )?;
+
+        let mae = max_abs_diff(&out_var, &out_ref)?;
+        let e = rmse(&out_var, &out_ref)?;
+        println!("prefill gqa: max_abs_diff={:.6e}, rmse={:.6e}", mae, e);
+
+        assert!(mae < 1e-4);
+        assert!(e < 1e-4);
+        Ok(())
+    }
+
+    #[test]
+    fn test_prefill_varlen_matches_padded_reference_alibi() -> Result<(), candle::Error> {
+        let device = Device::Cpu;
+        let (batch_size, num_heads, num_kv_heads, head_dim, max_seq) = (2, 8, 8, 64, 64);
+
+        let (q, k, v, seqlens_q, seqlens_k, max_q, max_k) = make_varlen_inputs_prefill(
+            batch_size,
+            num_heads,
+            num_kv_heads,
+            head_dim,
+            max_seq,
+            &device,
+        )?;
+
+        let slopes: Vec<f32> = (0..num_heads)
+            .map(|i| 2.0f32.powi(-(i as i32 + 1)))
+            .collect();
+        let alibi_slopes = Tensor::from_vec(slopes, num_heads, &device)?;
+
+        let softmax_scale = 1.0 / (head_dim as f64).sqrt();
+
+        let out_var = flash_attn_varlen_cpu(
+            &q,
+            &k,
+            &v,
+            Some(&alibi_slopes),
+            &seqlens_q,
+            &seqlens_k,
+            max_q,
+            max_k,
+            softmax_scale,
+            true,
+            None,
+            None,
+        )?;
+        let out_ref = reference_padded_attention(
+            &q,
+            &k,
+            &v,
+            Some(&alibi_slopes),
+            &seqlens_q,
+            &seqlens_k,
+            max_q,
+            max_k,
+            softmax_scale,
+            true,
+            None,
+            None,
+        )?;
+
+        let mae = max_abs_diff(&out_var, &out_ref)?;
+        let e = rmse(&out_var, &out_ref)?;
+        println!(
+            "prefill alibi causal: max_abs_diff={:.6e}, rmse={:.6e}",
+            mae, e
+        );
+
+        assert!(mae < 1e-4);
+        assert!(e < 1e-4);
+        Ok(())
+    }
+
+    #[test]
+    fn test_flash_attn_cpu_vs_gpu_prefill_basic() -> Result<(), candle::Error> {
+        if !candle::utils::cuda_is_available() {
+            println!("Skipping GPU test: CUDA not available");
+            return Ok(());
+        }
+        let flash_attn_enabled = cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"));
+        if !flash_attn_enabled {
+            println!("Skipping GPU comparison test: flash-attn features not enabled");
+            return Ok(());
+        }
+
+        let cpu_device = Device::Cpu;
+        #[cfg(feature = "cuda")]
+        let gpu_device = Device::new_cuda(0)?;
+
+        let test_cases = vec![
+            (1, 8, 8, 64, 32), // (B, Hq, Hk, D, max_seq)
+            (2, 12, 12, 128, 64),
+            (1, 16, 16, 256, 128),
+        ];
+
+        for (batch_size, num_heads, num_kv_heads, head_dim, max_seq_len) in test_cases {
+            println!(
+                "Prefill test: batch={}, Hq={}, Hk={}, dim={}, max_seq={}",
+                batch_size, num_heads, num_kv_heads, head_dim, max_seq_len
+            );
+
+            let (q_cpu, k_cpu, v_cpu, seqlens_q_cpu, seqlens_k_cpu, max_q, max_k) =
+                make_varlen_inputs_prefill(
+                    batch_size,
+                    num_heads,
+                    num_kv_heads,
+                    head_dim,
+                    max_seq_len,
+                    &cpu_device,
+                )?;
+
+            let softmax_scale = 1.0 / (head_dim as f64).sqrt();
+
+            // Non-causal
+            let cpu_out = flash_attn_varlen_cpu(
+                &q_cpu,
+                &k_cpu,
+                &v_cpu,
+                None,
+                &seqlens_q_cpu,
+                &seqlens_k_cpu,
+                max_q,
+                max_k,
+                softmax_scale,
+                false,
+                None,
+                None,
+            )?;
+
+            #[cfg(feature = "cuda")]
+            {
+                let cu_q_cpu = seqlens_to_cu_seqlens_tensor(&seqlens_q_cpu)?;
+                let cu_k_cpu = seqlens_to_cu_seqlens_tensor(&seqlens_k_cpu)?;
+
+                let q_gpu = q_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+                let k_gpu = k_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+                let v_gpu = v_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+                let cu_q_gpu = cu_q_cpu.to_device(&gpu_device)?;
+                let cu_k_gpu = cu_k_cpu.to_device(&gpu_device)?;
+
+                let gpu_out = crate::flash_attn::flash_attn_varlen(
+                    &q_gpu,
+                    &k_gpu,
+                    &v_gpu,
+                    None,
+                    &cu_q_gpu,
+                    &cu_k_gpu,
+                    max_q,
+                    max_k,
+                    softmax_scale as f32,
+                    false,
+                    None,
+                    None,
+                )?;
+
+                let gpu_out_cpu = gpu_out
+                    .to_device(&cpu_device)?
+                    .to_dtype(candle::DType::F32)?;
+                let dist = tensor_distance(&cpu_out, &gpu_out_cpu)?;
+                println!("  Prefill non-causal distance: {:.6}", dist);
+                assert!(dist < 1e-4, "distance too large: {:.6}", dist);
+            }
+
+            // Causal (prefill)
+            let cpu_out_causal = flash_attn_varlen_cpu(
+                &q_cpu,
+                &k_cpu,
+                &v_cpu,
+                None,
+                &seqlens_q_cpu,
+                &seqlens_k_cpu,
+                max_q,
+                max_k,
+                softmax_scale,
+                true,
+                None,
+                None,
+            )?;
+
+            #[cfg(feature = "cuda")]
+            {
+                let cu_q_cpu = seqlens_to_cu_seqlens_tensor(&seqlens_q_cpu)?;
+                let cu_k_cpu = seqlens_to_cu_seqlens_tensor(&seqlens_k_cpu)?;
+
+                let q_gpu = q_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+                let k_gpu = k_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+                let v_gpu = v_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+                let cu_q_gpu = cu_q_cpu.to_device(&gpu_device)?;
+                let cu_k_gpu = cu_k_cpu.to_device(&gpu_device)?;
+
+                let gpu_out_causal = crate::flash_attn::flash_attn_varlen(
+                    &q_gpu,
+                    &k_gpu,
+                    &v_gpu,
+                    None,
+                    &cu_q_gpu,
+                    &cu_k_gpu,
+                    max_q,
+                    max_k,
+                    softmax_scale as f32,
+                    true,
+                    None,
+                    None,
+                )?;
+
+                let gpu_out_causal_cpu = gpu_out_causal
+                    .to_device(&cpu_device)?
+                    .to_dtype(candle::DType::F32)?;
+                let dist = tensor_distance(&cpu_out_causal, &gpu_out_causal_cpu)?;
+                println!("  Prefill causal distance: {:.6}", dist);
+                assert!(dist < 1e-4, "causal distance too large: {:.6}", dist);
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_flash_attn_cpu_vs_gpu_prefill_gqa() -> Result<(), candle::Error> {
+        skip_test_if!(!candle::utils::cuda_is_available(), "CUDA not available");
+        skip_test_if!(
+            !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1")),
+            "flash-attn features not enabled"
+        );
+
+        let cpu_device = Device::Cpu;
+        #[cfg(feature = "cuda")]
+        let gpu_device = Device::new_cuda(0)?;
+
+        let (batch_size, num_heads, num_kv_heads, head_dim, max_seq_len) = (2, 12, 4, 64, 64);
+
+        let (q_cpu, k_cpu, v_cpu, seqlens_q_cpu, seqlens_k_cpu, max_q, max_k) =
+            make_varlen_inputs_prefill(
+                batch_size,
+                num_heads,
+                num_kv_heads,
+                head_dim,
+                max_seq_len,
+                &cpu_device,
+            )?;
+
+        let softmax_scale = 1.0 / (head_dim as f64).sqrt();
+
+        let cpu_out = flash_attn_varlen_cpu(
+            &q_cpu,
+            &k_cpu,
+            &v_cpu,
+            None,
+            &seqlens_q_cpu,
+            &seqlens_k_cpu,
+            max_q,
+            max_k,
+            softmax_scale,
+            true,
+            None,
+            None,
+        )?;
+
+        #[cfg(feature = "cuda")]
+        {
+            let cu_q_cpu = seqlens_to_cu_seqlens_tensor(&seqlens_q_cpu)?;
+            let cu_k_cpu = seqlens_to_cu_seqlens_tensor(&seqlens_k_cpu)?;
+
+            let q_gpu = q_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+            let k_gpu = k_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+            let v_gpu = v_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+            let cu_q_gpu = cu_q_cpu.to_device(&gpu_device)?;
+            let cu_k_gpu = cu_k_cpu.to_device(&gpu_device)?;
+
+            let gpu_out = crate::flash_attn::flash_attn_varlen(
+                &q_gpu,
+                &k_gpu,
+                &v_gpu,
+                None,
+                &cu_q_gpu,
+                &cu_k_gpu,
+                max_q,
+                max_k,
+                softmax_scale as f32,
+                true,
+                None,
+                None,
+            )?;
+
+            let gpu_out_cpu = gpu_out
+                .to_device(&cpu_device)?
+                .to_dtype(candle::DType::F32)?;
+            let dist = tensor_distance(&cpu_out, &gpu_out_cpu)?;
+            println!("Prefill GQA causal distance: {:.6}", dist);
+            assert!(dist < 1e-4, "distance too large: {:.6}", dist);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_flash_attn_cpu_vs_gpu_prefill_alibi() -> Result<(), candle::Error> {
+        skip_test_if!(!candle::utils::cuda_is_available(), "CUDA not available");
+        // ALiBi path usually requires flash-attn (not v1) in your earlier tests
+        skip_test_if!(
+            !cfg!(feature = "flash-attn"),
+            "flash-attn feature not enabled"
+        );
+
+        let cpu_device = Device::Cpu;
+        #[cfg(feature = "cuda")]
+        let gpu_device = Device::new_cuda(0)?;
+
+        let (batch_size, num_heads, num_kv_heads, head_dim, max_seq_len) = (1, 8, 8, 64, 64);
+
+        let (q_cpu, k_cpu, v_cpu, seqlens_q_cpu, seqlens_k_cpu, max_q, max_k) =
+            make_varlen_inputs_prefill(
+                batch_size,
+                num_heads,
+                num_kv_heads,
+                head_dim,
+                max_seq_len,
+                &cpu_device,
+            )?;
+
+        let slopes: Vec<f32> = (0..num_heads)
+            .map(|i| 2.0f32.powi(-(i as i32 + 1)))
+            .collect();
+        let alibi_slopes_cpu = Tensor::from_vec(slopes, num_heads, &cpu_device)?;
+
+        let softmax_scale = 1.0 / (head_dim as f64).sqrt();
+
+        let cpu_out = flash_attn_varlen_cpu(
+            &q_cpu,
+            &k_cpu,
+            &v_cpu,
+            Some(&alibi_slopes_cpu),
+            &seqlens_q_cpu,
+            &seqlens_k_cpu,
+            max_q,
+            max_k,
+            softmax_scale,
+            true,
+            None,
+            None,
+        )?;
+
+        #[cfg(feature = "cuda")]
+        {
+            let cu_q_cpu = seqlens_to_cu_seqlens_tensor(&seqlens_q_cpu)?;
+            let cu_k_cpu = seqlens_to_cu_seqlens_tensor(&seqlens_k_cpu)?;
+
+            let q_gpu = q_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+            let k_gpu = k_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+            let v_gpu = v_cpu.to_device(&gpu_device)?.to_dtype(candle::DType::F16)?;
+            let cu_q_gpu = cu_q_cpu.to_device(&gpu_device)?;
+            let cu_k_gpu = cu_k_cpu.to_device(&gpu_device)?;
+            let alibi_slopes_gpu = alibi_slopes_cpu.to_device(&gpu_device)?;
+
+            let gpu_out = crate::flash_attn::flash_attn_varlen(
+                &q_gpu,
+                &k_gpu,
+                &v_gpu,
+                Some(&alibi_slopes_gpu),
+                &cu_q_gpu,
+                &cu_k_gpu,
+                max_q,
+                max_k,
+                softmax_scale as f32,
+                true,
+                None,
+                None,
+            )?;
+
+            let gpu_out_cpu = gpu_out
+                .to_device(&cpu_device)?
+                .to_dtype(candle::DType::F32)?;
+            let dist = tensor_distance(&cpu_out, &gpu_out_cpu)?;
+            println!("Prefill ALiBi causal distance: {:.6}", dist);
+            assert!(dist < 1e-4, "distance too large: {:.6}", dist);
+        }
+
+        Ok(())
+    }
+
     #[allow(dead_code)]
     fn tensor_distance(cpu_result: &Tensor, gpu_result: &Tensor) -> Result<f32, candle::Error> {
         let diff = cpu_result.sub(gpu_result)?;
