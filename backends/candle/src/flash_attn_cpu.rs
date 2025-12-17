@@ -2463,6 +2463,47 @@ mod tests {
         Ok(())
     }
 
+    fn make_varlen_inputs_causal(
+        batch_size: usize,
+        num_heads: usize,
+        num_kv_heads: usize,
+        head_dim: usize,
+        max_seq: usize,
+        device: &Device,
+    ) -> Result<(Tensor, Tensor, Tensor, Tensor, Tensor, usize, usize), candle::Error> {
+        let mut rng = StdRng::seed_from_u64(123);
+
+        let mut seqlens_q = Vec::<u32>::with_capacity(batch_size);
+        let mut seqlens_k = Vec::<u32>::with_capacity(batch_size);
+        let mut total_q = 0usize;
+        let mut total_k = 0usize;
+        let mut max_q = 0usize;
+        let mut max_k = 0usize;
+
+        for _ in 0..batch_size {
+            let lq = rng.gen_range(1..=max_seq);
+            let lk = rng.gen_range(lq..=max_seq); // ✅ enforce k >= q
+            seqlens_q.push(lq as u32);
+            seqlens_k.push(lk as u32);
+            total_q += lq;
+            total_k += lk;
+            max_q = max_q.max(lq);
+            max_k = max_k.max(lk);
+        }
+
+        let q_data: Vec<f32> = (0..total_q * num_heads * head_dim).map(|_| rng.gen_range(-1.0..1.0)).collect();
+        let k_data: Vec<f32> = (0..total_k * num_kv_heads * head_dim).map(|_| rng.gen_range(-1.0..1.0)).collect();
+        let v_data: Vec<f32> = (0..total_k * num_kv_heads * head_dim).map(|_| rng.gen_range(-1.0..1.0)).collect();
+
+        let q = Tensor::from_vec(q_data, (total_q, num_heads, head_dim), device)?;
+        let k = Tensor::from_vec(k_data, (total_k, num_kv_heads, head_dim), device)?;
+        let v = Tensor::from_vec(v_data, (total_k, num_kv_heads, head_dim), device)?;
+        let seqlens_q_t = Tensor::from_vec(seqlens_q, batch_size, device)?;
+        let seqlens_k_t = Tensor::from_vec(seqlens_k, batch_size, device)?;
+
+        Ok((q, k, v, seqlens_q_t, seqlens_k_t, max_q, max_k))
+    }
+
     #[test]
     fn test_varlen_vs_padded_different_head_dims() -> Result<(), candle::Error> {
         let device = Device::Cpu;
@@ -2476,19 +2517,18 @@ mod tests {
             let num_kv_heads = 8;
             let max_seq = 32;
 
-            let (q, k, v, seqlens_q, seqlens_k, max_q, max_k) = make_varlen_inputs(
-                batch_size,
-                num_heads,
-                num_kv_heads,
-                head_dim,
-                max_seq,
-                &device,
-            )?;
-
-            let softmax_scale = 1.0 / (head_dim as f64).sqrt();
+            
 
             // Test both non-causal and causal
             for causal in [false, true] {
+                let (q, k, v, seqlens_q, seqlens_k, max_q, max_k) = if causal {
+                    make_varlen_inputs_causal(batch_size, num_heads, num_kv_heads, head_dim, max_seq, &device)?
+                } else {
+                    make_varlen_inputs(batch_size, num_heads, num_kv_heads, head_dim, max_seq, &device)?
+                };
+
+                let softmax_scale = 1.0 / (head_dim as f64).sqrt();
+
                 let out_var = flash_attn_varlen_cpu(
                     &q,
                     &k,
