@@ -1,5 +1,6 @@
 #[allow(dead_code, unused)]
 mod cublaslt;
+mod index_select;
 mod layer_norm;
 mod linear;
 #[allow(dead_code, unused)]
@@ -11,4 +12,6 @@ pub use layer_norm::{LayerNorm, LayerNormNoBias};
 pub use linear::{HiddenAct, Linear};
 #[allow(unused_imports)]
 pub use rms_norm::RMSNorm;
+#[allow(unused_imports)]
+pub use index_select::index_select;
 pub use rotary::{apply_rotary, get_cos_sin, get_inv_freqs, RopeScaling};

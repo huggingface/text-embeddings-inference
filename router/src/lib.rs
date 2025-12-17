@@ -141,9 +141,13 @@ pub async fn run(
         "tokenizer.json not found. text-embeddings-inference only supports fast tokenizers",
     );
     tokenizer.with_padding(None);
-    // Qwen2 updates the post processor manually instead of into the tokenizer.json...
+    // Old Qwen2  repos updates the post processor manually instead of into the tokenizer.json.
+    // Newer ones (https://huggingface.co/jinaai/jina-code-embeddings-0.5b/tree/main) have it in the tokenizer.json. This is to support both cases.
     // https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct/blob/main/tokenization_qwen.py#L246
-    if config.model_type == "qwen2" {
+    if config.model_type == "qwen2" && config.auto_map.as_ref().map_or(false, |m| {
+        m.get("AutoModel") == Some(&"modeling_qwen.Qwen2Model".to_string())
+    }) {
+        tracing::warn!("Model is detected as a Qwen2 model with remote code. Adding a post processor manually as the tokenizer.json does not contain a post processor.");
         let template = TemplateProcessing::builder()
             .try_single("$A:0 <|endoftext|>:0")
             .unwrap()
@@ -215,8 +219,10 @@ pub async fn run(
 
     tracing::info!("Maximum number of tokens per request: {max_input_length}");
 
-    let tokenization_workers = tokenization_workers.unwrap_or_else(num_cpus::get);
-
+    // fall-back to num_cpus - 1 to leave some CPU for the backend, and at most 64 workers.
+    let tokenization_workers =
+        tokenization_workers.unwrap_or_else(|| std::cmp::min(std::cmp::max(1, num_cpus::get() - 1), 64));
+        
     // Try to load new ST Config
     let mut new_st_config: Option<NewSTConfig> = None;
     let config_path = model_root.join("config_sentence_transformers.json");
@@ -449,6 +455,7 @@ pub struct ModelConfig {
     pub pad_token_id: usize,
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
+    pub auto_map: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
