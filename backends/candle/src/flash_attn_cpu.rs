@@ -70,6 +70,15 @@ pub fn flash_attn_varlen_cpu(
             continue;
         }
 
+        if causal && seq_len_k < seq_len_q {
+            candle::bail!(
+                "causal attention requires seq_len_k >= seq_len_q (got k={}, q={}) for batch index {}",
+                seq_len_k,
+                seq_len_q,
+                i
+            );
+        }
+
         // Use pre-computed cumulative sequence lengths (O(1) lookup)
         let start_q = cumsum_q[i];
         let start_k = cumsum_k[i];
@@ -98,7 +107,7 @@ pub fn flash_attn_varlen_cpu(
             attention_scores.mul(&scale_tensor.broadcast_as(attention_scores.shape())?)?; // [num_heads, seq_len_q, seq_len_k]
 
         // Apply causal mask if requested
-        if causal && seq_len_q > 1 && seq_len_k > 1 {
+        if causal {
             let causal_mask = create_causal_mask_batch(seq_len_q, seq_len_k, num_heads, device)?;
             attention_scores = attention_scores.add(&causal_mask)?;
         }
@@ -118,8 +127,14 @@ pub fn flash_attn_varlen_cpu(
 
         // Apply ALiBi slopes if provided
         if let Some(alibi_slopes) = alibi_slopes {
-            let alibi_bias =
-                create_alibi_bias_batch(seq_len_q, seq_len_k, num_heads, alibi_slopes, device)?;
+            let alibi_bias = create_alibi_bias_batch(
+                seq_len_q,
+                seq_len_k,
+                num_heads,
+                alibi_slopes,
+                causal,
+                device,
+            )?;
             attention_scores = attention_scores.add(&alibi_bias)?;
         }
 
@@ -149,8 +164,21 @@ fn create_causal_mask_batch(
     num_heads: usize,
     device: &candle::Device,
 ) -> Result<Tensor, candle::Error> {
+    let offset = seq_len_k as isize - seq_len_q as isize;
+
     let mask: Vec<f32> = (0..seq_len_q)
-        .flat_map(|i| (0..seq_len_k).map(move |j| if j > i { f32::NEG_INFINITY } else { 0.0 }))
+        .flat_map(|i| {
+            let i = i as isize;
+            (0..seq_len_k).map(move |j| {
+                let j = j as isize;
+                // FlashAttn-style: allow j <= i + offset
+                if j > i + offset {
+                    f32::NEG_INFINITY
+                } else {
+                    0.0
+                }
+            })
+        })
         .collect();
 
     let mask = Tensor::from_vec(mask, (seq_len_q, seq_len_k), device)?;
@@ -170,15 +198,17 @@ fn create_window_mask_batch(
     window_right: Option<usize>,
     device: &candle::Device,
 ) -> Result<Tensor, candle::Error> {
+    let offset = seq_len_k as isize - seq_len_q as isize;
+
     let mask: Vec<f32> = match (window_left, window_right) {
-        // Bidirectional window: allow positions within [i-left, i+right]
         (Some(left), Some(right)) => (0..seq_len_q)
             .flat_map(|i| {
+                let i_k = i as isize + offset; // query position in key-index space
                 (0..seq_len_k).map(move |j| {
-                    // Check if j is outside the window around i
-                    let left_distance = i.saturating_sub(j);
-                    let right_distance = j.saturating_sub(i);
-                    if left_distance > left || right_distance > right {
+                    let j = j as isize;
+                    let left_dist = (i_k - j).max(0) as usize;
+                    let right_dist = (j - i_k).max(0) as usize;
+                    if left_dist > left || right_dist > right {
                         f32::NEG_INFINITY
                     } else {
                         0.0
@@ -186,11 +216,18 @@ fn create_window_mask_batch(
                 })
             })
             .collect(),
-        // Mistral-style: causal sliding window: allow j <= i AND (i-j) <= left
+
+        // Mistral-style causal sliding window: allow j <= i_k AND (i_k - j) <= left
         (Some(left), None) => (0..seq_len_q)
             .flat_map(|i| {
+                let i_k = i as isize + offset;
                 (0..seq_len_k).map(move |j| {
-                    if j > i || i.saturating_sub(j) > left {
+                    let j = j as isize;
+                    if j > i_k {
+                        return f32::NEG_INFINITY;
+                    }
+                    let dist = (i_k - j) as usize;
+                    if dist > left {
                         f32::NEG_INFINITY
                     } else {
                         0.0
@@ -198,14 +235,9 @@ fn create_window_mask_batch(
                 })
             })
             .collect(),
-        // No windowing
-        (None, None) => {
-            vec![0.0; seq_len_q * seq_len_k]
-        }
-        // Invalid case: right without left
-        (None, Some(_)) => {
-            candle::bail!("window_right specified without window_left");
-        }
+
+        (None, None) => vec![0.0; seq_len_q * seq_len_k],
+        (None, Some(_)) => candle::bail!("window_right specified without window_left"),
     };
 
     let mask = Tensor::from_vec(mask, (seq_len_q, seq_len_k), device)?;
@@ -219,9 +251,9 @@ fn create_alibi_bias_batch(
     seq_len_k: usize,
     num_heads: usize,
     alibi_slopes: &Tensor,
+    causal: bool,
     device: &candle::Device,
 ) -> Result<Tensor, candle::Error> {
-    // Pull slopes to host ONCE (eliminates expensive per-head to_scalar calls)
     let slopes = alibi_slopes.to_vec1::<f32>()?;
     if slopes.len() != num_heads {
         candle::bail!(
@@ -231,26 +263,27 @@ fn create_alibi_bias_batch(
         );
     }
 
+    let offset = seq_len_k as isize - seq_len_q as isize;
+
     let mut head_biases = Vec::with_capacity(num_heads);
-    for (head_idx, &slope) in slopes.iter().enumerate() {
+    for &slope in slopes.iter() {
         let bias: Vec<f32> = (0..seq_len_q)
             .flat_map(|i| {
+                let i_k = i as isize + offset;
                 (0..seq_len_k).map(move |j| {
-                    let dist = if j >= i {
-                        (j - i) as f32
+                    let j = j as isize;
+                    let dist = if causal {
+                        // (i_k - j) is >= 0 for allowed positions
+                        (i_k - j).max(0) as f32
                     } else {
-                        (i - j) as f32
+                        (j - i_k).abs() as f32
                     };
-                    slope * dist
+                    -slope * dist
                 })
             })
             .collect();
 
-        let head_bias = Tensor::from_vec(bias, (seq_len_q, seq_len_k), device)?;
-        head_biases.push(head_bias);
-
-        // avoid unused warning if you log head_idx in debug builds
-        let _ = head_idx;
+        head_biases.push(Tensor::from_vec(bias, (seq_len_q, seq_len_k), device)?);
     }
 
     Tensor::stack(&head_biases, 0) // [H,Q,K]
@@ -290,7 +323,8 @@ mod tests {
 
         for _ in 0..batch_size {
             let seq_len_q = rng.gen_range(4..=max_seq_len);
-            let seq_len_k = rng.gen_range(4..=max_seq_len);
+            // k needs to be at least as long as q for causal attention
+            let seq_len_k = rng.gen_range(seq_len_q..=max_seq_len);
             seqlens_q.push(seq_len_q as u32);
             seqlens_k.push(seq_len_k as u32);
             total_q += seq_len_q;
@@ -923,7 +957,7 @@ mod tests {
 
         let test_cases = vec![
             (1, 8, 64, 32), // batch_size, num_heads, head_dim, max_seq_len
-            (2, 12, 128, 64),
+            (2, 64, 128, 64),
             (1, 16, 256, 128),
         ];
 
@@ -1380,29 +1414,12 @@ mod tests {
         device: &Device,
     ) -> Result<Tensor, candle::Error> {
         let bsz = seqlens_q.len();
-
-        // Shared masks/biases for the max sizes (same across batch elements)
-        let causal_bias = if causal {
-            Some(create_causal_mask_batch(max_q, max_k, num_heads, device)?)
-        } else {
-            None
-        };
-        let window_bias = if window_left.is_some() || window_right.is_some() {
-            Some(create_window_mask_batch(
-                max_q,
-                max_k,
-                num_heads,
-                window_left,
-                window_right,
-                device,
-            )?)
-        } else {
-            None
-        };
-        let alibi_bias = if let Some(slopes) = alibi_slopes {
-            Some(create_alibi_bias_batch(
-                max_q, max_k, num_heads, slopes, device,
-            )?)
+        let slopes = if let Some(s) = alibi_slopes {
+            let v = s.to_vec1::<f32>()?;
+            if v.len() != num_heads {
+                candle::bail!("alibi_slopes has len {}, expected {}", v.len(), num_heads);
+            }
+            Some(v)
         } else {
             None
         };
@@ -1412,33 +1429,77 @@ mod tests {
         for b in 0..bsz {
             let lq = seqlens_q[b] as usize;
             let lk = seqlens_k[b] as usize;
+            let offset = lk as isize - lq as isize;
 
-            // Padding mask [max_q, max_k]
-            let pad: Vec<f32> = (0..max_q)
-                .flat_map(|i| {
-                    (0..max_k).map(move |j| {
+            // bias [H, max_q, max_k] flattened
+            let mut bias = vec![0f32; num_heads * max_q * max_k];
+
+            for h in 0..num_heads {
+                let slope = slopes.as_ref().map(|s| s[h]).unwrap_or(0.0);
+
+                for i in 0..max_q {
+                    for j in 0..max_k {
+                        let idx = h * (max_q * max_k) + i * max_k + j;
+
+                        // padding: outside real (lq, lk) is masked
                         if i >= lq || j >= lk {
-                            f32::NEG_INFINITY
-                        } else {
-                            0.0
+                            bias[idx] = f32::NEG_INFINITY;
+                            continue;
                         }
-                    })
-                })
-                .collect();
-            let mut bias =
-                Tensor::from_vec(pad, (max_q, max_k), device)?.expand((num_heads, max_q, max_k))?;
 
-            if let Some(cb) = &causal_bias {
-                bias = bias.add(cb)?;
-            }
-            if let Some(wb) = &window_bias {
-                bias = bias.add(wb)?;
-            }
-            if let Some(ab) = &alibi_bias {
-                bias = bias.add(ab)?;
+                        // causal (FlashAttn offset style)
+                        if causal {
+                            let ii = i as isize;
+                            let jj = j as isize;
+                            if jj > ii + offset {
+                                bias[idx] = f32::NEG_INFINITY;
+                                continue;
+                            }
+                        }
+
+                        // windowing (your offset style)
+                        if window_left.is_some() || window_right.is_some() {
+                            let i_k = i as isize + offset; // query pos in key index space
+                            match (window_left, window_right) {
+                                (Some(left), Some(right)) => {
+                                    let left_dist = (i_k - j as isize).max(0) as usize;
+                                    let right_dist = (j as isize - i_k).max(0) as usize;
+                                    if left_dist > left || right_dist > right {
+                                        bias[idx] = f32::NEG_INFINITY;
+                                        continue;
+                                    }
+                                }
+                                // Mistral-style: causal sliding window
+                                (Some(left), None) => {
+                                    if (j as isize) > i_k {
+                                        bias[idx] = f32::NEG_INFINITY;
+                                        continue;
+                                    }
+                                    let dist = (i_k - j as isize) as usize;
+                                    if dist > left {
+                                        bias[idx] = f32::NEG_INFINITY;
+                                        continue;
+                                    }
+                                }
+                                (None, None) => {}
+                                (None, Some(_)) => {
+                                    candle::bail!("window_right without window_left")
+                                }
+                            }
+                        }
+
+                        // ALiBi (your offset style)
+                        if slopes.is_some() {
+                            let i_k = i as isize + offset;
+                            let dist = (i_k - j as isize).abs() as f32;
+                            bias[idx] += -slope * dist;
+                        }
+                    }
+                }
             }
 
-            per_batch.push(bias);
+            let t = Tensor::from_vec(bias, (num_heads, max_q, max_k), device)?;
+            per_batch.push(t);
         }
 
         Tensor::stack(&per_batch, 0) // [B,H,max_q,max_k]
@@ -1924,7 +1985,7 @@ mod tests {
         let (_, num_heads, num_kv_heads, head_dim, max_seq) = (4, 8, 8, 64, 64);
 
         for batch_size in [1, 2, 4] {
-            let (q, k, v, seqlens_q, seqlens_k, max_q, max_k) = make_varlen_inputs(
+            let (q, k, v, seqlens_q, seqlens_k, max_q, max_k) = make_varlen_inputs_prefill(
                 batch_size,
                 num_heads,
                 num_kv_heads,
