@@ -122,6 +122,11 @@ struct Args {
     #[clap(long, env)]
     dense_path: Option<String>,
 
+    /// The device ID to use for CUDA/Metal devices. Defaults to 0.
+    /// Only used with the candle backend.
+    #[clap(long, env, default_value = "0")]
+    device_id: usize,
+
     /// [DEPRECATED IN FAVOR OF `--hf-token`] Your Hugging Face Hub token
     #[clap(long, env, hide = true)]
     #[redact(partial)]
@@ -250,6 +255,7 @@ async fn main() -> Result<()> {
         args.otlp_service_name,
         args.prometheus_port,
         args.cors_allow_origin,
+        args.device_id,
     )
     .await?;
 
