@@ -121,7 +121,7 @@ enum Config {
 fn should_use_flash_attention(require_fa2_capabilities: bool) -> bool {
     let flash_attn_enabled = &std::env::var("USE_FLASH_ATTENTION").unwrap_or("true".to_string()).to_lowercase() == "true";
     
-    #cfg!(feature = "cuda") else {
+    if cfg!(not(feature = "cuda")) {
         // if not cuda support, always false for now.
         return false;
     };
