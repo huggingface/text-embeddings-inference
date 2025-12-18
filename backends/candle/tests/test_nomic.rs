@@ -16,6 +16,7 @@ fn test_nomic_small() -> Result<()> {
         "float32".to_string(),
         ModelType::Embedding(Pool::Mean),
         None,
+        0,
     )?;
 
     let input_batch = batch(
@@ -60,6 +61,7 @@ fn test_nomic_moe() -> Result<()> {
         "float32".to_string(),
         ModelType::Embedding(Pool::Mean),
         None,
+        0,
     )?;
 
     let input_batch = batch(

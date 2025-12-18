@@ -17,6 +17,7 @@ fn test_stella_en_400m_v5_default_dense() -> Result<()> {
         "float32".to_string(),
         ModelType::Embedding(Pool::Mean),
         dense_paths, // This will default to `2_Dense_1024/` as defined in `modules.json`
+        0,
     )?;
 
     let input_batch = batch(
@@ -74,6 +75,7 @@ fn test_stella_en_400m_v5_dense_768() -> Result<()> {
         "float32".to_string(),
         ModelType::Embedding(Pool::Mean),
         dense_paths,
+        0,
     )?;
 
     let input_batch = batch(
