@@ -4,6 +4,9 @@ use candle::Tensor;
 /// This implements standard attention computation for CPU and supports all model types
 /// actually not "flash" fused, but using no-padding will lower memory usage and flops on CPU
 #[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
+#[allow(clippy::needless_range_loop)]
 pub fn flash_attn_varlen_cpu(
     q: &Tensor,
     k: &Tensor,
@@ -358,6 +361,7 @@ mod tests {
         Ok((q, k, v, seqlens_q_tensor, seqlens_k_tensor))
     }
 
+    #[allow(clippy::type_complexity)]
     fn make_varlen_inputs_prefill(
         batch_size: usize,
         num_heads: usize,
@@ -1463,6 +1467,7 @@ mod tests {
     ///
     /// This intentionally reuses the same helper mask/bias functions as varlen,
     /// so semantics match 1:1.
+    #[allow(clippy::too_many_arguments)]
     fn build_reference_bias(
         seqlens_q: &[u32],
         seqlens_k: &[u32],
@@ -1570,6 +1575,8 @@ mod tests {
     /// A straightforward padded attention reference:
     /// - inputs are varlen-packed: q [total_q,H,D], k/v [total_k,H_kv,D], plus seqlens
     /// - pads to [B,max_q,H,D] / [B,max_k,H,D], runs attention, unpads back to [total_q,H,D]
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::needless_range_loop)]
     fn reference_padded_attention(
         q_var: &Tensor,
         k_var: &Tensor,
@@ -1730,6 +1737,7 @@ mod tests {
         Ok(lens.into_iter().max().unwrap_or(0) as usize)
     }
 
+    #[allow(clippy::type_complexity)]
     fn make_varlen_inputs(
         batch_size: usize,
         num_heads: usize,
@@ -2317,6 +2325,7 @@ mod tests {
         Ok(())
     }
 
+    #[allow(clippy::type_complexity)]
     fn make_varlen_inputs_causal(
         batch_size: usize,
         num_heads: usize,
