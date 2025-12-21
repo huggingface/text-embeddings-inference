@@ -48,6 +48,7 @@ candle = { version = "0.8", package = "candle-core" }
 candle-nn = { version = "0.8" }
 candle-transformers = { version = "0.8" }
 candle-flash-attn = { version = "0.8" }
+candle-flash-attn-v3 = { version = "*", features = ["cuda-11"], default-features = false }
 candle-cublaslt = { version = "0.0.1" }
 candle-layer-norm = { version = "0.0.1" }
 candle-index-select-cu =  { version = "0.0.1", features = ["cuda-11"], default-features = false }
@@ -61,6 +62,7 @@ candle = { git = "https://github.com/huggingface/candle", rev = "638102398225195
 candle-nn = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-nn" }
 candle-transformers = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-transformers" }
 candle-flash-attn = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-flash-attn" }
+candle-flash-attn-v3 = { git = "https://github.com/michaelfeil/candle-flash-attn-v3", rev = "e3802e4451f046a116d4c98ba58993d08d0d991c" }
 
 [profile.release]
 debug = 0
