@@ -19,6 +19,14 @@ pub fn get_runtime_compute_cap() -> usize {
     }
 }
 
+static PRINT_ONCE: Once = Once::new();
+
+fn print_version_once(version: &str) {
+    PRINT_ONCE.call_once(|| {
+        println!("Using michaelfeil/candle-flash-attn-3 v{}", version);
+    });
+}
+
 #[allow(clippy::too_many_arguments, unused)]
 pub(crate) fn flash_attn_varlen(
     q: &Tensor,
@@ -65,7 +73,7 @@ pub(crate) fn flash_attn_varlen(
         #[cfg(feature = "flash-attn-v3")]
         {
             use candle_flash_attn_v3::{flash_attn_varlen_alibi_windowed, flash_attn_varlen_windowed};
-
+            print_version_once("0.0.1");
             let window_size_right = if causal {
                 Some(0)
             } else if window_size_right.is_some() {
