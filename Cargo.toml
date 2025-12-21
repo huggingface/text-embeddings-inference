@@ -42,25 +42,18 @@ serde_json = "1.0"
 thiserror = "1.0"
 rand = "0.9"
 serial_test = "2.0.0"
-cudarc = { version = "0.13", features =["cuda-12020"], default-features = false }
+cudarc = { version = "0.18", features =["cuda-12090"], default-features = false }
 intel-mkl-src = { version = "0.8", default-features = false }
-candle = { version = "0.8", package = "candle-core" }
-candle-nn = { version = "0.8" }
-candle-transformers = { version = "0.8" }
-candle-flash-attn = { version = "0.8" }
-candle-cublaslt = { version = "0.0.1" }
-candle-layer-norm = { version = "0.0.1" }
-candle-index-select-cu =  { version = "0.0.1", features = ["cuda-11"], default-features = false }
-candle-rotary = { version = "0.0.1" }
-candle-flash-attn-v1 = { version = "0.0.1" }
+candle = { version = "0.9.1", package = "candle-core" }
+candle-nn = { version = "0.9.1" }
+candle-transformers = { version = "0.9.1" }
+candle-flash-attn = { version = "*" }
+candle-cublaslt = { version = "*" }
+candle-layer-norm = { version = "*" }
+candle-index-select-cu =  { version = "0.0.1", features = ["cuda-12"], default-features = false }
+candle-rotary = { version = "*" }
+candle-flash-attn-v1 = { version = "*" }
 half = { version = "2.3.1", features = ["num-traits"] }
-
-[patch.crates-io]
-cudarc = { git = "https://github.com/Narsil/cudarc" , rev = "8b4f18b4bcd5e4b1a9daf40abc3a2e27f83f06e9"}
-candle = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-core" }
-candle-nn = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-nn" }
-candle-transformers = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-transformers" }
-candle-flash-attn = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-flash-attn" }
 
 [profile.release]
 debug = 0
