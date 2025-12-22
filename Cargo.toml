@@ -48,6 +48,7 @@ candle = { version = "0.8", package = "candle-core" }
 candle-nn = { version = "0.8" }
 candle-transformers = { version = "0.8" }
 candle-flash-attn = { version = "0.8" }
+candle-flash-attn-3 = { version = "0.0.1", features = ["cuda-11"], default-features = false }
 candle-cublaslt = { version = "0.0.1" }
 candle-layer-norm = { version = "0.0.1" }
 candle-index-select-cu =  { version = "0.0.1", features = ["cuda-11"], default-features = false }
