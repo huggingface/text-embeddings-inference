@@ -42,7 +42,7 @@ serde_json = "1.0"
 thiserror = "1.0"
 rand = "0.9"
 serial_test = "2.0.0"
-cudarc = { version = "0.18", features =["cuda-12090"], default-features = false }
+cudarc = { version = "=0.16.6", features =["cuda-12060"], default-features = false }
 intel-mkl-src = { version = "0.8", default-features = false }
 candle = { version = "0.9.1", package = "candle-core" }
 candle-nn = { version = "0.9.1" }
@@ -54,6 +54,12 @@ candle-index-select-cu =  { version = "0.0.1", features = ["cuda-12"], default-f
 candle-rotary = { version = "*" }
 candle-flash-attn-v1 = { version = "*" }
 half = { version = "2.3.1", features = ["num-traits"] }
+
+[patch.crates-io]
+candle-cublaslt = { git = "https://github.com/michaelfeil/candle-extensions-fork", rev = "605e4975e2e16ee272673edff06baff01e98e0df", package = "candle-cublaslt" }
+candle-rotary = { git = "https://github.com/michaelfeil/candle-extensions-fork", rev = "605e4975e2e16ee272673edff06baff01e98e0df", package = "candle-rotary" }
+candle-flash-attn-v1 = { git = "https://github.com/michaelfeil/candle-extensions-fork", rev = "605e4975e2e16ee272673edff06baff01e98e0df", package = "candle-flash-attn-v1" }
+candle-layer-norm = { git = "https://github.com/michaelfeil/candle-extensions-fork", rev = "605e4975e2e16ee272673edff06baff01e98e0df", package = "candle-layer-norm" }
 
 [profile.release]
 debug = 0
