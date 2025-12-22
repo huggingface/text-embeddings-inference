@@ -56,10 +56,10 @@ candle-flash-attn-v1 = { version = "*" }
 half = { version = "2.3.1", features = ["num-traits"] }
 
 [patch.crates-io]
-candle-cublaslt = { git = "https://github.com/michaelfeil/candle-extensions-fork", rev = "605e4975e2e16ee272673edff06baff01e98e0df", package = "candle-cublaslt" }
-candle-rotary = { git = "https://github.com/michaelfeil/candle-extensions-fork", rev = "605e4975e2e16ee272673edff06baff01e98e0df", package = "candle-rotary" }
-candle-flash-attn-v1 = { git = "https://github.com/michaelfeil/candle-extensions-fork", rev = "605e4975e2e16ee272673edff06baff01e98e0df", package = "candle-flash-attn-v1" }
-candle-layer-norm = { git = "https://github.com/michaelfeil/candle-extensions-fork", rev = "605e4975e2e16ee272673edff06baff01e98e0df", package = "candle-layer-norm" }
+candle-cublaslt = { git = "https://github.com/michaelfeil/candle-extensions-fork", rev = "7413084449da2117197f8d561ba82d86976993d7", package = "candle-cublaslt" }
+candle-rotary = { git = "https://github.com/michaelfeil/candle-extensions-fork", rev = "7413084449da2117197f8d561ba82d86976993d7", package = "candle-rotary" }
+candle-flash-attn-v1 = { git = "https://github.com/michaelfeil/candle-extensions-fork", rev = "7413084449da2117197f8d561ba82d86976993d7", package = "candle-flash-attn-v1" }
+candle-layer-norm = { git = "https://github.com/michaelfeil/candle-extensions-fork", rev = "7413084449da2117197f8d561ba82d86976993d7", package = "candle-layer-norm" }
 
 [profile.release]
 debug = 0
