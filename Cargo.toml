@@ -42,25 +42,30 @@ serde_json = "1.0"
 thiserror = "1.0"
 rand = "0.9"
 serial_test = "2.0.0"
-cudarc = { version = "0.13", features =["cuda-12020"], default-features = false }
+cudarc = { version = "=0.18.1", features =["cuda-12060"], default-features = false }
 intel-mkl-src = { version = "0.8", default-features = false }
-candle = { version = "0.8", package = "candle-core" }
-candle-nn = { version = "0.8" }
-candle-transformers = { version = "0.8" }
-candle-flash-attn = { version = "0.8" }
-candle-cublaslt = { version = "0.0.1" }
-candle-layer-norm = { version = "0.0.1" }
-candle-index-select-cu =  { version = "0.0.1", features = ["cuda-11"], default-features = false }
-candle-rotary = { version = "0.0.1" }
-candle-flash-attn-v1 = { version = "0.0.1" }
+candle = { version = "0.9.2-alpha.2", package = "candle-core" }
+candle-nn = { version = "0.9.2-alpha.2" }
+candle-transformers = { version = "0.9.2-alpha.2" }
+candle-flash-attn = { version = "0.9.2-alpha.2" }
+candle-cublaslt = { version = "0.0.2" }
+candle-layer-norm = { version = "0.0.2" }
+candle-index-select-cu =  { version = "0.0.1", features = ["cuda-12"], default-features = false }
+candle-rotary = { version = "0.0.2" }
+candle-flash-attn-v1 = { version = "0.0.2" }
 half = { version = "2.3.1", features = ["num-traits"] }
 
 [patch.crates-io]
-cudarc = { git = "https://github.com/Narsil/cudarc" , rev = "8b4f18b4bcd5e4b1a9daf40abc3a2e27f83f06e9"}
-candle = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-core" }
-candle-nn = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-nn" }
-candle-transformers = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-transformers" }
-candle-flash-attn = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-flash-attn" }
+candle-cublaslt = { git = "https://github.com/michaelfeil/candle-extensions-fork", rev = "00481021d23517c99b609a25725be941edb5ed0e", package = "candle-cublaslt" }
+candle-rotary = { git = "https://github.com/michaelfeil/candle-extensions-fork", rev = "00481021d23517c99b609a25725be941edb5ed0e", package = "candle-rotary" }
+candle-flash-attn-v1 = { git = "https://github.com/michaelfeil/candle-extensions-fork", rev = "00481021d23517c99b609a25725be941edb5ed0e", package = "candle-flash-attn-v1" }
+candle-layer-norm = { git = "https://github.com/michaelfeil/candle-extensions-fork", rev = "00481021d23517c99b609a25725be941edb5ed0e", package = "candle-layer-norm" }
+candle = { git = "https://github.com/huggingface/candle", rev = "8839457c70316c7e2dd31aca66b264d7b9d21e91", package = "candle-core" } # 0.9.2-alpha.2 tag
+candle-nn = { git = "https://github.com/huggingface/candle", rev = "8839457c70316c7e2dd31aca66b264d7b9d21e91", package = "candle-nn" }
+candle-transformers = { git = "https://github.com/huggingface/candle", rev = "8839457c70316c7e2dd31aca66b264d7b9d21e91", package = "candle-transformers" }
+candle-flash-attn = { git = "https://github.com/huggingface/candle", rev = "8839457c70316c7e2dd31aca66b264d7b9d21e91", package = "candle-flash-attn" }
+cudarc = { git = "https://github.com/chelsea0x3b/cudarc/", rev = "8995648e2ea73689c3ce4351ab6f110302255c5f", package = "cudarc" } # 0.18.1 git tag.
+candle-index-select-cu = {git =  "https://github.com/michaelfeil/candle-index-select-cu" , rev = "1ae059f1902bef933efdb2f763c9b975f37c1879", package = "candle-index-select-cu" }
 
 [profile.release]
 debug = 0
