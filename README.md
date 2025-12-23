@@ -532,13 +532,13 @@ export PATH=$PATH:/usr/local/cuda/bin
 Then run:
 
 ```shell
-# This can take a while as we need to compile a lot of cuda kernels
+# This can take a while as we need to compile a lot of CUDA kernels
 
 # On Turing GPUs (T4, RTX 2000 series ... )
-cargo install --path router -F candle-cuda-turing -F http --no-default-features
+cargo install --path router -F candle-cuda-turing
 
 # On Ampere and Hopper
-cargo install --path router -F candle-cuda -F http --no-default-features
+cargo install --path router -F candle-cuda
 ```
 
 You can now launch Text Embeddings Inference on GPU with:

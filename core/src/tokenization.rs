@@ -40,24 +40,26 @@ impl Tokenization {
         // Create channel
         let (sender, receiver) = async_channel::bounded(workers * 4);
 
-        // Create workers
-        for _ in 0..workers {
-            let tokenizer_clone = tokenizer.clone();
-            let receiver_clone = receiver.clone();
-            let default_prompt_clone = default_prompt.clone();
-            let prompts_clone = prompts.clone();
-            // Spawn worker
-            std::thread::spawn(move || {
-                tokenizer_worker(
-                    tokenizer_clone,
-                    max_input_length,
-                    position_offset,
-                    default_prompt_clone,
-                    prompts_clone,
-                    receiver_clone,
-                )
-            });
-        }
+        // Spawn a background thread that creates all workers
+        // since tokenizer.clone() require 0.2s.
+        std::thread::spawn(move || {
+            for _ in 0..workers {
+                let tokenizer_clone = tokenizer.clone();
+                let receiver_clone = receiver.clone();
+                let default_prompt_clone = default_prompt.clone();
+                let prompts_clone = prompts.clone();
+                std::thread::spawn(move || {
+                    tokenizer_worker(
+                        tokenizer_clone,
+                        max_input_length,
+                        position_offset,
+                        default_prompt_clone,
+                        prompts_clone,
+                        receiver_clone,
+                    )
+                });
+            }
+        });
 
         Self { sender }
     }
@@ -72,7 +74,7 @@ impl Tokenization {
     ) -> Result<ValidEncoding, TextEmbeddingsError> {
         // Check if inputs is empty
         if inputs.is_empty() {
-            return Err(TextEmbeddingsError::Validation(
+            return Err(TextEmbeddingsError::Empty(
                 "`inputs` cannot be empty".to_string(),
             ));
         }
@@ -107,7 +109,7 @@ impl Tokenization {
     ) -> Result<(Option<String>, RawEncoding), TextEmbeddingsError> {
         // Check if inputs is empty
         if inputs.is_empty() {
-            return Err(TextEmbeddingsError::Validation(
+            return Err(TextEmbeddingsError::Empty(
                 "`inputs` cannot be empty".to_string(),
             ));
         }
@@ -138,9 +140,9 @@ impl Tokenization {
         ids: Vec<u32>,
         skip_special_tokens: bool,
     ) -> Result<String, TextEmbeddingsError> {
-        // Check if inputs is empty
+        // Check if input_ids is empty
         if ids.is_empty() {
-            return Err(TextEmbeddingsError::Validation(
+            return Err(TextEmbeddingsError::Empty(
                 "`input_ids` cannot be empty".to_string(),
             ));
         }
