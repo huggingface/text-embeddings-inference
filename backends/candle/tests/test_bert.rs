@@ -166,9 +166,7 @@ fn test_emotions() -> Result<()> {
     let matcher = relative_matcher();
 
     let predictions: Vec<Vec<f32>> = backend
-        .predict(input_batch)?
-        .into_iter()
-        .map(|(_, v)| v)
+        .predict(input_batch)?.into_values()
         .collect();
     let predictions_batch = SnapshotScores::from(predictions);
     insta::assert_yaml_snapshot!("emotions_batch", predictions_batch, &matcher);
@@ -180,9 +178,7 @@ fn test_emotions() -> Result<()> {
     );
 
     let predictions: Vec<Vec<f32>> = backend
-        .predict(input_single)?
-        .into_iter()
-        .map(|(_, v)| v)
+        .predict(input_single)?.into_values()
         .collect();
     let predictions_single = SnapshotScores::from(predictions);
 
@@ -222,9 +218,7 @@ fn test_bert_classification() -> Result<()> {
     );
 
     let predictions: Vec<Vec<f32>> = backend
-        .predict(input_single)?
-        .into_iter()
-        .map(|(_, v)| v)
+        .predict(input_single)?.into_values()
         .collect();
     let predictions_single = SnapshotScores::from(predictions);
 
