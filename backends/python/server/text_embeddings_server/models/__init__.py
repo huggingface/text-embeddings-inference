@@ -12,6 +12,7 @@ from text_embeddings_server.models.masked_model import MaskedLanguageModel
 from text_embeddings_server.models.default_model import DefaultModel
 from text_embeddings_server.models.classification_model import ClassificationModel
 from text_embeddings_server.models.jinaBert_model import FlashJinaBert
+from text_embeddings_server.models.jina_v4 import JinaV4Model
 from text_embeddings_server.models.flash_mistral import FlashMistral
 from text_embeddings_server.models.flash_qwen3 import FlashQwen3
 from text_embeddings_server.utils.device import get_device, use_ipex
@@ -73,7 +74,18 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
     device = get_device()
     logger.info(f"backend device: {device}")
 
-    config = AutoConfig.from_pretrained(model_path, trust_remote_code=TRUST_REMOTE_CODE)
+    try:
+        config = AutoConfig.from_pretrained(
+            model_path, trust_remote_code=TRUST_REMOTE_CODE
+        )
+    except Exception as err:
+        logger.warning(
+            f"Falling back to trust_remote_code=True while loading config: {err}"
+        )
+        config = AutoConfig.from_pretrained(model_path, trust_remote_code=True)
+
+    if "JinaEmbeddingsV4Model" in getattr(config, "architectures", []):
+        return create_model(JinaV4Model, model_path, device, datatype, pool)
 
     if (
         hasattr(config, "auto_map")

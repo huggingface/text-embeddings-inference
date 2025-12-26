@@ -534,14 +534,15 @@ pub fn into_tokens(encoding: tokenizers::Encoding, input: &str) -> Vec<SimpleTok
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hf_hub::api::sync::ApiBuilder;
+    use hf_hub::api::tokio::ApiBuilder;
+    use tokio::runtime::Runtime;
 
     #[test]
     fn tokenizer() {
+        let rt = Runtime::new().unwrap();
         let api = ApiBuilder::from_env().build().unwrap();
-        let filename = api
-            .model("BAAI/bge-m3".to_string())
-            .get("tokenizer.json")
+        let filename = rt
+            .block_on(api.model("BAAI/bge-m3".to_string()).get("tokenizer.json"))
             .unwrap();
         let string = "这是一个文本向量化的测试句子";
         let tokenizer = Tokenizer::from_file(filename).unwrap();
