@@ -122,7 +122,7 @@ struct Args {
     #[clap(long, env)]
     dense_path: Option<String>,
 
-    /// The device ID to use for CUDA/Metal devices. Defaults to 0.
+    /// The CUDA device ID where the model will be loaded. Defaults to 0 i.e., the first available device.
     /// Only used with the candle backend.
     #[clap(long, env, default_value = "0")]
     device_id: usize,
