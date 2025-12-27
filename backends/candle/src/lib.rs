@@ -127,6 +127,7 @@ impl CandleBackend {
         dtype: String,
         model_type: ModelType,
         dense_paths: Option<Vec<String>>,
+        device_id: usize,
     ) -> Result<Self, BackendError> {
         // Default files
         let default_safetensors = model_path.join("model.safetensors");
@@ -188,7 +189,7 @@ impl CandleBackend {
         let device = if candle::utils::cuda_is_available() {
             #[cfg(feature = "cuda")]
             match compatible_compute_cap() {
-                Ok(true) => Device::new_cuda(0),
+                Ok(true) => Device::new_cuda(device_id),
                 Ok(false) => {
                     return Err(BackendError::Start(format!(
                         "Runtime compute cap {} is not compatible with compile time compute cap {}",
@@ -205,7 +206,7 @@ impl CandleBackend {
             #[cfg(not(feature = "cuda"))]
             Ok(Device::Cpu)
         } else if candle::utils::metal_is_available() {
-            Device::new_metal(0)
+            Device::new_metal(device_id)
         } else {
             Ok(Device::Cpu)
         }
