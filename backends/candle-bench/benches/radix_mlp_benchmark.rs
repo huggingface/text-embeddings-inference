@@ -160,7 +160,7 @@ fn setup(
             &all_input_ids,
             &all_position_ids,
             &cumulative_seq_lengths,
-            true,
+            Some(8),
         );
 
     let (compact_input_ids_un, compact_position_ids_un, scatter_unfold_un, fold_gather_un) =
@@ -168,7 +168,7 @@ fn setup(
             &all_input_ids,
             &all_position_ids,
             &cumulative_seq_lengths,
-            false,
+            None,
         );
 
     println!(

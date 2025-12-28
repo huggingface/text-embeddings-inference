@@ -3769,9 +3769,9 @@ checksum = "74765f6d916ee2faa39bc8e68e4f3ed8949b48cccdac59983d287a7cb71ce9c5"
 
 [[package]]
 name = "radix_mlp"
-version = "0.0.1"
+version = "0.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1ebd98c62386004d243d88aa3127050c8687454e73ed38f62190a777880eae6"
+checksum = "a1de958e64c09ac6f9fe1f9bfd668da49197a315f11ea2ed205ae8285fbc4815"
 
 [[package]]
 name = "rand"

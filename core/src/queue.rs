@@ -105,9 +105,9 @@ fn queue_blocking_task(
     mut queue_receiver: mpsc::Receiver<QueueCommand>,
 ) {
     let capacity = max_batch_requests.unwrap_or(max_concurrent_requests);
-    let radix_mlp_pad = std::env::var("RADIX_MLP_PAD")
-        .map(|s| s.to_lowercase() == "true")
-        .unwrap_or(false);
+    let radix_mlp_pad: Option<usize> = std::env::var("RADIX_MLP_PAD")
+        .ok()
+        .and_then(|s| s.parse().ok());
 
     let mut entries: VecDeque<Entry> = VecDeque::with_capacity(max_concurrent_requests);
 
