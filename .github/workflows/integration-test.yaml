@@ -14,7 +14,7 @@ jobs:
       group: itac-bm-emr-gaudi3-dell-1gaudi
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
