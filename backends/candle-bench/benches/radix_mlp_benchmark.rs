@@ -270,7 +270,7 @@ fn bench_radix_mlp(c: &mut Criterion) {
     .expect("Could not start backend");
     println!("Backend initialized");
 
-    let batch_size = 13;
+    let batch_size = 15;
     let size_configs = [
         // 256 suffix sizes
         (1, 256),
@@ -383,6 +383,11 @@ fn bench_radix_mlp(c: &mut Criterion) {
             .warm_up_time(std::time::Duration::from_secs(3))
             .measurement_time(std::time::Duration::from_secs(30));
 
+        // Benchmark WITHOUT RadixMLP (standard full computation)
+        group.bench_function("no_radix_mlp", |b| {
+            b.iter(|| backend.embed(disabled_batch.clone().into()).unwrap())
+        });
+
         // Benchmark WITH RadixMLP enabled (uses shared prefix computation)
         group.bench_function("radix_mlp_perf_padding", |b| {
             b.iter(|| backend.embed(enabled_batch.clone().into()).unwrap())
@@ -393,10 +398,7 @@ fn bench_radix_mlp(c: &mut Criterion) {
             b.iter(|| backend.embed(enabled_batch_vanilla.clone().into()).unwrap())
         });
 
-        // Benchmark WITHOUT RadixMLP (standard full computation)
-        group.bench_function("no_radix_mlp", |b| {
-            b.iter(|| backend.embed(disabled_batch.clone().into()).unwrap())
-        });
+        
 
         group.finish();
     }
