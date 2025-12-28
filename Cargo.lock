@@ -587,8 +587,9 @@ dependencies = [
 
 [[package]]
 name = "candle-index-select-cu"
-version = "0.1.0"
-source = "git+https://github.com/michaelfeil/candle-index-select-cu?rev=4fc425654d13113ac9c7508706f61918b0c35ac2#4fc425654d13113ac9c7508706f61918b0c35ac2"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d776145d1dfa52ab0c254ec678ae7765a120ee0bab999dbfea95d648c883a47b"
 dependencies = [
  "anyhow",
  "candle-core",

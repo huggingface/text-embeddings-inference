@@ -1,5 +1,7 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{get_cos_sin, get_inv_freqs, CompactUnfoldTensors, index_select, HiddenAct, Linear, RMSNorm};
+use crate::layers::{
+    get_cos_sin, get_inv_freqs, index_select, CompactUnfoldTensors, HiddenAct, Linear, RMSNorm,
+};
 use crate::models::{MistralConfig, Model};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
@@ -319,8 +321,8 @@ impl FlashMistralModel {
             &self.device,
         )?;
 
-        let cos = index_select(self.cos_cache, &compact_tensors.position_ids_compact, 0)?;
-        let sin = index_select(self.sin_cache, &compact_tensors.position_ids_compact, 0)?;
+        let cos = index_select(&self.cos_cache, &compact_tensors.position_ids_compact, 0)?;
+        let sin = index_select(&self.sin_cache, &compact_tensors.position_ids_compact, 0)?;
 
         let mut residual = None;
         for layer in &self.layers {

@@ -1,5 +1,7 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{get_cos_sin, get_inv_freqs, index_select, CompactUnfoldTensors, HiddenAct, Linear, RMSNorm};
+use crate::layers::{
+    get_cos_sin, get_inv_freqs, index_select, CompactUnfoldTensors, HiddenAct, Linear, RMSNorm,
+};
 use crate::models::{Model, Qwen3Config};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
@@ -388,12 +390,8 @@ impl FlashQwen3Model {
         )?;
 
         // sin and cos are applied on the compact formation, therefore should be on the compact array
-        let cos = index_select(self.cos_cache           ,&compact_tensors.position_ids_compact, 0)?;
-        let sin = 
-            index_select(self            .sin_cache, &compact_tensors.position_ids_compact, 0)?;
-
-        let cos = index_select(&self.cos_cache, &position_ids, 0)?;
-        let sin = index_select(&self.sin_cache, &position_ids, 0)?;
+        let cos = index_select(&self.cos_cache, &compact_tensors.position_ids_compact, 0)?;
+        let sin = index_select(&self.sin_cache, &compact_tensors.position_ids_compact, 0)?;
 
         let mut residual = None;
         for layer in &self.layers {

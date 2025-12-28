@@ -7,7 +7,6 @@ mod radix_mlp;
 #[allow(dead_code, unused)]
 mod rms_norm;
 mod rotary;
-mod index_select;
 
 pub use cublaslt::get_cublas_lt_wrapper;
 #[allow(unused_imports)]

@@ -486,6 +486,7 @@ pub struct ModelConfig {
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
     pub auto_map: Option<HashMap<String, String>>,
+    pub use_bidirectional_attention: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

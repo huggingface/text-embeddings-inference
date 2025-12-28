@@ -18,7 +18,6 @@ candle-cublaslt = { workspace = true, optional = true }
 candle-index-select-cu = { workspace = true, optional = true, features = ["cuda-11"], default-features = false}
 candle-layer-norm = { workspace = true, optional = true }
 candle-rotary = { workspace = true, optional = true }
-candle-index-select-cu = { workspace = true, optional = true }
 nohash-hasher = { workspace = true }
 text-embeddings-backend-core = { path = "../core" }
 tracing = { workspace = true }
