@@ -88,7 +88,7 @@ pub fn compute_fold_and_scatter(
             return;
         }
 
-        let multiple = if current_len < 1024 { 8 } else { 64 };
+        let multiple = if current_len < 4096 { 8 } else { 64 };
         let remainder = current_len % multiple;
 
         if remainder != 0 {
