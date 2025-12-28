@@ -198,7 +198,7 @@ fn setup(
         fold_gather: Some(fold_gather),
     };
 
-    let enabled_batch_unpadded = Batch {
+    let enabled_batch_vanilla = Batch {
         input_ids: all_input_ids.clone(),
         token_type_ids: token_type_ids.clone(),
         position_ids: all_position_ids.clone(),
@@ -227,7 +227,7 @@ fn setup(
         fold_gather: None,
     };
 
-    Ok((enabled_batch, disabled_batch, enabled_batch_unpadded))
+    Ok((enabled_batch, disabled_batch, enabled_batch_vanilla))
 }
 
 fn normalize(v: &[f32]) -> Vec<f32> {
@@ -259,7 +259,7 @@ fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
 fn bench_radix_mlp(c: &mut Criterion) {
     // 1. Setup backend
     let model_root =
-        download_artifacts("Qwen/Qwen3-Embedding-4B", None).expect("Failed to download artifacts");
+        download_artifacts("Qwen/Qwen3-Embedding-0.6B", None).expect("Failed to download artifacts");
     println!("Model downloaded to {:?}", model_root);
     let backend = CandleBackend::new(
         &model_root,
@@ -292,15 +292,15 @@ fn bench_radix_mlp(c: &mut Criterion) {
     ];
 
     for (shared_prefix_len, unique_suffix_len) in size_configs {
-        let (enabled_batch, disabled_batch, enabled_batch_unpadded) =
+        let (enabled_batch, disabled_batch, enabled_batch_vanilla) =
             setup(&backend, batch_size, shared_prefix_len, unique_suffix_len)
                 .expect("Failed to set up benchmark");
 
         // --- Correctness Check ---
         let radix_result = backend.embed(enabled_batch.clone().into()).unwrap();
         let regular_result = backend.embed(disabled_batch.clone().into()).unwrap();
-        let radix_unpadded_result = backend
-            .embed(enabled_batch_unpadded.clone().into())
+        let radix_vanilla_result = backend
+            .embed(enabled_batch_vanilla.clone().into())
             .unwrap();
 
         let radix_vecs: Vec<Vec<f32>> = (0..batch_size)
@@ -315,8 +315,8 @@ fn bench_radix_mlp(c: &mut Criterion) {
                 text_embeddings_backend_core::Embedding::All(vecs) => vecs.last().unwrap().clone(),
             })
             .collect();
-        let radix_unpadded_vecs: Vec<Vec<f32>> = (0..batch_size)
-            .map(|i| match radix_unpadded_result.get(&i).unwrap() {
+        let radix_vanilla_vecs: Vec<Vec<f32>> = (0..batch_size)
+            .map(|i| match radix_vanilla_result.get(&i).unwrap() {
                 text_embeddings_backend_core::Embedding::Pooled(v) => v.clone(),
                 text_embeddings_backend_core::Embedding::All(vecs) => vecs.last().unwrap().clone(),
             })
@@ -326,11 +326,11 @@ fn bench_radix_mlp(c: &mut Criterion) {
             radix_vecs.iter().map(|v| normalize(v)).collect();
         let normalized_regular_vecs: Vec<Vec<f32>> =
             regular_vecs.iter().map(|v| normalize(v)).collect();
-        let normalized_radix_unpadded_vecs: Vec<Vec<f32>> =
-            radix_unpadded_vecs.iter().map(|v| normalize(v)).collect();
+        let normalized_radix_vanilla_vecs: Vec<Vec<f32>> =
+            radix_vanilla_vecs.iter().map(|v| normalize(v)).collect();
 
         assert_eq!(radix_vecs.len(), regular_vecs.len());
-        assert_eq!(radix_unpadded_vecs.len(), regular_vecs.len());
+        assert_eq!(radix_vanilla_vecs.len(), regular_vecs.len());
 
         for i in 0..radix_vecs.len() {
             let diff: f32 = normalized_radix_vecs[i]
@@ -340,20 +340,20 @@ fn bench_radix_mlp(c: &mut Criterion) {
                 .reduce(f32::max)
                 .unwrap_or(0.0);
             let cos_sim = cosine_similarity(&normalized_radix_vecs[i], &normalized_regular_vecs[i]);
-            let cos_sim_unpadded = cosine_similarity(
-                &normalized_radix_unpadded_vecs[i],
+            let cos_sim_vanilla = cosine_similarity(
+                &normalized_radix_vanilla_vecs[i],
                 &normalized_regular_vecs[i],
             );
 
-            let passed = diff < 1e-4 && cos_sim > 0.999 && cos_sim_unpadded > 0.999;
+            let passed = diff < 1e-4 && cos_sim > 0.999 && cos_sim_vanilla > 0.999;
 
             if !passed {
                 println!(
-                    "Item {}: Abs Diff: {:.4}, Cosine Sim (Padded): {:.6}, Cosine Sim (Unpadded): {:.6}",
+                    "Item {}: Abs Diff: {:.4}, Cosine Sim (Padded): {:.6}, Cosine Sim (Vanilla): {:.6}",
                     i,
                     diff,
                     1.0 - cos_sim,
-                    1.0 - cos_sim_unpadded
+                    1.0 - cos_sim_vanilla
                 );
                 println!(
                     "Correctness check FAILED for size ({}, {}), item {}",
@@ -365,8 +365,8 @@ fn bench_radix_mlp(c: &mut Criterion) {
                 );
                 println!("Padded (normalized):  {:?}", &normalized_radix_vecs[i][..8]);
                 println!(
-                    "Unpadded (normalized):{:?}",
-                    &normalized_radix_unpadded_vecs[i][..8]
+                    "Vanilla (normalized):{:?}",
+                    &normalized_radix_vanilla_vecs[i][..8]
                 );
             }
         }
@@ -386,21 +386,21 @@ fn bench_radix_mlp(c: &mut Criterion) {
             .measurement_time(std::time::Duration::from_secs(30));
 
         // Benchmark WITH RadixMLP enabled (uses shared prefix computation)
-        group.bench_function("radix_mlp_enabled", |b| {
+        group.bench_function("radix_mlp_perf_padding", |b| {
             b.iter(|| backend.embed(enabled_batch.clone().into()).unwrap())
         });
 
         // Benchmark WITH RadixMLP enabled but without padding (uses shared prefix computation)
-        group.bench_function("radix_mlp_enabled_unpadded", |b| {
+        group.bench_function("radix_mlp_vanilla", |b| {
             b.iter(|| {
                 backend
-                    .embed(enabled_batch_unpadded.clone().into())
+                    .embed(enabled_batch_vanilla.clone().into())
                     .unwrap()
             })
         });
 
         // Benchmark WITHOUT RadixMLP (standard full computation)
-        group.bench_function("radix_mlp_disabled", |b| {
+        group.bench_function("no_radix_mlp", |b| {
             b.iter(|| backend.embed(disabled_batch.clone().into()).unwrap())
         });
 
