@@ -449,6 +449,7 @@ impl FlashQwen2Model {
 
         let raw_embeddings = if has_raw_requests {
             if batch_size > 1 && has_pooling_requests {
+                let shape = batch.input_ids.len();
                 // Create indexing vector for the embeddings
                 let mut final_indices: Vec<u32> = Vec::with_capacity(shape);
                 for i in batch.raw_indices.into_iter() {
