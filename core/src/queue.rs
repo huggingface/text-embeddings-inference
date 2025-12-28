@@ -1,5 +1,4 @@
 use crate::infer::InferResult;
-use radix_mlp;
 use crate::tokenization::ValidEncoding;
 use std::cmp::max;
 use std::collections::VecDeque;

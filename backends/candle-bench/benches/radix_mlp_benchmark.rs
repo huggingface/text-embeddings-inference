@@ -258,8 +258,8 @@ fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
 /// The main benchmark function.
 fn bench_radix_mlp(c: &mut Criterion) {
     // 1. Setup backend
-    let model_root =
-        download_artifacts("Qwen/Qwen3-Embedding-0.6B", None).expect("Failed to download artifacts");
+    let model_root = download_artifacts("Qwen/Qwen3-Embedding-0.6B", None)
+        .expect("Failed to download artifacts");
     println!("Model downloaded to {:?}", model_root);
     let backend = CandleBackend::new(
         &model_root,
@@ -299,9 +299,7 @@ fn bench_radix_mlp(c: &mut Criterion) {
         // --- Correctness Check ---
         let radix_result = backend.embed(enabled_batch.clone().into()).unwrap();
         let regular_result = backend.embed(disabled_batch.clone().into()).unwrap();
-        let radix_vanilla_result = backend
-            .embed(enabled_batch_vanilla.clone().into())
-            .unwrap();
+        let radix_vanilla_result = backend.embed(enabled_batch_vanilla.clone().into()).unwrap();
 
         let radix_vecs: Vec<Vec<f32>> = (0..batch_size)
             .map(|i| match radix_result.get(&i).unwrap() {
@@ -392,11 +390,7 @@ fn bench_radix_mlp(c: &mut Criterion) {
 
         // Benchmark WITH RadixMLP enabled but without padding (uses shared prefix computation)
         group.bench_function("radix_mlp_vanilla", |b| {
-            b.iter(|| {
-                backend
-                    .embed(enabled_batch_vanilla.clone().into())
-                    .unwrap()
-            })
+            b.iter(|| backend.embed(enabled_batch_vanilla.clone().into()).unwrap())
         });
 
         // Benchmark WITHOUT RadixMLP (standard full computation)
