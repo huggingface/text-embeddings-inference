@@ -9,6 +9,7 @@ use candle::{Result, Tensor};
 use candle_index_select_cu;
 
 #[inline]
+#[allow(dead_code)]
 pub fn index_select(tensor: &Tensor, ids: &Tensor, dim: usize) -> Result<Tensor> {
     #[cfg(not(feature = "cuda"))]
     {

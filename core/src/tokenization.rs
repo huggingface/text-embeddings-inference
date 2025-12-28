@@ -40,24 +40,26 @@ impl Tokenization {
         // Create channel
         let (sender, receiver) = async_channel::bounded(workers * 4);
 
-        // Create workers
-        for _ in 0..workers {
-            let tokenizer_clone = tokenizer.clone();
-            let receiver_clone = receiver.clone();
-            let default_prompt_clone = default_prompt.clone();
-            let prompts_clone = prompts.clone();
-            // Spawn worker
-            std::thread::spawn(move || {
-                tokenizer_worker(
-                    tokenizer_clone,
-                    max_input_length,
-                    position_offset,
-                    default_prompt_clone,
-                    prompts_clone,
-                    receiver_clone,
-                )
-            });
-        }
+        // Spawn a background thread that creates all workers
+        // since tokenizer.clone() require 0.2s.
+        std::thread::spawn(move || {
+            for _ in 0..workers {
+                let tokenizer_clone = tokenizer.clone();
+                let receiver_clone = receiver.clone();
+                let default_prompt_clone = default_prompt.clone();
+                let prompts_clone = prompts.clone();
+                std::thread::spawn(move || {
+                    tokenizer_worker(
+                        tokenizer_clone,
+                        max_input_length,
+                        position_offset,
+                        default_prompt_clone,
+                        prompts_clone,
+                        receiver_clone,
+                    )
+                });
+            }
+        });
 
         Self { sender }
     }
