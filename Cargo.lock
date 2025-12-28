@@ -512,6 +512,7 @@ dependencies = [
  "criterion",
  "cudarc",
  "hf-hub",
+ "radix_mlp",
  "serde_json",
  "text-embeddings-backend",
  "text-embeddings-backend-candle",

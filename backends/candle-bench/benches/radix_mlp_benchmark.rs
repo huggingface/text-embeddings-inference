@@ -2,7 +2,7 @@ use anyhow::Result;
 use criterion::{criterion_group, criterion_main, Criterion};
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
-use text_embeddings_core::radix_mlp::compute_fold_and_scatter;
+use radix_mlp::compute_fold_and_scatter;
 
 use hf_hub::api::sync::{ApiBuilder, ApiError, ApiRepo};
 use hf_hub::{Repo, RepoType};
@@ -258,7 +258,7 @@ fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
 /// The main benchmark function.
 fn bench_radix_mlp(c: &mut Criterion) {
     // 1. Setup backend
-    let model_root = download_artifacts("Qwen/Qwen3-Embedding-0.6B", None)
+    let model_root = download_artifacts("Qwen/Qwen3-Embedding-8B", None)
         .expect("Failed to download artifacts");
     println!("Model downloaded to {:?}", model_root);
     let backend = CandleBackend::new(
@@ -270,25 +270,25 @@ fn bench_radix_mlp(c: &mut Criterion) {
     .expect("Could not start backend");
     println!("Backend initialized");
 
-    let batch_size = 32;
+    let batch_size = 13;
     let size_configs = [
         // 256 suffix sizes
         (1, 256),
-        (16, 256),
-        (32, 256),
-        (128, 256),
-        (256, 256),
-        (512, 256),
-        (1024, 256),
-        (2048, 256),
+        (15, 256),
+        (31, 256),
+        (127, 256),
+        (255, 256),
+        (511, 256),
+        (1023, 256),
+        (2047, 256),
         // 1024 suffix sizes
         (1, 1024),
-        (32, 1024),
-        (128, 1024),
-        (256, 1024),
-        (512, 1024),
-        (1024, 1024),
-        (2048, 1024),
+        (31, 1024),
+        (127, 1024),
+        (255, 1024),
+        (511, 1024),
+        (1023, 1024),
+        (2047, 1024),
     ];
 
     for (shared_prefix_len, unique_suffix_len) in size_configs {

@@ -15,7 +15,7 @@ thiserror = { workspace = true }
 tokenizers = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
-radix_mlp = { version = "0.0.1" }
+radix_mlp = {workspace = true}
 
 [dev-dependencies]
 hf-hub = { workspace = true, features = ["ureq"] }
