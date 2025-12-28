@@ -125,7 +125,7 @@ impl Infer {
         truncation_direction: TruncationDirection,
         prompt_name: Option<String>,
         permit: OwnedSemaphorePermit,
-        batch_counter: Arc<AtomicUsize>,
+        batch_counter: Option<Arc<AtomicUsize>>,
     ) -> Result<AllEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
 
@@ -178,7 +178,7 @@ impl Infer {
         truncation_direction: TruncationDirection,
         prompt_name: Option<String>,
         permit: OwnedSemaphorePermit,
-        batch_counter: Arc<AtomicUsize>,
+        batch_counter: Option<Arc<AtomicUsize>>,
     ) -> Result<PooledEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
 
@@ -238,7 +238,7 @@ impl Infer {
         normalize: bool,
         dimensions: Option<usize>,
         permit: OwnedSemaphorePermit,
-        batch_counter: Arc<AtomicUsize>,
+        batch_counter: Option<Arc<AtomicUsize>>,
     ) -> Result<PooledEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
 
@@ -339,7 +339,7 @@ impl Infer {
         pooling: bool,
         start_time: &Instant,
         _permit: OwnedSemaphorePermit,
-        batch_counter: Arc<AtomicUsize>,
+        batch_counter: Option<Arc<AtomicUsize>>,
     ) -> Result<InferResult, TextEmbeddingsError> {
         if self.is_classifier() {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
@@ -381,9 +381,13 @@ impl Infer {
             encoding,
         });
 
-        // Increment counter and notify if this is the last item in the batch
-        if batch_counter.fetch_sub(1, Ordering::SeqCst) == 1 {
-            self.notify_batching_task.notify_one();
+        match batch_counter {
+            None => self.notify_batching_task.notify_one(),
+            Some(counter) => {
+                if counter.fetch_sub(1, Ordering::SeqCst) == 1 {
+                    self.notify_batching_task.notify_one();
+                }
+            }
         }
 
         let response = response_rx
@@ -409,7 +413,7 @@ impl Infer {
         truncation_direction: TruncationDirection,
         raw_scores: bool,
         _permit: OwnedSemaphorePermit,
-        batch_counter: Arc<AtomicUsize>,
+        batch_counter: Option<Arc<AtomicUsize>>,
     ) -> Result<ClassificationInferResponse, TextEmbeddingsError> {
         if !self.is_classifier() {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
@@ -451,9 +455,13 @@ impl Infer {
             encoding,
         });
 
-        // Increment counter and notify if this is the last item in the batch
-        if batch_counter.fetch_sub(1, Ordering::SeqCst) == 1 {
-            self.notify_batching_task.notify_one();
+        match batch_counter {
+            None => self.notify_batching_task.notify_one(),
+            Some(counter) => {
+                if counter.fetch_sub(1, Ordering::SeqCst) == 1 {
+                    self.notify_batching_task.notify_one();
+                }
+            }
         }
 
         let response = response_rx

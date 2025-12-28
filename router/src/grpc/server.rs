@@ -84,7 +84,6 @@ impl TextEmbeddingsService {
 
         let compute_chars = request.inputs.chars().count();
         let truncation_direction = convert_truncation_direction(request.truncation_direction);
-        let batch_counter = Arc::new(AtomicUsize::new(1));
         let response = self
             .infer
             .embed_pooled(
@@ -95,7 +94,7 @@ impl TextEmbeddingsService {
                 request.normalize,
                 request.dimensions.map(|v| v as usize),
                 permit,
-                batch_counter,
+                None,
             )
             .await
             .map_err(ErrorResponse::from)?;
@@ -143,7 +142,6 @@ impl TextEmbeddingsService {
 
         let compute_chars = request.inputs.chars().count();
         let truncation_direction = convert_truncation_direction(request.truncation_direction);
-        let batch_counter = Arc::new(AtomicUsize::new(1));
         let response = self
             .infer
             .embed_sparse(
@@ -152,7 +150,7 @@ impl TextEmbeddingsService {
                 truncation_direction,
                 request.prompt_name,
                 permit,
-                batch_counter,
+                None,
             )
             .await
             .map_err(ErrorResponse::from)?;
@@ -211,7 +209,6 @@ impl TextEmbeddingsService {
 
         let compute_chars = request.inputs.chars().count();
         let truncation_direction = convert_truncation_direction(request.truncation_direction);
-        let batch_counter = Arc::new(AtomicUsize::new(1));
         let response = self
             .infer
             .embed_all(
@@ -220,7 +217,7 @@ impl TextEmbeddingsService {
                 truncation_direction,
                 request.prompt_name,
                 permit,
-                batch_counter,
+                None,
             )
             .await
             .map_err(ErrorResponse::from)?;
@@ -283,10 +280,9 @@ impl TextEmbeddingsService {
             EncodingInput::Ids(_) => unreachable!(),
         };
 
-        let batch_counter = Arc::new(AtomicUsize::new(1));
         let response = self
             .infer
-            .predict(inputs, truncate, truncation_direction, raw_scores, permit, batch_counter)
+            .predict(inputs, truncate, truncation_direction, raw_scores, permit, None)
             .await
             .map_err(ErrorResponse::from)?;
 
@@ -737,7 +733,6 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
 
         let request = request.into_inner();
         let truncation_direction = convert_truncation_direction(request.truncation_direction);
-        let batch_counter = Arc::new(AtomicUsize::new(1));
         let (response, metadata) = self
             .predict_inner(
                 request.inputs,
@@ -745,7 +740,7 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
                 truncation_direction,
                 request.raw_scores,
                 permit,
-                batch_counter,
+                None,
             )
             .await?;
         let headers = HeaderMap::from(metadata);
@@ -789,7 +784,6 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
             .map_err(ErrorResponse::from)?;
 
         let truncation_direction = convert_truncation_direction(request.truncation_direction);
-        let batch_counter = Arc::new(AtomicUsize::new(1));
         let (response, metadata) = self
             .predict_inner(
                 inputs,
@@ -797,7 +791,7 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
                 truncation_direction,
                 request.raw_scores,
                 permit,
-                batch_counter,
+                None,
             )
             .await?;
         let headers = HeaderMap::from(metadata);
@@ -822,7 +816,6 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
         let clone = self.clone();
         let function = |req: PredictRequest, permit: OwnedSemaphorePermit| async move {
             let truncation_direction = convert_truncation_direction(req.truncation_direction);
-            let batch_counter = Arc::new(AtomicUsize::new(1));
             clone
                 .predict_inner(
                     req.inputs,
@@ -830,7 +823,7 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
                     truncation_direction,
                     req.raw_scores,
                     permit,
-                    batch_counter,
+                    None,
                 )
                 .await
         };
@@ -864,7 +857,6 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
             };
 
             let truncation_direction = convert_truncation_direction(req.truncation_direction);
-            let batch_counter = Arc::new(AtomicUsize::new(1));
             clone
                 .predict_inner(
                     inputs,
@@ -872,7 +864,7 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
                     truncation_direction,
                     req.raw_scores,
                     permit,
-                    batch_counter,
+                    None,
                 )
                 .await
         };
@@ -933,14 +925,14 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
             }
         }?;
 
-        // Closure for rerank
+// Closure for rerank
         let rerank_inner = move |query: String,
-                                 text: String,
-                                 truncate: bool,
-                                 truncation_direction: tokenizers::TruncationDirection,
-                                 raw_scores: bool,
-                                 infer: Infer,
-                                 batch_counter: Arc<AtomicUsize>| async move {
+                                  text: String,
+                                  truncate: bool,
+                                  truncation_direction: tokenizers::TruncationDirection,
+                                  raw_scores: bool,
+                                  infer: Infer,
+                                  batch_counter: Option<Arc<AtomicUsize>>| async move {
             let permit = infer.acquire_permit().await;
 
             let response = infer
@@ -985,7 +977,11 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
             Err(err)?;
         }
 
-        let batch_counter = Arc::new(AtomicUsize::new(batch_size));
+        let batch_counter = if batch_size == 1 {
+            None
+        } else {
+            Some(Arc::new(AtomicUsize::new(batch_size)))
+        };
         let mut futures = Vec::with_capacity(batch_size);
         let query_chars = request.query.chars().count();
         let mut total_compute_chars = query_chars * batch_size;
@@ -1191,9 +1187,8 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
                 // Create async task for this specific input
                 tokio::spawn(async move {
                     // Select on closed to cancel work if the stream was closed
-                    let batch_counter = Arc::new(AtomicUsize::new(1));
                     tokio::select! {
-                    result = rerank_inner(index, query, text, truncate, truncation_direction, raw_scores, task_infer, permit, batch_counter) => {
+                    result = rerank_inner(index, query, text, truncate, truncation_direction, raw_scores, task_infer, permit, None) => {
                         let _ = sender.send(result);
                     }
                     _ = sender.closed() => {}

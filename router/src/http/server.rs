@@ -121,13 +121,12 @@ async fn predict(
                               infer: Infer,
                               info: Info,
                               permit: Option<OwnedSemaphorePermit>,
-_batch_counter: Arc<AtomicUsize>| async move {
+_batch_counter: Option<Arc<AtomicUsize>>| async move {
         let permit = match permit {
             None => infer.acquire_permit().await,
             Some(permit) => permit,
         };
 
-        let batch_counter = Arc::new(AtomicUsize::new(1));
         let response = infer
             .predict(
                 inputs,
@@ -135,7 +134,7 @@ _batch_counter: Arc<AtomicUsize>| async move {
                 req.truncation_direction.into(),
                 req.raw_scores,
                 permit,
-                batch_counter,
+                None,
             )
             .await
             .map_err(ErrorResponse::from)?;
@@ -183,9 +182,8 @@ _batch_counter: Arc<AtomicUsize>| async move {
 
             let compute_chars = inputs.count_chars();
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
-            let batch_counter = Arc::new(AtomicUsize::new(1));
             let (prompt_tokens, tokenization, queue, inference, predictions) =
-                predict_inner(inputs, truncate, infer.0, info.0, Some(permit), batch_counter).await?;
+                predict_inner(inputs, truncate, infer.0, info.0, Some(permit), None).await?;
 
             let counter = metrics::counter!("te_request_count", "method" => "single");
             counter.increment(1);
@@ -222,7 +220,11 @@ _batch_counter: Arc<AtomicUsize>| async move {
                 Err(err)?;
             }
 
-            let batch_counter = Arc::new(AtomicUsize::new(batch_size));
+            let batch_counter = if batch_size == 1 {
+                None
+            } else {
+                Some(Arc::new(AtomicUsize::new(batch_size)))
+            };
             let mut futures = Vec::with_capacity(batch_size);
             let mut compute_chars = 0;
 
@@ -354,7 +356,7 @@ async fn rerank(
     })?;
 
     // Closure for rerank
-    let rerank_inner = move |query: String, text: String, truncate: bool, infer: Infer, batch_counter: Arc<AtomicUsize>| async move {
+    let rerank_inner = move |query: String, text: String, truncate: bool, infer: Infer, batch_counter: Option<Arc<AtomicUsize>>| async move {
         let permit = infer.acquire_permit().await;
 
         let response = infer
@@ -402,7 +404,11 @@ let batch_size = req.texts.len();
             Err(err)?;
         }
 
-        let batch_counter = Arc::new(AtomicUsize::new(batch_size));
+        let batch_counter = if batch_size == 1 {
+                None
+            } else {
+                Some(Arc::new(AtomicUsize::new(batch_size)))
+            };
         let mut futures = Vec::with_capacity(batch_size);
         let query_chars = req.query.chars().count();
         let mut compute_chars = query_chars * batch_size;
@@ -617,7 +623,6 @@ async fn embed(
             let compute_chars = input.count_chars();
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
-            let batch_counter = Arc::new(AtomicUsize::new(1));
             let response = infer
                 .embed_pooled(
                     input,
@@ -627,7 +632,7 @@ async fn embed(
                     req.normalize,
                     req.dimensions,
                     permit,
-                    batch_counter,
+                    None,
                 )
                 .await
                 .map_err(ErrorResponse::from)?;
@@ -678,7 +683,11 @@ async fn embed(
                 Err(err)?;
             }
 
-            let batch_counter = Arc::new(AtomicUsize::new(batch_size));
+            let batch_counter = if batch_size == 1 {
+                None
+            } else {
+                Some(Arc::new(AtomicUsize::new(batch_size)))
+            };
             let mut futures = Vec::with_capacity(batch_size);
             let mut compute_chars = 0;
 
@@ -807,7 +816,6 @@ async fn embed_sparse(
             let compute_chars = input.count_chars();
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
-            let batch_counter = Arc::new(AtomicUsize::new(1));
             let response = infer
                 .embed_sparse(
                     input,
@@ -815,7 +823,7 @@ async fn embed_sparse(
                     req.truncation_direction.into(),
                     req.prompt_name,
                     permit,
-                    batch_counter,
+                    None,
                 )
                 .await
                 .map_err(ErrorResponse::from)?;
@@ -866,7 +874,11 @@ async fn embed_sparse(
                 Err(err)?;
             }
 
-            let batch_counter = Arc::new(AtomicUsize::new(batch_size));
+            let batch_counter = if batch_size == 1 {
+                None
+            } else {
+                Some(Arc::new(AtomicUsize::new(batch_size)))
+            };
             let mut futures = Vec::with_capacity(batch_size);
             let mut compute_chars = 0;
 
@@ -986,7 +998,6 @@ async fn embed_all(
             let compute_chars = input.count_chars();
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
-            let batch_counter = Arc::new(AtomicUsize::new(1));
             let response = infer
                 .embed_all(
                     input,
@@ -994,7 +1005,7 @@ async fn embed_all(
                     req.truncation_direction.into(),
                     req.prompt_name,
                     permit,
-                    batch_counter,
+                    None,
                 )
                 .await
                 .map_err(ErrorResponse::from)?;
@@ -1045,7 +1056,11 @@ async fn embed_all(
                 Err(err)?;
             }
 
-            let batch_counter = Arc::new(AtomicUsize::new(batch_size));
+            let batch_counter = if batch_size == 1 {
+                None
+            } else {
+                Some(Arc::new(AtomicUsize::new(batch_size)))
+            };
             let mut futures = Vec::with_capacity(batch_size);
             let mut compute_chars = 0;
 
@@ -1179,7 +1194,6 @@ async fn openai_embed(
             let compute_chars = input.count_chars();
 
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
-            let batch_counter = Arc::new(AtomicUsize::new(1));
             let response = infer
                 .embed_pooled(
                     input,
@@ -1189,7 +1203,7 @@ async fn openai_embed(
                     true,
                     req.dimensions,
                     permit,
-                    batch_counter,
+                    None,
                 )
                 .await
                 .map_err(ErrorResponse::from)?;
@@ -1245,7 +1259,11 @@ async fn openai_embed(
                 Err(err)?;
             }
 
-            let batch_counter = Arc::new(AtomicUsize::new(batch_size));
+            let batch_counter = if batch_size == 1 {
+                None
+            } else {
+                Some(Arc::new(AtomicUsize::new(batch_size)))
+            };
             let mut futures = Vec::with_capacity(batch_size);
             let mut compute_chars = 0;
 
