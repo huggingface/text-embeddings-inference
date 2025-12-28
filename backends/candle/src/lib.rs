@@ -206,7 +206,7 @@ impl CandleBackend {
             #[cfg(not(feature = "cuda"))]
             Ok(Device::Cpu)
         } else if candle::utils::metal_is_available() {
-            Device::new_metal(device_id)
+            Device::new_metal(0)
         } else {
             Ok(Device::Cpu)
         }
