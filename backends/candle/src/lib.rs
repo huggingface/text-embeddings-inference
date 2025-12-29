@@ -25,7 +25,7 @@ use crate::models::{
     BertConfig, BertModel, Dense, DenseConfig, DenseLayer, DistilBertConfig, DistilBertModel,
     GTEConfig, GTEModel, Gemma3Config, Gemma3Model, JinaBertModel, JinaCodeBertModel, MPNetConfig,
     MPNetModel, MistralConfig, Model, ModernBertConfig, ModernBertModel, NomicBertModel,
-    NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model,
+    NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model, StaticEmbeddingConfig, StaticEmbeddingModel,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -113,6 +113,7 @@ enum Config {
     Qwen3(Qwen3Config),
     Roberta(BertConfig),
     XlmRoberta(BertConfig),
+    StaticEmbedding(StaticEmbeddingConfig),
 }
 
 pub struct CandleBackend {
@@ -131,12 +132,17 @@ impl CandleBackend {
         // Default files
         let default_safetensors = model_path.join("model.safetensors");
         let default_pytorch = model_path.join("pytorch_model.bin");
+        let static_embedding_safetensors = model_path
+            .join("0_StaticEmbedding")
+            .join("model.safetensors");
 
         // Single Files
         let model_files = if default_safetensors.exists() {
             vec![default_safetensors]
         } else if default_pytorch.exists() {
             vec![default_pytorch]
+        } else if static_embedding_safetensors.exists() {
+            vec![static_embedding_safetensors]
         }
         // Sharded weights
         else {
@@ -304,6 +310,12 @@ impl CandleBackend {
             (Config::Qwen3(config), Device::Cpu | Device::Metal(_)) => {
                 tracing::info!("Starting Qwen3 model on {:?}", device);
                 Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
+            }
+            (Config::StaticEmbedding(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting StaticEmbedding model on {:?}", device);
+                Ok(Box::new(
+                    StaticEmbeddingModel::load(vb, &config, model_type).s()?,
+                ))
             }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
@@ -508,6 +520,13 @@ impl CandleBackend {
                         FlashQwen3Model::load(vb, &config, model_type).s()?,
                     ))
                 }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::StaticEmbedding(config), Device::Cuda(_)) => {
+                tracing::info!("Starting StaticEmbedding model on {:?}", device);
+                Ok(Box::new(
+                    StaticEmbeddingModel::load(vb, &config, model_type).s()?,
+                ))
             }
         };
 
