@@ -114,14 +114,12 @@ pub async fn run(
         text_embeddings_backend::ModelType::Classifier => {
             let id2label = config
                 .id2label
-                .clone()
                 .context("`config.json` does not contain `id2label`")?;
             let n_classes = id2label.len();
             let classifier_model = ClassifierModel {
                 id2label,
                 label2id: config
                     .label2id
-                    .clone()
                     .context("`config.json` does not contain `label2id`")?,
             };
             if n_classes > 1 {
