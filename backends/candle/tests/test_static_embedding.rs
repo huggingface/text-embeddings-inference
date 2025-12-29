@@ -9,8 +9,11 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
 #[test]
 #[serial_test::serial]
 fn test_static_embedding() -> Result<()> {
-    let (model_root, _) =
-        download_artifacts("sentence-transformers/static-similarity-mrl-multilingual-v1", None, None)?;
+    let (model_root, _) = download_artifacts(
+        "sentence-transformers/static-similarity-mrl-multilingual-v1",
+        Some("refs/pr/7"),
+        None,
+    )?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -71,8 +74,11 @@ fn test_static_embedding() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_static_embedding_pooled_raw() -> Result<()> {
-    let (model_root, _) =
-        download_artifacts("sentence-transformers/static-similarity-mrl-multilingual-v1", None, None)?;
+    let (model_root, _) = download_artifacts(
+        "sentence-transformers/static-similarity-mrl-multilingual-v1",
+        Some("refs/pr/7"),
+        None,
+    )?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -99,7 +105,11 @@ fn test_static_embedding_pooled_raw() -> Result<()> {
 
     let (pooled_embeddings, raw_embeddings) = sort_embeddings(backend.embed(input_batch)?);
     let pooled_embeddings_batch = SnapshotEmbeddings::from(pooled_embeddings);
-    insta::assert_yaml_snapshot!("static_embedding_batch_pooled", pooled_embeddings_batch, &matcher);
+    insta::assert_yaml_snapshot!(
+        "static_embedding_batch_pooled",
+        pooled_embeddings_batch,
+        &matcher
+    );
 
     let raw_embeddings_batch = SnapshotEmbeddings::from(raw_embeddings);
     insta::assert_yaml_snapshot!("static_embedding_batch_raw", raw_embeddings_batch, &matcher);
@@ -118,7 +128,11 @@ fn test_static_embedding_pooled_raw() -> Result<()> {
 
     let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_single)?);
     let embeddings_single = SnapshotEmbeddings::from(pooled_embeddings);
-    insta::assert_yaml_snapshot!("static_embedding_single_pooled", embeddings_single, &matcher);
+    insta::assert_yaml_snapshot!(
+        "static_embedding_single_pooled",
+        embeddings_single,
+        &matcher
+    );
 
     assert_eq!(pooled_embeddings_batch[0], embeddings_single[0]);
     assert_eq!(pooled_embeddings_batch[2], embeddings_single[0]);
