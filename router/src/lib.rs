@@ -114,12 +114,14 @@ pub async fn run(
         text_embeddings_backend::ModelType::Classifier => {
             let id2label = config
                 .id2label
+                .clone()
                 .context("`config.json` does not contain `id2label`")?;
             let n_classes = id2label.len();
             let classifier_model = ClassifierModel {
                 id2label,
                 label2id: config
                     .label2id
+                    .clone()
                     .context("`config.json` does not contain `label2id`")?,
             };
             if n_classes > 1 {
@@ -144,7 +146,7 @@ pub async fn run(
     // Old Qwen2  repos updates the post processor manually instead of into the tokenizer.json.
     // Newer ones (https://huggingface.co/jinaai/jina-code-embeddings-0.5b/tree/main) have it in the tokenizer.json. This is to support both cases.
     // https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct/blob/main/tokenization_qwen.py#L246
-    if config.model_type == "qwen2"
+    if config.model_type() == Some("qwen2")
         && config
             .auto_map
             .as_ref()
@@ -172,10 +174,10 @@ pub async fn run(
     }
 
     // Position IDs offset. Used for Roberta and camembert.
-    let position_offset = if &config.model_type == "xlm-roberta"
-        || &config.model_type == "camembert"
-        || &config.model_type == "roberta"
-    {
+    let position_offset = if matches!(
+        config.model_type(),
+        Some("xlm-roberta") | Some("camembert") | Some("roberta")
+    ) {
         config.pad_token_id + 1
     } else {
         0
@@ -263,7 +265,7 @@ pub async fn run(
     // NOTE: `gemma3_text` won't support Float16 but only Float32, given that with `candle-cuda`
     // feature, the default `Dtype::Float16` this overrides that to prevent issues when running a
     // `gemma3_text` model without specifying a `--dtype`
-    let dtype = if dtype.is_none() && config.model_type == "gemma3_text" {
+    let dtype = if dtype.is_none() && config.model_type() == Some("gemma3_text") {
         DType::Float32
     } else {
         dtype.unwrap_or_default()
@@ -415,6 +417,15 @@ fn get_backend_model_type(
         }
     }
 
+    if config
+        .architectures
+        .iter()
+        .any(|arch| arch == "JinaEmbeddingsV4Model")
+    {
+        let pool = pooling.unwrap_or(text_embeddings_backend::Pool::Mean);
+        return Ok(text_embeddings_backend::ModelType::Embedding(pool));
+    }
+
     if Some(text_embeddings_backend::Pool::Splade) == pooling {
         return Err(anyhow!(
             "Splade pooling is not supported: model is not a ForMaskedLM model"
@@ -435,7 +446,10 @@ fn get_backend_model_type(
                     Pool::try_from(config)?
                 }
                 Err(err) => {
-                    if !config.model_type.to_lowercase().contains("bert") {
+                    let is_bert = config
+                        .model_type()
+                        .is_some_and(|t| t.to_lowercase().contains("bert"));
+                    if !is_bert {
                         return Err(err).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.");
                     }
                     tracing::warn!("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model but the model is a BERT variant. Defaulting to `CLS` pooling.");
@@ -451,14 +465,31 @@ fn get_backend_model_type(
 #[derive(Debug, Deserialize)]
 pub struct ModelConfig {
     pub architectures: Vec<String>,
-    pub model_type: String,
+    pub model_type: Option<String>,
     #[serde(alias = "n_positions")]
     pub max_position_embeddings: usize,
     #[serde(default)]
     pub pad_token_id: usize,
+    #[serde(default)]
+    pub text_config: Option<TextConfig>,
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
     pub auto_map: Option<HashMap<String, String>>,
+}
+
+impl ModelConfig {
+    fn model_type(&self) -> Option<&str> {
+        self.model_type
+            .as_deref()
+            .or_else(|| self.text_config.as_ref()?.model_type.as_deref())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TextConfig {
+    pub model_type: Option<String>,
+    #[serde(default)]
+    pub sliding_window: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

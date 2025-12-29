@@ -4,7 +4,7 @@ use hf_hub::api::tokio::{ApiError, ApiRepo};
 use rand::Rng;
 use std::cmp::{max, min};
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -29,6 +29,27 @@ use text_embeddings_backend_ort::OrtBackend;
 
 #[cfg(feature = "python")]
 use text_embeddings_backend_python::PythonBackend;
+
+#[cfg(feature = "candle")]
+#[derive(Debug, Deserialize)]
+struct MinimalConfig {
+    #[serde(default)]
+    architectures: Vec<String>,
+}
+
+#[cfg(feature = "candle")]
+fn is_jina_v4_model(model_path: &Path) -> bool {
+    let cfg_path = model_path.join("config.json");
+    if let Ok(cfg) = std::fs::read_to_string(cfg_path) {
+        if let Ok(cfg) = serde_json::from_str::<MinimalConfig>(&cfg) {
+            return cfg
+                .architectures
+                .iter()
+                .any(|arch| arch == "JinaEmbeddingsV4Model");
+        }
+    }
+    false
+}
 
 fn powers_of_two(max_value: usize) -> Vec<usize> {
     let mut result = Vec::new();
@@ -365,8 +386,12 @@ async fn init_backend(
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     let mut backend_start_failed = false;
     let api_repo = api_repo.map(Arc::new);
+    #[cfg(feature = "candle")]
+    let jina_v4_model = is_jina_v4_model(&model_path);
+    #[cfg(not(feature = "candle"))]
+    let jina_v4_model = false;
 
-    if cfg!(feature = "ort") {
+    if cfg!(feature = "ort") && !jina_v4_model {
         #[cfg(feature = "ort")]
         {
             if let Some(api_repo) = api_repo.as_ref() {
@@ -420,6 +445,12 @@ async fn init_backend(
             }
 
             tracing::info!("Model weights downloaded in {:?}", start.elapsed());
+
+            if jina_v4_model {
+                if let Err(err) = download_jina_v4_adapters(api_repo.clone()).await {
+                    tracing::warn!("Failed to download Jina v4 adapters: {err}");
+                }
+            }
         }
     }
 
@@ -631,6 +662,14 @@ async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiErro
     }
 
     Ok(safetensors_files)
+}
+
+async fn download_jina_v4_adapters(api: Arc<ApiRepo>) -> Result<(), ApiError> {
+    tracing::info!("Downloading `adapters/adapter_config.json`");
+    let _ = api.get("adapters/adapter_config.json").await?;
+    tracing::info!("Downloading `adapters/adapter_model.safetensors`");
+    let _ = api.get("adapters/adapter_model.safetensors").await?;
+    Ok(())
 }
 
 #[cfg(feature = "ort")]
