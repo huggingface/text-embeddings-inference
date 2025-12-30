@@ -1,5 +1,5 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{LayerNorm, Linear};
+use crate::layers::{index_select, LayerNorm, Linear};
 use crate::models::distilbert::{
     DistilBertConfig, DistilBertEmbeddings, DistilBertMLP, DistilBertSpladeHead,
 };
@@ -84,6 +84,7 @@ impl DistilBertAttention {
             max_s,
             self.softmax_scale,
             false,
+            None,
             None,
         )?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
@@ -212,6 +213,11 @@ impl FlashDistilBertModel {
                     DistilBertEncoder::load(vb.pp("distilbert.transformer"), config),
                 ) {
                     (embeddings, encoder)
+                } else if let (Ok(embeddings), Ok(encoder)) = (
+                    DistilBertEmbeddings::load(vb.pp("embeddings"), config),
+                    DistilBertEncoder::load(vb.pp("transformer"), config),
+                ) {
+                    (embeddings, encoder)
                 } else {
                     return Err(err);
                 }
@@ -284,11 +290,11 @@ impl FlashDistilBertModel {
                             )?;
 
                             // Only select indices that requires pooling
-                            indices = indices.index_select(&pooled_indices, 0)?
+                            indices = index_select(&indices, &pooled_indices, 0)?
                         }
 
                         // Select tokens
-                        outputs.index_select(&indices, 0)?
+                        index_select(&outputs, &indices, 0)?
                     } else {
                         match self.pool {
                             Pool::Cls => outputs.i(0)?,
@@ -378,7 +384,7 @@ impl FlashDistilBertModel {
                     Tensor::from_vec(final_indices, final_indices_length, &self.device)?;
 
                 // Select the tokens with final indices
-                Some(outputs.index_select(&final_indices, 0)?)
+                Some(index_select(&outputs, &final_indices, 0)?)
             } else {
                 Some(outputs)
             }

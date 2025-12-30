@@ -23,7 +23,7 @@ futures = "^0.3"
 init-tracing-opentelemetry = { version = "0.18.1", features = ["opentelemetry-otlp"] }
 hf-hub = { workspace = true }
 http = "1.0.0"
-num_cpus = "1.16.0"
+num_cpus = { workspace = true }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { version = "0.15.1", features = [] }
 opentelemetry = "0.23.0"
@@ -47,7 +47,7 @@ axum-tracing-opentelemetry = { version = "0.18.1", optional = true }
 base64 = { version = "0.22.1", optional = true }
 tower-http = { version = "0.5.1", features = ["cors"], optional = true }
 utoipa = { version = "4.2", features = ["axum_extras"], optional = true }
-utoipa-swagger-ui = { version = "7.1", features = ["axum"], optional = true }
+utoipa-swagger-ui = { version = "7.1", features = ["axum", "vendored"], optional = true }
 
 # gRPC dependencies
 async-stream = { version = "0.3.5", optional = true }
@@ -56,6 +56,10 @@ tonic = { version = "0.11.0", optional = true }
 tonic-health = { version = "0.11.0", optional = true }
 tonic-reflection = { version = "0.11.0", optional = true }
 tokio-stream = { version = "0.1.14", optional = true }
+
+# Optional
+cudarc = { workspace = true, optional = true }
+intel-mkl-src = { workspace = true, optional = true }
 
 # Malloc trim hack for linux
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -68,24 +72,25 @@ mimalloc = { version = "*", features = ["no_thp"] }
 insta = { git = "https://github.com/OlivierDehaene/insta", rev = "f4f98c0410b91fb5a28b10df98e4422955be9c2c", features = ["yaml"] }
 is_close = "0.1.3"
 reqwest = { version = "0.12.5", features = ["json"] }
+serial_test = { workspace = true }
 
 [build-dependencies]
 vergen = { version = "8.0.0", features = ["build", "git", "gitcl"] }
 tonic-build = { version = "0.11.0", optional = true }
 
 [features]
-default = ["candle", "http"]
+default = ["candle", "http", "dynamic-linking"]
 http = ["dep:axum", "dep:axum-tracing-opentelemetry", "dep:base64", "dep:tower-http", "dep:utoipa", "dep:utoipa-swagger-ui"]
 grpc = ["metrics-exporter-prometheus/http-listener", "dep:prost", "dep:tonic", "dep:tonic-health", "dep:tonic-reflection", "dep:tonic-build", "dep:async-stream", "dep:tokio-stream"]
 metal = ["text-embeddings-backend/metal"]
-mkl = ["text-embeddings-backend/mkl"]
-mkl-dynamic = ["text-embeddings-backend/mkl-dynamic"]
+mkl = ["text-embeddings-backend/mkl", "dep:intel-mkl-src"]
 accelerate = ["text-embeddings-backend/accelerate"]
 python = ["text-embeddings-backend/python"]
 ort = ["text-embeddings-backend/ort"]
 candle = ["text-embeddings-backend/candle"]
-candle-cuda = ["candle", "text-embeddings-backend/flash-attn"]
-candle-cuda-turing = ["candle", "text-embeddings-backend/flash-attn-v1"]
-candle-cuda-volta = ["candle", "text-embeddings-backend/cuda"]
-static-linking = ["text-embeddings-backend/static-linking"]
+candle-cuda = ["candle", "text-embeddings-backend/flash-attn", "dep:cudarc"]
+candle-cuda-turing = ["candle", "text-embeddings-backend/flash-attn-v1", "dep:cudarc"]
+candle-cuda-volta = ["candle", "text-embeddings-backend/cuda", "dep:cudarc"]
+static-linking = ["cudarc?/static-linking", "intel-mkl-src?/mkl-static-lp64-iomp"]
+dynamic-linking = ["cudarc?/dynamic-linking", "intel-mkl-src?/mkl-dynamic-lp64-iomp"]
 google = []

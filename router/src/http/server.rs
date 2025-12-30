@@ -10,7 +10,7 @@ use crate::http::types::{
     VertexResponse,
 };
 use crate::{
-    shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
+    logging, shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
     ResponseMetadata,
 };
 use ::http::HeaderMap;
@@ -34,10 +34,12 @@ use text_embeddings_backend::BackendError;
 use text_embeddings_core::infer::{
     AllEmbeddingsInferResponse, Infer, InferMetadata, PooledEmbeddingsInferResponse,
 };
+use text_embeddings_core::tokenization::{into_tokens, SimpleToken as CoreSimpleToken};
 use text_embeddings_core::TextEmbeddingsError;
 use tokio::sync::OwnedSemaphorePermit;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::instrument;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -89,6 +91,8 @@ example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
 example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
 (status = 413, description = "Batch size error", body = ErrorResponse,
 example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )
@@ -100,9 +104,14 @@ example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 async fn predict(
     infer: Extension<Infer>,
     info: Extension<Info>,
+    Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<PredictRequest>,
 ) -> Result<(HeaderMap, Json<PredictResponse>), (StatusCode, Json<ErrorResponse>)> {
     let span = tracing::Span::current();
+    if let Some(context) = context {
+        span.set_parent(context);
+    }
+
     let start_time = Instant::now();
 
     // Closure for predict
@@ -285,6 +294,8 @@ example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
 example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
 (status = 413, description = "Batch size error", body = ErrorResponse,
 example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )
@@ -296,9 +307,14 @@ example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 async fn rerank(
     infer: Extension<Infer>,
     info: Extension<Info>,
+    Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<RerankRequest>,
 ) -> Result<(HeaderMap, Json<RerankResponse>), (StatusCode, Json<ErrorResponse>)> {
     let span = tracing::Span::current();
+    if let Some(context) = context {
+        span.set_parent(context);
+    }
+
     let start_time = Instant::now();
 
     if req.texts.is_empty() {
@@ -306,7 +322,7 @@ async fn rerank(
         tracing::error!("{message}");
         let err = ErrorResponse {
             error: message,
-            error_type: ErrorType::Validation,
+            error_type: ErrorType::Empty,
         };
         let counter = metrics::counter!("te_request_failure", "err" => "validation");
         counter.increment(1);
@@ -471,6 +487,8 @@ example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
 example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
 (status = 413, description = "Batch size error", body = ErrorResponse,
 example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )
@@ -482,6 +500,7 @@ example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 async fn similarity(
     infer: Extension<Infer>,
     info: Extension<Info>,
+    context: Extension<Option<opentelemetry::Context>>,
     Json(req): Json<SimilarityRequest>,
 ) -> Result<(HeaderMap, Json<SimilarityResponse>), (StatusCode, Json<ErrorResponse>)> {
     if req.inputs.sentences.is_empty() {
@@ -489,7 +508,7 @@ async fn similarity(
         tracing::error!("{message}");
         let err = ErrorResponse {
             error: message,
-            error_type: ErrorType::Validation,
+            error_type: ErrorType::Empty,
         };
         let counter = metrics::counter!("te_request_failure", "err" => "validation");
         counter.increment(1);
@@ -525,10 +544,11 @@ async fn similarity(
         truncation_direction: parameters.truncation_direction,
         prompt_name: parameters.prompt_name,
         normalize: false,
+        dimensions: None,
     };
 
     // Get embeddings
-    let (header_map, embed_response) = embed(infer, info, Json(embed_req)).await?;
+    let (header_map, embed_response) = embed(infer, info, context, Json(embed_req)).await?;
     let embeddings = embed_response.0 .0;
 
     // Compute cosine
@@ -553,6 +573,8 @@ example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
 example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
 (status = 413, description = "Batch size error", body = ErrorResponse,
 example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )
@@ -564,17 +586,21 @@ example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 async fn embed(
     infer: Extension<Infer>,
     info: Extension<Info>,
+    Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<EmbedRequest>,
 ) -> Result<(HeaderMap, Json<EmbedResponse>), (StatusCode, Json<ErrorResponse>)> {
     let span = tracing::Span::current();
+    if let Some(context) = context {
+        span.set_parent(context);
+    }
+
     let start_time = Instant::now();
 
     let truncate = req.truncate.unwrap_or(info.auto_truncate);
 
     let (response, metadata) = match req.inputs {
         Input::Single(input) => {
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_count", "method" => "single").increment(1);
 
             let compute_chars = input.count_chars();
 
@@ -586,13 +612,13 @@ async fn embed(
                     req.truncation_direction.into(),
                     req.prompt_name,
                     req.normalize,
+                    req.dimensions,
                     permit,
                 )
                 .await
                 .map_err(ErrorResponse::from)?;
 
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_success", "method" => "single").increment(1);
 
             (
                 EmbedResponse(vec![response.results]),
@@ -615,7 +641,7 @@ async fn embed(
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
-                    error_type: ErrorType::Validation,
+                    error_type: ErrorType::Empty,
                 };
                 let counter = metrics::counter!("te_request_failure", "err" => "validation");
                 counter.increment(1);
@@ -655,6 +681,7 @@ async fn embed(
                             req.truncation_direction.into(),
                             prompt_name,
                             req.normalize,
+                            req.dimensions,
                             permit,
                         )
                         .await
@@ -722,6 +749,8 @@ example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
 example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
 (status = 413, description = "Batch size error", body = ErrorResponse,
 example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )
@@ -733,9 +762,14 @@ example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 async fn embed_sparse(
     infer: Extension<Infer>,
     info: Extension<Info>,
+    Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<EmbedSparseRequest>,
 ) -> Result<(HeaderMap, Json<EmbedSparseResponse>), (StatusCode, Json<ErrorResponse>)> {
     let span = tracing::Span::current();
+    if let Some(context) = context {
+        span.set_parent(context);
+    }
+
     let start_time = Instant::now();
 
     let sparsify = |values: Vec<f32>| {
@@ -751,8 +785,7 @@ async fn embed_sparse(
 
     let (response, metadata) = match req.inputs {
         Input::Single(input) => {
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_count", "method" => "single").increment(1);
 
             let compute_chars = input.count_chars();
 
@@ -768,8 +801,7 @@ async fn embed_sparse(
                 .await
                 .map_err(ErrorResponse::from)?;
 
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_success", "method" => "single").increment(1);
 
             (
                 EmbedSparseResponse(vec![sparsify(response.results)]),
@@ -792,7 +824,7 @@ async fn embed_sparse(
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
-                    error_type: ErrorType::Validation,
+                    error_type: ErrorType::Empty,
                 };
                 let counter = metrics::counter!("te_request_failure", "err" => "validation");
                 counter.increment(1);
@@ -900,6 +932,8 @@ example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
 example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
 (status = 413, description = "Batch size error", body = ErrorResponse,
 example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )
@@ -911,17 +945,21 @@ example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 async fn embed_all(
     infer: Extension<Infer>,
     info: Extension<Info>,
+    Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<EmbedAllRequest>,
 ) -> Result<(HeaderMap, Json<EmbedAllResponse>), (StatusCode, Json<ErrorResponse>)> {
     let span = tracing::Span::current();
+    if let Some(context) = context {
+        span.set_parent(context);
+    }
+
     let start_time = Instant::now();
 
     let truncate = req.truncate.unwrap_or(info.auto_truncate);
 
     let (response, metadata) = match req.inputs {
         Input::Single(input) => {
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_count", "method" => "single").increment(1);
 
             let compute_chars = input.count_chars();
 
@@ -937,8 +975,7 @@ async fn embed_all(
                 .await
                 .map_err(ErrorResponse::from)?;
 
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_success", "method" => "single").increment(1);
 
             (
                 EmbedAllResponse(vec![response.results]),
@@ -961,7 +998,7 @@ async fn embed_all(
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
-                    error_type: ErrorType::Validation,
+                    error_type: ErrorType::Empty,
                 };
                 let counter = metrics::counter!("te_request_failure", "err" => "validation");
                 counter.increment(1);
@@ -1067,6 +1104,8 @@ example = json ! ({"message": "Inference failed", "type": "backend"})),
 example = json ! ({"message": "Model is overloaded", "type": "overloaded"})),
 (status = 422, description = "Tokenization error", body = OpenAICompatErrorResponse,
 example = json ! ({"message": "Tokenization error", "type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = OpenAICompatErrorResponse,
+example = json ! ({"message": "Batch is empty", "type": "empty"})),
 (status = 413, description = "Batch size error", body = OpenAICompatErrorResponse,
 example = json ! ({"message": "Batch size error", "type": "validation"})),
 )
@@ -1078,6 +1117,7 @@ example = json ! ({"message": "Batch size error", "type": "validation"})),
 async fn openai_embed(
     infer: Extension<Infer>,
     info: Extension<Info>,
+    Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<OpenAICompatRequest>,
 ) -> Result<(HeaderMap, Json<OpenAICompatResponse>), (StatusCode, Json<OpenAICompatErrorResponse>)>
 {
@@ -1097,14 +1137,17 @@ async fn openai_embed(
     };
 
     let span = tracing::Span::current();
+    if let Some(context) = context {
+        span.set_parent(context);
+    }
+
     let start_time = Instant::now();
 
     let truncate = info.auto_truncate;
 
     let (embeddings, metadata) = match req.input {
         Input::Single(input) => {
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_count", "method" => "single").increment(1);
 
             let compute_chars = input.count_chars();
 
@@ -1116,13 +1159,13 @@ async fn openai_embed(
                     tokenizers::TruncationDirection::Right,
                     None,
                     true,
+                    req.dimensions,
                     permit,
                 )
                 .await
                 .map_err(ErrorResponse::from)?;
 
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_success", "method" => "single").increment(1);
 
             let embedding = encode_embedding(response.results);
             (
@@ -1150,7 +1193,7 @@ async fn openai_embed(
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
-                    error_type: ErrorType::Validation,
+                    error_type: ErrorType::Empty,
                 };
                 let counter = metrics::counter!("te_request_failure", "err" => "validation");
                 counter.increment(1);
@@ -1189,6 +1232,7 @@ async fn openai_embed(
                             tokenizers::TruncationDirection::Right,
                             None,
                             true,
+                            req.dimensions,
                             permit,
                         )
                         .await
@@ -1265,8 +1309,12 @@ path = "/tokenize",
 request_body = TokenizeRequest,
 responses(
 (status = 200, description = "Tokenized ids", body = TokenizeResponse),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
+(status = 413, description = "Batch size error", body = ErrorResponse,
+example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
-example = json ! ({"message": "Tokenization error", "type": "tokenizer"})),
+example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
 )
 )]
 #[instrument(skip_all)]
@@ -1285,32 +1333,22 @@ async fn tokenize(
             .map_err(ErrorResponse::from)?;
         let input = encoded_input.unwrap_or(input);
 
-        let tokens: Vec<SimpleToken> = encoding
-            .get_ids()
-            .iter()
-            .zip(encoding.get_offsets())
-            .zip(encoding.get_special_tokens_mask())
-            .zip(encoding.get_tokens())
-            .map(|(((&id, &(start, stop)), special), token)| {
-                let special = *special == 1;
-                match special {
-                    true => SimpleToken {
-                        id,
-                        text: token.clone(),
-                        special,
-                        start: None,
-                        stop: None,
-                    },
-                    false => {
-                        let text: String = input.chars().skip(start).take(stop - start).collect();
-                        SimpleToken {
-                            id,
-                            text,
-                            special,
-                            start: Some(start),
-                            stop: Some(stop),
-                        }
-                    }
+        let tokens: Vec<SimpleToken> = into_tokens(encoding, &input)
+            .into_iter()
+            .map(|t| {
+                let CoreSimpleToken {
+                    id,
+                    text,
+                    special,
+                    start,
+                    stop,
+                } = t;
+                SimpleToken {
+                    id,
+                    text,
+                    special,
+                    start,
+                    stop,
                 }
             })
             .collect();
@@ -1327,7 +1365,7 @@ async fn tokenize(
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
-                    error_type: ErrorType::Validation,
+                    error_type: ErrorType::Empty,
                 };
                 let counter = metrics::counter!("te_request_failure", "err" => "validation");
                 counter.increment(1);
@@ -1377,8 +1415,12 @@ path = "/decode",
 request_body = DecodeRequest,
 responses(
 (status = 200, description = "Decoded ids", body = DecodeResponse),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
+(status = 413, description = "Batch size error", body = ErrorResponse,
+example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
-example = json ! ({"message": "Tokenization error", "type": "tokenizer"})),
+example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
 )
 )]
 #[instrument(skip_all)]
@@ -1403,7 +1445,7 @@ async fn decode(
                 tracing::error!("{message}");
                 let err = ErrorResponse {
                     error: message,
-                    error_type: ErrorType::Validation,
+                    error_type: ErrorType::Empty,
                 };
                 let counter = metrics::counter!("te_request_failure", "err" => "validation");
                 counter.increment(1);
@@ -1454,6 +1496,8 @@ example = json ! ({"error": "Inference failed", "error_type": "backend"})),
 example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
 (status = 422, description = "Tokenization error", body = ErrorResponse,
 example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
 (status = 413, description = "Batch size error", body = ErrorResponse,
 example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )
@@ -1462,36 +1506,47 @@ example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 async fn vertex_compatibility(
     infer: Extension<Infer>,
     info: Extension<Info>,
+    context: Extension<Option<opentelemetry::Context>>,
     Json(req): Json<VertexRequest>,
 ) -> Result<Json<VertexResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let embed_future = move |infer: Extension<Infer>, info: Extension<Info>, req: EmbedRequest| async move {
-        let result = embed(infer, info, Json(req)).await?;
+    let embed_future = move |infer: Extension<Infer>,
+                             info: Extension<Info>,
+                             context: Extension<Option<opentelemetry::Context>>,
+                             req: EmbedRequest| async move {
+        let result = embed(infer, info, context, Json(req)).await?;
         Ok(VertexPrediction::Embed(result.1 .0))
     };
-    let embed_sparse_future =
-        move |infer: Extension<Infer>, info: Extension<Info>, req: EmbedSparseRequest| async move {
-            let result = embed_sparse(infer, info, Json(req)).await?;
-            Ok(VertexPrediction::EmbedSparse(result.1 .0))
-        };
-    let predict_future =
-        move |infer: Extension<Infer>, info: Extension<Info>, req: PredictRequest| async move {
-            let result = predict(infer, info, Json(req)).await?;
-            Ok(VertexPrediction::Predict(result.1 .0))
-        };
-    let rerank_future =
-        move |infer: Extension<Infer>, info: Extension<Info>, req: RerankRequest| async move {
-            let result = rerank(infer, info, Json(req)).await?;
-            Ok(VertexPrediction::Rerank(result.1 .0))
-        };
+    let embed_sparse_future = move |infer: Extension<Infer>,
+                                    info: Extension<Info>,
+                                    context: Extension<Option<opentelemetry::Context>>,
+                                    req: EmbedSparseRequest| async move {
+        let result = embed_sparse(infer, info, context, Json(req)).await?;
+        Ok(VertexPrediction::EmbedSparse(result.1 .0))
+    };
+    let predict_future = move |infer: Extension<Infer>,
+                               info: Extension<Info>,
+                               context: Extension<Option<opentelemetry::Context>>,
+                               req: PredictRequest| async move {
+        let result = predict(infer, info, context, Json(req)).await?;
+        Ok(VertexPrediction::Predict(result.1 .0))
+    };
+    let rerank_future = move |infer: Extension<Infer>,
+                              info: Extension<Info>,
+                              context: Extension<Option<opentelemetry::Context>>,
+                              req: RerankRequest| async move {
+        let result = rerank(infer, info, context, Json(req)).await?;
+        Ok(VertexPrediction::Rerank(result.1 .0))
+    };
 
     let mut futures = Vec::with_capacity(req.instances.len());
     for instance in req.instances {
         let local_infer = infer.clone();
         let local_info = info.clone();
+        let local_context = context.clone();
 
         // Rerank is the only payload that can me matched safely
         if let Ok(instance) = serde_json::from_value::<RerankRequest>(instance.clone()) {
-            futures.push(rerank_future(local_infer, local_info, instance).boxed());
+            futures.push(rerank_future(local_infer, local_info, local_context, instance).boxed());
             continue;
         }
 
@@ -1499,17 +1554,23 @@ async fn vertex_compatibility(
             ModelType::Classifier(_) | ModelType::Reranker(_) => {
                 let instance = serde_json::from_value::<PredictRequest>(instance)
                     .map_err(ErrorResponse::from)?;
-                futures.push(predict_future(local_infer, local_info, instance).boxed());
+                futures
+                    .push(predict_future(local_infer, local_info, local_context, instance).boxed());
             }
             ModelType::Embedding(_) => {
                 if infer.is_splade() {
                     let instance = serde_json::from_value::<EmbedSparseRequest>(instance)
                         .map_err(ErrorResponse::from)?;
-                    futures.push(embed_sparse_future(local_infer, local_info, instance).boxed());
+                    futures.push(
+                        embed_sparse_future(local_infer, local_info, local_context, instance)
+                            .boxed(),
+                    );
                 } else {
                     let instance = serde_json::from_value::<EmbedRequest>(instance)
                         .map_err(ErrorResponse::from)?;
-                    futures.push(embed_future(local_infer, local_info, instance).boxed());
+                    futures.push(
+                        embed_future(local_infer, local_info, local_context, instance).boxed(),
+                    );
                 }
             }
         }
@@ -1634,9 +1695,12 @@ pub async fn run(
         }
     });
 
-    let prom_handle = prom_builder
-        .install_recorder()
-        .context("failed to install metrics recorder")?;
+    // See: https://github.com/metrics-rs/metrics/issues/467#issuecomment-2022755151
+    let (recorder, _) = prom_builder
+        .build()
+        .context("failed to build prometheus recorder")?;
+    let prom_handle = recorder.handle();
+    metrics::set_global_recorder(recorder).context("Failed to set global recorder")?;
 
     // CORS layer
     let allow_origin = allow_origin.unwrap_or(AllowOrigin::any());
@@ -1666,9 +1730,7 @@ pub async fn run(
         ApiDoc::openapi()
     };
 
-    // Create router
-    let mut app = Router::new()
-        .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", doc))
+    let mut routes = Router::new()
         // Base routes
         .route("/info", get(get_model_info))
         .route("/embed", post(embed))
@@ -1683,7 +1745,10 @@ pub async fn run(
         .route("/embeddings", post(openai_embed))
         .route("/v1/embeddings", post(openai_embed))
         // Vertex compat route
-        .route("/vertex", post(vertex_compatibility))
+        .route("/vertex", post(vertex_compatibility));
+
+    #[allow(unused_mut)]
+    let mut public_routes = Router::new()
         // Base Health route
         .route("/health", get(health))
         // Inference API health route
@@ -1691,9 +1756,7 @@ pub async fn run(
         // AWS Sagemaker health route
         .route("/ping", get(health))
         // Prometheus metrics route
-        .route("/metrics", get(metrics))
-        // Update payload limit
-        .layer(DefaultBodyLimit::max(payload_limit));
+        .route("/metrics", get(metrics));
 
     #[cfg(feature = "google")]
     {
@@ -1701,39 +1764,44 @@ pub async fn run(
 
         if let Ok(env_predict_route) = std::env::var("AIP_PREDICT_ROUTE") {
             tracing::info!("Serving Vertex compatible route on {env_predict_route}");
-            app = app.route(&env_predict_route, post(vertex_compatibility));
+            routes = routes.route(&env_predict_route, post(vertex_compatibility));
         }
 
         if let Ok(env_health_route) = std::env::var("AIP_HEALTH_ROUTE") {
             tracing::info!("Serving Vertex compatible health route on {env_health_route}");
-            app = app.route(&env_health_route, get(health));
+            public_routes = public_routes.route(&env_health_route, get(health));
         }
     }
     #[cfg(not(feature = "google"))]
     {
         // Set default routes
-        app = match &info.model_type {
+        routes = match &info.model_type {
             ModelType::Classifier(_) => {
-                app.route("/", post(predict))
+                routes
+                    .route("/", post(predict))
                     // AWS Sagemaker route
                     .route("/invocations", post(predict))
             }
             ModelType::Reranker(_) => {
-                app.route("/", post(rerank))
+                routes
+                    .route("/", post(rerank))
                     // AWS Sagemaker route
                     .route("/invocations", post(rerank))
             }
             ModelType::Embedding(model) => {
                 if std::env::var("TASK").ok() == Some("sentence-similarity".to_string()) {
-                    app.route("/", post(similarity))
+                    routes
+                        .route("/", post(similarity))
                         // AWS Sagemaker route
                         .route("/invocations", post(similarity))
                 } else if model.pooling == "splade" {
-                    app.route("/", post(embed_sparse))
+                    routes
+                        .route("/", post(embed_sparse))
                         // AWS Sagemaker route
                         .route("/invocations", post(embed_sparse))
                 } else {
-                    app.route("/", post(embed))
+                    routes
+                        .route("/", post(embed))
                         // AWS Sagemaker route
                         .route("/invocations", post(embed))
                 }
@@ -1741,16 +1809,8 @@ pub async fn run(
         };
     }
 
-    app = app
-        .layer(Extension(infer))
-        .layer(Extension(info))
-        .layer(Extension(prom_handle.clone()))
-        .layer(OtelAxumLayer::default())
-        .layer(cors_layer);
-
     if let Some(api_key) = api_key {
-        let mut prefix = "Bearer ".to_string();
-        prefix.push_str(&api_key);
+        let prefix = format!("Bearer {}", api_key);
 
         // Leak to allow FnMut
         let api_key: &'static str = prefix.leak();
@@ -1767,8 +1827,22 @@ pub async fn run(
             }
         };
 
-        app = app.layer(axum::middleware::from_fn(auth));
+        routes = routes.layer(axum::middleware::from_fn(auth));
     }
+
+    let app = Router::new()
+        .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", doc))
+        .merge(routes)
+        .merge(public_routes)
+        .layer(Extension(infer))
+        .layer(Extension(info))
+        .layer(Extension(prom_handle.clone()))
+        .layer(OtelAxumLayer::default())
+        .layer(axum::middleware::from_fn(
+            logging::http::trace_context_middleware,
+        ))
+        .layer(DefaultBodyLimit::max(payload_limit))
+        .layer(cors_layer);
 
     // Run server
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -1794,6 +1868,7 @@ impl From<&ErrorType> for StatusCode {
             ErrorType::Overloaded => StatusCode::TOO_MANY_REQUESTS,
             ErrorType::Tokenizer => StatusCode::UNPROCESSABLE_ENTITY,
             ErrorType::Validation => StatusCode::PAYLOAD_TOO_LARGE,
+            ErrorType::Empty => StatusCode::BAD_REQUEST,
         }
     }
 }

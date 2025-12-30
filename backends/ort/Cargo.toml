@@ -8,8 +8,10 @@ homepage.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 nohash-hasher = { workspace = true }
-ndarray = "0.15.6"
-ort = { version = "2.0.0-rc.2", default-features = false, features = ["download-binaries", "half", "onednn", "ndarray"] }
+ndarray = "0.16.1"
+num_cpus = { workspace = true }
+ort = { version = "2.0.0-rc.10", default-features = false, features = ["std", "download-binaries", "half", "onednn", "ndarray"] }
+ort-sys = { version = "=2.0.0-rc.10", default-features = false }  # https://github.com/pykeio/ort/issues/399
 text-embeddings-backend-core = { path = "../core" }
 tracing = { workspace = true }
 thiserror = { workspace = true }

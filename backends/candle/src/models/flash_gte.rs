@@ -1,8 +1,11 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{HiddenAct, LayerNorm, Linear};
-use crate::models::{GTEConfig, Model, NTKScaling, PositionEmbeddingType, RopeScaling};
+use crate::layers::{get_cos_sin, get_inv_freqs, index_select, LayerNorm, Linear};
+use crate::models::gte::{GTEClassificationHead, GTEConfig, GTEMLP};
+use crate::models::{Model, PositionEmbeddingType};
+
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
+use candle_rotary::apply_rotary_inplace;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 struct GTEAttention {
@@ -72,7 +75,7 @@ impl GTEAttention {
         let k = qkv.narrow(1, self.num_attention_heads, self.num_attention_heads)?;
         let v = qkv.narrow(1, self.num_attention_heads * 2, self.num_attention_heads)?;
 
-        candle_rotary::apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
+        apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
 
         let attention = flash_attn_varlen(
             &q,
@@ -86,6 +89,7 @@ impl GTEAttention {
             self.softmax_scale,
             false,
             None,
+            None,
         )?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
@@ -93,60 +97,7 @@ impl GTEAttention {
     }
 }
 
-struct GTEMLP {
-    up_gate_proj: Linear,
-    down_proj: Linear,
-
-    act: HiddenAct,
-    intermediate_size: usize,
-
-    span: tracing::Span,
-}
-
-impl GTEMLP {
-    pub fn load(vb: VarBuilder, config: &GTEConfig) -> Result<Self> {
-        let intermediate_size = config.intermediate_size;
-
-        let up_gate_proj_weight = vb
-            .pp("up_gate_proj")
-            .get((intermediate_size * 2, config.hidden_size), "weight")?;
-
-        let up_gate_proj = Linear::new(up_gate_proj_weight, None, None);
-
-        let down_proj_weight = vb
-            .pp("down_proj")
-            .get((config.hidden_size, intermediate_size), "weight")?;
-        let down_proj_bias = vb.pp("down_proj").get(config.hidden_size, "bias")?;
-        let down_proj = Linear::new(down_proj_weight, Some(down_proj_bias), None);
-
-        Ok(Self {
-            up_gate_proj,
-            down_proj,
-            intermediate_size,
-            act: config.hidden_act.clone(),
-            span: tracing::span!(tracing::Level::TRACE, "mlp"),
-        })
-    }
-
-    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
-        let _enter = self.span.enter();
-
-        let up_gate_states = self.up_gate_proj.forward(hidden_states)?;
-        let up_states = up_gate_states.narrow(1, 0, self.intermediate_size)?;
-        let gate_states =
-            up_gate_states.narrow(1, self.intermediate_size, self.intermediate_size)?;
-
-        let gate_states = match self.act {
-            HiddenAct::Gelu => gate_states.gelu(),
-            HiddenAct::Relu => gate_states.relu(),
-            HiddenAct::Swiglu => gate_states.silu(),
-        }?;
-        let r = self.down_proj.forward(&(gate_states * up_states)?);
-        r
-    }
-}
-
-struct GTELayer {
+pub struct GTELayer {
     attention: GTEAttention,
     mlp: GTEMLP,
     attention_layer_norm: LayerNorm,
@@ -205,6 +156,7 @@ pub struct FlashGTEModel {
     embeddings_norm: LayerNorm,
     cos_cache: Tensor,
     sin_cache: Tensor,
+    classifier: Option<GTEClassificationHead>,
     pool: Pool,
     pub device: Device,
 
@@ -233,13 +185,52 @@ impl FlashGTEModel {
             candle::bail!("Only `PositionEmbeddingType::Rope` is supported");
         }
 
-        let pool = match model_type {
+        let (pool, classifier) = match model_type {
             ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for GTE")
+                let pool = Pool::Cls;
+
+                let classifier = GTEClassificationHead::load(vb.clone(), config)?;
+                (pool, Some(classifier))
             }
-            ModelType::Embedding(pool) => pool,
+            ModelType::Embedding(pool) => (pool, None),
         };
 
+        let (word_embeddings, token_type_embeddings, layers, embeddings_norm) =
+            Self::inner_load(vb.pp("new"), config)
+                .or_else(|_| Self::inner_load(vb.clone(), config))?;
+
+        let inv_freqs = get_inv_freqs(
+            layers[0].attention.attention_head_size,
+            config.rope_theta,
+            vb.device(),
+            config.rope_scaling.as_ref(),
+        )?;
+
+        let (cos_cache, sin_cache) = get_cos_sin(
+            config.max_position_embeddings,
+            &inv_freqs,
+            vb.dtype(),
+            false,
+        )?;
+
+        Ok(Self {
+            word_embeddings,
+            token_type_embeddings,
+            layers,
+            embeddings_norm,
+            cos_cache,
+            sin_cache,
+            classifier,
+            pool,
+            device: vb.device().clone(),
+            span: tracing::span!(tracing::Level::TRACE, "model"),
+        })
+    }
+
+    fn inner_load(
+        vb: VarBuilder,
+        config: &GTEConfig,
+    ) -> Result<(Embedding, Option<Embedding>, Vec<GTELayer>, LayerNorm)> {
         let word_embeddings = Embedding::new(
             vb.pp("embeddings.word_embeddings")
                 .get((config.vocab_size, config.hidden_size), "weight")?,
@@ -265,37 +256,12 @@ impl FlashGTEModel {
             config.hidden_size,
             config.layer_norm_eps,
         )?;
-
-        let inv_freqs = if let Some(RopeScaling::Ntk(NTKScaling { factor })) = config.rope_scaling {
-            let inv_freqs = candle_rotary::inv_freqs(
-                layers[0].attention.attention_head_size,
-                config.rope_theta * factor,
-                vb.device(),
-            )?;
-            let s = factor.powf(2.0 / layers[0].attention.attention_head_size as f32) as f64;
-            inv_freqs / s
-        } else {
-            candle_rotary::inv_freqs(
-                layers[0].attention.attention_head_size,
-                config.rope_theta,
-                vb.device(),
-            )
-        }?;
-
-        let (cos_cache, sin_cache) =
-            candle_rotary::cos_sin(config.max_position_embeddings, &inv_freqs, vb.dtype())?;
-
-        Ok(Self {
+        Ok((
             word_embeddings,
             token_type_embeddings,
             layers,
             embeddings_norm,
-            cos_cache,
-            sin_cache,
-            pool,
-            device: vb.device().clone(),
-            span: tracing::span!(tracing::Level::TRACE, "model"),
-        })
+        ))
     }
 
     pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
@@ -325,8 +291,8 @@ impl FlashGTEModel {
             .embeddings_norm
             .forward(&word_embeddings, token_type_embeddings.as_ref())?;
 
-        let cos = self.cos_cache.index_select(&position_ids, 0)?;
-        let sin = self.sin_cache.index_select(&position_ids, 0)?;
+        let cos = index_select(&self.cos_cache, &position_ids, 0)?;
+        let sin = index_select(&self.sin_cache, &position_ids, 0)?;
 
         for layer in &self.layers {
             let h = layer.forward(
@@ -370,11 +336,11 @@ impl FlashGTEModel {
                             )?;
 
                             // Only select indices that requires pooling
-                            indices = indices.index_select(&pooled_indices, 0)?
+                            indices = index_select(&indices, &pooled_indices, 0)?
                         }
 
                         // Select tokens
-                        Some(outputs.index_select(&indices, 0)?)
+                        Some(index_select(&outputs, &indices, 0)?)
                     } else {
                         Some(
                             match self.pool {
@@ -441,7 +407,7 @@ impl FlashGTEModel {
                     Tensor::from_vec(final_indices, final_indices_length, &self.device)?;
 
                 // Select the tokens with final indices
-                Some(outputs.index_select(&final_indices, 0)?)
+                Some(index_select(&outputs, &final_indices, 0)?)
             } else {
                 Some(outputs)
             }
@@ -457,7 +423,20 @@ impl Model for FlashGTEModel {
     fn is_padded(&self) -> bool {
         false
     }
+
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
+    }
+
+    fn predict(&self, batch: Batch) -> Result<Tensor> {
+        match &self.classifier {
+            None => candle::bail!("`predict` is not implemented for this model"),
+            Some(classifier) => {
+                let (pooled_embeddings, _raw_embeddings) = self.forward(batch)?;
+                let pooled_embeddings =
+                    pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
+                classifier.forward(&pooled_embeddings)
+            }
+        }
     }
 }

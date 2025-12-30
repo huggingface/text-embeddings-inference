@@ -17,7 +17,9 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use text_embeddings_core::infer::Infer;
-use text_embeddings_core::tokenization::EncodingInput;
+use text_embeddings_core::tokenization::{
+    into_tokens, EncodingInput, SimpleToken as CoreSimpleToken,
+};
 use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_stream::StreamExt;
@@ -91,6 +93,7 @@ impl TextEmbeddingsService {
                 truncation_direction,
                 request.prompt_name,
                 request.normalize,
+                request.dimensions.map(|v| v as usize),
                 permit,
             )
             .await
@@ -342,32 +345,22 @@ impl TextEmbeddingsService {
             .map_err(ErrorResponse::from)?;
         let inputs = encoded_inputs.unwrap_or(inputs);
 
-        let tokens: Vec<SimpleToken> = encoding
-            .get_ids()
-            .iter()
-            .zip(encoding.get_offsets())
-            .zip(encoding.get_special_tokens_mask())
-            .zip(encoding.get_tokens())
-            .map(|(((&id, &(start, stop)), special), token)| {
-                let special = *special == 1;
-                match special {
-                    true => SimpleToken {
-                        id,
-                        text: token.clone(),
-                        special,
-                        start: None,
-                        stop: None,
-                    },
-                    false => {
-                        let text: String = inputs.chars().skip(start).take(stop - start).collect();
-                        SimpleToken {
-                            id,
-                            text,
-                            special,
-                            start: Some(start as u32),
-                            stop: Some(stop as u32),
-                        }
-                    }
+        let tokens: Vec<SimpleToken> = into_tokens(encoding, &inputs)
+            .into_iter()
+            .map(|t| {
+                let CoreSimpleToken {
+                    id,
+                    text,
+                    special,
+                    start,
+                    stop,
+                } = t;
+                SimpleToken {
+                    id,
+                    text,
+                    special,
+                    start: start.map(|s| s as u32),
+                    stop: stop.map(|s| s as u32),
                 }
             })
             .collect();
@@ -600,8 +593,7 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         &self,
         request: Request<EmbedRequest>,
     ) -> Result<Response<EmbedResponse>, Status> {
-        let counter = metrics::counter!("te_request_count", "method" => "single");
-        counter.increment(1);
+        metrics::counter!("te_request_count", "method" => "single").increment(1);
 
         let permit = self
             .infer
@@ -612,8 +604,7 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         let (response, metadata) = self.embed_pooled_inner(request, permit).await?;
         let headers = HeaderMap::from(metadata);
 
-        let counter = metrics::counter!("te_request_count", "method" => "single");
-        counter.increment(1);
+        metrics::counter!("te_request_success", "method" => "single").increment(1);
 
         Ok(Response::from_parts(
             MetadataMap::from_headers(headers),
@@ -730,8 +721,7 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
         &self,
         request: Request<PredictRequest>,
     ) -> Result<Response<PredictResponse>, Status> {
-        let counter = metrics::counter!("te_request_count", "method" => "single");
-        counter.increment(1);
+        metrics::counter!("te_request_count", "method" => "single").increment(1);
 
         let permit = self
             .infer
@@ -751,8 +741,7 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
             .await?;
         let headers = HeaderMap::from(metadata);
 
-        let counter = metrics::counter!("te_request_count", "method" => "single");
-        counter.increment(1);
+        metrics::counter!("te_request_success", "method" => "single").increment(1);
 
         Ok(Response::from_parts(
             MetadataMap::from_headers(headers),
@@ -765,8 +754,8 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
         &self,
         request: Request<PredictPairRequest>,
     ) -> Result<Response<PredictResponse>, Status> {
-        let counter = metrics::counter!("te_request_count", "method" => "single");
-        counter.increment(1);
+        metrics::counter!("te_request_count", "method" => "single").increment(1);
+
         let request = request.into_inner();
 
         let mut inputs = request.inputs;
@@ -802,8 +791,7 @@ impl grpc::predict_server::Predict for TextEmbeddingsService {
             .await?;
         let headers = HeaderMap::from(metadata);
 
-        let counter = metrics::counter!("te_request_count", "method" => "single");
-        counter.increment(1);
+        metrics::counter!("te_request_success", "method" => "single").increment(1);
 
         Ok(Response::from_parts(
             MetadataMap::from_headers(headers),
@@ -1966,6 +1954,7 @@ impl From<ErrorResponse> for Status {
             ErrorType::Overloaded => Code::ResourceExhausted,
             ErrorType::Validation => Code::InvalidArgument,
             ErrorType::Tokenizer => Code::FailedPrecondition,
+            ErrorType::Empty => Code::InvalidArgument,
         };
 
         Status::new(code, value.error)

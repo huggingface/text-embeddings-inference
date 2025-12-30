@@ -9,18 +9,18 @@ python-text-embeddings-server = 'text_embeddings_server.cli:app'
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.13"
-protobuf = "^4.21.7"
+protobuf = ">=4.25.3,<6"
 grpcio = "^1.51.1"
 grpcio-status = "^1.51.1"
 grpcio-reflection = "^1.51.1"
 grpc-interceptor = "^0.15.0"
 typer = "^0.6.1"
-safetensors = "^0.3.2"
+safetensors = "^0.4"
 loguru = "^0.6.0"
-opentelemetry-api = "^1.15.0"
-opentelemetry-exporter-otlp = "^1.15.0"
-opentelemetry-instrumentation-grpc = "^0.36b0"
-torch = { version = "^2.0.1" }
+opentelemetry-api = "^1.25.0"
+opentelemetry-exporter-otlp = "^1.25.0"
+opentelemetry-instrumentation-grpc = "^0.46b0"
+sentence-transformers = "^3.3.1"
 
 [tool.poetry.extras]
 

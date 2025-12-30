@@ -1,8 +1,9 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{HiddenAct, Linear, RMSNorm};
+use crate::layers::{get_cos_sin, get_inv_freqs, index_select, HiddenAct, Linear, RMSNorm};
 use crate::models::{MistralConfig, Model};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
+use candle_rotary::apply_rotary_inplace;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 struct MistralAttention {
@@ -90,7 +91,7 @@ impl MistralAttention {
             self.num_key_value_heads,
         )?;
 
-        candle_rotary::apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
+        apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
 
         let attention = flash_attn_varlen(
             &q,
@@ -104,6 +105,7 @@ impl MistralAttention {
             self.softmax_scale,
             true,
             self.window_size_left,
+            None,
         )?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
@@ -157,11 +159,7 @@ impl MistralMLP {
         let gate_states = gate_up_states.narrow(1, 0, self.intermediate_size)?;
         let up_states = gate_up_states.narrow(1, self.intermediate_size, self.intermediate_size)?;
 
-        let gate_states = match self.act {
-            HiddenAct::Gelu => gate_states.gelu(),
-            HiddenAct::Relu => gate_states.relu(),
-            HiddenAct::Swiglu => gate_states.silu(),
-        }?;
+        let gate_states = self.act.forward(&gate_states)?;
         let r = self.down_proj.forward(&(gate_states * up_states)?);
         r
     }
@@ -267,13 +265,18 @@ impl FlashMistralModel {
 
         let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
 
-        let inv_freqs = candle_rotary::inv_freqs(
+        let inv_freqs = get_inv_freqs(
             layers[0].attention.attention_head_size,
             config.rope_theta,
             vb.device(),
+            None,
         )?;
-        let (cos_cache, sin_cache) =
-            candle_rotary::cos_sin(config.max_position_embeddings, &inv_freqs, vb.dtype())?;
+        let (cos_cache, sin_cache) = get_cos_sin(
+            config.max_position_embeddings,
+            &inv_freqs,
+            vb.dtype(),
+            false,
+        )?;
 
         Ok(Self {
             embeddings,
@@ -304,8 +307,8 @@ impl FlashMistralModel {
 
         let mut hidden_states = self.embeddings.forward(&input_ids)?;
 
-        let cos = self.cos_cache.index_select(&position_ids, 0)?;
-        let sin = self.sin_cache.index_select(&position_ids, 0)?;
+        let cos = index_select(&self.cos_cache, &position_ids, 0)?;
+        let sin = index_select(&self.sin_cache, &position_ids, 0)?;
 
         let mut residual = None;
         for layer in &self.layers {
@@ -352,11 +355,11 @@ impl FlashMistralModel {
                             )?;
 
                             // Only select indices that requires pooling
-                            indices = indices.index_select(&pooled_indices, 0)?
+                            indices = index_select(&indices, &pooled_indices, 0)?
                         }
 
                         // Select tokens
-                        Some(outputs.index_select(&indices, 0)?)
+                        Some(index_select(&outputs, &indices, 0)?)
                     } else {
                         Some(
                             match self.pool {
@@ -423,7 +426,7 @@ impl FlashMistralModel {
                     Tensor::from_vec(final_indices, final_indices_length, &self.device)?;
 
                 // Select the tokens with final indices
-                Some(outputs.index_select(&final_indices, 0)?)
+                Some(index_select(&outputs, &final_indices, 0)?)
             } else {
                 Some(outputs)
             }

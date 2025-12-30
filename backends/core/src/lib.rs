@@ -1,6 +1,7 @@
 #[cfg(feature = "clap")]
 use clap::ValueEnum;
 use nohash_hasher::IntMap;
+use serde::Deserialize;
 use std::fmt;
 use thiserror::Error;
 
@@ -52,8 +53,9 @@ pub enum ModelType {
     Embedding(Pool),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Deserialize)]
 #[cfg_attr(feature = "clap", derive(ValueEnum))]
+#[serde(rename_all = "snake_case")]
 pub enum Pool {
     /// Select the CLS token as embedding
     Cls,
@@ -88,4 +90,6 @@ pub enum BackendError {
     Inference(String),
     #[error("Backend is unhealthy")]
     Unhealthy,
+    #[error("Weights not found: {0}")]
+    WeightsNotFound(String),
 }

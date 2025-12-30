@@ -1,9 +1,10 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{LayerNorm, Linear};
-use crate::models::nomic::{NomicBertEmbeddings, NomicBertGatedMLP};
+use crate::layers::{get_cos_sin, get_inv_freqs, index_select, LayerNorm, Linear};
+use crate::models::nomic::{NomicBertEmbeddings, NomicMLP};
 use crate::models::{Model, NomicConfig};
 use candle::{DType, Device, IndexOp, Result, Tensor, D};
 use candle_nn::VarBuilder;
+use candle_rotary::apply_rotary_inplace;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 struct NomicAttention {
@@ -24,16 +25,25 @@ impl NomicAttention {
         let attention_head_size = config.n_embd / config.n_head;
         let hidden_size = config.n_embd;
 
-        let qkv_weight = vb.pp("Wqkv").get(
-            (3 * num_attention_heads * attention_head_size, hidden_size),
-            "weight",
-        )?;
-        let qkv_linear = Linear::new(qkv_weight, None, None);
+        let qkv_dim = 3 * num_attention_heads * attention_head_size;
+
+        let qkv_weight = vb.pp("Wqkv").get((qkv_dim, hidden_size), "weight")?;
+        let qkv_bias = if config.qkv_proj_bias {
+            Some(vb.pp("Wqkv").get((qkv_dim,), "bias")?)
+        } else {
+            None
+        };
+        let qkv_linear = Linear::new(qkv_weight, qkv_bias, None);
 
         let out_proj_weight = vb
             .pp("out_proj")
             .get((hidden_size, hidden_size), "weight")?;
-        let out_proj = Linear::new(out_proj_weight, None, None);
+        let out_proj_bias = if config.qkv_proj_bias {
+            Some(vb.pp("out_proj").get((hidden_size,), "bias")?)
+        } else {
+            None
+        };
+        let out_proj = Linear::new(out_proj_weight, out_proj_bias, None);
 
         let softmax_scale = (1. / (attention_head_size as f64).sqrt()) as f32;
 
@@ -68,7 +78,7 @@ impl NomicAttention {
         let qkv = qkv.reshape(new_qkv_shape.as_slice())?;
         let qkv = qkv.chunk(3, 1)?;
 
-        candle_rotary::apply_rotary_inplace(&qkv[0], &qkv[1], &cos, &sin, true)?;
+        apply_rotary_inplace(&qkv[0], &qkv[1], &cos, &sin, true)?;
 
         let attention = flash_attn_varlen(
             &qkv[0],
@@ -82,6 +92,7 @@ impl NomicAttention {
             self.softmax_scale,
             false,
             None,
+            None,
         )?;
         let attention = attention.flatten_from(D::Minus2)?;
 
@@ -91,7 +102,7 @@ impl NomicAttention {
 
 struct NomicBertBlock {
     attention: NomicAttention,
-    mlp: NomicBertGatedMLP,
+    mlp: NomicMLP,
     post_attention_layer_norm: LayerNorm,
     output_layer_norm: LayerNorm,
 
@@ -99,9 +110,10 @@ struct NomicBertBlock {
 }
 
 impl NomicBertBlock {
-    pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
+    pub fn load(vb: VarBuilder, index: usize, config: &NomicConfig) -> Result<Self> {
         let attention = NomicAttention::load(vb.pp("attn"), config)?;
-        let mlp = NomicBertGatedMLP::load(vb.pp("mlp"), config)?;
+
+        let mlp = NomicMLP::load(vb.pp("mlp"), index, config)?;
 
         let post_attention_layer_norm =
             LayerNorm::load(vb.pp("norm1"), config.n_embd, config.layer_norm_epsilon)?;
@@ -130,6 +142,7 @@ impl NomicBertBlock {
         let attn_output = self
             .attention
             .forward(&hidden_states, cu_seqlens, cos, sin, max_s)?;
+
         let hidden_states = self
             .post_attention_layer_norm
             .forward(&hidden_states, Some(&attn_output))?;
@@ -143,13 +156,14 @@ impl NomicBertBlock {
 
 struct NomicBertEncoder {
     layers: Vec<NomicBertBlock>,
+
     span: tracing::Span,
 }
 
 impl NomicBertEncoder {
     pub fn load(vb: VarBuilder, config: &NomicConfig) -> Result<Self> {
         let layers = (0..config.n_layer)
-            .map(|index| NomicBertBlock::load(vb.pp(format!("layers.{index}")), config))
+            .map(|index| NomicBertBlock::load(vb.pp(format!("layers.{index}")), index, config))
             .collect::<Result<Vec<_>>>()?;
 
         let span = tracing::span!(tracing::Level::TRACE, "encoder");
@@ -168,7 +182,6 @@ impl NomicBertEncoder {
 
         let mut hidden_states = hidden_states.clone();
 
-        // Use a loop rather than a fold as it's easier to modify when adding debug/...
         for layer in self.layers.iter() {
             hidden_states = layer.forward(&hidden_states, cu_seqlens, cos, sin, max_s)?
         }
@@ -221,8 +234,8 @@ impl FlashNomicBertModel {
         let encoder = NomicBertEncoder::load(vb.pp("encoder"), config)?;
 
         let rotary_dim = encoder.layers[0].attention.attention_head_size;
-        let inv_freqs = candle_rotary::inv_freqs(rotary_dim, config.rotary_emb_base, vb.device())?;
-        let rotary_cache = candle_rotary::cos_sin(config.n_positions, &inv_freqs, vb.dtype())?;
+        let inv_freqs = get_inv_freqs(rotary_dim, config.rotary_emb_base, vb.device(), None)?;
+        let rotary_cache = get_cos_sin(config.n_positions, &inv_freqs, vb.dtype(), false)?;
 
         let scaled_rotary_cache = if let Some(scaling_factor) = config.rotary_scaling_factor {
             let new_base = (config.rotary_emb_base
@@ -230,11 +243,12 @@ impl FlashNomicBertModel {
                     / config.max_trained_positions as f32)
                     - (scaling_factor - 1.0)))
                 .powi((rotary_dim as f32 / (rotary_dim as f32 - 2.0)) as i32);
-            let inv_freqs = candle_rotary::inv_freqs(rotary_dim, new_base, vb.device())?;
-            Some(candle_rotary::cos_sin(
+            let inv_freqs = get_inv_freqs(rotary_dim, new_base, vb.device(), None)?;
+            Some(get_cos_sin(
                 config.n_positions,
                 &inv_freqs,
                 vb.dtype(),
+                false,
             )?)
         } else {
             None
@@ -271,22 +285,20 @@ impl FlashNomicBertModel {
         let (cos, sin) = if self.scaled_rotary_cache.is_some()
             && batch.max_length > self.max_trained_positions
         {
-            let cos = self
-                .scaled_rotary_cache
-                .as_ref()
-                .unwrap()
-                .0
-                .index_select(&position_ids, 0)?;
-            let sin = self
-                .scaled_rotary_cache
-                .as_ref()
-                .unwrap()
-                .1
-                .index_select(&position_ids, 0)?;
+            let cos = index_select(
+                &self.scaled_rotary_cache.as_ref().unwrap().0,
+                &position_ids,
+                0,
+            )?;
+            let sin = index_select(
+                &self.scaled_rotary_cache.as_ref().unwrap().1,
+                &position_ids,
+                0,
+            )?;
             (cos, sin)
         } else {
-            let cos = self.rotary_cache.0.index_select(&position_ids, 0)?;
-            let sin = self.rotary_cache.1.index_select(&position_ids, 0)?;
+            let cos = index_select(&self.rotary_cache.0, &position_ids, 0)?;
+            let sin = index_select(&self.rotary_cache.1, &position_ids, 0)?;
             (cos, sin)
         };
 
@@ -329,11 +341,11 @@ impl FlashNomicBertModel {
                             )?;
 
                             // Only select indices that requires pooling
-                            indices = indices.index_select(&pooled_indices, 0)?
+                            indices = index_select(&indices, &pooled_indices, 0)?
                         }
 
                         // Select tokens
-                        Some(outputs.index_select(&indices, 0)?)
+                        Some(index_select(&outputs, &indices, 0)?)
                     } else {
                         Some(
                             match self.pool {
@@ -416,6 +428,7 @@ impl Model for FlashNomicBertModel {
     fn is_padded(&self) -> bool {
         false
     }
+
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
     }

@@ -27,10 +27,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{DType, Pool};
-use text_embeddings_core::download::{
-    download_artifacts, download_new_st_config, download_pool_config, download_st_config,
-    ST_CONFIG_NAMES,
-};
+use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
 use text_embeddings_core::tokenization::Tokenization;
@@ -57,7 +54,8 @@ pub async fn run(
     auto_truncate: bool,
     default_prompt: Option<String>,
     default_prompt_name: Option<String>,
-    hf_api_token: Option<String>,
+    dense_path: Option<String>,
+    hf_token: Option<String>,
     hostname: Option<String>,
     port: u16,
     uds_path: Option<String>,
@@ -66,19 +64,24 @@ pub async fn run(
     api_key: Option<String>,
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
+    prometheus_port: u16,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
     let model_id_path = Path::new(&model_id);
-    let model_root = if model_id_path.exists() && model_id_path.is_dir() {
+    let (model_root, api_repo) = if model_id_path.exists() && model_id_path.is_dir() {
         // Using a local model
-        model_id_path.to_path_buf()
+        (model_id_path.to_path_buf(), None)
     } else {
-        let mut builder = ApiBuilder::new()
+        let mut builder = ApiBuilder::from_env()
             .with_progress(false)
-            .with_token(hf_api_token);
+            .with_token(hf_token);
 
         if let Some(cache_dir) = huggingface_hub_cache {
             builder = builder.with_cache_dir(cache_dir.into());
+        }
+
+        if let Ok(origin) = std::env::var("HF_HUB_USER_AGENT_ORIGIN") {
+            builder = builder.with_user_agent("origin", origin.as_str());
         }
 
         let api = builder.build().unwrap();
@@ -88,21 +91,13 @@ pub async fn run(
             revision.clone().unwrap_or("main".to_string()),
         ));
 
-        // Optionally download the pooling config.
-        if pooling.is_none() {
-            // If a pooling config exist, download it
-            let _ = download_pool_config(&api_repo).await;
-        }
-
-        // Download sentence transformers config
-        let _ = download_st_config(&api_repo).await;
-        // Download new sentence transformers config
-        let _ = download_new_st_config(&api_repo).await;
-
         // Download model from the Hub
-        download_artifacts(&api_repo)
-            .await
-            .context("Could not download model artifacts")?
+        (
+            download_artifacts(&api_repo, pooling.is_none())
+                .await
+                .context("Could not download model artifacts")?,
+            Some(api_repo),
+        )
     };
 
     // Load config
@@ -146,9 +141,16 @@ pub async fn run(
         "tokenizer.json not found. text-embeddings-inference only supports fast tokenizers",
     );
     tokenizer.with_padding(None);
-    // Qwen2 updates the post processor manually instead of into the tokenizer.json...
+    // Old Qwen2  repos updates the post processor manually instead of into the tokenizer.json.
+    // Newer ones (https://huggingface.co/jinaai/jina-code-embeddings-0.5b/tree/main) have it in the tokenizer.json. This is to support both cases.
     // https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct/blob/main/tokenization_qwen.py#L246
-    if config.model_type == "qwen2" {
+    if config.model_type == "qwen2"
+        && config
+            .auto_map
+            .as_ref()
+            .is_some_and(|m| m.get("AutoModel") == Some(&"modeling_qwen.Qwen2Model".to_string()))
+    {
+        tracing::warn!("Model is detected as a Qwen2 model with remote code. Adding a post processor manually as the tokenizer.json does not contain a post processor.");
         let template = TemplateProcessing::builder()
             .try_single("$A:0 <|endoftext|>:0")
             .unwrap()
@@ -158,13 +160,13 @@ pub async fn run(
             .build()
             .unwrap();
         match tokenizer.get_post_processor() {
-            None => tokenizer.with_post_processor(template),
+            None => tokenizer.with_post_processor(Some(template)),
             Some(post_processor) => {
                 let post_processor = Sequence::new(vec![
                     post_processor.clone(),
                     PostProcessorWrapper::Template(template),
                 ]);
-                tokenizer.with_post_processor(post_processor)
+                tokenizer.with_post_processor(Some(post_processor))
             }
         };
     }
@@ -189,16 +191,40 @@ pub async fn run(
             break;
         }
     }
-    let max_input_length = match st_config {
+
+    let base_input_length = match st_config {
         Some(config) => config.max_seq_length,
         None => {
             tracing::warn!("Could not find a Sentence Transformers config");
             config.max_position_embeddings - position_offset
         }
     };
+
+    // Raise an error when max_input_length is bigger than max_batch tokens to prevent an infinite loop in the queue
+    let max_input_length = if base_input_length > max_batch_tokens {
+        if !auto_truncate {
+            anyhow::bail!(
+                "`--max-batch-tokens` cannot be lower than the model `max_input_length` ({} < {}) when `--auto-truncate` is disabled, add the `--auto-truncate` flag to truncate the input sequences to match the `--max-batch-tokens`.",
+                base_input_length,
+                max_batch_tokens
+            );
+        }
+        tracing::warn!(
+            "The input sequences will be truncated to {} tokens even if the model `max_input_length` is greater than the provided `--max-batch-tokens` ({} > {}), as `--auto-truncate` is enabled.",
+            max_batch_tokens,
+            base_input_length,
+            max_batch_tokens
+        );
+        max_batch_tokens
+    } else {
+        base_input_length
+    };
+
     tracing::info!("Maximum number of tokens per request: {max_input_length}");
 
-    let tokenization_workers = tokenization_workers.unwrap_or_else(num_cpus::get_physical);
+    // fall-back to num_cpus - 1 to leave some CPU for the backend, and at most 64 workers.
+    let tokenization_workers =
+        tokenization_workers.unwrap_or_else(|| (num_cpus::get() - 1).clamp(1, 64));
 
     // Try to load new ST Config
     let mut new_st_config: Option<NewSTConfig> = None;
@@ -234,39 +260,45 @@ pub async fn run(
         prompts,
     );
 
-    // Get dtype
-    let dtype = dtype.unwrap_or_default();
+    // NOTE: `gemma3_text` won't support Float16 but only Float32, given that with `candle-cuda`
+    // feature, the default `Dtype::Float16` this overrides that to prevent issues when running a
+    // `gemma3_text` model without specifying a `--dtype`
+    let dtype = if dtype.is_none() && config.model_type == "gemma3_text" {
+        DType::Float32
+    } else {
+        dtype.unwrap_or_default()
+    };
 
     // Create backend
     tracing::info!("Starting model backend");
     let backend = text_embeddings_backend::Backend::new(
         model_root,
+        api_repo,
         dtype.clone(),
         backend_model_type,
+        dense_path,
         uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_string()),
         otlp_endpoint.clone(),
         otlp_service_name.clone(),
     )
+    .await
     .context("Could not create backend")?;
     backend
         .health()
         .await
         .context("Model backend is not healthy")?;
 
-    if !backend.padded_model {
-        tracing::info!("Warming up model");
-        backend
-            .warmup(max_input_length, max_batch_tokens, max_batch_requests)
-            .await
-            .context("Model backend is not healthy")?;
-    }
+    tracing::info!("Warming up model");
+    backend
+        .warmup(max_input_length, max_batch_tokens, max_batch_requests)
+        .await
+        .context("Model backend is not healthy")?;
 
     let max_batch_requests = backend
         .max_batch_size
-        .map(|s| {
+        .inspect(|&s| {
             tracing::warn!("Backend does not support a batch size > {s}");
             tracing::warn!("forcing `max_batch_requests={s}`");
-            s
         })
         .or(max_batch_requests);
 
@@ -304,9 +336,8 @@ pub async fn run(
         std::env::var("AIP_HTTP_PORT")
             .ok()
             .and_then(|p| p.parse().ok())
-            .map(|p| {
+            .inspect(|&p| {
                 tracing::info!("`AIP_HTTP_PORT` is set: overriding port {port} by port {p}");
-                p
             })
             .unwrap_or(port)
     } else {
@@ -321,7 +352,7 @@ pub async fn run(
         }
     };
 
-    let prom_builder = prometheus::prometheus_builer(info.max_input_length)?;
+    let prom_builder = prometheus::prometheus_builer(addr, prometheus_port, info.max_input_length)?;
 
     #[cfg(all(feature = "grpc", feature = "http"))]
     compile_error!("Features `http` and `grpc` cannot be enabled at the same time.");
@@ -361,6 +392,15 @@ fn get_backend_model_type(
     pooling: Option<text_embeddings_backend::Pool>,
 ) -> Result<text_embeddings_backend::ModelType> {
     for arch in &config.architectures {
+        // Edge case affecting `Alibaba-NLP/gte-multilingual-base` and possibly other fine-tunes of
+        // the same base model. More context at https://huggingface.co/Alibaba-NLP/gte-multilingual-base/discussions/7
+        if arch == "NewForTokenClassification"
+            && (config.id2label.is_none() | config.label2id.is_none())
+        {
+            tracing::warn!("Provided `--model-id` is likely an AlibabaNLP GTE model, but the `config.json` contains the architecture `NewForTokenClassification` but it doesn't contain the `id2label` and `label2id` mapping, so `NewForTokenClassification` architecture will be ignored.");
+            continue;
+        }
+
         if Some(text_embeddings_backend::Pool::Splade) == pooling && arch.ends_with("MaskedLM") {
             return Ok(text_embeddings_backend::ModelType::Embedding(
                 text_embeddings_backend::Pool::Splade,
@@ -387,12 +427,24 @@ fn get_backend_model_type(
         None => {
             // Load pooling config
             let config_path = model_root.join("1_Pooling/config.json");
-            let config = fs::read_to_string(config_path).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.")?;
-            let config: PoolConfig =
-                serde_json::from_str(&config).context("Failed to parse `1_Pooling/config.json`")?;
-            Pool::try_from(config)?
+
+            match fs::read_to_string(config_path) {
+                Ok(config) => {
+                    let config: PoolConfig = serde_json::from_str(&config)
+                        .context("Failed to parse `1_Pooling/config.json`")?;
+                    Pool::try_from(config)?
+                }
+                Err(err) => {
+                    if !config.model_type.to_lowercase().contains("bert") {
+                        return Err(err).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.");
+                    }
+                    tracing::warn!("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model but the model is a BERT variant. Defaulting to `CLS` pooling.");
+                    text_embeddings_backend::Pool::Cls
+                }
+            }
         }
     };
+
     Ok(text_embeddings_backend::ModelType::Embedding(pool))
 }
 
@@ -406,6 +458,7 @@ pub struct ModelConfig {
     pub pad_token_id: usize,
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
+    pub auto_map: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -516,6 +569,7 @@ pub enum ErrorType {
     Overloaded,
     Validation,
     Tokenizer,
+    Empty,
 }
 
 #[derive(Serialize)]
@@ -530,6 +584,7 @@ impl From<TextEmbeddingsError> for ErrorResponse {
         let error_type = match err {
             TextEmbeddingsError::Tokenizer(_) => ErrorType::Tokenizer,
             TextEmbeddingsError::Validation(_) => ErrorType::Validation,
+            TextEmbeddingsError::Empty(_) => ErrorType::Empty,
             TextEmbeddingsError::Overloaded(_) => ErrorType::Overloaded,
             TextEmbeddingsError::Backend(_) => ErrorType::Backend,
         };

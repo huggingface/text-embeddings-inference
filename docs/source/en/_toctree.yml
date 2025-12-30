@@ -15,13 +15,17 @@
     title: Using TEI locally with GPU
   - local: private_models
     title: Serving private and gated models
-#  - local: tei_cli
-#    title: Using TEI CLI
   - local: custom_container
     title: Build custom container for TEI
+  - local: intel_container
+    title: Using TEI container with Intel Hardware
   - local: examples
     title: Example uses
   title: Tutorials
+- sections:
+  - local: tei_cloud_run
+    title: Cloud Run
+  title: Deploying TEI on Google Cloud
 - sections:
   - local: cli_arguments
     title: CLI arguments

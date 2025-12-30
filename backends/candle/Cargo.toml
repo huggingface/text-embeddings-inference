@@ -8,15 +8,16 @@ homepage.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 accelerate-src = { version = "0.3.2", optional = true }
-intel-mkl-src = { version = "0.8.1", optional = true  }
-candle = { version = "*", package = "candle-core", default-features = false }
-candle-nn = { version = "*" }
-candle-transformers = { version = "*" }
-candle-flash-attn = { version = "*", optional = true }
-candle-flash-attn-v1 = { git = "https://github.com/huggingface/candle-flash-attn-v1", rev = "3f1870b0d708579904c76e41745c659c3f9fa038", optional = true }
-candle-cublaslt = { git = "https://github.com/huggingface/candle-cublaslt", rev = "cf789b7dd6d4abb19b03b9556442f94f0588b4a0", optional = true }
-candle-layer-norm = { git = "https://github.com/huggingface/candle-layer-norm", rev = "94c2add7d94c2d63aebde77f7534614e04dbaea1", optional = true }
-candle-rotary = { git = "https://github.com/huggingface/candle-rotary", rev = "0a718a0856569a92f3112e64f10d07e4447822e8", optional = true }
+intel-mkl-src = { workspace = true, optional = true }
+candle = { workspace = true }
+candle-nn = { workspace = true }
+candle-transformers = { workspace = true }
+candle-flash-attn = { workspace = true, optional = true}
+candle-flash-attn-v1 = { workspace = true, optional = true }
+candle-cublaslt = { workspace = true, optional = true }
+candle-index-select-cu = { workspace = true, optional = true, features = ["cuda-11"], default-features = false}
+candle-layer-norm = { workspace = true, optional = true }
+candle-rotary = { workspace = true, optional = true }
 nohash-hasher = { workspace = true }
 text-embeddings-backend-core = { path = "../core" }
 tracing = { workspace = true }
@@ -29,10 +30,10 @@ memmap2 = "^0.9"
 [dev-dependencies]
 insta = { git = "https://github.com/OlivierDehaene/insta", rev = "f4f98c0410b91fb5a28b10df98e4422955be9c2c", features = ["yaml"] }
 is_close = "0.1.3"
-hf-hub = "0.3.2"
+hf-hub = { workspace = true, features = ["ureq"] }
 anyhow = { workspace = true }
 tokenizers = { workspace = true }
-serial_test = "2.0.0"
+serial_test = { workspace = true }
 
 [build-dependencies]
 anyhow = { version = "1", features = ["backtrace"] }
@@ -40,9 +41,7 @@ anyhow = { version = "1", features = ["backtrace"] }
 [features]
 accelerate = ["dep:accelerate-src", "candle/accelerate", "candle-nn/accelerate"]
 metal = ["candle/metal", "candle-nn/metal"]
-mkl = ["dep:intel-mkl-src", "intel-mkl-src/mkl-static-lp64-iomp", "candle/mkl", "candle-nn/mkl"]
-mkl-dynamic = ["dep:intel-mkl-src", "intel-mkl-src/mkl-dynamic-lp64-iomp", "candle/mkl-dynamic", "candle-nn/mkl-dynamic"]
-cuda = ["candle/cuda", "candle-nn/cuda", "dep:candle-cublaslt", "dep:candle-layer-norm", "dep:candle-rotary"]
+mkl = ["dep:intel-mkl-src", "candle/_mkl"]
+cuda = ["candle/_cuda", "candle-nn/_cuda", "dep:candle-cublaslt", "dep:candle-layer-norm", "dep:candle-rotary", "dep:candle-index-select-cu"]
 flash-attn-v1 = ["dep:candle-flash-attn-v1", "cuda"]
 flash-attn = ["dep:candle-flash-attn", "cuda"]
-static-linking = ["candle-cublaslt?/static-linking"]

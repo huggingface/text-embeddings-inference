@@ -8,14 +8,15 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
 #[test]
 #[serial_test::serial]
-fn test_mini() -> Result<()> {
-    let model_root = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None)?;
+fn test_bert() -> Result<()> {
+    let (model_root, _) = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
-        model_root,
+        &model_root,
         "float32".to_string(),
         ModelType::Embedding(Pool::Mean),
+        None,
     )?;
 
     let input_batch = batch(
@@ -32,7 +33,7 @@ fn test_mini() -> Result<()> {
 
     let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_batch)?);
     let embeddings_batch = SnapshotEmbeddings::from(pooled_embeddings);
-    insta::assert_yaml_snapshot!("mini_batch", embeddings_batch, &matcher);
+    insta::assert_yaml_snapshot!("bert_batch", embeddings_batch, &matcher);
 
     let input_single = batch(
         vec![tokenizer.encode("What is Deep Learning?", true).unwrap()],
@@ -43,7 +44,7 @@ fn test_mini() -> Result<()> {
     let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_single)?);
     let embeddings_single = SnapshotEmbeddings::from(pooled_embeddings);
 
-    insta::assert_yaml_snapshot!("mini_single", embeddings_single, &matcher);
+    insta::assert_yaml_snapshot!("bert_single", embeddings_single, &matcher);
     assert_eq!(embeddings_batch[0], embeddings_single[0]);
     assert_eq!(embeddings_batch[2], embeddings_single[0]);
 
@@ -68,14 +69,15 @@ fn test_mini() -> Result<()> {
 
 #[test]
 #[serial_test::serial]
-fn test_mini_pooled_raw() -> Result<()> {
-    let model_root = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None)?;
+fn test_bert_pooled_raw() -> Result<()> {
+    let (model_root, _) = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
-        model_root,
+        &model_root,
         "float32".to_string(),
         ModelType::Embedding(Pool::Cls),
+        None,
     )?;
 
     let input_batch = batch(
@@ -95,10 +97,10 @@ fn test_mini_pooled_raw() -> Result<()> {
 
     let (pooled_embeddings, raw_embeddings) = sort_embeddings(backend.embed(input_batch)?);
     let pooled_embeddings_batch = SnapshotEmbeddings::from(pooled_embeddings);
-    insta::assert_yaml_snapshot!("mini_batch_pooled", pooled_embeddings_batch, &matcher);
+    insta::assert_yaml_snapshot!("bert_batch_pooled", pooled_embeddings_batch, &matcher);
 
     let raw_embeddings_batch = SnapshotEmbeddings::from(raw_embeddings);
-    insta::assert_yaml_snapshot!("mini_batch_raw", raw_embeddings_batch, &matcher);
+    insta::assert_yaml_snapshot!("bert_batch_raw", raw_embeddings_batch, &matcher);
 
     // Check that the first token of each raw embeddings member is the same as the cls pooling ones
     assert_eq!(pooled_embeddings_batch[0], raw_embeddings_batch[0]);
@@ -114,7 +116,7 @@ fn test_mini_pooled_raw() -> Result<()> {
 
     let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_single)?);
     let embeddings_single = SnapshotEmbeddings::from(pooled_embeddings);
-    insta::assert_yaml_snapshot!("mini_single_pooled", embeddings_single, &matcher);
+    insta::assert_yaml_snapshot!("bert_single_pooled", embeddings_single, &matcher);
 
     assert_eq!(pooled_embeddings_batch[0], embeddings_single[0]);
     assert_eq!(pooled_embeddings_batch[2], embeddings_single[0]);
@@ -127,7 +129,7 @@ fn test_mini_pooled_raw() -> Result<()> {
 
     let (_, raw_embeddings) = sort_embeddings(backend.embed(input_single)?);
     let embeddings_single = SnapshotEmbeddings::from(raw_embeddings);
-    insta::assert_yaml_snapshot!("mini_single_raw", embeddings_single, &matcher);
+    insta::assert_yaml_snapshot!("bert_single_raw", embeddings_single, &matcher);
 
     assert_eq!(raw_embeddings_batch[0], embeddings_single[0]);
     assert_eq!(raw_embeddings_batch[15], embeddings_single[0]);
@@ -139,10 +141,15 @@ fn test_mini_pooled_raw() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_emotions() -> Result<()> {
-    let model_root = download_artifacts("SamLowe/roberta-base-go_emotions", None)?;
+    let (model_root, _) = download_artifacts("SamLowe/roberta-base-go_emotions", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
-    let backend = CandleBackend::new(model_root, "float32".to_string(), ModelType::Classifier)?;
+    let backend = CandleBackend::new(
+        &model_root,
+        "float32".to_string(),
+        ModelType::Classifier,
+        None,
+    )?;
 
     let input_batch = batch(
         vec![
@@ -189,10 +196,16 @@ fn test_emotions() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_bert_classification() -> Result<()> {
-    let model_root = download_artifacts("ibm/re2g-reranker-nq", Some("refs/pr/3"))?;
+    let (model_root, _) =
+        download_artifacts("ibm-research/re2g-reranker-nq", Some("refs/pr/3"), None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
-    let backend = CandleBackend::new(model_root, "float32".to_string(), ModelType::Classifier)?;
+    let backend = CandleBackend::new(
+        &model_root,
+        "float32".to_string(),
+        ModelType::Classifier,
+        None,
+    )?;
 
     let input_single = batch(
         vec![tokenizer

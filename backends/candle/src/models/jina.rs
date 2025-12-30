@@ -294,11 +294,7 @@ impl JinaBertLayer {
 
         let hidden_states = self.gated.forward(&hidden_states)?;
         let gated = hidden_states.i((.., .., 0..self.intermediate_size))?;
-        let gated = match self.act {
-            HiddenAct::Gelu => gated.gelu(),
-            HiddenAct::Relu => gated.relu(),
-            HiddenAct::Swiglu => gated.silu(),
-        }?;
+        let gated = self.act.forward(&gated)?;
 
         let non_gated = hidden_states.i((.., .., self.intermediate_size..))?;
         let hidden_states = (gated * non_gated)?;
@@ -339,11 +335,69 @@ impl JinaBertEncoder {
     }
 }
 
+pub trait ClassificationHead {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
+}
+
+pub struct JinaBertClassificationHead {
+    pooler: Option<Linear>,
+    output: Linear,
+    span: tracing::Span,
+}
+
+impl JinaBertClassificationHead {
+    pub(crate) fn load(vb: VarBuilder, config: &BertConfig) -> Result<Self> {
+        let n_classes = match &config.id2label {
+            None => candle::bail!("`id2label` must be set for classifier models"),
+            Some(id2label) => id2label.len(),
+        };
+
+        let pooler = if let Ok(pooler_weight) = vb
+            .pp("bert.pooler.dense")
+            .get((config.hidden_size, config.hidden_size), "weight")
+        {
+            let pooler_bias = vb.pp("bert.pooler.dense").get(config.hidden_size, "bias")?;
+            Some(Linear::new(pooler_weight, Some(pooler_bias), None))
+        } else {
+            None
+        };
+
+        let output_weight = vb
+            .pp("classifier")
+            .get((n_classes, config.hidden_size), "weight")?;
+        let output_bias = vb.pp("classifier").get(n_classes, "bias")?;
+        let output = Linear::new(output_weight, Some(output_bias), None);
+
+        Ok(Self {
+            pooler,
+            output,
+            span: tracing::span!(tracing::Level::TRACE, "classifier"),
+        })
+    }
+}
+
+impl ClassificationHead for JinaBertClassificationHead {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let mut hidden_states = hidden_states.unsqueeze(1)?;
+        if let Some(pooler) = self.pooler.as_ref() {
+            hidden_states = pooler.forward(&hidden_states)?;
+            hidden_states = hidden_states.tanh()?;
+        }
+
+        let hidden_states = self.output.forward(&hidden_states)?;
+        let hidden_states = hidden_states.squeeze(1)?;
+        Ok(hidden_states)
+    }
+}
+
 pub struct JinaBertModel {
     embeddings: JinaEmbeddings,
     encoder: JinaBertEncoder,
     pool: Pool,
     alibi: Option<Tensor>,
+    classifier: Option<Box<dyn ClassificationHead + Send>>,
 
     num_attention_heads: usize,
 
@@ -366,9 +420,12 @@ impl JinaBertModel {
             _ => candle::bail!("not supported"),
         };
 
-        let pool = match model_type {
+        let (pool, classifier) = match model_type {
             ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for Jina")
+                let pool = Pool::Cls;
+                let classifier: Box<dyn ClassificationHead + Send> =
+                    Box::new(JinaBertClassificationHead::load(vb.clone(), config)?);
+                (pool, Some(classifier))
             }
             ModelType::Embedding(pool) => {
                 if pool == Pool::Splade {
@@ -377,7 +434,7 @@ impl JinaBertModel {
                 if pool == Pool::LastToken {
                     candle::bail!("`last_token` is not supported for Jina");
                 }
-                pool
+                (pool, None)
             }
         };
 
@@ -403,6 +460,7 @@ impl JinaBertModel {
             encoder,
             pool,
             alibi,
+            classifier,
             num_attention_heads: config.num_attention_heads,
             device: vb.device().clone(),
             dtype: vb.dtype(),
@@ -667,7 +725,20 @@ impl Model for JinaBertModel {
     fn is_padded(&self) -> bool {
         true
     }
+
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
+    }
+
+    fn predict(&self, batch: Batch) -> Result<Tensor> {
+        match &self.classifier {
+            None => candle::bail!("`predict` is not implemented for this model"),
+            Some(classifier) => {
+                let (pooled_embeddings, _raw_embeddings) = self.forward(batch)?;
+                let pooled_embeddings =
+                    pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
+                classifier.forward(&pooled_embeddings)
+            }
+        }
     }
 }

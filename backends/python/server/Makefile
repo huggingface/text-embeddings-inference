@@ -6,7 +6,7 @@ unit-tests:
 
 gen-server:
 	# Compile protos
-	pip install grpcio-tools==1.51.1 mypy-protobuf==3.4.0 'types-protobuf>=3.20.4' --no-cache-dir
+	pip install grpcio-tools==1.62.2 mypy-protobuf==3.6.0 'types-protobuf' --no-cache-dir
 	mkdir text_embeddings_server/pb || true
 	python -m grpc_tools.protoc -I../../proto --python_out=text_embeddings_server/pb \
 		--grpc_python_out=text_embeddings_server/pb --mypy_out=text_embeddings_server/pb ../../proto/embed.proto
@@ -15,7 +15,7 @@ gen-server:
 
 install: gen-server
 	pip install pip --upgrade
-	pip install -r requirements.txt
+	pip install --no-deps -r requirements.txt
 	pip install -e .
 
 run-dev:

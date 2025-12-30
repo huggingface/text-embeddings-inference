@@ -1,0 +1,5 @@
+---
+source: backends/candle/tests/test_flash_gte.rs
+expression: predictions_single
+---
+- - -0.7426758

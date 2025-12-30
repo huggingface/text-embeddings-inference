@@ -195,7 +195,9 @@ impl<'__s> ToSchema<'__s> for PredictInput {
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize, ToSchema, Eq, Default)]
 pub(crate) enum TruncationDirection {
+    #[serde(alias = "left", alias = "Left")]
     Left,
+    #[serde(alias = "right", alias = "Right")]
     #[default]
     Right,
 }
@@ -323,6 +325,8 @@ pub(crate) struct OpenAICompatRequest {
     #[schema(default = "float", example = "float")]
     #[serde(default)]
     pub encoding_format: EncodingFormat,
+    #[schema(default = "null", example = "null", nullable = true)]
+    pub dimensions: Option<usize>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -375,6 +379,7 @@ pub(crate) struct SimilarityInput {
 pub(crate) struct SimilarityParameters {
     #[schema(default = "false", example = "false", nullable = true)]
     pub truncate: Option<bool>,
+    #[serde(default)]
     #[schema(default = "right", example = "right")]
     pub truncation_direction: TruncationDirection,
     /// The name of the prompt that should be used by for encoding. If not set, no prompt
@@ -405,12 +410,15 @@ pub(crate) struct SimilarityResponse(pub Vec<f32>);
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct EmbedRequest {
     pub inputs: Input,
+
     #[serde(default)]
     #[schema(default = "false", example = "false", nullable = true)]
     pub truncate: Option<bool>,
+
     #[serde(default)]
     #[schema(default = "right", example = "right")]
     pub truncation_direction: TruncationDirection,
+
     /// The name of the prompt that should be used by for encoding. If not set, no prompt
     /// will be applied.
     ///
@@ -422,9 +430,15 @@ pub(crate) struct EmbedRequest {
     /// any text to encode.
     #[schema(default = "null", example = "null", nullable = true)]
     pub prompt_name: Option<String>,
+
     #[serde(default = "default_normalize")]
     #[schema(default = "true", example = "true")]
     pub normalize: bool,
+
+    /// The number of dimensions that the output embeddings should have. If not set, the original
+    /// shape of the representation will be returned instead.
+    #[schema(default = "null", example = "null", nullable = true)]
+    pub dimensions: Option<usize>,
 }
 
 fn default_normalize() -> bool {

@@ -60,6 +60,7 @@ pub async fn start_server(model_id: String, revision: Option<String>, dtype: DTy
             None,
             None,
             None,
+            None,
             8090,
             None,
             None,
@@ -67,6 +68,7 @@ pub async fn start_server(model_id: String, revision: Option<String>, dtype: DTy
             None,
             None,
             "text-embeddings-inference.server".to_owned(),
+            9000,
             None,
         )
     });

@@ -284,11 +284,7 @@ impl JinaCodeBertLayer {
         let hidden_states = self.up_gated_layer.forward(&hidden_states)?;
         let non_gated = hidden_states.i((.., .., 0..self.intermediate_size))?;
         let gated = hidden_states.i((.., .., self.intermediate_size..))?;
-        let gated = match self.act {
-            HiddenAct::Gelu => gated.gelu(),
-            HiddenAct::Relu => gated.relu(),
-            HiddenAct::Swiglu => gated.silu(),
-        }?;
+        let gated = self.act.forward(&gated)?;
         let hidden_states = (non_gated * gated)?;
         let hidden_states = self.down_layer.forward(&hidden_states)?;
 
@@ -656,6 +652,7 @@ impl Model for JinaCodeBertModel {
     fn is_padded(&self) -> bool {
         true
     }
+
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
     }

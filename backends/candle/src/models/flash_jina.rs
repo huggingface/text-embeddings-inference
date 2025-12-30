@@ -1,8 +1,8 @@
 use crate::alibi::alibi_head_slopes;
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{HiddenAct, LayerNorm, Linear};
+use crate::layers::{index_select, HiddenAct, LayerNorm, Linear};
 use crate::models::bert::PositionEmbeddingType;
-use crate::models::jina::JinaEmbeddings;
+use crate::models::jina::{ClassificationHead, JinaBertClassificationHead, JinaEmbeddings};
 use crate::models::{BertConfig, Model};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::VarBuilder;
@@ -106,6 +106,7 @@ impl JinaAttention {
             self.softmax_scale,
             false,
             None,
+            None,
         )?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
@@ -175,11 +176,7 @@ impl JinaBertLayer {
 
         let hidden_states = self.gated.forward(&hidden_states)?;
         let gated = hidden_states.narrow(1, 0, self.intermediate_size)?;
-        let gated = match self.act {
-            HiddenAct::Gelu => gated.gelu(),
-            HiddenAct::Relu => gated.relu(),
-            HiddenAct::Swiglu => gated.silu(),
-        }?;
+        let gated = self.act.forward(&gated)?;
 
         let non_gated = hidden_states.narrow(1, self.intermediate_size, self.intermediate_size)?;
         let hidden_states = (gated * non_gated)?;
@@ -226,6 +223,8 @@ pub struct FlashJinaBertModel {
     embeddings: JinaEmbeddings,
     encoder: JinaBertEncoder,
     pool: Pool,
+    classifier: Option<Box<dyn ClassificationHead + Send>>,
+
     pub device: Device,
 
     span: tracing::Span,
@@ -254,15 +253,19 @@ impl FlashJinaBertModel {
             candle::bail!("FlashJinaBertModel requires DType::F16")
         }
 
-        let pool = match model_type {
+        let (pool, classifier) = match model_type {
             ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for Jina")
+                let pool = Pool::Cls;
+
+                let classifier: Box<dyn ClassificationHead + Send> =
+                    Box::new(JinaBertClassificationHead::load(vb.clone(), config)?);
+                (pool, Some(classifier))
             }
             ModelType::Embedding(pool) => {
                 if pool == Pool::Splade {
                     candle::bail!("`splade` is not supported for Jina")
                 }
-                pool
+                (pool, None)
             }
         };
 
@@ -287,6 +290,7 @@ impl FlashJinaBertModel {
             embeddings,
             encoder,
             pool,
+            classifier,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
@@ -345,11 +349,11 @@ impl FlashJinaBertModel {
                             )?;
 
                             // Only select indices that requires pooling
-                            indices = indices.index_select(&pooled_indices, 0)?
+                            indices = index_select(&indices, &pooled_indices, 0)?
                         }
 
                         // Select tokens
-                        Some(outputs.index_select(&indices, 0)?)
+                        Some(index_select(&outputs, &indices, 0)?)
                     } else {
                         Some(
                             match self.pool {
@@ -416,7 +420,7 @@ impl FlashJinaBertModel {
                     Tensor::from_vec(final_indices, final_indices_length, &self.device)?;
 
                 // Select the tokens with final indices
-                Some(outputs.index_select(&final_indices, 0)?)
+                Some(index_select(&outputs, &final_indices, 0)?)
             } else {
                 Some(outputs)
             }
@@ -432,7 +436,20 @@ impl Model for FlashJinaBertModel {
     fn is_padded(&self) -> bool {
         false
     }
+
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
+    }
+
+    fn predict(&self, batch: Batch) -> Result<Tensor> {
+        match &self.classifier {
+            None => candle::bail!("`predict` is not implemented for this model"),
+            Some(classifier) => {
+                let (pooled_embeddings, _raw_embeddings) = self.forward(batch)?;
+                let pooled_embeddings =
+                    pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
+                classifier.forward(&pooled_embeddings)
+            }
+        }
     }
 }

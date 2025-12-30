@@ -12,12 +12,14 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[derive(Parser, Redact)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    /// The name of the model to load.
-    /// Can be a MODEL_ID as listed on <https://hf.co/models> like
-    /// `BAAI/bge-large-en-v1.5`.
-    /// Or it can be a local directory containing the necessary files
-    /// as saved by `save_pretrained(...)` methods of transformers
-    #[clap(default_value = "BAAI/bge-large-en-v1.5", long, env)]
+    /// The Hugging Face model ID, can be any model listed on <https://huggingface.co/models> with
+    /// the `text-embeddings-inference` tag (meaning it's compatible with Text Embeddings
+    /// Inference)
+    ///
+    /// Alternatively, the specified ID can also be a path to a local directory containing the
+    /// necessary model files saved by the `save_pretrained(...)` methods of either Transformers or
+    /// Sentence Transformers.
+    #[clap(long, env)]
     #[redact(partial)]
     model_id: String,
 
@@ -106,10 +108,29 @@ struct Args {
     #[clap(long, env, conflicts_with = "default_prompt_name")]
     default_prompt: Option<String>,
 
-    /// Your HuggingFace hub token
+    /// Optionally, define the path to the Dense module required for some embedding models.
+    ///
+    /// Some embedding models require an extra `Dense` module which contains a single Linear layer
+    /// and an activation function. By default, those `Dense` modules are stored under the `2_Dense`
+    /// directory, but there might be cases where different `Dense` modules are provided, to
+    /// convert the pooled embeddings into different dimensions, available as `2_Dense_<dims>` e.g.
+    /// https://huggingface.co/NovaSearch/stella_en_400M_v5.
+    ///
+    /// Note that this argument is optional, only required to be set if there is no `modules.json`
+    /// file or when you want to override a single Dense module path, only when running with the
+    /// `candle` backend.
     #[clap(long, env)]
+    dense_path: Option<String>,
+
+    /// [DEPRECATED IN FAVOR OF `--hf-token`] Your Hugging Face Hub token
+    #[clap(long, env, hide = true)]
     #[redact(partial)]
     hf_api_token: Option<String>,
+
+    /// Your Hugging Face Hub token
+    #[clap(long, env, conflicts_with = "hf_api_token")]
+    #[redact(partial)]
+    hf_token: Option<String>,
 
     /// The IP address to listen on
     #[clap(default_value = "0.0.0.0", long, env)]
@@ -145,6 +166,10 @@ struct Args {
     #[clap(long, env)]
     json_output: bool,
 
+    // Whether or not to include the log trace through spans
+    #[clap(long, env)]
+    disable_spans: bool,
+
     /// The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC.
     /// e.g. `http://localhost:4317`
     #[clap(long, env)]
@@ -154,6 +179,10 @@ struct Args {
     /// e.g. `text-embeddings-inference.server`
     #[clap(default_value = "text-embeddings-inference.server", long, env)]
     otlp_service_name: String,
+
+    /// The Prometheus port to listen on.
+    #[clap(default_value = "9000", long, env)]
+    prometheus_port: u16,
 
     /// Unused for gRPC servers
     #[clap(long, env)]
@@ -170,6 +199,7 @@ async fn main() -> Result<()> {
         args.otlp_endpoint.as_ref(),
         args.otlp_service_name.clone(),
         args.json_output,
+        args.disable_spans,
     );
 
     tracing::info!("{args:?}");
@@ -188,6 +218,13 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Since `--hf-api-token` is deprecated in favor of `--hf-token`, we need to still make sure
+    // that if the user provides the token with `--hf-api-token` the token is still parsed properly
+    if args.hf_api_token.is_some() {
+        tracing::warn!("The `--hf-api-token` argument (and the `HF_API_TOKEN` env var) is deprecated and will be removed in a future version. Please use `--hf-token` (or the `HF_TOKEN` env var) instead.");
+    }
+    let token = args.hf_token.or(args.hf_api_token);
+
     text_embeddings_router::run(
         args.model_id,
         args.revision,
@@ -201,7 +238,8 @@ async fn main() -> Result<()> {
         args.auto_truncate,
         args.default_prompt,
         args.default_prompt_name,
-        args.hf_api_token,
+        args.dense_path,
+        token,
         Some(args.hostname),
         args.port,
         Some(args.uds_path),
@@ -210,6 +248,7 @@ async fn main() -> Result<()> {
         args.api_key,
         args.otlp_endpoint,
         args.otlp_service_name,
+        args.prometheus_port,
         args.cors_allow_origin,
     )
     .await?;
