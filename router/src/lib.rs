@@ -290,7 +290,12 @@ pub async fn run(
 
     tracing::info!("Warming up model");
     backend
-        .warmup(max_input_length, max_batch_tokens, max_batch_requests)
+        .warmup(
+            max_input_length,
+            max_batch_tokens,
+            max_batch_requests,
+            backend.padded_model,
+        )
         .await
         .context("Model backend is not healthy")?;
 
