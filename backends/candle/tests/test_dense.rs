@@ -65,7 +65,7 @@ fn test_stella_en_400m_v5_dense_768() -> Result<()> {
     let (model_root, dense_paths) = download_artifacts(
         "dunzhang/stella_en_400M_v5",
         None,
-        Some("2_Dense_768".into()),
+        Some("2_Dense_768"),
     )?;
     let tokenizer = load_tokenizer(&model_root)?;
 

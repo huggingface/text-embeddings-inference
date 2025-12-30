@@ -564,7 +564,7 @@ mod tests {
             ]
         );
 
-        let tokens = into_tokens(encoded, &string);
+        let tokens = into_tokens(encoded, string);
         assert_eq!(
             tokens,
             vec![
