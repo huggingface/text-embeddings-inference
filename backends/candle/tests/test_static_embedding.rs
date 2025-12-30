@@ -84,7 +84,7 @@ fn test_static_embedding_pooled_raw() -> Result<()> {
     let backend = CandleBackend::new(
         &model_root,
         "float32".to_string(),
-        ModelType::Embedding(Pool::Mean),
+        ModelType::Embedding(Pool::Cls),
         None,
     )?;
 
