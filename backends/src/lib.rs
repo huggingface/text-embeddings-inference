@@ -232,6 +232,7 @@ impl Backend {
         max_input_length: usize,
         max_batch_tokens: usize,
         max_batch_requests: Option<usize>,
+        padded_model: bool,
     ) -> Result<(), BackendError> {
         if is_hpu() {
             return self
@@ -239,15 +240,23 @@ impl Backend {
                 .await;
         }
 
-        let mut input_ids = Vec::with_capacity(max_batch_tokens);
-        let mut token_type_ids = Vec::with_capacity(max_batch_tokens);
-        let mut position_ids = Vec::with_capacity(max_batch_tokens);
+        // In padded_model (CPU), use minimal warmup size (max_input_length tokens) for fast startup
+        // Non-padded (GPU), use full max_batch_tokens to exercise production batching limits
+        let warmup_tokens = if padded_model {
+            max_input_length.min(max_batch_tokens)
+        } else {
+            max_batch_tokens
+        };
+
+        let mut input_ids = Vec::with_capacity(warmup_tokens);
+        let mut token_type_ids = Vec::with_capacity(warmup_tokens);
+        let mut position_ids = Vec::with_capacity(warmup_tokens);
 
         let mut cumulative_seq_lengths = vec![0];
         let mut pooled_indices = Vec::new();
 
         let mut i = 0_u32;
-        let mut remaining = max_batch_tokens;
+        let mut remaining = warmup_tokens;
         let mut cumulative_length = 0;
         let mut max_length = 0;
 
