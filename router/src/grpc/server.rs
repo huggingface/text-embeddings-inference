@@ -268,7 +268,7 @@ impl TextEmbeddingsService {
         truncation_direction: tokenizers::TruncationDirection,
         raw_scores: bool,
         permit: OwnedSemaphorePermit,
-        batch_counter: Arc<AtomicUsize>,
+        batch_counter: Option<Arc<AtomicUsize>>,
     ) -> Result<(PredictResponse, ResponseMetadata), Status> {
         let span = Span::current();
         let start_time = Instant::now();
@@ -282,7 +282,7 @@ impl TextEmbeddingsService {
 
         let response = self
             .infer
-            .predict(inputs, truncate, truncation_direction, raw_scores, permit, None)
+            .predict(inputs, truncate, truncation_direction, raw_scores, permit, batch_counter)
             .await
             .map_err(ErrorResponse::from)?;
 
