@@ -543,7 +543,7 @@ dependencies = [
 [[package]]
 name = "candle-cublaslt"
 version = "0.0.2"
-source = "git+https://github.com/michaelfeil/candle-extensions-fork?rev=00481021d23517c99b609a25725be941edb5ed0e#00481021d23517c99b609a25725be941edb5ed0e"
+source = "git+https://github.com/michaelfeil/candle-extensions-fork?rev=b367f1c841ede260912d3dcc7e5b495e92ff38c1#b367f1c841ede260912d3dcc7e5b495e92ff38c1"
 dependencies = [
  "candle-core",
  "cudarc 0.18.1",
@@ -564,7 +564,7 @@ dependencies = [
 [[package]]
 name = "candle-flash-attn-v1"
 version = "0.0.2"
-source = "git+https://github.com/michaelfeil/candle-extensions-fork?rev=00481021d23517c99b609a25725be941edb5ed0e#00481021d23517c99b609a25725be941edb5ed0e"
+source = "git+https://github.com/michaelfeil/candle-extensions-fork?rev=b367f1c841ede260912d3dcc7e5b495e92ff38c1#b367f1c841ede260912d3dcc7e5b495e92ff38c1"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -596,7 +596,7 @@ dependencies = [
 [[package]]
 name = "candle-layer-norm"
 version = "0.0.2"
-source = "git+https://github.com/michaelfeil/candle-extensions-fork?rev=00481021d23517c99b609a25725be941edb5ed0e#00481021d23517c99b609a25725be941edb5ed0e"
+source = "git+https://github.com/michaelfeil/candle-extensions-fork?rev=b367f1c841ede260912d3dcc7e5b495e92ff38c1#b367f1c841ede260912d3dcc7e5b495e92ff38c1"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -640,7 +640,7 @@ dependencies = [
 [[package]]
 name = "candle-rotary"
 version = "0.0.2"
-source = "git+https://github.com/michaelfeil/candle-extensions-fork?rev=00481021d23517c99b609a25725be941edb5ed0e#00481021d23517c99b609a25725be941edb5ed0e"
+source = "git+https://github.com/michaelfeil/candle-extensions-fork?rev=b367f1c841ede260912d3dcc7e5b495e92ff38c1#b367f1c841ede260912d3dcc7e5b495e92ff38c1"
 dependencies = [
  "anyhow",
  "bindgen_cuda",
