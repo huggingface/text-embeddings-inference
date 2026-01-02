@@ -17,6 +17,7 @@ fn test_bert() -> Result<()> {
         "float32".to_string(),
         ModelType::Embedding(Pool::Mean),
         None,
+        0,
     )?;
 
     let input_batch = batch(
@@ -78,6 +79,7 @@ fn test_bert_pooled_raw() -> Result<()> {
         "float32".to_string(),
         ModelType::Embedding(Pool::Cls),
         None,
+        0,
     )?;
 
     let input_batch = batch(
@@ -149,6 +151,7 @@ fn test_emotions() -> Result<()> {
         "float32".to_string(),
         ModelType::Classifier,
         None,
+        0,
     )?;
 
     let input_batch = batch(
@@ -201,6 +204,7 @@ fn test_bert_classification() -> Result<()> {
         "float32".to_string(),
         ModelType::Classifier,
         None,
+        0,
     )?;
 
     let input_single = batch(

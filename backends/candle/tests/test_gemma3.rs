@@ -17,6 +17,7 @@ fn test_gemma3() -> Result<()> {
         "float32".to_string(),
         ModelType::Embedding(Pool::Mean),
         dense_paths,
+        0,
     )?;
 
     let input_batch = batch(

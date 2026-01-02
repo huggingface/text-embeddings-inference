@@ -17,6 +17,7 @@ fn test_alibaba_gte() -> Result<()> {
         "float32".to_string(),
         ModelType::Embedding(Pool::Cls),
         None,
+        0,
     )?;
 
     let input_batch = batch(
@@ -62,6 +63,7 @@ fn test_alibaba_gte_new() -> Result<()> {
         "float32".to_string(),
         ModelType::Embedding(Pool::Cls),
         None,
+        0,
     )?;
 
     let input_batch = batch(
@@ -108,6 +110,7 @@ fn test_snowflake_gte() -> Result<()> {
         "float32".to_string(),
         ModelType::Embedding(Pool::Cls),
         None,
+        0,
     )?;
 
     let input_batch = batch(
@@ -154,6 +157,7 @@ fn test_gte_classification() -> Result<()> {
         "float32".to_string(),
         ModelType::Classifier,
         None,
+        0,
     )?;
 
     let input_single = batch(
