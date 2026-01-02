@@ -1121,7 +1121,7 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
                                  raw_scores: bool,
                                  infer: Infer,
                                  permit: OwnedSemaphorePermit,
-                                 batch_counter: Arc<AtomicUsize>| async move {
+                                 batch_counter: Option<Arc<AtomicUsize>>| async move {
             let response = infer
                 .predict(
                     (query, text.clone()),
