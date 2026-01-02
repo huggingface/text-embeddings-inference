@@ -2,6 +2,7 @@
 members = [
     "backends",
     "backends/candle",
+    "backends/candle-bench",
     "backends/ort",
     "backends/core",
     "backends/python",
@@ -54,6 +55,7 @@ candle-index-select-cu =  { version = "0.0.1", features = ["cuda-11"], default-f
 candle-rotary = { version = "0.0.1" }
 candle-flash-attn-v1 = { version = "0.0.1" }
 half = { version = "2.3.1", features = ["num-traits"] }
+radix_mlp = { version = "0.0.2" }
 
 [patch.crates-io]
 cudarc = { git = "https://github.com/Narsil/cudarc" , rev = "8b4f18b4bcd5e4b1a9daf40abc3a2e27f83f06e9"}
