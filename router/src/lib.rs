@@ -353,6 +353,7 @@ pub async fn run(
         max_batch_requests,
         max_client_batch_size,
         auto_truncate,
+        radix_mlp_threshold,
         version: env!("CARGO_PKG_VERSION"),
         sha: option_env!("VERGEN_GIT_SHA"),
         docker_label: option_env!("DOCKER_LABEL"),
@@ -580,6 +581,8 @@ pub struct Info {
     pub auto_truncate: bool,
     #[cfg_attr(feature = "http", schema(example = "4"))]
     pub tokenization_workers: usize,
+    #[cfg_attr(feature = "http", schema(example = "0.5"))]
+    pub radix_mlp_threshold: f32,
     /// Router Info
     #[cfg_attr(feature = "http", schema(example = "0.5.0"))]
     pub version: &'static str,
