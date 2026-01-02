@@ -1,8 +1,8 @@
 use anyhow::Result;
 use criterion::{criterion_group, criterion_main, Criterion};
+use radix_mlp::compute_fold_and_scatter;
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
-use radix_mlp::compute_fold_and_scatter;
 
 use hf_hub::api::sync::{ApiBuilder, ApiError, ApiRepo};
 use hf_hub::{Repo, RepoType};
@@ -258,8 +258,8 @@ fn cosine_similarity(v1: &[f32], v2: &[f32]) -> f32 {
 /// The main benchmark function.
 fn bench_radix_mlp(c: &mut Criterion) {
     // 1. Setup backend
-    let model_root = download_artifacts("Qwen/Qwen3-Embedding-8B", None)
-        .expect("Failed to download artifacts");
+    let model_root =
+        download_artifacts("Qwen/Qwen3-Embedding-8B", None).expect("Failed to download artifacts");
     println!("Model downloaded to {:?}", model_root);
     let backend = CandleBackend::new(
         &model_root,
@@ -397,8 +397,6 @@ fn bench_radix_mlp(c: &mut Criterion) {
         group.bench_function("radix_mlp_vanilla", |b| {
             b.iter(|| backend.embed(enabled_batch_vanilla.clone().into()).unwrap())
         });
-
-        
 
         group.finish();
     }
