@@ -90,7 +90,7 @@ pub use flash_modernbert::FlashModernBertModel;
 pub use flash_nomic::FlashNomicBertModel;
 
 #[cfg(feature = "cuda")]
-pub use flash_qwen2::FlashQwen2Model;
+pub use flash_qwen2::{FlashQwen2Model, LoraWeights};
 
 #[cfg(feature = "cuda")]
 pub use flash_qwen3::FlashQwen3Model;
