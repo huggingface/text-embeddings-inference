@@ -29,7 +29,7 @@ use http::header::AUTHORIZATION;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use simsimd::SpatialSimilarity;
 use std::net::SocketAddr;
-use std::sync::{Arc, atomic::AtomicUsize};
+use std::sync::{atomic::AtomicUsize, Arc};
 use std::time::{Duration, Instant};
 use text_embeddings_backend::BackendError;
 use text_embeddings_core::infer::{
@@ -121,7 +121,7 @@ async fn predict(
                               infer: Infer,
                               info: Info,
                               permit: Option<OwnedSemaphorePermit>,
-_batch_counter: Option<Arc<AtomicUsize>>| async move {
+                              _batch_counter: Option<Arc<AtomicUsize>>| async move {
         let permit = match permit {
             None => infer.acquire_permit().await,
             Some(permit) => permit,
@@ -356,7 +356,11 @@ async fn rerank(
     })?;
 
     // Closure for rerank
-    let rerank_inner = move |query: String, text: String, truncate: bool, infer: Infer, batch_counter: Option<Arc<AtomicUsize>>| async move {
+    let rerank_inner = move |query: String,
+                             text: String,
+                             truncate: bool,
+                             infer: Infer,
+                             batch_counter: Option<Arc<AtomicUsize>>| async move {
         let permit = infer.acquire_permit().await;
 
         let response = infer
@@ -388,7 +392,7 @@ async fn rerank(
         let counter = metrics::counter!("te_request_count", "method" => "batch");
         counter.increment(1);
 
-let batch_size = req.texts.len();
+        let batch_size = req.texts.len();
         if batch_size > info.max_client_batch_size {
             let message = format!(
                 "batch size {batch_size} > maximum allowed batch size {}",
@@ -405,10 +409,10 @@ let batch_size = req.texts.len();
         }
 
         let batch_counter = if batch_size == 1 {
-                None
-            } else {
-                Some(Arc::new(AtomicUsize::new(batch_size)))
-            };
+            None
+        } else {
+            Some(Arc::new(AtomicUsize::new(batch_size)))
+        };
         let mut futures = Vec::with_capacity(batch_size);
         let query_chars = req.query.chars().count();
         let mut compute_chars = query_chars * batch_size;

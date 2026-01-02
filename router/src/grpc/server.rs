@@ -13,7 +13,7 @@ use futures::future::join_all;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::future::Future;
 use std::net::SocketAddr;
-use std::sync::{Arc, atomic::AtomicUsize};
+use std::sync::{atomic::AtomicUsize, Arc};
 use std::time::{Duration, Instant};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::tokenization::{
@@ -282,7 +282,14 @@ impl TextEmbeddingsService {
 
         let response = self
             .infer
-            .predict(inputs, truncate, truncation_direction, raw_scores, permit, batch_counter)
+            .predict(
+                inputs,
+                truncate,
+                truncation_direction,
+                raw_scores,
+                permit,
+                batch_counter,
+            )
             .await
             .map_err(ErrorResponse::from)?;
 
@@ -925,38 +932,39 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
             }
         }?;
 
-// Closure for rerank
-        let rerank_inner = move |query: String,
-                                  text: String,
-                                  truncate: bool,
-                                  truncation_direction: tokenizers::TruncationDirection,
-                                  raw_scores: bool,
-                                  infer: Infer,
-                                  batch_counter: Option<Arc<AtomicUsize>>| async move {
-            let permit = infer.acquire_permit().await;
+        // Closure for rerank
+        let rerank_inner =
+            move |query: String,
+                  text: String,
+                  truncate: bool,
+                  truncation_direction: tokenizers::TruncationDirection,
+                  raw_scores: bool,
+                  infer: Infer,
+                  batch_counter: Option<Arc<AtomicUsize>>| async move {
+                let permit = infer.acquire_permit().await;
 
-            let response = infer
-                .predict(
-                    (query, text),
-                    truncate,
-                    truncation_direction,
-                    raw_scores,
-                    permit,
-                    batch_counter,
-                )
-                .await
-                .map_err(ErrorResponse::from)?;
+                let response = infer
+                    .predict(
+                        (query, text),
+                        truncate,
+                        truncation_direction,
+                        raw_scores,
+                        permit,
+                        batch_counter,
+                    )
+                    .await
+                    .map_err(ErrorResponse::from)?;
 
-            let score = response.results[0];
+                let score = response.results[0];
 
-            Ok::<(usize, Duration, Duration, Duration, f32), ErrorResponse>((
-                response.metadata.prompt_tokens,
-                response.metadata.tokenization,
-                response.metadata.queue,
-                response.metadata.inference,
-                score,
-            ))
-        };
+                Ok::<(usize, Duration, Duration, Duration, f32), ErrorResponse>((
+                    response.metadata.prompt_tokens,
+                    response.metadata.tokenization,
+                    response.metadata.queue,
+                    response.metadata.inference,
+                    score,
+                ))
+            };
 
         let counter = metrics::counter!("te_request_count", "method" => "batch");
         counter.increment(1);
@@ -1113,39 +1121,40 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
         }?;
 
         // Closure for rerank
-        let rerank_inner = move |index: usize,
-                                 query: String,
-                                 text: String,
-                                 truncate: bool,
-                                 truncation_direction: tokenizers::TruncationDirection,
-                                 raw_scores: bool,
-                                 infer: Infer,
-                                 permit: OwnedSemaphorePermit,
-                                 batch_counter: Option<Arc<AtomicUsize>>| async move {
-            let response = infer
-                .predict(
-                    (query, text.clone()),
-                    truncate,
-                    truncation_direction,
-                    raw_scores,
-                    permit,
-                    batch_counter,
-                )
-                .await
-                .map_err(ErrorResponse::from)?;
+        let rerank_inner =
+            move |index: usize,
+                  query: String,
+                  text: String,
+                  truncate: bool,
+                  truncation_direction: tokenizers::TruncationDirection,
+                  raw_scores: bool,
+                  infer: Infer,
+                  permit: OwnedSemaphorePermit,
+                  batch_counter: Option<Arc<AtomicUsize>>| async move {
+                let response = infer
+                    .predict(
+                        (query, text.clone()),
+                        truncate,
+                        truncation_direction,
+                        raw_scores,
+                        permit,
+                        batch_counter,
+                    )
+                    .await
+                    .map_err(ErrorResponse::from)?;
 
-            let score = response.results[0];
+                let score = response.results[0];
 
-            Ok::<(usize, usize, Duration, Duration, Duration, f32, String), ErrorResponse>((
-                index,
-                response.metadata.prompt_tokens,
-                response.metadata.tokenization,
-                response.metadata.queue,
-                response.metadata.inference,
-                score,
-                text,
-            ))
-        };
+                Ok::<(usize, usize, Duration, Duration, Duration, f32, String), ErrorResponse>((
+                    index,
+                    response.metadata.prompt_tokens,
+                    response.metadata.tokenization,
+                    response.metadata.queue,
+                    response.metadata.inference,
+                    score,
+                    text,
+                ))
+            };
 
         let counter = metrics::counter!("te_request_count", "method" => "batch");
         counter.increment(1);
