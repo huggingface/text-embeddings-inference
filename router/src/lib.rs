@@ -141,9 +141,16 @@ pub async fn run(
         "tokenizer.json not found. text-embeddings-inference only supports fast tokenizers",
     );
     tokenizer.with_padding(None);
-    // Qwen2 updates the post processor manually instead of into the tokenizer.json...
+    // Old Qwen2  repos updates the post processor manually instead of into the tokenizer.json.
+    // Newer ones (https://huggingface.co/jinaai/jina-code-embeddings-0.5b/tree/main) have it in the tokenizer.json. This is to support both cases.
     // https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct/blob/main/tokenization_qwen.py#L246
-    if config.model_type == "qwen2" {
+    if config.model_type == "qwen2"
+        && config
+            .auto_map
+            .as_ref()
+            .is_some_and(|m| m.get("AutoModel") == Some(&"modeling_qwen.Qwen2Model".to_string()))
+    {
+        tracing::warn!("Model is detected as a Qwen2 model with remote code. Adding a post processor manually as the tokenizer.json does not contain a post processor.");
         let template = TemplateProcessing::builder()
             .try_single("$A:0 <|endoftext|>:0")
             .unwrap()
@@ -184,16 +191,40 @@ pub async fn run(
             break;
         }
     }
-    let max_input_length = match st_config {
+
+    let base_input_length = match st_config {
         Some(config) => config.max_seq_length,
         None => {
             tracing::warn!("Could not find a Sentence Transformers config");
             config.max_position_embeddings - position_offset
         }
     };
+
+    // Raise an error when max_input_length is bigger than max_batch tokens to prevent an infinite loop in the queue
+    let max_input_length = if base_input_length > max_batch_tokens {
+        if !auto_truncate {
+            anyhow::bail!(
+                "`--max-batch-tokens` cannot be lower than the model `max_input_length` ({} < {}) when `--auto-truncate` is disabled, add the `--auto-truncate` flag to truncate the input sequences to match the `--max-batch-tokens`.",
+                base_input_length,
+                max_batch_tokens
+            );
+        }
+        tracing::warn!(
+            "The input sequences will be truncated to {} tokens even if the model `max_input_length` is greater than the provided `--max-batch-tokens` ({} > {}), as `--auto-truncate` is enabled.",
+            max_batch_tokens,
+            base_input_length,
+            max_batch_tokens
+        );
+        max_batch_tokens
+    } else {
+        base_input_length
+    };
+
     tracing::info!("Maximum number of tokens per request: {max_input_length}");
 
-    let tokenization_workers = tokenization_workers.unwrap_or_else(num_cpus::get);
+    // fall-back to num_cpus - 1 to leave some CPU for the backend, and at most 64 workers.
+    let tokenization_workers =
+        tokenization_workers.unwrap_or_else(|| (num_cpus::get() - 1).clamp(1, 64));
 
     // Try to load new ST Config
     let mut new_st_config: Option<NewSTConfig> = None;
@@ -259,7 +290,12 @@ pub async fn run(
 
     tracing::info!("Warming up model");
     backend
-        .warmup(max_input_length, max_batch_tokens, max_batch_requests)
+        .warmup(
+            max_input_length,
+            max_batch_tokens,
+            max_batch_requests,
+            backend.padded_model,
+        )
         .await
         .context("Model backend is not healthy")?;
 
@@ -427,6 +463,7 @@ pub struct ModelConfig {
     pub pad_token_id: usize,
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
+    pub auto_map: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -552,6 +589,7 @@ impl From<TextEmbeddingsError> for ErrorResponse {
         let error_type = match err {
             TextEmbeddingsError::Tokenizer(_) => ErrorType::Tokenizer,
             TextEmbeddingsError::Validation(_) => ErrorType::Validation,
+            TextEmbeddingsError::Empty(_) => ErrorType::Empty,
             TextEmbeddingsError::Overloaded(_) => ErrorType::Overloaded,
             TextEmbeddingsError::Backend(_) => ErrorType::Backend,
         };

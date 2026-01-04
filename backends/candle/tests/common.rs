@@ -85,7 +85,7 @@ impl Deref for SnapshotEmbeddings {
 
 impl From<Vec<Vec<f32>>> for SnapshotEmbeddings {
     fn from(value: Vec<Vec<f32>>) -> Self {
-        Self(value.into_iter().map(|v| SnapEmbedding(v)).collect())
+        Self(value.into_iter().map(SnapEmbedding).collect())
     }
 }
 
@@ -133,12 +133,12 @@ pub fn download_artifacts(
 ) -> Result<(PathBuf, Option<Vec<String>>)> {
     let mut builder = ApiBuilder::from_env().with_progress(false);
 
-    if let Some(cache_dir) = std::env::var_os("HUGGINGFACE_HUB_CACHE") {
-        builder = builder.with_cache_dir(cache_dir.into());
+    if let Ok(token) = std::env::var("HF_TOKEN") {
+        builder = builder.with_token(Some(token));
     }
 
-    if let Ok(origin) = std::env::var("HF_HUB_USER_AGENT_ORIGIN") {
-        builder = builder.with_user_agent("origin", origin.as_str());
+    if let Some(cache_dir) = std::env::var_os("HUGGINGFACE_HUB_CACHE") {
+        builder = builder.with_cache_dir(cache_dir.into());
     }
 
     let api = builder.build().unwrap();
@@ -181,7 +181,7 @@ pub fn download_artifacts(
                 }
                 _ => {
                     for path in &paths {
-                        download_dense_module(&api_repo, &path)?;
+                        download_dense_module(&api_repo, path)?;
                     }
                     Some(paths)
                 }

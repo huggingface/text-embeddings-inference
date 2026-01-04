@@ -326,7 +326,7 @@ dependencies = [
 
 [[package]]
 name = "backend-grpc-client"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "grpc-metadata",
  "prost 0.11.9",
@@ -555,6 +555,19 @@ name = "candle-flash-attn-v1"
 version = "0.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77052ab8dd38cbdce0daaefcb900fc93392a4be82ffe38065b4bc7c211f2ade6"
+dependencies = [
+ "anyhow",
+ "candle-core",
+ "half",
+ "num_cpus",
+ "rayon",
+]
+
+[[package]]
+name = "candle-index-select-cu"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d776145d1dfa52ab0c254ec678ae7765a120ee0bab999dbfea95d648c883a47b"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -4488,7 +4501,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "clap",
  "hf-hub",
@@ -4505,7 +4518,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend-candle"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "accelerate-src",
  "anyhow",
@@ -4513,6 +4526,7 @@ dependencies = [
  "candle-cublaslt",
  "candle-flash-attn",
  "candle-flash-attn-v1",
+ "candle-index-select-cu",
  "candle-layer-norm",
  "candle-moe",
  "candle-nn",
@@ -4536,7 +4550,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend-core"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "clap",
  "nohash-hasher",
@@ -4546,7 +4560,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend-ort"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "anyhow",
  "ndarray",
@@ -4563,7 +4577,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend-python"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "backend-grpc-client",
  "nohash-hasher",
@@ -4577,7 +4591,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-core"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "async-channel",
  "hf-hub",
@@ -4592,7 +4606,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-router"
-version = "1.8.2"
+version = "1.8.3"
 dependencies = [
  "anyhow",
  "async-stream",
