@@ -599,6 +599,13 @@ async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiErro
         Err(err) => tracing::warn!("Could not download `model.safetensors`: {}", err),
     };
 
+    // StaticEmbedding fallback
+    tracing::info!("Downloading `0_StaticEmbedding/model.safetensors`");
+    match api.get("0_StaticEmbedding/model.safetensors").await {
+        Ok(p) => return Ok(vec![p]),
+        Err(err) => tracing::warn!("Could not download `0_StaticEmbedding/model.safetensors`: {}", err),
+    };
+
     // Sharded weights
     // Download and parse index file
     tracing::info!("Downloading `model.safetensors.index.json`");

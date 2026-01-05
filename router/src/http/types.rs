@@ -257,6 +257,16 @@ pub(crate) struct RerankRequest {
     #[serde(default)]
     #[schema(default = "false", example = "false")]
     pub return_text: bool,
+    /// Custom instruction for reranking (e.g., "Select only semantically similar documents")
+    /// Used with models that support templated prompts like Qwen3 rerankers
+    #[serde(default)]
+    #[schema(default = "null", example = "Select only the Documents that are semantically similar to the Query.", nullable = true)]
+    pub instruction: Option<String>,
+    /// Whether to use the model's chat template for formatting.  
+    /// Defaults to true for models that support it (e.g., Qwen3 rerankers)
+    #[serde(default)]
+    #[schema(default = "null", example = "true", nullable = true)]
+    pub use_template: Option<bool>,
 }
 
 #[derive(Serialize, ToSchema)]
