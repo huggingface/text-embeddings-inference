@@ -123,7 +123,7 @@ async fn predict(
                               permit: Option<OwnedSemaphorePermit>,
                               _batch_counter: Option<Arc<AtomicUsize>>| async move {
         let permit = match permit {
-            None => infer.acquire_permit().await,
+            None => infer.try_acquire_permit().map_err(ErrorResponse::from)?,
             Some(permit) => permit,
         };
 
@@ -361,7 +361,7 @@ async fn rerank(
                              truncate: bool,
                              infer: Infer,
                              batch_counter: Option<Arc<AtomicUsize>>| async move {
-        let permit = infer.acquire_permit().await;
+        let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
 
         let response = infer
             .predict(
@@ -701,8 +701,13 @@ async fn embed(
                 let local_infer = infer.clone();
                 let prompt_name = req.prompt_name.clone();
                 let local_batch_counter = batch_counter.clone();
+
+
+                let permit = local_infer
+                    .try_acquire_permit()
+                    .map_err(ErrorResponse::from)?;
+
                 futures.push(async move {
-                    let permit = local_infer.acquire_permit().await;
                     local_infer
                         .embed_pooled(
                             input,
@@ -892,8 +897,12 @@ async fn embed_sparse(
                 let local_infer = infer.clone();
                 let prompt_name = req.prompt_name.clone();
                 let local_batch_counter = batch_counter.clone();
+
+                let permit = local_infer
+                    .try_acquire_permit()
+                    .map_err(ErrorResponse::from)?;
+
                 futures.push(async move {
-                    let permit = local_infer.acquire_permit().await;
                     let response = local_infer
                         .embed_sparse(
                             input,
@@ -1074,8 +1083,12 @@ async fn embed_all(
                 let local_infer = infer.clone();
                 let prompt_name = req.prompt_name.clone();
                 let local_batch_counter = batch_counter.clone();
+
+                let permit = local_infer
+                    .try_acquire_permit()
+                    .map_err(ErrorResponse::from)?;
+
                 futures.push(async move {
-                    let permit = local_infer.acquire_permit().await;
                     local_infer
                         .embed_all(
                             input,
@@ -1276,8 +1289,12 @@ async fn openai_embed(
 
                 let local_infer = infer.clone();
                 let local_batch_counter = batch_counter.clone();
+
+                let permit = local_infer
+                    .try_acquire_permit()
+                    .map_err(ErrorResponse::from)?;
+
                 futures.push(async move {
-                    let permit = local_infer.acquire_permit().await;
                     local_infer
                         .embed_pooled(
                             input,
