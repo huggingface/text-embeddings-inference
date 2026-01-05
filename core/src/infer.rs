@@ -550,8 +550,8 @@ async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextB
             ModelType::Classifier => {
                 let results = backend.predict(batch.1).await;
 
-                // Handle sending responses in another thread to avoid starving the backend
-                std::thread::spawn(move || match results {
+                // Handle sending responses in a blocking task to avoid starving the backend
+                tokio::task::spawn_blocking(move || match results {
                     Ok((mut predictions, inference_duration)) => {
                         batch.0.into_iter().enumerate().for_each(|(i, m)| {
                             let infer_metadata = InferMetadata {
@@ -581,8 +581,8 @@ async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextB
             ModelType::Embedding(_) => {
                 let results = backend.embed(batch.1).await;
 
-                // Handle sending responses in another thread to avoid starving the backend
-                std::thread::spawn(move || match results {
+                // Handle sending responses in a blocking task to avoid starving the backend
+                tokio::task::spawn_blocking(move || match results {
                     Ok((mut embeddings, inference_duration)) => {
                         batch.0.into_iter().enumerate().for_each(|(i, m)| {
                             let metadata = InferMetadata {
