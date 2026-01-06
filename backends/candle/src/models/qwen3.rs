@@ -7,6 +7,10 @@ use candle_nn::{Embedding, Module, VarBuilder};
 use serde::Deserialize;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
+// Token IDs for Qwen3-Reranker yes/no classification
+const YES_TOKEN_ID: usize = 9693;
+const NO_TOKEN_ID: usize = 2152;
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Qwen3Config {
     pub attention_bias: bool,
@@ -379,9 +383,11 @@ pub struct Qwen3Model {
     embeddings: Embedding,
     layers: Vec<Qwen3Layer>,
     norm: RMSNorm,
+    lm_head: Option<Linear>,
     rotary_cache: (Tensor, Tensor),
     rotary_dim: usize,
-    pool: Pool,
+    pool: Option<Pool>,
+    is_listwise_reranker: bool,
     num_attention_heads: usize,
     pad_token_id: u32,
 
@@ -393,53 +399,75 @@ pub struct Qwen3Model {
 
 impl Qwen3Model {
     pub fn load(vb: VarBuilder, config: &Qwen3Config, model_type: ModelType) -> Result<Self> {
-        let pool = match model_type {
+        let (pool, is_listwise_reranker) = match model_type {
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for Qwen3")
             }
-            ModelType::Embedding(pool) => pool,
+            ModelType::Embedding(pool) => (Some(pool), false),
+            ModelType::ListwiseReranker => (None, true),
         };
 
         // The Qwen3-Reranker models contain the `model` key
         // https://huggingface.co/collections/Qwen/qwen3-reranker-6841b22d0192d7ade9cdefea
-        let vb = if vb.contains_tensor("model.embed_tokens.weight") {
+        let has_model_prefix = vb.contains_tensor("model.embed_tokens.weight");
+        let model_vb = if has_model_prefix {
             vb.pp("model")
         } else {
-            vb
+            vb.clone()
         };
 
         let embeddings = Embedding::new(
-            vb.pp("embed_tokens")
+            model_vb
+                .pp("embed_tokens")
                 .get((config.vocab_size, config.hidden_size), "weight")?,
             config.hidden_size,
         );
 
         let layers = (0..config.num_hidden_layers)
-            .map(|index| Qwen3Layer::load(vb.pp(format!("layers.{index}")), config))
+            .map(|index| Qwen3Layer::load(model_vb.pp(format!("layers.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
 
-        let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
+        let norm = RMSNorm::load(model_vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
+
+        // Load lm_head for ListwiseReranker
+        // Support tied embeddings: if lm_head.weight doesn't exist, use embed_tokens.weight
+        let lm_head = if is_listwise_reranker {
+            let lm_head_weight = if vb.contains_tensor("lm_head.weight") {
+                vb.pp("lm_head")
+                    .get((config.vocab_size, config.hidden_size), "weight")?
+            } else {
+                // Tied embeddings - reuse embed_tokens weight
+                model_vb
+                    .pp("embed_tokens")
+                    .get((config.vocab_size, config.hidden_size), "weight")?
+            };
+            Some(Linear::new(lm_head_weight, None, None))
+        } else {
+            None
+        };
 
         let rotary_dim = config
             .head_dim
             .unwrap_or(config.hidden_size / config.num_attention_heads);
 
-        let inv_freqs = get_inv_freqs(rotary_dim, config.rope_theta, vb.device(), None)?;
+        let inv_freqs = get_inv_freqs(rotary_dim, config.rope_theta, model_vb.device(), None)?;
 
         let rotary_cache =
-            get_cos_sin(config.max_position_embeddings, &inv_freqs, vb.dtype(), true)?;
+            get_cos_sin(config.max_position_embeddings, &inv_freqs, model_vb.dtype(), true)?;
 
         Ok(Self {
             embeddings,
             layers,
             norm,
+            lm_head,
             rotary_cache,
             rotary_dim,
             pool,
+            is_listwise_reranker,
             pad_token_id: config.eos_token_id as u32,
             num_attention_heads: config.num_attention_heads,
-            dtype: vb.dtype(),
-            device: vb.device().clone(),
+            dtype: model_vb.dtype(),
+            device: model_vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
     }
@@ -585,8 +613,8 @@ impl Qwen3Model {
         let has_raw_requests = !batch.raw_indices.is_empty();
 
         let pooled_embeddings = if has_pooling_requests {
-            match self.pool {
-                Pool::Cls => {
+            match &self.pool {
+                Some(Pool::Cls) => {
                     if batch_size > 1 {
                         let pooled_indices = Tensor::from_vec(
                             batch.pooled_indices.clone(),
@@ -609,7 +637,7 @@ impl Qwen3Model {
                         Some(outputs.i((0, 0))?.unsqueeze(0)?)
                     }
                 }
-                Pool::LastToken => {
+                Some(Pool::LastToken) => {
                     if batch_size > 1 {
                         let results: Result<Vec<Tensor>> = batch
                             .pooled_indices
@@ -629,7 +657,7 @@ impl Qwen3Model {
                         Some(outputs.i((0, last_idx))?.unsqueeze(0)?)
                     }
                 }
-                Pool::Mean => {
+                Some(Pool::Mean) => {
                     if batch_size > 1 {
                         let results: Result<Vec<Tensor>> = batch
                             .pooled_indices
@@ -653,9 +681,10 @@ impl Qwen3Model {
                         Some((embeddings.sum_keepdim(0)? / length)?)
                     }
                 }
-                Pool::Splade => {
+                Some(Pool::Splade) => {
                     unreachable!("Splade is not supported for Qwen3");
                 }
+                None => None,
             }
         } else {
             None
@@ -690,6 +719,156 @@ impl Qwen3Model {
 
         Ok((pooled_embeddings, raw_embeddings))
     }
+
+    /// Forward pass for ListwiseReranker
+    /// Returns P(yes) scores for reranking
+    pub fn forward_for_rerank(&self, batch: Batch) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let lm_head = self
+            .lm_head
+            .as_ref()
+            .ok_or_else(|| candle::Error::Msg("lm_head not loaded for reranker".to_string()))?;
+
+        let batch_size = batch.len();
+        let max_length = batch.max_length as usize;
+
+        let shape = (batch_size, max_length);
+
+        let (input_ids, position_ids, input_lengths, attention_bias) = if batch_size > 1 {
+            // Prepare padded batch with left padding
+            let elems = batch_size * max_length;
+
+            let mut input_ids = Vec::with_capacity(elems);
+            let mut position_ids = Vec::with_capacity(elems);
+            let mut attention_bias = Vec::with_capacity(elems);
+            let mut input_lengths = Vec::with_capacity(batch_size);
+            let mut masking = false;
+
+            for i in 0..batch_size {
+                let start = batch.cumulative_seq_lengths[i] as usize;
+                let end = batch.cumulative_seq_lengths[i + 1] as usize;
+                let seq_length = end - start;
+                input_lengths.push(seq_length);
+
+                // Left padding for Qwen3
+                let padding = max_length - seq_length;
+                if padding > 0 {
+                    masking = true;
+                    for _ in 0..padding {
+                        input_ids.push(self.pad_token_id);
+                        position_ids.push(0);
+                        attention_bias.push(f32::NEG_INFINITY);
+                    }
+                }
+
+                // Then add the actual sequence
+                for j in start..end {
+                    input_ids.push(batch.input_ids[j]);
+                    position_ids.push(batch.position_ids[j]);
+                    attention_bias.push(0.0);
+                }
+            }
+
+            let input_ids = Tensor::from_vec(input_ids, shape, &self.device)?;
+            let position_ids = Tensor::from_vec(position_ids, shape, &self.device)?;
+
+            let attention_bias = if masking {
+                let attention_bias =
+                    Tensor::from_vec(attention_bias, (batch_size, 1, 1, max_length), &self.device)?
+                        .to_dtype(self.dtype)?;
+                let attention_bias = attention_bias
+                    .broadcast_as((batch_size, self.num_attention_heads, max_length, max_length))?
+                    .contiguous()?;
+                Some(attention_bias)
+            } else {
+                None
+            };
+
+            (input_ids, position_ids, input_lengths, attention_bias)
+        } else {
+            let input_ids = Tensor::from_vec(
+                batch.input_ids.clone(),
+                (1, batch.input_ids.len()),
+                &self.device,
+            )?;
+            let position_ids = Tensor::from_vec(
+                batch.position_ids.clone(),
+                (1, batch.position_ids.len()),
+                &self.device,
+            )?;
+            let input_lengths = vec![batch.input_ids.len()];
+
+            let seq_len = batch.input_ids.len();
+            let attention_bias = Tensor::zeros(
+                (1, self.num_attention_heads, seq_len, seq_len),
+                self.dtype,
+                &self.device,
+            )?;
+
+            (input_ids, position_ids, input_lengths, Some(attention_bias))
+        };
+
+        let attention_bias = if let Some(attn_bias) = attention_bias {
+            Some(self.get_causal_attention_bias(attn_bias)?)
+        } else {
+            None
+        };
+
+        let mut hidden_states = self.embeddings.forward(&input_ids)?;
+
+        let cos = self
+            .rotary_cache
+            .0
+            .index_select(&position_ids.flatten_all()?, 0)?;
+        let sin = self
+            .rotary_cache
+            .1
+            .index_select(&position_ids.flatten_all()?, 0)?;
+
+        let cos = cos.reshape((batch_size, 1, max_length, self.rotary_dim))?;
+        let sin = sin.reshape((batch_size, 1, max_length, self.rotary_dim))?;
+
+        for layer in &self.layers {
+            hidden_states = layer.forward(&hidden_states, attention_bias.as_ref(), &cos, &sin)?;
+        }
+
+        let (outputs, _) = self.norm.forward(&hidden_states, None)?;
+
+        // Apply lm_head to get logits
+        let logits = lm_head.forward(&outputs)?;
+
+        // Extract yes/no logits from the last token position
+        let mut scores = Vec::with_capacity(batch_size);
+
+        for i in 0..batch_size {
+            // With left padding, the last token is always at max_length - 1
+            let last_idx = if batch_size > 1 {
+                max_length - 1
+            } else {
+                input_lengths[0] - 1
+            };
+
+            // Get logits for the last token
+            let last_logits = logits.i((i, last_idx))?;
+
+            // Extract yes and no logits
+            let yes_logit = last_logits.i(YES_TOKEN_ID)?.to_scalar::<f32>()?;
+            let no_logit = last_logits.i(NO_TOKEN_ID)?.to_scalar::<f32>()?;
+
+            // Compute P(yes) using softmax over [no, yes]
+            let max_logit = yes_logit.max(no_logit);
+            let yes_exp = (yes_logit - max_logit).exp();
+            let no_exp = (no_logit - max_logit).exp();
+            let p_yes = yes_exp / (yes_exp + no_exp);
+
+            scores.push(vec![p_yes]);
+        }
+
+        // Convert scores to tensor
+        let flat_scores: Vec<f32> = scores.into_iter().flatten().collect();
+        Tensor::from_vec(flat_scores, (batch_size, 1), &self.device)
+    }
 }
 
 impl Model for Qwen3Model {
@@ -699,5 +878,13 @@ impl Model for Qwen3Model {
 
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
+    }
+
+    fn predict(&self, batch: Batch) -> Result<Tensor> {
+        if self.is_listwise_reranker {
+            self.forward_for_rerank(batch)
+        } else {
+            candle::bail!("`predict` is not implemented for Qwen3 embedding model")
+        }
     }
 }

@@ -6,6 +6,10 @@ use candle_nn::{Embedding, Module, VarBuilder};
 use candle_rotary::apply_rotary_inplace;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
+// Token IDs for Qwen3-Reranker yes/no classification
+const YES_TOKEN_ID: usize = 9693;
+const NO_TOKEN_ID: usize = 2152;
+
 struct Qwen3Attention {
     q_proj: Linear,
     k_proj: Linear,
@@ -285,9 +289,11 @@ pub struct FlashQwen3Model {
     embeddings: Embedding,
     layers: Vec<Qwen3Layer>,
     norm: RMSNorm,
+    lm_head: Option<Linear>,
     cos_cache: Tensor,
     sin_cache: Tensor,
-    pool: Pool,
+    pool: Option<Pool>,
+    is_listwise_reranker: bool,
     pub device: Device,
 
     span: tracing::Span,
@@ -304,43 +310,63 @@ impl FlashQwen3Model {
             candle::bail!("FlashQwen3 requires DType::F16")
         }
 
-        let pool = match model_type {
+        let (pool, is_listwise_reranker) = match model_type {
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for Qwen3")
             }
-            ModelType::Embedding(pool) => pool,
+            ModelType::Embedding(pool) => (Some(pool), false),
+            ModelType::ListwiseReranker => (None, true),
         };
 
         // The Qwen3-Reranker models contain the `model` key
         // https://huggingface.co/collections/Qwen/qwen3-reranker-6841b22d0192d7ade9cdefea
-        let vb = if vb.contains_tensor("model.embed_tokens.weight") {
+        let has_model_prefix = vb.contains_tensor("model.embed_tokens.weight");
+        let model_vb = if has_model_prefix {
             vb.pp("model")
         } else {
-            vb
+            vb.clone()
         };
 
         let embeddings = Embedding::new(
-            vb.pp("embed_tokens")
+            model_vb
+                .pp("embed_tokens")
                 .get((config.vocab_size, config.hidden_size), "weight")?,
             config.hidden_size,
         );
 
         let layers = (0..config.num_hidden_layers)
-            .map(|index| Qwen3Layer::load(vb.pp(format!("layers.{index}")), config))
+            .map(|index| Qwen3Layer::load(model_vb.pp(format!("layers.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
 
-        let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
+        let norm = RMSNorm::load(model_vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
+
+        // Load lm_head for ListwiseReranker
+        // Support tied embeddings: if lm_head.weight doesn't exist, use embed_tokens.weight
+        let lm_head = if is_listwise_reranker {
+            let lm_head_weight = if vb.contains_tensor("lm_head.weight") {
+                vb.pp("lm_head")
+                    .get((config.vocab_size, config.hidden_size), "weight")?
+            } else {
+                // Tied embeddings - reuse embed_tokens weight
+                model_vb
+                    .pp("embed_tokens")
+                    .get((config.vocab_size, config.hidden_size), "weight")?
+            };
+            Some(Linear::new(lm_head_weight, None, None))
+        } else {
+            None
+        };
 
         let inv_freqs = get_inv_freqs(
             layers[0].attention.attention_head_size,
             config.rope_theta,
-            vb.device(),
+            model_vb.device(),
             None,
         )?;
         let (cos_cache, sin_cache) = get_cos_sin(
             config.max_position_embeddings,
             &inv_freqs,
-            vb.dtype(),
+            model_vb.dtype(),
             false,
         )?;
 
@@ -348,10 +374,12 @@ impl FlashQwen3Model {
             embeddings,
             layers,
             norm,
+            lm_head,
             cos_cache,
             sin_cache,
             pool,
-            device: vb.device().clone(),
+            is_listwise_reranker,
+            device: model_vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
     }
@@ -396,14 +424,14 @@ impl FlashQwen3Model {
         let has_raw_requests = !batch.raw_indices.is_empty();
 
         let pooled_embeddings = if has_pooling_requests {
-            match self.pool {
+            match &self.pool {
                 // CLS and LastToken pooling
-                Pool::Cls | Pool::LastToken => {
+                Some(Pool::Cls) | Some(Pool::LastToken) => {
                     if batch_size > 1 {
                         // Get token indices form cu_seqlens
-                        let mut indices = match self.pool {
-                            Pool::Cls => cu_seqlens.narrow(0, 0, batch_size)?,
-                            Pool::LastToken => {
+                        let mut indices = match &self.pool {
+                            Some(Pool::Cls) => cu_seqlens.narrow(0, 0, batch_size)?,
+                            Some(Pool::LastToken) => {
                                 let end = cu_seqlens.narrow(0, 1, batch_size)?;
                                 (&end - &end.ones_like()?)?
                             }
@@ -428,9 +456,9 @@ impl FlashQwen3Model {
                         Some(index_select(&outputs, &indices, 0)?)
                     } else {
                         Some(
-                            match self.pool {
-                                Pool::Cls => outputs.i(0)?,
-                                Pool::LastToken => {
+                            match &self.pool {
+                                Some(Pool::Cls) => outputs.i(0)?,
+                                Some(Pool::LastToken) => {
                                     outputs.i(batch.cumulative_seq_lengths[1] as usize - 1)?
                                 }
                                 _ => unreachable!(),
@@ -440,7 +468,7 @@ impl FlashQwen3Model {
                     }
                 }
                 // Mean pooling
-                Pool::Mean => {
+                Some(Pool::Mean) => {
                     if batch_size > 1 {
                         // for each request that requires pooling
                         let results: Result<Vec<Tensor>> = batch
@@ -463,9 +491,10 @@ impl FlashQwen3Model {
                         Some((outputs.sum_keepdim(0)? / (batch.max_length as f64))?)
                     }
                 }
-                Pool::Splade => {
+                Some(Pool::Splade) => {
                     unreachable!();
                 }
+                None => None,
             }
         } else {
             None
@@ -502,6 +531,80 @@ impl FlashQwen3Model {
 
         Ok((pooled_embeddings, raw_embeddings))
     }
+
+    /// Forward pass for ListwiseReranker
+    /// Returns P(yes) scores for reranking
+    pub fn forward_for_rerank(&self, batch: Batch) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let lm_head = self
+            .lm_head
+            .as_ref()
+            .ok_or_else(|| candle::Error::Msg("lm_head not loaded for reranker".to_string()))?;
+
+        let batch_size = batch.cumulative_seq_lengths.len() - 1;
+        let shape = batch.input_ids.len();
+
+        // Create Cuda tensors
+        let input_ids = Tensor::from_vec(batch.input_ids, shape, &self.device)?;
+        let position_ids = Tensor::from_vec(batch.position_ids.clone(), shape, &self.device)?;
+        let cu_seqlens = Tensor::from_vec(
+            batch.cumulative_seq_lengths.clone(),
+            batch_size + 1,
+            &self.device,
+        )?;
+
+        let mut hidden_states = self.embeddings.forward(&input_ids)?;
+
+        let cos = index_select(&self.cos_cache, &position_ids, 0)?;
+        let sin = index_select(&self.sin_cache, &position_ids, 0)?;
+
+        let mut residual = None;
+        for layer in &self.layers {
+            let (h, r) = layer.forward(
+                &hidden_states,
+                residual.as_ref(),
+                &cu_seqlens,
+                &cos,
+                &sin,
+                batch.max_length as usize,
+            )?;
+            hidden_states = h;
+            residual = Some(r);
+        }
+
+        let (outputs, _) = self.norm.forward(&hidden_states, residual.as_ref())?;
+
+        // Apply lm_head to get logits
+        let logits = lm_head.forward(&outputs)?;
+
+        // Extract yes/no logits from the last token position for each sequence
+        let mut scores = Vec::with_capacity(batch_size);
+
+        for i in 0..batch_size {
+            // Get the last token position for this sequence
+            let last_idx = (batch.cumulative_seq_lengths[i + 1] - 1) as usize;
+
+            // Get logits for the last token
+            let last_logits = logits.i(last_idx)?;
+
+            // Extract yes and no logits (convert to f32 first for F16 models)
+            let yes_logit = last_logits.i(YES_TOKEN_ID)?.to_dtype(DType::F32)?.to_scalar::<f32>()?;
+            let no_logit = last_logits.i(NO_TOKEN_ID)?.to_dtype(DType::F32)?.to_scalar::<f32>()?;
+
+            // Compute P(yes) using softmax over [no, yes]
+            let max_logit = yes_logit.max(no_logit);
+            let yes_exp = (yes_logit - max_logit).exp();
+            let no_exp = (no_logit - max_logit).exp();
+            let p_yes = yes_exp / (yes_exp + no_exp);
+
+            scores.push(vec![p_yes]);
+        }
+
+        // Convert scores to tensor
+        let flat_scores: Vec<f32> = scores.into_iter().flatten().collect();
+        Tensor::from_vec(flat_scores, (batch_size, 1), &self.device)
+    }
 }
 
 impl Model for FlashQwen3Model {
@@ -511,5 +614,13 @@ impl Model for FlashQwen3Model {
 
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
+    }
+
+    fn predict(&self, batch: Batch) -> Result<Tensor> {
+        if self.is_listwise_reranker {
+            self.forward_for_rerank(batch)
+        } else {
+            candle::bail!("`predict` is not implemented for FlashQwen3 embedding model")
+        }
     }
 }
