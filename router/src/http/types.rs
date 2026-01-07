@@ -273,6 +273,55 @@ pub(crate) struct Rank {
 #[derive(Serialize, ToSchema)]
 pub(crate) struct RerankResponse(pub Vec<Rank>);
 
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct JinaAIRerankRequest {
+    #[allow(dead_code)]
+    #[schema(nullable = true, example = "null")]
+    pub model: Option<String>,
+    #[schema(example = "What is Deep Learning?")]
+    pub query: String,
+    #[schema(example = json!(["Deep Learning is ..."]))]
+    pub documents: Vec<String>,
+    #[schema(example = "3", nullable = true)]
+    pub top_n: Option<usize>,
+    #[serde(default)]
+    #[schema(default = "false", example = "false")]
+    pub return_documents: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct JinaAIDocument {
+    #[schema(example = "Deep Learning is ...")]
+    pub text: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct JinaAIResult {
+    #[schema(example = "0")]
+    pub index: usize,
+    #[schema(nullable = true, default = "null")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document: Option<JinaAIDocument>,
+    #[schema(example = "1.0")]
+    pub relevance_score: f32,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct JinaAIUsage {
+    #[schema(example = "512")]
+    pub total_tokens: usize,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct JinaAIRerankResponse {
+    #[schema(example = "thenlper/gte-base")]
+    pub model: String,
+    #[schema(example = "list")]
+    pub object: &'static str,
+    pub usage: JinaAIUsage,
+    pub results: Vec<JinaAIResult>,
+}
+
 #[derive(Deserialize, ToSchema, Debug)]
 #[serde(untagged)]
 pub(crate) enum InputType {

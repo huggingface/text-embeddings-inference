@@ -2,6 +2,7 @@
 use crate::http::types::{
     DecodeRequest, DecodeResponse, EmbedAllRequest, EmbedAllResponse, EmbedRequest, EmbedResponse,
     EmbedSparseRequest, EmbedSparseResponse, Embedding, EncodingFormat, Input, InputIds, InputType,
+    JinaAIDocument, JinaAIRerankRequest, JinaAIRerankResponse, JinaAIResult, JinaAIUsage,
     OpenAICompatEmbedding, OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse,
     OpenAICompatUsage, PredictInput, PredictRequest, PredictResponse, Prediction, Rank,
     RerankRequest, RerankResponse, Sequence, SimilarityInput, SimilarityParameters,
@@ -465,6 +466,209 @@ async fn rerank(
 
     metadata.record_span(&span);
     metadata.record_metrics();
+
+    let headers = HeaderMap::from(metadata);
+
+    tracing::info!("Success");
+
+    Ok((headers, Json(response)))
+}
+
+#[utoipa::path(
+post,
+tag = "Text Embeddings Inference",
+path = "/v1/rerank",
+request_body = JinaAIRerankRequest,
+responses(
+(status = 200, description = "Ranks", body = JinaAIRerankResponse),
+(status = 424, description = "Rerank Error", body = ErrorResponse,
+example = json ! ({"error": "Inference failed", "error_type": "backend"})),
+(status = 429, description = "Model is overloaded", body = ErrorResponse,
+example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
+(status = 422, description = "Tokenization error", body = ErrorResponse,
+example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+(status = 400, description = "Batch is empty", body = ErrorResponse,
+example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
+(status = 413, description = "Batch size error", body = ErrorResponse,
+example = json ! ({"error": "Batch size error", "error_type": "validation"})),
+)
+)]
+#[instrument(
+    skip_all,
+    fields(total_time, tokenization_time, queue_time, inference_time,)
+)]
+async fn jinaai_rerank(
+    infer: Extension<Infer>,
+    info: Extension<Info>,
+    Extension(context): Extension<Option<opentelemetry::Context>>,
+    Json(req): Json<JinaAIRerankRequest>,
+) -> Result<(HeaderMap, Json<JinaAIRerankResponse>), (StatusCode, Json<ErrorResponse>)> {
+    let span = tracing::Span::current();
+    if let Some(context) = context {
+        span.set_parent(context);
+    }
+
+    let start_time = Instant::now();
+
+    if req.documents.is_empty() {
+        let message = "`documents` cannot be empty".to_string();
+        tracing::error!("{message}");
+        let err = ErrorResponse {
+            error: message,
+            error_type: ErrorType::Empty,
+        };
+        let counter = metrics::counter!("te_request_failure", "err" => "validation");
+        counter.increment(1);
+        Err(err)?;
+    }
+
+    match &info.model_type {
+        ModelType::Reranker(_) => Ok(()),
+        ModelType::Classifier(_) | ModelType::Embedding(_) => {
+            let counter = metrics::counter!("te_request_failure", "err" => "model_type");
+            counter.increment(1);
+            let message = "model is not a re-ranker model".to_string();
+            Err(TextEmbeddingsError::Backend(BackendError::Inference(
+                message,
+            )))
+        }
+    }
+    .map_err(|err| {
+        tracing::error!("{err}");
+        ErrorResponse::from(err)
+    })?;
+
+    let rerank_inner = move |query: String, document: String, infer: Infer| async move {
+        let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+
+        let response = infer
+            .predict(
+                (query, document),
+                false,
+                TruncationDirection::Right.into(),
+                false,
+                permit,
+            )
+            .await
+            .map_err(ErrorResponse::from)?;
+
+        let score = response.results[0];
+
+        Ok::<(usize, Duration, Duration, Duration, f32), ErrorResponse>((
+            response.metadata.prompt_tokens,
+            response.metadata.tokenization,
+            response.metadata.queue,
+            response.metadata.inference,
+            score,
+        ))
+    };
+
+    let (response, metadata) = {
+        let counter = metrics::counter!("te_request_count", "method" => "batch");
+        counter.increment(1);
+
+        let batch_size = req.documents.len();
+        if batch_size > info.max_client_batch_size {
+            let message = format!(
+                "batch size {batch_size} > maximum allowed batch size {}",
+                info.max_client_batch_size
+            );
+            tracing::error!("{message}");
+            let err = ErrorResponse {
+                error: message,
+                error_type: ErrorType::Validation,
+            };
+            let counter = metrics::counter!("te_request_failure", "err" => "batch_size");
+            counter.increment(1);
+            Err(err)?;
+        }
+
+        let mut futures = Vec::with_capacity(batch_size);
+        let query_chars = req.query.chars().count();
+        let mut compute_chars = query_chars * batch_size;
+
+        for document in &req.documents {
+            compute_chars += document.chars().count();
+            let local_infer = infer.clone();
+            futures.push(rerank_inner(
+                req.query.clone(),
+                document.clone(),
+                local_infer.0,
+            ))
+        }
+        let results = join_all(futures)
+            .await
+            .into_iter()
+            .collect::<Result<Vec<(usize, Duration, Duration, Duration, f32)>, ErrorResponse>>()?;
+
+        let mut ranks = Vec::with_capacity(batch_size);
+        let mut total_tokenization_time = 0;
+        let mut total_queue_time = 0;
+        let mut total_inference_time = 0;
+        let mut total_compute_tokens = 0;
+
+        for (index, r) in results.into_iter().enumerate() {
+            total_compute_tokens += r.0;
+            total_tokenization_time += r.1.as_nanos() as u64;
+            total_queue_time += r.2.as_nanos() as u64;
+            total_inference_time += r.3.as_nanos() as u64;
+            let document = if req.return_documents {
+                Some(JinaAIDocument {
+                    text: req.documents[index].clone(),
+                })
+            } else {
+                None
+            };
+
+            let score = r.4;
+            // Check that s is not NaN or the partial_cmp below will panic
+            if score.is_nan() {
+                Err(ErrorResponse {
+                    error: "score is NaN".to_string(),
+                    error_type: ErrorType::Backend,
+                })?;
+            }
+
+            ranks.push(JinaAIResult {
+                index,
+                document,
+                relevance_score: score,
+            });
+        }
+
+        ranks.sort_by(|x, y| x.relevance_score.partial_cmp(&y.relevance_score).unwrap());
+        ranks.reverse();
+        ranks.truncate(req.top_n.map_or(ranks.len(), |x| x.min(ranks.len())));
+
+        let batch_size = batch_size as u64;
+
+        let counter = metrics::counter!("te_request_success", "method" => "batch");
+        counter.increment(1);
+
+        (
+            ranks,
+            ResponseMetadata::new(
+                compute_chars,
+                total_compute_tokens,
+                start_time,
+                Duration::from_nanos(total_tokenization_time / batch_size),
+                Duration::from_nanos(total_queue_time / batch_size),
+                Duration::from_nanos(total_inference_time / batch_size),
+            ),
+        )
+    };
+
+    metadata.record_span(&span);
+    metadata.record_metrics();
+
+    let response = JinaAIRerankResponse {
+        model: info.model_id.clone(),
+        object: "list",
+        results: response,
+        usage: JinaAIUsage {
+            total_tokens: metadata.compute_tokens,
+        },
+    };
 
     let headers = HeaderMap::from(metadata);
 
@@ -1757,9 +1961,16 @@ pub async fn run(
         .route("/similarity", post(similarity))
         .route("/tokenize", post(tokenize))
         .route("/decode", post(decode))
-        // OpenAI compat route
+        // OpenAI Embeddings API compatible routes
+        // Reference: https://platform.openai.com/docs/api-reference/embeddings
         .route("/embeddings", post(openai_embed))
         .route("/v1/embeddings", post(openai_embed))
+        // JinaAI Reranker API compatible route
+        // Reference: https://jina.ai/reranker/#apiform
+        .route("/v1/rerank", post(jinaai_rerank))
+        // // Cohere Rerank API compatible route
+        // // Reference: https://docs.cohere.com/reference/rerank
+        // .route("/v2/rerank", post(cohere_rerank))
         // Vertex compat route
         .route("/vertex", post(vertex_compatibility));
 
