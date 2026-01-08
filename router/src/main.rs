@@ -75,6 +75,10 @@ struct Args {
     #[clap(default_value = "32", long, env)]
     max_client_batch_size: usize,
 
+    /// Control the channel capacity for batching (number of batches that can be queued for processing).
+    #[clap(default_value = "1", long, env)]
+    batch_channel_capacity: usize,
+
     /// Automatically truncate inputs that are longer than the maximum supported size
     ///
     /// Unused for gRPC servers
@@ -250,6 +254,7 @@ async fn main() -> Result<()> {
         args.otlp_service_name,
         args.prometheus_port,
         args.cors_allow_origin,
+        args.batch_channel_capacity,
     )
     .await?;
 
