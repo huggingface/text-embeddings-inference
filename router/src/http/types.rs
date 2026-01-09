@@ -276,8 +276,8 @@ pub(crate) struct RerankResponse(pub Vec<Rank>);
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct JinaAIRerankRequest {
     #[allow(dead_code)]
-    #[schema(nullable = true, example = "null")]
-    pub model: Option<String>,
+    #[schema(example = "cross-encoder/ms-marco-MiniLM-L6-v2")]
+    pub model: String,
     #[schema(example = "What is Deep Learning?")]
     pub query: String,
     #[schema(example = json!(["Deep Learning is ..."]))]
@@ -316,7 +316,7 @@ pub(crate) struct JinaAIUsage {
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct JinaAIRerankResponse {
-    #[schema(example = "thenlper/gte-base")]
+    #[schema(example = "cross-encoder/ms-marco-MiniLM-L6-v2")]
     pub model: String,
     #[schema(example = "list")]
     pub object: &'static str,
@@ -327,8 +327,8 @@ pub(crate) struct JinaAIRerankResponse {
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct CohereRerankRequest {
     #[allow(dead_code)]
-    #[schema(nullable = true, example = "null")]
-    pub model: Option<String>,
+    #[schema(example = "cross-encoder/ms-marco-MiniLM-L6-v2")]
+    pub model: String,
     #[schema(example = "What is Deep Learning?")]
     pub query: String,
     #[schema(example = json!(["Deep Learning is ..."]))]
