@@ -309,6 +309,8 @@ pub(crate) struct JinaAIResult {
 #[derive(Serialize, ToSchema)]
 pub(crate) struct JinaAIUsage {
     #[schema(example = "512")]
+    pub prompt_tokens: usize,
+    #[schema(example = "512")]
     pub total_tokens: usize,
 }
 

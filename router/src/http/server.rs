@@ -666,6 +666,7 @@ async fn jinaai_rerank(
         object: "list",
         results: response,
         usage: JinaAIUsage {
+            prompt_tokens: metadata.compute_tokens,
             total_tokens: metadata.compute_tokens,
         },
     };
