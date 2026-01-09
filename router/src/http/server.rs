@@ -1,15 +1,15 @@
 /// HTTP Server logic
 use crate::http::types::{
-    CohereApiVersion, CohereMeta, CohereMetaTokens, CohereRerankRequest, CohereRerankResponse,
-    CohereResult, DecodeRequest, DecodeResponse, EmbedAllRequest, EmbedAllResponse, EmbedRequest,
-    EmbedResponse, EmbedSparseRequest, EmbedSparseResponse, Embedding, EncodingFormat, Input,
-    InputIds, InputType, JinaAIDocument, JinaAIRerankRequest, JinaAIRerankResponse, JinaAIResult,
-    JinaAIUsage, OpenAICompatEmbedding, OpenAICompatErrorResponse, OpenAICompatRequest,
-    OpenAICompatResponse, OpenAICompatUsage, PredictInput, PredictRequest, PredictResponse,
-    Prediction, Rank, RerankRequest, RerankResponse, Sequence, SimilarityInput,
-    SimilarityParameters, SimilarityRequest, SimilarityResponse, SimpleToken, SparseValue,
-    TokenizeInput, TokenizeRequest, TokenizeResponse, TruncationDirection, VertexPrediction,
-    VertexRequest, VertexResponse,
+    CohereApiVersion, CohereErrorResponse, CohereMeta, CohereMetaTokens, CohereRerankRequest,
+    CohereRerankResponse, CohereResult, DecodeRequest, DecodeResponse, EmbedAllRequest,
+    EmbedAllResponse, EmbedRequest, EmbedResponse, EmbedSparseRequest, EmbedSparseResponse,
+    Embedding, EncodingFormat, Input, InputIds, InputType, JinaAIDocument, JinaAIRerankRequest,
+    JinaAIRerankResponse, JinaAIResult, JinaAIUsage, OpenAICompatEmbedding,
+    OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage,
+    PredictInput, PredictRequest, PredictResponse, Prediction, Rank, RerankRequest, RerankResponse,
+    Sequence, SimilarityInput, SimilarityParameters, SimilarityRequest, SimilarityResponse,
+    SimpleToken, SparseValue, TokenizeInput, TokenizeRequest, TokenizeResponse,
+    TruncationDirection, VertexPrediction, VertexRequest, VertexResponse,
 };
 use crate::{
     logging, shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
@@ -687,16 +687,16 @@ path = "/v2/rerank",
 request_body = CohereRerankRequest,
 responses(
 (status = 200, description = "Ranks", body = CohereRerankResponse),
-(status = 424, description = "Rerank Error", body = ErrorResponse,
-example = json ! ({"error": "Inference failed", "error_type": "backend"})),
-(status = 429, description = "Model is overloaded", body = ErrorResponse,
-example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
-(status = 422, description = "Tokenization error", body = ErrorResponse,
-example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
-(status = 400, description = "Batch is empty", body = ErrorResponse,
-example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
-(status = 413, description = "Batch size error", body = ErrorResponse,
-example = json ! ({"error": "Batch size error", "error_type": "validation"})),
+(status = 424, description = "Rerank Error", body = CohereErrorResponse,
+example = json ! ({"id": "12345678-1234-1234-1234-123456789abc", "message": "Inference failed"})),
+(status = 429, description = "Model is overloaded", body = CohereErrorResponse,
+example = json ! ({"id": "12345678-1234-1234-1234-123456789abc", "message": "Model is overloaded"})),
+(status = 422, description = "Tokenization error", body = CohereErrorResponse,
+example = json ! ({"id": "12345678-1234-1234-1234-123456789abc", "message": "Tokenization error"})),
+(status = 400, description = "Batch is empty", body = CohereErrorResponse,
+example = json ! ({"id": "12345678-1234-1234-1234-123456789abc", "message": "Batch is empty"})),
+(status = 413, description = "Batch size error", body = CohereErrorResponse,
+example = json ! ({"id": "12345678-1234-1234-1234-123456789abc", "message": "Batch size error"})),
 )
 )]
 #[instrument(
@@ -708,7 +708,7 @@ async fn cohere_rerank(
     info: Extension<Info>,
     Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<CohereRerankRequest>,
-) -> Result<(HeaderMap, Json<CohereRerankResponse>), (StatusCode, Json<ErrorResponse>)> {
+) -> Result<(HeaderMap, Json<CohereRerankResponse>), (StatusCode, Json<CohereErrorResponse>)> {
     let span = tracing::Span::current();
     if let Some(context) = context {
         span.set_parent(context);
@@ -2357,6 +2357,21 @@ impl From<ErrorResponse> for (StatusCode, Json<ErrorResponse>) {
 }
 
 impl From<ErrorResponse> for (StatusCode, Json<OpenAICompatErrorResponse>) {
+    fn from(err: ErrorResponse) -> Self {
+        (StatusCode::from(&err.error_type), Json(err.into()))
+    }
+}
+
+impl From<ErrorResponse> for CohereErrorResponse {
+    fn from(value: ErrorResponse) -> Self {
+        CohereErrorResponse {
+            id: Some(uuid::Uuid::new_v4().to_string()),
+            message: Some(value.error),
+        }
+    }
+}
+
+impl From<ErrorResponse> for (StatusCode, Json<CohereErrorResponse>) {
     fn from(err: ErrorResponse) -> Self {
         (StatusCode::from(&err.error_type), Json(err.into()))
     }

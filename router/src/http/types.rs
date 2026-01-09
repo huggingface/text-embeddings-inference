@@ -399,6 +399,12 @@ pub(crate) struct CohereRerankResponse {
     pub results: Vec<CohereResult>,
 }
 
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CohereErrorResponse {
+    pub id: Option<String>,
+    pub message: Option<String>,
+}
+
 #[derive(Deserialize, ToSchema, Debug)]
 #[serde(untagged)]
 pub(crate) enum InputType {
