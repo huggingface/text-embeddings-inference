@@ -750,7 +750,9 @@ async fn cohere_rerank(
         let response = infer
             .predict(
                 (query, document),
-                false,
+                // Cohere Rerank API expects the `max_tokens_per_doc` parameter that always
+                // truncates to 4096 by default, despite the model's max length
+                true,
                 TruncationDirection::Right.into(),
                 false,
                 permit,
