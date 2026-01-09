@@ -744,8 +744,35 @@ async fn cohere_rerank(
         ErrorResponse::from(err)
     })?;
 
-    let rerank_inner = move |query: String, document: String, infer: Infer| async move {
+    let rerank_inner = move |query: String,
+                             document: String,
+                             max_tokens_per_doc: Option<usize>,
+                             infer: Infer| async move {
         let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+
+        // TODO: This is most likely not ideal given that we're tokenizing each document, then
+        // truncating it if applicable and decoding the input IDs back into a string; so as to then
+        // call predict with each query and truncated document (if applicable) combination, which
+        // might not be ideal, but seems the most straightforward approach. In any case, this
+        // should be revisited.
+        let document = if let Some(max_tokens) = max_tokens_per_doc {
+            let (_, encoding) = infer
+                .tokenize(document.clone(), false, None)
+                .await
+                .map_err(ErrorResponse::from)?;
+
+            let token_ids = encoding.get_ids();
+            if token_ids.len() > max_tokens {
+                infer
+                    .decode(token_ids[..max_tokens].to_vec(), false)
+                    .await
+                    .map_err(ErrorResponse::from)?
+            } else {
+                document
+            }
+        } else {
+            document
+        };
 
         let response = infer
             .predict(
@@ -801,6 +828,7 @@ async fn cohere_rerank(
             futures.push(rerank_inner(
                 req.query.clone(),
                 document.clone(),
+                req.max_tokens_per_doc,
                 local_infer.0,
             ))
         }
