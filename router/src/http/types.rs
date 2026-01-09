@@ -338,7 +338,7 @@ pub(crate) struct CohereRerankRequest {
     #[allow(dead_code)]
     #[serde(default)]
     #[schema(default = "4096", example = "2048")]
-    pub max_tokens_per_doc: usize,
+    pub max_tokens_per_doc: Option<usize>,
     // Set `skip_serializing` given that the `priority` field is used internally in the Cohere API,
     // but in Text Embeddings Inference there's not a priority queue defined by a field when the
     // request is sent to the server.
