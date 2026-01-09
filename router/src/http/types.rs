@@ -324,6 +324,21 @@ pub(crate) struct JinaAIRerankResponse {
     pub results: Vec<JinaAIResult>,
 }
 
+#[derive(Serialize, ToSchema)]
+pub(crate) struct JinaAIError {
+    pub field: Option<String>,
+    pub message: Option<Vec<JinaAIError>>,
+    #[serde(rename(serialize = "type"))]
+    pub error_t: Option<Vec<JinaAIError>>,
+    pub input: Option<Vec<JinaAIError>>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct JinaAIErrorResponse {
+    pub detail: Option<String>,
+    pub errors: Option<Vec<JinaAIError>>,
+}
+
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct CohereRerankRequest {
     #[allow(dead_code)]

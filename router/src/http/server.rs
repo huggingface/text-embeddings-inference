@@ -3,8 +3,8 @@ use crate::http::types::{
     CohereApiVersion, CohereErrorResponse, CohereMeta, CohereMetaTokens, CohereRerankRequest,
     CohereRerankResponse, CohereResult, DecodeRequest, DecodeResponse, EmbedAllRequest,
     EmbedAllResponse, EmbedRequest, EmbedResponse, EmbedSparseRequest, EmbedSparseResponse,
-    Embedding, EncodingFormat, Input, InputIds, InputType, JinaAIDocument, JinaAIRerankRequest,
-    JinaAIRerankResponse, JinaAIResult, JinaAIUsage, OpenAICompatEmbedding,
+    Embedding, EncodingFormat, Input, InputIds, InputType, JinaAIDocument, JinaAIErrorResponse,
+    JinaAIRerankRequest, JinaAIRerankResponse, JinaAIResult, JinaAIUsage, OpenAICompatEmbedding,
     OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage,
     PredictInput, PredictRequest, PredictResponse, Prediction, Rank, RerankRequest, RerankResponse,
     Sequence, SimilarityInput, SimilarityParameters, SimilarityRequest, SimilarityResponse,
@@ -483,16 +483,16 @@ path = "/v1/rerank",
 request_body = JinaAIRerankRequest,
 responses(
 (status = 200, description = "Ranks", body = JinaAIRerankResponse),
-(status = 424, description = "Rerank Error", body = ErrorResponse,
-example = json ! ({"error": "Inference failed", "error_type": "backend"})),
-(status = 429, description = "Model is overloaded", body = ErrorResponse,
-example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
-(status = 422, description = "Tokenization error", body = ErrorResponse,
-example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
-(status = 400, description = "Batch is empty", body = ErrorResponse,
-example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
-(status = 413, description = "Batch size error", body = ErrorResponse,
-example = json ! ({"error": "Batch size error", "error_type": "validation"})),
+(status = 424, description = "Rerank Error", body = JinaAIErrorResponse,
+example = json ! ({"detail": "[RID: 12345678-1234-1234-1234-123456789abc] Inference failed"})),
+(status = 429, description = "Model is overloaded", body = JinaAIErrorResponse,
+example = json ! ({"detail": "[RID: 12345678-1234-1234-1234-123456789abc] Model is overloaded"})),
+(status = 422, description = "Tokenization error", body = JinaAIErrorResponse,
+example = json ! ({"detail": "[RID: 12345678-1234-1234-1234-123456789abc] Tokenization error"})),
+(status = 400, description = "Batch is empty", body = JinaAIErrorResponse,
+example = json ! ({"detail": "[RID: 12345678-1234-1234-1234-123456789abc] Batch is empty"})),
+(status = 413, description = "Batch size error", body = JinaAIErrorResponse,
+example = json ! ({"detail": "[RID: 12345678-1234-1234-1234-123456789abc] Batch size error"})),
 )
 )]
 #[instrument(
@@ -503,12 +503,32 @@ async fn jinaai_rerank(
     infer: Extension<Infer>,
     info: Extension<Info>,
     Extension(context): Extension<Option<opentelemetry::Context>>,
-    Json(req): Json<JinaAIRerankRequest>,
-) -> Result<(HeaderMap, Json<JinaAIRerankResponse>), (StatusCode, Json<ErrorResponse>)> {
+    payload: Result<Json<JinaAIRerankRequest>, JsonRejection>,
+) -> Result<(HeaderMap, Json<JinaAIRerankResponse>), (StatusCode, Json<JinaAIErrorResponse>)> {
     let span = tracing::Span::current();
     if let Some(context) = context {
         span.set_parent(context);
     }
+
+    // NOTE: Required to capture the JSON parsing errors, so that those follow the specification
+    // for the JinaAI Rerank API, otherwise those are returned as strings
+    let req = match payload {
+        Ok(req) => req,
+        Err(rejection) => {
+            let message = format!("Invalid JSON format: {}", rejection.body_text());
+            tracing::error!(message);
+
+            let response = JinaAIErrorResponse {
+                detail: Some(format!(
+                    "[RID: {}] Validation error: {}",
+                    uuid::Uuid::new_v4(),
+                    message
+                )),
+                errors: None,
+            };
+            return Err((StatusCode::BAD_REQUEST, Json(response)));
+        }
+    };
 
     let start_time = Instant::now();
 
@@ -673,11 +693,9 @@ async fn jinaai_rerank(
         },
     };
 
-    let headers = HeaderMap::from(metadata);
-
     tracing::info!("Success");
 
-    Ok((headers, Json(response)))
+    Ok((HeaderMap::from(metadata), Json(response)))
 }
 
 #[utoipa::path(
@@ -924,11 +942,9 @@ async fn cohere_rerank(
         }),
     };
 
-    let headers = HeaderMap::from(metadata);
-
     tracing::info!("Success");
 
-    Ok((headers, Json(response)))
+    Ok((HeaderMap::from(metadata), Json(response)))
 }
 
 /// Get Sentence Similarity. Returns a 424 status code if the model is not an embedding model.
@@ -2388,6 +2404,21 @@ impl From<ErrorResponse> for CohereErrorResponse {
 }
 
 impl From<ErrorResponse> for (StatusCode, Json<CohereErrorResponse>) {
+    fn from(err: ErrorResponse) -> Self {
+        (StatusCode::from(&err.error_type), Json(err.into()))
+    }
+}
+
+impl From<ErrorResponse> for JinaAIErrorResponse {
+    fn from(value: ErrorResponse) -> Self {
+        JinaAIErrorResponse {
+            detail: Some(format!("[RID: {}] {}", uuid::Uuid::new_v4(), value.error)),
+            errors: None,
+        }
+    }
+}
+
+impl From<ErrorResponse> for (StatusCode, Json<JinaAIErrorResponse>) {
     fn from(err: ErrorResponse) -> Self {
         (StatusCode::from(&err.error_type), Json(err.into()))
     }
