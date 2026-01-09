@@ -17,7 +17,7 @@ use crate::{
 };
 use ::http::HeaderMap;
 use anyhow::Context;
-use axum::extract::{DefaultBodyLimit, Extension};
+use axum::extract::{rejection::JsonRejection, DefaultBodyLimit, Extension};
 use axum::http::HeaderValue;
 use axum::http::{Method, StatusCode};
 use axum::routing::{get, post};
@@ -707,12 +707,28 @@ async fn cohere_rerank(
     infer: Extension<Infer>,
     info: Extension<Info>,
     Extension(context): Extension<Option<opentelemetry::Context>>,
-    Json(req): Json<CohereRerankRequest>,
+    payload: Result<Json<CohereRerankRequest>, JsonRejection>,
 ) -> Result<(HeaderMap, Json<CohereRerankResponse>), (StatusCode, Json<CohereErrorResponse>)> {
     let span = tracing::Span::current();
     if let Some(context) = context {
         span.set_parent(context);
     }
+
+    // NOTE: Required to capture the JSON parsing errors, so that those follow the specification
+    // for the Cohere Rerank API, otherwise those are returned as strings
+    let req = match payload {
+        Ok(req) => req,
+        Err(rejection) => {
+            let message = format!("Invalid JSON format: {}", rejection.body_text());
+            tracing::error!(message);
+
+            let response = CohereErrorResponse {
+                id: Some(uuid::Uuid::new_v4().to_string()),
+                message: Some(message),
+            };
+            return Err((StatusCode::BAD_REQUEST, Json(response)));
+        }
+    };
 
     let start_time = Instant::now();
 
