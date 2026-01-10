@@ -95,7 +95,7 @@ jobs:
 
       - name: configure aws credentials
         id: aws-creds
-        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708  # v5.1.1
+        uses: aws-actions/configure-aws-credentials@v5.1.1
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_GITHUB_BUILDX_CACHE }}
           role-duration-seconds: 7200
