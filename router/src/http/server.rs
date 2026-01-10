@@ -519,11 +519,7 @@ async fn jinaai_rerank(
             tracing::error!(message);
 
             let response = JinaAIErrorResponse {
-                detail: Some(format!(
-                    "[RID: {}] Validation error: {}",
-                    uuid::Uuid::new_v4(),
-                    message
-                )),
+                detail: Some(format!("[RID: {}] {}", uuid::Uuid::new_v4(), message)),
                 errors: None,
             };
             return Err((StatusCode::BAD_REQUEST, Json(response)));
