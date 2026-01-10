@@ -67,7 +67,13 @@ pub async fn download_artifacts(api: &ApiRepo, pool_config: bool) -> Result<Path
         });
 
     download_file(api, "config.json").await?;
-    let path = download_file(api, "tokenizer.json").await?;
+    let path = match download_file(api, "tokenizer.json").await {
+        Ok(path) => path,
+        Err(_) => {
+            tracing::info!("Falling back to `0_StaticEmbedding/tokenizer.json`");
+            download_file(api, "0_StaticEmbedding/tokenizer.json").await?
+        }
+    };
 
     tracing::info!("Model artifacts downloaded in {:?}", start.elapsed());
 
