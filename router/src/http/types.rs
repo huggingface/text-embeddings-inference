@@ -57,9 +57,8 @@ impl<'de> Deserialize<'de> for PredictInput {
             fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
                 formatter.write_str(
                     "a string, \
-                    a pair of strings [string, string], \
-                    a batch of mixed strings and pairs [[string], [string, string], ...], \
-                    or a batch of single strings [string, string, string, ...]",
+                    a batch of single strings [string, string, ...], \
+                    or a batch of singles and/or pairs [[string], [string, string], ...]",
                 )
             }
 
@@ -74,7 +73,6 @@ impl<'de> Deserialize<'de> for PredictInput {
             where
                 A: SeqAccess<'de>,
             {
-                // Create a Sequence from a Vec<String>
                 let sequence_from_vec = |mut value: Vec<String>| match value.len() {
                     1 => Ok(Sequence::Single(value.pop().unwrap())),
                     2 => {
@@ -91,44 +89,20 @@ impl<'de> Deserialize<'de> for PredictInput {
                     .ok_or_else(|| de::Error::invalid_length(0, &self))?;
 
                 match first {
-                    // Flat array: ["a"], ["a", "b"], or ["a", "b", "c", ...]
+                    // Flat array of strings: ["a", "b", "c", ...]
+                    // Always treated as a batch of single sequences
                     Internal::Single(first_string) => {
-                        let second = seq.next_element::<String>()?;
+                        let mut batch = Vec::with_capacity(32);
+                        batch.push(Sequence::Single(first_string));
 
-                        match second {
-                            None => {
-                                // Single string in array: ["text"]
-                                Ok(PredictInput::Single(Sequence::Single(first_string)))
-                            }
-                            Some(second_string) => {
-                                let third = seq.next_element::<String>()?;
-
-                                match third {
-                                    None => {
-                                        // Pair of strings: ["text1", "text2"]
-                                        Ok(PredictInput::Single(Sequence::Pair(
-                                            first_string,
-                                            second_string,
-                                        )))
-                                    }
-                                    Some(third_string) => {
-                                        // Batch of single strings: ["a", "b", "c", ...]
-                                        let mut batch = Vec::with_capacity(32);
-                                        batch.push(Sequence::Single(first_string));
-                                        batch.push(Sequence::Single(second_string));
-                                        batch.push(Sequence::Single(third_string));
-
-                                        while let Some(s) = seq.next_element::<String>()? {
-                                            batch.push(Sequence::Single(s));
-                                        }
-
-                                        Ok(PredictInput::Batch(batch))
-                                    }
-                                }
-                            }
+                        while let Some(s) = seq.next_element::<String>()? {
+                            batch.push(Sequence::Single(s));
                         }
+
+                        Ok(PredictInput::Batch(batch))
                     }
                     // Nested array: [["a"], ["a", "b"], ...]
+                    // Batch of singles and/or pairs
                     Internal::Multiple(first_vec) => {
                         let mut batch = Vec::with_capacity(32);
                         batch.push(sequence_from_vec(first_vec)?);
@@ -163,39 +137,38 @@ impl<'__s> ToSchema<'__s> for PredictInput {
                             utoipa::openapi::ObjectBuilder::new()
                                 .schema_type(utoipa::openapi::SchemaType::String),
                         )
-                        .description(Some("A pair of strings"))
-                        .min_items(Some(2))
-                        .max_items(Some(2)),
+                        .description(Some("A batch of single strings")),
                 )
                 .item(
-                    utoipa::openapi::ArrayBuilder::new().items(
-                        utoipa::openapi::OneOfBuilder::new()
-                            .item(
-                                utoipa::openapi::ArrayBuilder::new()
-                                    .items(
-                                        utoipa::openapi::ObjectBuilder::new()
-                                            .schema_type(utoipa::openapi::SchemaType::String),
-                                    )
-                                    .description(Some("A single string"))
-                                    .min_items(Some(1))
-                                    .max_items(Some(1)),
-                            )
-                            .item(
-                                utoipa::openapi::ArrayBuilder::new()
-                                    .items(
-                                        utoipa::openapi::ObjectBuilder::new()
-                                            .schema_type(utoipa::openapi::SchemaType::String),
-                                    )
-                                    .description(Some("A pair of strings"))
-                                    .min_items(Some(2))
-                                    .max_items(Some(2)),
-                            )
-                    ).description(Some("A batch")),
+                    utoipa::openapi::ArrayBuilder::new()
+                        .items(
+                            utoipa::openapi::OneOfBuilder::new()
+                                .item(
+                                    utoipa::openapi::ArrayBuilder::new()
+                                        .items(
+                                            utoipa::openapi::ObjectBuilder::new()
+                                                .schema_type(utoipa::openapi::SchemaType::String),
+                                        )
+                                        .description(Some("A single string"))
+                                        .min_items(Some(1))
+                                        .max_items(Some(1)),
+                                )
+                                .item(
+                                    utoipa::openapi::ArrayBuilder::new()
+                                        .items(
+                                            utoipa::openapi::ObjectBuilder::new()
+                                                .schema_type(utoipa::openapi::SchemaType::String),
+                                        )
+                                        .description(Some("A pair of strings"))
+                                        .min_items(Some(2))
+                                        .max_items(Some(2)),
+                                ),
+                        )
+                        .description(Some("A batch of singles and/or pairs")),
                 )
                 .description(Some(
                     "Model input. \
-                Can be either a single string, a pair of strings or a batch of mixed single and pairs \
-                of strings.",
+                Can be either a single string, a batch of single strings, or a batch of mixed singles and pairs.",
                 ))
                 .example(Some(json!("What is Deep Learning?")))
                 .into(),
