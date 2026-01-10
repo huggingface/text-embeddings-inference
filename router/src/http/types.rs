@@ -57,8 +57,9 @@ impl<'de> Deserialize<'de> for PredictInput {
             fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
                 formatter.write_str(
                     "a string, \
-                    a pair of strings [string, string] \
-                    or a batch of mixed strings and pairs [[string], [string, string], ...]",
+                    a pair of strings [string, string], \
+                    a batch of mixed strings and pairs [[string], [string, string], ...], \
+                    or a batch of single strings [string, string, string, ...]",
                 )
             }
 
@@ -73,63 +74,72 @@ impl<'de> Deserialize<'de> for PredictInput {
             where
                 A: SeqAccess<'de>,
             {
-                let sequence_from_vec = |mut value: Vec<String>| {
-                    // Validate that value is correct
-                    match value.len() {
-                        1 => Ok(Sequence::Single(value.pop().unwrap())),
-                        2 => {
-                            // Second element is last
-                            let second = value.pop().unwrap();
-                            let first = value.pop().unwrap();
-                            Ok(Sequence::Pair(first, second))
-                        }
-                        // Sequence can only be a single string or a pair of strings
-                        _ => Err(de::Error::invalid_length(value.len(), &self)),
+                // Create a Sequence from a Vec<String>
+                let sequence_from_vec = |mut value: Vec<String>| match value.len() {
+                    1 => Ok(Sequence::Single(value.pop().unwrap())),
+                    2 => {
+                        let second = value.pop().unwrap();
+                        let first = value.pop().unwrap();
+                        Ok(Sequence::Pair(first, second))
                     }
+                    _ => Err(de::Error::invalid_length(value.len(), &self)),
                 };
 
-                // Get first element
-                // This will determine if input is a batch or not
-                let s = match seq
+                // Get first element to determine input structure
+                let first = seq
                     .next_element::<Internal>()?
-                    .ok_or_else(|| de::Error::invalid_length(0, &self))?
-                {
-                    // Input is not a batch
-                    // Return early
-                    Internal::Single(value) => {
-                        // Option get second element
-                        let second = seq.next_element()?;
+                    .ok_or_else(|| de::Error::invalid_length(0, &self))?;
 
-                        if seq.next_element::<String>()?.is_some() {
-                            // Error as we do not accept > 2 elements
-                            return Err(de::Error::invalid_length(3, &self));
-                        }
+                match first {
+                    // Flat array: ["a"], ["a", "b"], or ["a", "b", "c", ...]
+                    Internal::Single(first_string) => {
+                        let second = seq.next_element::<String>()?;
 
-                        if let Some(second) = second {
-                            // Second element exists
-                            // This is a pair
-                            return Ok(PredictInput::Single(Sequence::Pair(value, second)));
-                        } else {
-                            // Second element does not exist
-                            return Ok(PredictInput::Single(Sequence::Single(value)));
+                        match second {
+                            None => {
+                                // Single string in array: ["text"]
+                                Ok(PredictInput::Single(Sequence::Single(first_string)))
+                            }
+                            Some(second_string) => {
+                                let third = seq.next_element::<String>()?;
+
+                                match third {
+                                    None => {
+                                        // Pair of strings: ["text1", "text2"]
+                                        Ok(PredictInput::Single(Sequence::Pair(
+                                            first_string,
+                                            second_string,
+                                        )))
+                                    }
+                                    Some(third_string) => {
+                                        // Batch of single strings: ["a", "b", "c", ...]
+                                        let mut batch = Vec::with_capacity(32);
+                                        batch.push(Sequence::Single(first_string));
+                                        batch.push(Sequence::Single(second_string));
+                                        batch.push(Sequence::Single(third_string));
+
+                                        while let Some(s) = seq.next_element::<String>()? {
+                                            batch.push(Sequence::Single(s));
+                                        }
+
+                                        Ok(PredictInput::Batch(batch))
+                                    }
+                                }
+                            }
                         }
                     }
-                    // Input is a batch
-                    Internal::Multiple(value) => sequence_from_vec(value),
-                }?;
+                    // Nested array: [["a"], ["a", "b"], ...]
+                    Internal::Multiple(first_vec) => {
+                        let mut batch = Vec::with_capacity(32);
+                        batch.push(sequence_from_vec(first_vec)?);
 
-                let mut batch = Vec::with_capacity(32);
-                // Push first sequence
-                batch.push(s);
+                        while let Some(vec) = seq.next_element::<Vec<String>>()? {
+                            batch.push(sequence_from_vec(vec)?);
+                        }
 
-                // Iterate on all sequences
-                while let Some(value) = seq.next_element::<Vec<String>>()? {
-                    // Validate sequence
-                    let s = sequence_from_vec(value)?;
-                    // Push to batch
-                    batch.push(s);
+                        Ok(PredictInput::Batch(batch))
+                    }
                 }
-                Ok(PredictInput::Batch(batch))
             }
         }
 
