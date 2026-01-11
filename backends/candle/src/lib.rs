@@ -23,9 +23,9 @@ use crate::compute_cap::{
 };
 use crate::models::{
     BertConfig, BertModel, Dense, DenseConfig, DenseLayer, DistilBertConfig, DistilBertModel,
-    GTEConfig, GTEModel, Gemma3Config, Gemma3Model, JinaBertModel, JinaCodeBertModel, MPNetConfig,
-    MPNetModel, MistralConfig, Model, ModernBertConfig, ModernBertModel, NomicBertModel,
-    NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model, LLamaConfig
+    GTEConfig, GTEModel, Gemma3Config, Gemma3Model, JinaBertModel, JinaCodeBertModel, LLamaConfig,
+    MPNetConfig, MPNetModel, MistralConfig, Model, ModernBertConfig, ModernBertModel,
+    NomicBertModel, NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -114,7 +114,7 @@ enum Config {
     Roberta(BertConfig),
     XlmRoberta(BertConfig),
     #[allow(dead_code)]
-    #[serde(alias = "llama_bidirec")]  // Also accept llama_bidirec
+    #[serde(alias = "llama_bidirec")] // Also accept llama_bidirec
     Llama(LLamaConfig),
 }
 
@@ -286,12 +286,10 @@ impl CandleBackend {
                 tracing::info!("Starting MPNet model on {:?}", device);
                 Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
             }
-            (Config::Llama(_config), Device::Cpu | Device::Metal(_)) => {
-                Err(BackendError::Start(
-                    "Llama is only supported on Cuda devices in fp16 with flash attention enabled"
-                        .to_string(),
-                ))
-            }
+            (Config::Llama(_config), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
+                "Llama is only supported on Cuda devices in fp16 with flash attention enabled"
+                    .to_string(),
+            )),
             (Config::Mistral(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
                 "Mistral is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
@@ -517,16 +515,17 @@ impl CandleBackend {
                         FlashQwen3Model::load(vb, &config, model_type).s()?,
                     ))
                 }
-            },
+            }
             #[cfg(feature = "cuda")]
-            (Config::Llama(config), Device::Cuda(_) ) => {
+            (Config::Llama(config), Device::Cuda(_)) => {
                 match config.rope_scaling {
                     Some(ref _rope_scaling) => {
                         // error, as no rope scaling is supported for FlashLlama yet
-                        Err(BackendError::Start("Rope scaling is not supported for FlashLlama yet".to_string()))
-                    },
+                        Err(BackendError::Start(
+                            "Rope scaling is not supported for FlashLlama yet".to_string(),
+                        ))
+                    }
                     None => {
-
                         let cfg_mistral = MistralConfig {
                             vocab_size: config.vocab_size,
                             hidden_size: config.hidden_size,
@@ -542,10 +541,12 @@ impl CandleBackend {
                             rope_theta: config.rope_theta,
                             sliding_window: config.sliding_window,
                         };
-                        Ok(Box::new(FlashMistralModel::load(vb, &cfg_mistral, model_type).s()?))
-                    },
+                        Ok(Box::new(
+                            FlashMistralModel::load(vb, &cfg_mistral, model_type).s()?,
+                        ))
+                    }
                 }
-            },
+            }
         };
 
         let mut dense_layers = Vec::new();

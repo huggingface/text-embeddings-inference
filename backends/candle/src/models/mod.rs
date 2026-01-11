@@ -14,13 +14,13 @@ mod gemma3;
 mod gte;
 mod jina;
 mod jina_code;
+mod llama;
 mod mistral;
 mod modernbert;
 mod mpnet;
 mod nomic;
 mod qwen2;
 mod qwen3;
-mod llama;
 
 #[cfg(feature = "cuda")]
 mod flash_bert;
@@ -59,13 +59,13 @@ pub use gemma3::{Gemma3Config, Gemma3Model};
 pub use gte::{GTEConfig, GTEModel};
 pub use jina::JinaBertModel;
 pub use jina_code::JinaCodeBertModel;
+pub use llama::LLamaConfig;
 pub use mistral::MistralConfig;
 pub use modernbert::{ModernBertConfig, ModernBertModel};
 pub use mpnet::{MPNetConfig, MPNetModel};
 pub use nomic::{NomicBertModel, NomicConfig};
 pub use qwen2::Qwen2Config;
 pub use qwen3::{Qwen3Config, Qwen3Model};
-pub use llama::LLamaConfig;
 
 #[cfg(feature = "cuda")]
 pub use flash_bert::FlashBertModel;
