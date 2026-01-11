@@ -20,6 +20,7 @@ mod mpnet;
 mod nomic;
 mod qwen2;
 mod qwen3;
+mod llama;
 
 #[cfg(feature = "cuda")]
 mod flash_bert;
