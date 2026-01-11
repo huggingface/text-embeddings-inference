@@ -6,6 +6,64 @@ use candle_nn::{Embedding, Module, VarBuilder};
 use candle_rotary::apply_rotary_inplace;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
+#[derive(Debug, Clone)]
+pub struct LoraWeights {
+    vb: VarBuilder,
+    task: String,
+    scale: f64,
+    r: usize,
+    prefix: String,
+}
+
+impl LoraWeights {
+    pub fn new(vb: VarBuilder, task: String, r: usize, lora_alpha: f32, prefix: String) -> Self {
+        let scale = lora_alpha as f64 / r as f64;
+        Self {
+            vb,
+            task,
+            scale,
+            r,
+            prefix,
+        }
+    }
+
+    fn apply(&self, weight: Tensor, base_path: &str) -> Result<Tensor> {
+        let lora_a_prefix = format!("{}.{}.lora_A.{}", self.prefix, base_path, self.task);
+        let lora_a_name = format!("{lora_a_prefix}.weight");
+        if !self.vb.contains_tensor(&lora_a_name) {
+            return Ok(weight);
+        }
+
+        let (out_dim, in_dim) = weight.dims2()?;
+        let lora_a = self
+            .vb
+            .pp(&lora_a_prefix)
+            .get((self.r, in_dim), "weight")?;
+
+        let lora_b_prefix = format!("{}.{}.lora_B.{}", self.prefix, base_path, self.task);
+        let lora_b = self
+            .vb
+            .pp(&lora_b_prefix)
+            .get((out_dim, self.r), "weight")?;
+
+        let delta = (lora_b.matmul(&lora_a)? * self.scale)?;
+        (&weight + &delta)
+    }
+}
+
+fn load_weight_with_lora(
+    vb: &VarBuilder,
+    lora: Option<&LoraWeights>,
+    lora_path: &str,
+    shape: (usize, usize),
+) -> Result<Tensor> {
+    let weight = vb.get(shape, "weight")?;
+    match lora {
+        Some(lora) => lora.apply(weight, lora_path),
+        None => Ok(weight),
+    }
+}
+
 struct Qwen2Attention {
     qkv_linear: Linear,
     o_proj: Linear,
@@ -21,7 +79,12 @@ struct Qwen2Attention {
 }
 
 impl Qwen2Attention {
-    pub fn load(vb: VarBuilder, config: &Qwen2Config) -> Result<Self> {
+    pub fn load(
+        vb: VarBuilder,
+        config: &Qwen2Config,
+        layer_index: usize,
+        lora: Option<&LoraWeights>,
+    ) -> Result<Self> {
         if config.use_sliding_window {
             candle::bail!("Sliding window is not supported for Qwen2",);
         }
@@ -31,20 +94,34 @@ impl Qwen2Attention {
         let num_key_value_heads = config.num_key_value_heads;
         let hidden_size = config.hidden_size;
 
-        let query_weight = vb.pp("q_proj").get((hidden_size, hidden_size), "weight")?;
+        let lora_base = format!("layers.{layer_index}.self_attn");
+
+        let q_vb = vb.pp("q_proj");
+        let query_weight = load_weight_with_lora(
+            &q_vb,
+            lora,
+            &format!("{lora_base}.q_proj"),
+            (hidden_size, hidden_size),
+        )?;
         let query_bias = vb.pp("q_proj").get(hidden_size, "bias")?;
 
-        let key_weight = vb.pp("k_proj").get(
+        let k_vb = vb.pp("k_proj");
+        let key_weight = load_weight_with_lora(
+            &k_vb,
+            lora,
+            &format!("{lora_base}.k_proj"),
             (num_key_value_heads * attention_head_size, hidden_size),
-            "weight",
         )?;
         let key_bias = vb
             .pp("k_proj")
             .get(num_key_value_heads * attention_head_size, "bias")?;
 
-        let value_weight = vb.pp("v_proj").get(
+        let v_vb = vb.pp("v_proj");
+        let value_weight = load_weight_with_lora(
+            &v_vb,
+            lora,
+            &format!("{lora_base}.v_proj"),
             (num_key_value_heads * attention_head_size, hidden_size),
-            "weight",
         )?;
         let value_bias = vb
             .pp("v_proj")
@@ -54,7 +131,13 @@ impl Qwen2Attention {
         let qkv_bias = Tensor::cat(&[&query_bias, &key_bias, &value_bias], 0)?;
         let qkv_linear = Linear::new(qkv_weight, Some(qkv_bias), None);
 
-        let o_proj_weight = vb.pp("o_proj").get((hidden_size, hidden_size), "weight")?;
+        let o_vb = vb.pp("o_proj");
+        let o_proj_weight = load_weight_with_lora(
+            &o_vb,
+            lora,
+            &format!("{lora_base}.o_proj"),
+            (hidden_size, hidden_size),
+        )?;
 
         let o_proj = Linear::new(o_proj_weight, None, None);
 
@@ -134,23 +217,42 @@ struct Qwen2MLP {
 }
 
 impl Qwen2MLP {
-    pub fn load(vb: VarBuilder, config: &Qwen2Config) -> Result<Self> {
+    pub fn load(
+        vb: VarBuilder,
+        config: &Qwen2Config,
+        layer_index: usize,
+        lora: Option<&LoraWeights>,
+    ) -> Result<Self> {
         let intermediate_size = config.intermediate_size;
 
-        let gate_proj_weight = vb
-            .pp("gate_proj")
-            .get((intermediate_size, config.hidden_size), "weight")?;
+        let lora_base = format!("layers.{layer_index}.mlp");
 
-        let up_proj_weight = vb
-            .pp("up_proj")
-            .get((intermediate_size, config.hidden_size), "weight")?;
+        let gate_vb = vb.pp("gate_proj");
+        let gate_proj_weight = load_weight_with_lora(
+            &gate_vb,
+            lora,
+            &format!("{lora_base}.gate_proj"),
+            (intermediate_size, config.hidden_size),
+        )?;
+
+        let up_vb = vb.pp("up_proj");
+        let up_proj_weight = load_weight_with_lora(
+            &up_vb,
+            lora,
+            &format!("{lora_base}.up_proj"),
+            (intermediate_size, config.hidden_size),
+        )?;
 
         let gate_up_proj_weight = Tensor::cat(&[&gate_proj_weight, &up_proj_weight], 0)?;
         let gate_up_proj = Linear::new(gate_up_proj_weight, None, None);
 
-        let down_proj_weight = vb
-            .pp("down_proj")
-            .get((config.hidden_size, intermediate_size), "weight")?;
+        let down_vb = vb.pp("down_proj");
+        let down_proj_weight = load_weight_with_lora(
+            &down_vb,
+            lora,
+            &format!("{lora_base}.down_proj"),
+            (config.hidden_size, intermediate_size),
+        )?;
         let down_proj = Linear::new(down_proj_weight, None, None);
 
         Ok(Self {
@@ -185,9 +287,14 @@ struct Qwen2Layer {
 }
 
 impl Qwen2Layer {
-    pub fn load(vb: VarBuilder, config: &Qwen2Config) -> Result<Self> {
-        let attention = Qwen2Attention::load(vb.pp("self_attn"), config)?;
-        let mlp = Qwen2MLP::load(vb.pp("mlp"), config)?;
+    pub fn load(
+        vb: VarBuilder,
+        config: &Qwen2Config,
+        layer_index: usize,
+        lora: Option<&LoraWeights>,
+    ) -> Result<Self> {
+        let attention = Qwen2Attention::load(vb.pp("self_attn"), config, layer_index, lora)?;
+        let mlp = Qwen2MLP::load(vb.pp("mlp"), config, layer_index, lora)?;
 
         let input_layer_norm = RMSNorm::load(
             vb.pp("input_layernorm"),
@@ -240,13 +347,20 @@ pub struct FlashQwen2Model {
     cos_cache: Tensor,
     sin_cache: Tensor,
     pool: Pool,
+    normalize_embeddings: bool,
     pub device: Device,
 
     span: tracing::Span,
 }
 
 impl FlashQwen2Model {
-    pub fn load(vb: VarBuilder, config: &Qwen2Config, model_type: ModelType) -> Result<Self> {
+    pub fn load(
+        vb: VarBuilder,
+        config: &Qwen2Config,
+        model_type: ModelType,
+        lora: Option<LoraWeights>,
+        normalize_embeddings: bool,
+    ) -> Result<Self> {
         match vb.device() {
             Device::Cuda(_) => {}
             _ => candle::bail!("FlashQwen2 requires Cuda"),
@@ -279,8 +393,9 @@ impl FlashQwen2Model {
             config.hidden_size,
         );
 
+        let lora = lora.as_ref();
         let layers = (0..config.num_hidden_layers)
-            .map(|index| Qwen2Layer::load(vb.pp(format!("layers.{index}")), config))
+            .map(|index| Qwen2Layer::load(vb.pp(format!("layers.{index}")), config, index, lora))
             .collect::<Result<Vec<_>>>()?;
 
         let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
@@ -305,6 +420,7 @@ impl FlashQwen2Model {
             cos_cache,
             sin_cache,
             pool,
+            normalize_embeddings,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
@@ -423,6 +539,18 @@ impl FlashQwen2Model {
             }
         } else {
             None
+        };
+
+        let pooled_embeddings = if self.normalize_embeddings {
+            match pooled_embeddings {
+                Some(embeddings) => {
+                    let norms = embeddings.sqr()?.sum_keepdim(1)?.sqrt()?;
+                    Some(embeddings.broadcast_div(&norms)?)
+                }
+                None => None,
+            }
+        } else {
+            pooled_embeddings
         };
 
         let raw_embeddings = if has_raw_requests {
