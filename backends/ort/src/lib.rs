@@ -87,6 +87,11 @@ impl OrtBackend {
                 }
                 _ => pool,
             },
+            ModelType::ListwiseReranker => {
+                return Err(BackendError::Start(
+                    "`ListwiseReranker` model type is not supported for `ort`".to_string(),
+                ));
+            }
         };
 
         let onnx_path = {

@@ -267,6 +267,9 @@ impl FlashJinaBertModel {
                 }
                 (pool, None)
             }
+            ModelType::ListwiseReranker => {
+                candle::bail!("`ListwiseReranker` model type is not supported for this model")
+            }
         };
 
         let (embeddings, encoder) = match (
