@@ -64,6 +64,7 @@ pub use mpnet::{MPNetConfig, MPNetModel};
 pub use nomic::{NomicBertModel, NomicConfig};
 pub use qwen2::Qwen2Config;
 pub use qwen3::{Qwen3Config, Qwen3Model};
+pub use llama::LLamaConfig;
 
 #[cfg(feature = "cuda")]
 pub use flash_bert::FlashBertModel;

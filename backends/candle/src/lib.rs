@@ -25,7 +25,7 @@ use crate::models::{
     BertConfig, BertModel, Dense, DenseConfig, DenseLayer, DistilBertConfig, DistilBertModel,
     GTEConfig, GTEModel, Gemma3Config, Gemma3Model, JinaBertModel, JinaCodeBertModel, MPNetConfig,
     MPNetModel, MistralConfig, Model, ModernBertConfig, ModernBertModel, NomicBertModel,
-    NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model,
+    NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model, LLamaConfig
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -113,6 +113,10 @@ enum Config {
     Qwen3(Qwen3Config),
     Roberta(BertConfig),
     XlmRoberta(BertConfig),
+    #[allow(dead_code)]
+    LLama(LLamaConfig),
+    #[allow(dead_code)]
+    Llama_bidirec(LLamaConfig),
 }
 
 pub struct CandleBackend {
