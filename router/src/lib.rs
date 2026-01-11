@@ -50,6 +50,7 @@ pub async fn run(
     max_concurrent_requests: usize,
     max_batch_tokens: usize,
     max_batch_requests: Option<usize>,
+    radix_mlp_threshold: f32,
     max_client_batch_size: usize,
     auto_truncate: bool,
     default_prompt: Option<String>,
@@ -308,10 +309,36 @@ pub async fn run(
         .or(max_batch_requests);
 
     // Queue logic
+    let radix_mlp_threshold = if config.model_type == "bert"
+        || config.model_type == "xlm-roberta"
+        || config.model_type == "camembert"
+        || config.model_type == "roberta"
+        || config.model_type == "distilbert"
+        || config.model_type == "modernbert"
+        || config.use_bidirectional_attention.unwrap_or(false)
+        || !backend.radix_mlp_supported
+    {
+        if radix_mlp_threshold > 0.0 {
+            tracing::warn!("`--radix-mlp-threshold` is only supported for Causal LM's Qwen2.5, Qwen3 and LLaMA models. Disabling RadixMLP.");
+        }
+        0.0
+    } else {
+        radix_mlp_threshold
+    };
+    if radix_mlp_threshold > 0.0 {
+        tracing::info!(
+            "RadixMLP enabled with compression ratio threshold: {}",
+            radix_mlp_threshold
+        );
+    } else {
+        tracing::info!("RadixMLP disabled");
+    }
+
     let queue = Queue::new(
         backend.padded_model,
         max_batch_tokens,
         max_batch_requests,
+        radix_mlp_threshold,
         max_concurrent_requests,
     );
 
@@ -331,6 +358,7 @@ pub async fn run(
         max_batch_requests,
         max_client_batch_size,
         auto_truncate,
+        radix_mlp_threshold,
         version: env!("CARGO_PKG_VERSION"),
         sha: option_env!("VERGEN_GIT_SHA"),
         docker_label: option_env!("DOCKER_LABEL"),
@@ -464,6 +492,7 @@ pub struct ModelConfig {
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
     pub auto_map: Option<HashMap<String, String>>,
+    pub use_bidirectional_attention: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -557,6 +586,8 @@ pub struct Info {
     pub auto_truncate: bool,
     #[cfg_attr(feature = "http", schema(example = "4"))]
     pub tokenization_workers: usize,
+    #[cfg_attr(feature = "http", schema(example = "0.5"))]
+    pub radix_mlp_threshold: f32,
     /// Router Info
     #[cfg_attr(feature = "http", schema(example = "0.5.0"))]
     pub version: &'static str,

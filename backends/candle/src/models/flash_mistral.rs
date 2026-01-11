@@ -1,5 +1,7 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{get_cos_sin, get_inv_freqs, index_select, HiddenAct, Linear, RMSNorm};
+use crate::layers::{
+    get_cos_sin, get_inv_freqs, index_select, CompactUnfoldTensors, HiddenAct, Linear, RMSNorm,
+};
 use crate::models::{MistralConfig, Model};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
@@ -69,6 +71,7 @@ impl MistralAttention {
         cos: &Tensor,
         sin: &Tensor,
         max_s: usize,
+        compact_tensors: &CompactUnfoldTensors,
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
@@ -93,6 +96,10 @@ impl MistralAttention {
 
         apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
 
+        let q = compact_tensors.scatter_unfold(&q)?;
+        let k = compact_tensors.scatter_unfold(&k)?;
+        let v = compact_tensors.scatter_unfold(&v)?;
+
         let attention = flash_attn_varlen(
             &q,
             &k,
@@ -108,6 +115,8 @@ impl MistralAttention {
             None,
         )?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
+
+        let attention = compact_tensors.fold_gather(&attention)?;
 
         self.o_proj.forward(&attention)
     }
@@ -207,13 +216,19 @@ impl MistralLayer {
         cos: &Tensor,
         sin: &Tensor,
         max_s: usize,
+        compact_tensors: &CompactUnfoldTensors,
     ) -> Result<(Tensor, Tensor)> {
         let _enter = self.span.enter();
 
         let (normed_hidden_states, res) = self.input_layer_norm.forward(hidden_states, residual)?;
-        let attn_output =
-            self.attention
-                .forward(&normed_hidden_states, cu_seqlens, cos, sin, max_s)?;
+        let attn_output = self.attention.forward(
+            &normed_hidden_states,
+            cu_seqlens,
+            cos,
+            sin,
+            max_s,
+            compact_tensors,
+        )?;
         let (normed_attn_res_output, attn_res) = self
             .post_attention_layer_norm
             .forward(&attn_output, Some(&res))?;
@@ -296,19 +311,18 @@ impl FlashMistralModel {
         let batch_size = batch.cumulative_seq_lengths.len() - 1;
         let shape = batch.input_ids.len();
 
-        // Create Cuda tensors
-        let input_ids = Tensor::from_vec(batch.input_ids, shape, &self.device)?;
-        let position_ids = Tensor::from_vec(batch.position_ids, shape, &self.device)?;
+        // Create compact/unfold tensors and get embeddings
+        let (input_ids, compact_tensors) = CompactUnfoldTensors::from_batch(&batch, &self.device)?;
+        let mut hidden_states = self.embeddings.forward(&input_ids)?.contiguous()?;
+
         let cu_seqlens = Tensor::from_vec(
             batch.cumulative_seq_lengths.clone(),
             batch_size + 1,
             &self.device,
         )?;
 
-        let mut hidden_states = self.embeddings.forward(&input_ids)?;
-
-        let cos = index_select(&self.cos_cache, &position_ids, 0)?;
-        let sin = index_select(&self.sin_cache, &position_ids, 0)?;
+        let cos = index_select(&self.cos_cache, &compact_tensors.position_ids_compact, 0)?;
+        let sin = index_select(&self.sin_cache, &compact_tensors.position_ids_compact, 0)?;
 
         let mut residual = None;
         for layer in &self.layers {
@@ -319,12 +333,15 @@ impl FlashMistralModel {
                 &cos,
                 &sin,
                 batch.max_length as usize,
+                &compact_tensors,
             )?;
             hidden_states = h;
             residual = Some(r);
         }
 
         let (outputs, _) = self.norm.forward(&hidden_states, residual.as_ref())?;
+
+        let outputs = compact_tensors.scatter_unfold(&outputs)?;
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();
@@ -442,6 +459,11 @@ impl Model for FlashMistralModel {
     fn is_padded(&self) -> bool {
         false
     }
+
+    fn supports_radix_mlp(&self) -> bool {
+        true
+    }
+
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
     }

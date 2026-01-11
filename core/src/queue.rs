@@ -43,6 +43,7 @@ impl Queue {
         padded_model: bool,
         max_batch_tokens: usize,
         max_batch_requests: Option<usize>,
+        radix_mlp_threshold: f32,
         max_concurrent_requests: usize,
     ) -> Self {
         // Create channels
@@ -56,6 +57,7 @@ impl Queue {
                 padded_model,
                 max_batch_tokens,
                 max_batch_requests,
+                radix_mlp_threshold,
                 max_concurrent_requests,
                 queue_receiver,
             )
@@ -100,10 +102,14 @@ fn queue_blocking_task(
     padded_model: bool,
     max_batch_tokens: usize,
     max_batch_requests: Option<usize>,
+    radix_mlp_threshold: f32,
     max_concurrent_requests: usize,
     mut queue_receiver: mpsc::Receiver<QueueCommand>,
 ) {
     let capacity = max_batch_requests.unwrap_or(max_concurrent_requests);
+    let radix_mlp_pad: Option<usize> = std::env::var("RADIX_MLP_PAD")
+        .ok()
+        .and_then(|s| s.parse().ok());
 
     let mut entries: VecDeque<Entry> = VecDeque::with_capacity(max_concurrent_requests);
 
@@ -181,6 +187,41 @@ fn queue_blocking_task(
                     }
                 }
 
+                // Compute RadixMLP compact representation with BOTH mappings
+                let (compact_input_ids, compact_position_ids, scatter_unfold, fold_gather) =
+                    if radix_mlp_threshold > 1e-6 && !input_ids.is_empty() {
+                        let (compact_ids, compact_pos, scatter, fold) =
+                            radix_mlp::compute_fold_and_scatter(
+                                &input_ids,
+                                &position_ids,
+                                &cu_seq_lengths,
+                                radix_mlp_pad,
+                            );
+
+                        // Only use if we achieved meaningful compression
+                        let compression_ratio = compact_ids.len() as f32 / input_ids.len() as f32;
+                        tracing::info!(
+                            "RadixMLP compression ratio: {:.2} ({} -> {})",
+                            compression_ratio,
+                            input_ids.len(),
+                            compact_ids.len()
+                        );
+                        metrics::histogram!("te_radix_mlp_compression_ratio")
+                            .record(compression_ratio as f64);
+                        if radix_mlp_threshold >= 1.0 || compression_ratio < radix_mlp_threshold {
+                            (
+                                Some(compact_ids),
+                                Some(compact_pos),
+                                Some(scatter),
+                                Some(fold),
+                            )
+                        } else {
+                            (None, None, None, None)
+                        }
+                    } else {
+                        (None, None, None, None)
+                    };
+
                 let batch_size = metadata.len();
                 let next_batch = if metadata.is_empty() {
                     None
@@ -195,6 +236,10 @@ fn queue_blocking_task(
                             max_length,
                             pooled_indices,
                             raw_indices,
+                            compact_input_ids,
+                            compact_position_ids,
+                            scatter_unfold,
+                            fold_gather, // Add the second mapping
                         },
                     ))
                 };

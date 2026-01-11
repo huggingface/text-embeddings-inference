@@ -8,6 +8,17 @@ use veil::Redact;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+fn pct_parser(s: &str) -> Result<f32, String> {
+    let v = s.parse::<f32>().map_err(|e| e.to_string())?;
+    if !(0.0..=1.0).contains(&v) {
+        return Err(format!(
+            "The value must be between 0.0 and 1.0, but got {}",
+            v
+        ));
+    }
+    Ok(v)
+}
+
 /// App Configuration
 #[derive(Parser, Redact)]
 #[clap(author, version, about, long_about = None)]
@@ -70,6 +81,14 @@ struct Args {
     /// Optionally control the maximum number of individual requests in a batch
     #[clap(long, env)]
     max_batch_requests: Option<usize>,
+
+    /// RadixMLP threshold.
+    ///
+    /// Set the threshold for RadixMLP.
+    /// If the compression ratio is lower than the threshold, RadixMLP will be used.
+    /// The default is 0.85 for most models, and 0.0 (force disabled) for bidirectional models.
+    #[clap(long, env, default_value = "0.85", value_parser = pct_parser)]
+    radix_mlp_threshold: f32,
 
     /// Control the maximum number of inputs that a client can send in a single request
     #[clap(default_value = "32", long, env)]
@@ -234,6 +253,7 @@ async fn main() -> Result<()> {
         args.max_concurrent_requests,
         args.max_batch_tokens,
         args.max_batch_requests,
+        args.radix_mlp_threshold,
         args.max_client_batch_size,
         args.auto_truncate,
         args.default_prompt,
