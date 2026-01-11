@@ -9,8 +9,12 @@ compute_cap=$(nvidia-smi --query-gpu=compute_cap --format=csv | sed -n '2p' | se
 
 if [ ${compute_cap} -eq 75 ]; then
     exec text-embeddings-router-75 "$@"
-elif [ ${compute_cap} -ge 80 -a ${compute_cap} -lt 90 ]; then
+elif [ ${compute_cap} -ge 80 -a ${compute_cap} -lt 87 ]; then
     exec text-embeddings-router-80 "$@"
+elif [ ${compute_cap} -eq 87 ]; then
+    exec text-embeddings-router-87 "$@"
+elif [ ${compute_cap} -eq 89 ]; then
+    exec text-embeddings-router-89 "$@"
 elif [ ${compute_cap} -eq 90 ]; then
     exec text-embeddings-router-90 "$@"
 else

@@ -1,7 +1,10 @@
 use crate::queue::{Entry, Metadata, NextBatch, Queue};
 use crate::tokenization::{EncodingInput, RawEncoding, Tokenization};
 use crate::TextEmbeddingsError;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{Backend, BackendError, Embedding, ModelType};
 use tokenizers::TruncationDirection;
@@ -122,6 +125,7 @@ impl Infer {
         truncation_direction: TruncationDirection,
         prompt_name: Option<String>,
         permit: OwnedSemaphorePermit,
+        batch_counter: Option<Arc<AtomicUsize>>,
     ) -> Result<AllEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
 
@@ -144,6 +148,7 @@ impl Infer {
                 false,
                 &start_time,
                 permit,
+                batch_counter,
             )
             .await?;
 
@@ -173,6 +178,7 @@ impl Infer {
         truncation_direction: TruncationDirection,
         prompt_name: Option<String>,
         permit: OwnedSemaphorePermit,
+        batch_counter: Option<Arc<AtomicUsize>>,
     ) -> Result<PooledEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
 
@@ -195,6 +201,7 @@ impl Infer {
                 true,
                 &start_time,
                 permit,
+                batch_counter,
             )
             .await?;
 
@@ -231,6 +238,7 @@ impl Infer {
         normalize: bool,
         dimensions: Option<usize>,
         permit: OwnedSemaphorePermit,
+        batch_counter: Option<Arc<AtomicUsize>>,
     ) -> Result<PooledEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
 
@@ -263,6 +271,7 @@ impl Infer {
                 true,
                 &start_time,
                 permit,
+                batch_counter,
             )
             .await?;
 
@@ -330,6 +339,7 @@ impl Infer {
         pooling: bool,
         start_time: &Instant,
         _permit: OwnedSemaphorePermit,
+        batch_counter: Option<Arc<AtomicUsize>>,
     ) -> Result<InferResult, TextEmbeddingsError> {
         if self.is_classifier() {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
@@ -371,7 +381,14 @@ impl Infer {
             encoding,
         });
 
-        self.notify_batching_task.notify_one();
+        match batch_counter {
+            None => self.notify_batching_task.notify_one(),
+            Some(counter) => {
+                if counter.fetch_sub(1, Ordering::SeqCst) == 1 {
+                    self.notify_batching_task.notify_one();
+                }
+            }
+        }
 
         let response = response_rx
             .await
@@ -396,6 +413,7 @@ impl Infer {
         truncation_direction: TruncationDirection,
         raw_scores: bool,
         _permit: OwnedSemaphorePermit,
+        batch_counter: Option<Arc<AtomicUsize>>,
     ) -> Result<ClassificationInferResponse, TextEmbeddingsError> {
         if !self.is_classifier() {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
@@ -437,7 +455,14 @@ impl Infer {
             encoding,
         });
 
-        self.notify_batching_task.notify_one();
+        match batch_counter {
+            None => self.notify_batching_task.notify_one(),
+            Some(counter) => {
+                if counter.fetch_sub(1, Ordering::SeqCst) == 1 {
+                    self.notify_batching_task.notify_one();
+                }
+            }
+        }
 
         let response = response_rx
             .await
