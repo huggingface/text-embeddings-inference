@@ -166,7 +166,7 @@ struct Args {
     #[clap(long, env)]
     json_output: bool,
 
-    // Whether or not to include the log trace through spans
+    /// Whether or not to include the log trace through spans
     #[clap(long, env)]
     disable_spans: bool,
 

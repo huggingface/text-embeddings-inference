@@ -273,6 +273,153 @@ pub(crate) struct Rank {
 #[derive(Serialize, ToSchema)]
 pub(crate) struct RerankResponse(pub Vec<Rank>);
 
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct JinaAIRerankRequest {
+    #[allow(dead_code)]
+    #[schema(example = "cross-encoder/ms-marco-MiniLM-L6-v2")]
+    pub model: String,
+    #[schema(example = "What is Deep Learning?")]
+    pub query: String,
+    #[schema(example = json!(["Deep Learning is ..."]))]
+    pub documents: Vec<String>,
+    #[schema(example = "3", nullable = true)]
+    pub top_n: Option<usize>,
+    #[serde(default)]
+    #[schema(default = "false", example = "false")]
+    pub return_documents: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct JinaAIDocument {
+    #[schema(example = "Deep Learning is ...")]
+    pub text: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct JinaAIResult {
+    #[schema(example = "0")]
+    pub index: usize,
+    #[schema(nullable = true, default = "null")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document: Option<JinaAIDocument>,
+    #[schema(example = "1.0")]
+    pub relevance_score: f32,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct JinaAIUsage {
+    #[schema(example = "512")]
+    pub prompt_tokens: usize,
+    #[schema(example = "512")]
+    pub total_tokens: usize,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct JinaAIRerankResponse {
+    #[schema(example = "cross-encoder/ms-marco-MiniLM-L6-v2")]
+    pub model: String,
+    #[schema(example = "list")]
+    pub object: &'static str,
+    pub usage: JinaAIUsage,
+    pub results: Vec<JinaAIResult>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct JinaAIError {
+    pub field: Option<String>,
+    pub message: Option<Vec<JinaAIError>>,
+    #[serde(rename(serialize = "type"))]
+    pub error_t: Option<Vec<JinaAIError>>,
+    pub input: Option<Vec<JinaAIError>>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct JinaAIErrorResponse {
+    pub detail: Option<String>,
+    pub errors: Option<Vec<JinaAIError>>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct CohereRerankRequest {
+    #[allow(dead_code)]
+    #[schema(example = "cross-encoder/ms-marco-MiniLM-L6-v2")]
+    pub model: String,
+    #[schema(example = "What is Deep Learning?")]
+    pub query: String,
+    #[schema(example = json!(["Deep Learning is ..."]))]
+    pub documents: Vec<String>,
+    #[schema(example = "3", nullable = true)]
+    pub top_n: Option<usize>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    #[schema(default = "4096", example = "2048")]
+    pub max_tokens_per_doc: Option<usize>,
+    // Set `skip_serializing` given that the `priority` field is used internally in the Cohere API,
+    // but in Text Embeddings Inference there's not a priority queue defined by a field when the
+    // request is sent to the server.
+    #[allow(dead_code)]
+    #[serde(default, skip_serializing)]
+    #[schema(default = "0", example = "0")]
+    pub priority: usize,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CohereResult {
+    #[schema(example = "0")]
+    pub index: usize,
+    #[schema(example = "1.0")]
+    pub relevance_score: f64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CohereMetaTokens {
+    #[schema(example = "128", nullable = true)]
+    pub input_tokens: Option<usize>,
+    #[schema(example = "128", nullable = true)]
+    pub output_tokens: Option<usize>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CohereApiVersion {
+    pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(default = "false", example = "false", nullable = true)]
+    pub is_deprecated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(default = "false", example = "false", nullable = true)]
+    pub is_experimental: Option<bool>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CohereMeta {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_version: Option<CohereApiVersion>,
+    #[allow(dead_code)]
+    #[serde(skip_serializing)]
+    pub billed_units: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<CohereMetaTokens>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warnings: Option<Vec<String>>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CohereRerankResponse {
+    #[schema(example = "07734bd2-2473-4f07-94e1-0d9f0e6843cf", nullable = true)]
+    pub id: Option<String>,
+    #[schema(nullable = true)]
+    pub meta: Option<CohereMeta>,
+    pub results: Vec<CohereResult>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CohereErrorResponse {
+    pub id: Option<String>,
+    pub message: Option<String>,
+}
+
 #[derive(Deserialize, ToSchema, Debug)]
 #[serde(untagged)]
 pub(crate) enum InputType {
