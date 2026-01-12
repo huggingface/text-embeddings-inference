@@ -66,6 +66,7 @@ pub async fn run(
     otlp_service_name: String,
     prometheus_port: u16,
     cors_allow_origin: Option<Vec<String>>,
+    batch_channel_capacity: usize,
 ) -> Result<()> {
     let model_id_path = Path::new(&model_id);
     let (model_root, api_repo) = if model_id_path.exists() && model_id_path.is_dir() {
@@ -316,7 +317,7 @@ pub async fn run(
     );
 
     // Create infer task
-    let infer = Infer::new(tokenization, queue, max_concurrent_requests, backend);
+    let infer = Infer::new(tokenization, queue, max_concurrent_requests, backend, batch_channel_capacity);
 
     // Endpoint info
     let info = Info {

@@ -27,11 +27,12 @@ impl Infer {
         queue: Queue,
         max_concurrent_requests: usize,
         backend: Backend,
+        batch_channel_capacity: usize,
     ) -> Self {
         let notify_batching_task = Arc::new(Notify::new());
 
-        // Bound channel to 1 to be able to prefetch one batch
-        let (embed_sender, embed_receiver) = mpsc::channel(1);
+        // Channel capacity controls how many batches can be queued for processing.
+        let (embed_sender, embed_receiver) = mpsc::channel(batch_channel_capacity);
 
         // Batching task
         tokio::spawn(batching_task(
