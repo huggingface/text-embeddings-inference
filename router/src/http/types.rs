@@ -3,9 +3,20 @@ use serde::de::{SeqAccess, Visitor};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::json;
 use std::fmt::Formatter;
+use std::sync::OnceLock;
 use text_embeddings_core::tokenization::EncodingInput;
 use utoipa::openapi::{RefOr, Schema};
 use utoipa::ToSchema;
+
+static MAX_CLIENT_BATCH_SIZE: OnceLock<usize> = OnceLock::new();
+
+pub(crate) fn set_max_client_batch_size(size: usize) {
+    MAX_CLIENT_BATCH_SIZE.get_or_init(|| size);
+}
+
+fn get_max_client_batch_size() -> usize {
+    *MAX_CLIENT_BATCH_SIZE.get().unwrap_or(&32)
+}
 
 #[derive(Debug)]
 pub(crate) enum Sequence {
@@ -92,7 +103,7 @@ impl<'de> Deserialize<'de> for PredictInput {
                     // Flat array of strings: ["a", "b", "c", ...]
                     // Always treated as a batch of single sequences
                     Internal::Single(first_string) => {
-                        let mut batch = Vec::with_capacity(32);
+                        let mut batch = Vec::with_capacity(get_max_client_batch_size());
                         batch.push(Sequence::Single(first_string));
 
                         while let Some(s) = seq.next_element::<String>()? {
@@ -104,7 +115,7 @@ impl<'de> Deserialize<'de> for PredictInput {
                     // Nested array: [["a"], ["a", "b"], ...]
                     // Batch of singles and/or pairs
                     Internal::Multiple(first_vec) => {
-                        let mut batch = Vec::with_capacity(32);
+                        let mut batch = Vec::with_capacity(get_max_client_batch_size());
                         batch.push(sequence_from_vec(first_vec)?);
 
                         while let Some(vec) = seq.next_element::<Vec<String>>()? {
