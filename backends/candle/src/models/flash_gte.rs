@@ -1,5 +1,5 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{get_cos_sin, get_inv_freqs, LayerNorm, Linear};
+use crate::layers::{get_cos_sin, get_inv_freqs, index_select, LayerNorm, Linear};
 use crate::models::gte::{GTEClassificationHead, GTEConfig, GTEMLP};
 use crate::models::{Model, PositionEmbeddingType};
 
@@ -291,8 +291,8 @@ impl FlashGTEModel {
             .embeddings_norm
             .forward(&word_embeddings, token_type_embeddings.as_ref())?;
 
-        let cos = self.cos_cache.index_select(&position_ids, 0)?;
-        let sin = self.sin_cache.index_select(&position_ids, 0)?;
+        let cos = index_select(&self.cos_cache, &position_ids, 0)?;
+        let sin = index_select(&self.sin_cache, &position_ids, 0)?;
 
         for layer in &self.layers {
             let h = layer.forward(
@@ -336,11 +336,11 @@ impl FlashGTEModel {
                             )?;
 
                             // Only select indices that requires pooling
-                            indices = indices.index_select(&pooled_indices, 0)?
+                            indices = index_select(&indices, &pooled_indices, 0)?
                         }
 
                         // Select tokens
-                        Some(outputs.index_select(&indices, 0)?)
+                        Some(index_select(&outputs, &indices, 0)?)
                     } else {
                         Some(
                             match self.pool {
@@ -407,7 +407,7 @@ impl FlashGTEModel {
                     Tensor::from_vec(final_indices, final_indices_length, &self.device)?;
 
                 // Select the tokens with final indices
-                Some(outputs.index_select(&final_indices, 0)?)
+                Some(index_select(&outputs, &final_indices, 0)?)
             } else {
                 Some(outputs)
             }
