@@ -43,33 +43,34 @@ pub fn get_inv_freqs(
                 low_freq_factor,
                 original_max_position_embeddings,
             } => {
-                // Llama 3 NTK-by-parts scaling with frequency-dependent factors
-                let scale = factor / *original_max_position_embeddings as f32;
+                let old_context_len = *original_max_position_embeddings as f32;
+                let low_freq_wavelen = old_context_len / low_freq_factor;
+                let high_freq_wavelen = old_context_len / high_freq_factor;
+                
                 let inv_freq: Vec<_> = (0..dim)
                     .step_by(2)
-                    .enumerate()
-                    .map(|(_idx, i)| {
+                    .map(|i| {
                         let freq_idx = i as f32 / dim as f32;
-                        // Compute wavelength relative to original context
-                        let wavelength = 2.0 * std::f32::consts::PI * base.powf(freq_idx);
-                        let original_context = *original_max_position_embeddings as f32;
+                        // Compute base inverse frequency
+                        let inv_freq_base = 1.0 / base.powf(freq_idx);
                         
-                        // Ramp function: transition from low to high freq scaling
-                        let alpha = 1.0;
-                        let beta = 32.0;
-                        let r = wavelength / original_context;
+                        // Compute wavelength from inverse frequency
+                        let wavelen = 2.0 * std::f32::consts::PI / inv_freq_base;
                         
-                        let gamma = if r < alpha {
-                            0.0
-                        } else if r > beta {
-                            1.0
+                        // Apply Llama3 scaling logic
+                        if wavelen < high_freq_wavelen {
+                            // High frequency: no scaling
+                            inv_freq_base
+                        } else if wavelen > low_freq_wavelen {
+                            // Low frequency: scale by factor
+                            inv_freq_base / factor
                         } else {
-                            (r - alpha) / (beta - alpha)
-                        };
-                        
-                        // Blend low and high frequency scaling
-                        let scale_factor = (1.0 - gamma) * low_freq_factor + gamma * high_freq_factor;
-                        1f32 / (base.powf(freq_idx) * scale_factor * scale)
+                            // Medium frequency: smooth interpolation
+                            let smooth_factor = (old_context_len / wavelen - low_freq_factor) 
+                                / (high_freq_factor - low_freq_factor);
+                            let inv_freq_llama = inv_freq_base / factor;
+                            (1.0 - smooth_factor) * inv_freq_llama + smooth_factor * inv_freq_base
+                        }
                     })
                     .collect();
                 let inv_freq_len = inv_freq.len();
