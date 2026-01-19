@@ -1,17 +1,5 @@
-use crate::layers::HiddenAct;
+use crate::layers::{HiddenAct, RopeScaling};
 use serde::Deserialize;
-
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(tag = "rope_type", rename_all = "lowercase")]
-pub enum RopeScaling {
-    Llama3 {
-        factor: f32,
-        high_freq_factor: f32,
-        low_freq_factor: f32,
-        original_max_position_embeddings: usize,
-    },
-    // Add other rope types as needed
-}
 
 fn default_use_bidirectional_attention() -> bool {
     false

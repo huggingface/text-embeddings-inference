@@ -1,5 +1,9 @@
-use crate::layers::HiddenAct;
+use crate::layers::{HiddenAct, RopeScaling};
 use serde::Deserialize;
+
+fn default_use_bidirectional_attention() -> bool {
+    false
+}
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct MistralConfig {
@@ -16,4 +20,7 @@ pub struct MistralConfig {
     pub model_type: Option<String>,
     pub rope_theta: f32,
     pub sliding_window: Option<usize>,
+    pub rope_scaling: Option<RopeScaling>,
+    #[serde(default = "default_use_bidirectional_attention")]
+    pub use_bidirectional_attention: bool,
 }
