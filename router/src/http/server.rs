@@ -1155,15 +1155,10 @@ async fn openai_embed(
 
     // Validate model name if provided in request
     if let Some(requested_model) = &req.model {
-        let expected_model = info
-            .served_model_name
-            .as_ref()
-            .unwrap_or(&info.model_id);
-
-        if requested_model != expected_model {
+        if requested_model != &info.served_model_name {
             let message = format!(
                 "Model `{}` not found. Available model: `{}`",
-                requested_model, expected_model
+                requested_model, info.served_model_name
             );
             tracing::error!("{message}");
             let err = ErrorResponse {
@@ -1331,7 +1326,7 @@ async fn openai_embed(
     let response = OpenAICompatResponse {
         object: "list",
         data: embeddings,
-        model: info.served_model_name.clone().unwrap_or_else(|| info.model_id.clone()),
+        model: info.served_model_name.clone(),
         usage: OpenAICompatUsage {
             prompt_tokens: compute_tokens,
             total_tokens: compute_tokens,

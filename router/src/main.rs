@@ -38,8 +38,7 @@ struct Args {
     #[clap(long, env, value_enum)]
     dtype: Option<DType>,
 
-    /// The name of the model that is being served. If not specified, defaults to
-    /// model-id. 
+    /// The name of the model that is being served. If not specified, defaults to `--model-id`.
     #[clap(long, env)]
     served_model_name: Option<String>,
 
@@ -230,12 +229,16 @@ async fn main() -> Result<()> {
     }
     let token = args.hf_token.or(args.hf_api_token);
 
+    let served_model_name = args
+        .served_model_name
+        .unwrap_or_else(|| args.model_id.clone());
+
     text_embeddings_router::run(
         args.model_id,
         args.revision,
         args.tokenization_workers,
         args.dtype,
-        args.served_model_name,
+        served_model_name,
         args.pooling,
         args.max_concurrent_requests,
         args.max_batch_tokens,
