@@ -286,7 +286,7 @@ impl CandleBackend {
                 tracing::info!("Starting MPNet model on {:?}", device);
                 Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
             }
-            (Config::Llama(_config), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
+            (Config::Llama(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
                 "Llama is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
             )),

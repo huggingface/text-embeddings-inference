@@ -21,6 +21,6 @@ pub struct MistralConfig {
     pub rope_theta: f32,
     pub sliding_window: Option<usize>,
     pub rope_scaling: Option<RopeScaling>,
-    #[serde(default = "default_use_bidirectional_attention")]
+    #[serde(default)]
     pub use_bidirectional_attention: bool,
 }
