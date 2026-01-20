@@ -25,6 +25,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
+use std::str::FromStr;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{DType, Pool};
 use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
@@ -260,16 +261,14 @@ pub async fn run(
         prompts,
     );
 
-    // NOTE: `gemma3_text` won't support Float16 but only Float32, given that with `candle-cuda`
-    // feature, the default `Dtype::Float16` this overrides that to prevent issues when running a
-    // `gemma3_text` model without specifying a `--dtype`
-    let dtype = if dtype.is_none() && config.model_type == "gemma3_text" {
-        DType::Float32
-    } else {
-        dtype.unwrap_or_default()
-    };
+    let dtype = dtype.unwrap_or_else(|| {
+        config
+            .dtype
+            .as_deref()
+            .and_then(|s| DType::from_str(s).ok())
+            .unwrap_or_default()
+    });
 
-    // Create backend
     tracing::info!("Starting model backend");
     let backend = text_embeddings_backend::Backend::new(
         model_root,
@@ -464,6 +463,8 @@ pub struct ModelConfig {
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
     pub auto_map: Option<HashMap<String, String>>,
+    #[serde(alias = "torch_dtype")]
+    pub dtype: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

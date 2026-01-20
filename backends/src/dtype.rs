@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, str::FromStr};
 
 #[cfg(feature = "clap")]
 use clap::ValueEnum;
@@ -14,8 +14,31 @@ pub enum DType {
     Float16,
     #[cfg(any(feature = "python", feature = "candle", feature = "ort"))]
     Float32,
-    #[cfg(feature = "python")]
+    #[cfg(any(feature = "python", feature = "candle"))]
     Bfloat16,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct DTypeParseError;
+
+impl FromStr for DType {
+    type Err = DTypeParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let dtype = match s {
+            "float32" => DType::Float32,
+            #[cfg(any(
+                feature = "python",
+                all(feature = "candle", not(feature = "accelerate"))
+            ))]
+            "float16" => DType::Float16,
+            #[cfg(any(feature = "python", feature = "candle"))]
+            "bfloat16" => DType::Bfloat16,
+            _ => return Err(DTypeParseError),
+        };
+
+        Ok(dtype)
+    }
 }
 
 impl fmt::Display for DType {
@@ -29,7 +52,7 @@ impl fmt::Display for DType {
             DType::Float16 => write!(f, "float16"),
             #[cfg(any(feature = "python", feature = "candle", feature = "ort"))]
             DType::Float32 => write!(f, "float32"),
-            #[cfg(feature = "python")]
+            #[cfg(any(feature = "python", feature = "candle"))]
             DType::Bfloat16 => write!(f, "bfloat16"),
         }
     }

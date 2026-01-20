@@ -216,6 +216,8 @@ impl CandleBackend {
             Ok(DType::F32)
         } else if &dtype == "float16" {
             Ok(DType::F16)
+        } else if &dtype == "bfloat16" {
+            Ok(DType::BF16)
         } else {
             Err(BackendError::Start(format!(
                 "DType {dtype} is not supported"
