@@ -22,10 +22,11 @@ use crate::compute_cap::{
     compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
 };
 use crate::models::{
-    BertConfig, BertModel, Dense, DenseConfig, DenseLayer, DistilBertConfig, DistilBertModel,
-    GTEConfig, GTEModel, Gemma3Config, Gemma3Model, JinaBertModel, JinaCodeBertModel, MPNetConfig,
-    MPNetModel, MistralConfig, Model, ModernBertConfig, ModernBertModel, NomicBertModel,
-    NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model,
+    BertConfig, BertModel, DebertaV2Config, DebertaV2Model, Dense, DenseConfig, DenseLayer,
+    DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, Gemma3Config, Gemma3Model,
+    JinaBertModel, JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig, Model,
+    ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config, Qwen3Config,
+    Qwen3Model,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -92,6 +93,8 @@ impl<'de> Deserialize<'de> for BertConfigWrapper {
 #[serde(tag = "model_type", rename_all = "kebab-case")]
 enum Config {
     Bert(BertConfigWrapper),
+    #[serde(rename(deserialize = "deberta-v2"))]
+    DebertaV2(DebertaV2Config),
     Camembert(BertConfig),
     #[serde(rename(deserialize = "distilbert"))]
     DistilBert(DistilBertConfig),
@@ -250,6 +253,10 @@ impl CandleBackend {
                     Ok(Box::new(BertModel::load(vb, &config, model_type).s()?))
                 }
             },
+            (Config::DebertaV2(config), Device::Cpu | Device::Metal(_) | Device::Cuda(_)) => {
+                tracing::info!("Starting DebertaV2 model on {:?}", device);
+                Ok(Box::new(DebertaV2Model::load(vb, &config, model_type).s()?))
+            }
             (
                 Config::Camembert(config) | Config::Roberta(config) | Config::XlmRoberta(config),
                 Device::Cpu | Device::Metal(_),
@@ -265,7 +272,7 @@ impl CandleBackend {
                     DistilBertModel::load(vb, &config, model_type).s()?,
                 ))
             }
-            (Config::Gemma3(config), Device::Cpu | Device::Metal(_)) => {
+            (Config::Gemma3(config), Device::Cpu | Device::Metal(_) | Device::Cuda(_)) => {
                 if dtype != DType::F32 {
                     Err(BackendError::Start(
                         "Gemma3 is only supported in fp32 precision".to_string(),
@@ -390,17 +397,6 @@ impl CandleBackend {
                     Ok(Box::new(
                         DistilBertModel::load(vb, &config, model_type).s()?,
                     ))
-                }
-            }
-            #[cfg(feature = "cuda")]
-            (Config::Gemma3(config), Device::Cuda(_)) => {
-                if dtype != DType::F32 {
-                    Err(BackendError::Start(
-                        "Gemma3 is only supported in fp32 precision".to_string(),
-                    ))
-                } else {
-                    tracing::info!("Starting Gemma3 model on {:?}", device);
-                    Ok(Box::new(Gemma3Model::load(vb, &config, model_type).s()?))
                 }
             }
             #[cfg(feature = "cuda")]
