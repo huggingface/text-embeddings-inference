@@ -137,14 +137,15 @@ To see all options to serve your models:
 $ text-embeddings-router --help
 Text Embedding Webserver
 
-Usage: text-embeddings-router [OPTIONS]
+Usage: text-embeddings-router [OPTIONS] --model-id <MODEL_ID>
 
 Options:
       --model-id <MODEL_ID>
-          The name of the model to load. Can be a MODEL_ID as listed on <https://hf.co/models> like `BAAI/bge-large-en-v1.5`. Or it can be a local directory containing the necessary files as saved by `save_pretrained(...)` methods of transformers
+          The Hugging Face model ID, can be any model listed on <https://huggingface.co/models> with the `text-embeddings-inference` tag (meaning it's compatible with Text Embeddings Inference).
+
+          Alternatively, the specified ID can also be a path to a local directory containing the necessary model files saved by the `save_pretrained(...)` methods of either Transformers or Sentence Transformers.
 
           [env: MODEL_ID=]
-          [default: BAAI/bge-large-en-v1.5]
 
       --revision <REVISION>
           The actual revision of the model if you're referring to a model on the hub. You can use a specific commit id or a branch like `refs/pr/2`
@@ -161,6 +162,11 @@ Options:
 
           [env: DTYPE=]
           [possible values: float16, float32]
+
+      --served-model-name <SERVED_MODEL_NAME>
+          The name of the model that is being served. If not specified, defaults to `--model-id`. It is only used for the OpenAI-compatible endpoints via HTTP
+
+          [env: SERVED_MODEL_NAME=]
 
       --pooling <POOLING>
           Optionally control the pooling method for embedding models.
@@ -238,10 +244,9 @@ Options:
 
           Some embedding models require an extra `Dense` module which contains a single Linear layer and an activation function. By default, those `Dense` modules are stored under the `2_Dense` directory, but there might be cases where different `Dense` modules are provided, to convert the pooled embeddings into different dimensions, available as `2_Dense_<dims>` e.g. https://huggingface.co/NovaSearch/stella_en_400M_v5.
 
-          Note that this argument is optional, only required to be set if the path to the `Dense` module is other than `2_Dense`. And it also applies when leveraging the `candle` backend.
+          Note that this argument is optional, only required to be set if there is no `modules.json` file or when you want to override a single Dense module path, only when running with the `candle` backend.
 
           [env: DENSE_PATH=]
-          [default: 2_Dense]
 
       --hf-token <HF_TOKEN>
           Your Hugging Face Hub token
