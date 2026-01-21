@@ -269,6 +269,10 @@ pub async fn run(
             .unwrap_or_default()
     });
 
+    if dtype == DType::Bfloat16 {
+        tracing::warn!("`--dtype bfloat16` support is still experimental, so bear in mind that it might not be stable on all the models.");
+    }
+
     tracing::info!("Starting model backend");
     let backend = text_embeddings_backend::Backend::new(
         model_root,
