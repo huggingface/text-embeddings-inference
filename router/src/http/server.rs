@@ -1153,21 +1153,15 @@ async fn openai_embed(
         span.set_parent(context);
     }
 
-    // Validate model name if provided in request
+    // NOTE: Validation of `model` won't fail for the time being given that Text Embeddings
+    // Inference can only serve a single model at a time so no need for the `model` parameter to
+    // differentiate one model from the other, but we at least raise a warning.
     if let Some(requested_model) = &req.model {
         if requested_model != &info.served_model_name {
-            let message = format!(
-                "Model `{}` not found. Available model: `{}`",
+            tracing::warn!(
+                "The provided `model={}` has not been found, the `model` parameter should be provided either empty or with `model={}` instead.",
                 requested_model, info.served_model_name
             );
-            tracing::error!("{message}");
-            let err = ErrorResponse {
-                error: message,
-                error_type: ErrorType::NotFound,
-            };
-            let counter = metrics::counter!("te_request_failure", "err" => "model_not_found");
-            counter.increment(1);
-            return Err((StatusCode::NOT_FOUND, Json(err.into())));
         }
     }
 
@@ -1903,7 +1897,6 @@ impl From<&ErrorType> for StatusCode {
             ErrorType::Tokenizer => StatusCode::UNPROCESSABLE_ENTITY,
             ErrorType::Validation => StatusCode::PAYLOAD_TOO_LARGE,
             ErrorType::Empty => StatusCode::BAD_REQUEST,
-            ErrorType::NotFound => StatusCode::NOT_FOUND,
         }
     }
 }
