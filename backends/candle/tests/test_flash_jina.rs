@@ -19,6 +19,7 @@ fn test_flash_jina_small() -> Result<()> {
         "float16".to_string(),
         ModelType::Embedding(Pool::Mean),
         None,
+        0,
     )?;
 
     let input_batch = batch(
