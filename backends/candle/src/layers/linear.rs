@@ -3,14 +3,16 @@ use candle::{Device, Result, Tensor};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, PartialEq, Clone)]
-#[serde(rename_all = "lowercase")]
 pub enum HiddenAct {
     #[serde(rename = "gelu")]
     GeluErf,
     #[serde(alias = "gelu_new", alias = "gelu_pytorch_tanh")]
     Gelu,
+    #[serde(alias = "relu")]
     Relu,
+    #[serde(alias = "silu")]
     Silu,
+    #[serde(rename = "swiglu")]
     Swiglu,
 }
 
