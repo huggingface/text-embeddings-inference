@@ -633,6 +633,9 @@ impl Gemma3Model {
                 candle::bail!("`classifier` model type is not supported for Gemma3")
             }
             ModelType::Embedding(pool) => pool,
+            ModelType::ListwiseReranker => {
+                candle::bail!("`ListwiseReranker` model type is not supported for this model")
+            }
         };
 
         let embed_tokens = Gemma3Embedding::load(vb.pp("embed_tokens"), config)?;

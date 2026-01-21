@@ -498,6 +498,9 @@ impl ModernBertModel {
 
                 (pool, None)
             }
+            ModelType::ListwiseReranker => {
+                candle::bail!("`ListwiseReranker` model type is not supported for this model")
+            }
         };
 
         let embeddings = ModernBertEmbeddings::load(vb.pp("model.embeddings"), config)

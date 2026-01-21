@@ -228,6 +228,9 @@ impl FlashNomicBertModel {
                 }
                 pool
             }
+            ModelType::ListwiseReranker => {
+                candle::bail!("`ListwiseReranker` model type is not supported for this model")
+            }
         };
 
         let embeddings = NomicBertEmbeddings::load(vb.clone(), config)?;

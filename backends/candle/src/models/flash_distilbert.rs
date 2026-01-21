@@ -200,6 +200,9 @@ impl FlashDistilBertModel {
                 candle::bail!("`classifier` model type is not supported for DistilBert")
             }
             ModelType::Embedding(pool) => pool,
+            ModelType::ListwiseReranker => {
+                candle::bail!("`ListwiseReranker` model type is not supported for this model")
+            }
         };
 
         let (embeddings, encoder) = match (

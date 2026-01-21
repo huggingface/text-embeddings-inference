@@ -27,6 +27,11 @@ impl PythonBackend {
         let pool = match model_type {
             ModelType::Classifier => Pool::Cls,
             ModelType::Embedding(pool) => pool,
+            ModelType::ListwiseReranker => {
+                return Err(BackendError::Start(
+                    "`ListwiseReranker` model type is not supported for Python backend".to_string(),
+                ));
+            }
         };
 
         let backend_process = management::BackendProcess::new(

@@ -34,6 +34,7 @@ use text_embeddings_backend::BackendError;
 use text_embeddings_core::infer::{
     AllEmbeddingsInferResponse, Infer, InferMetadata, PooledEmbeddingsInferResponse,
 };
+use text_embeddings_core::templates::apply_qwen3_reranker_template;
 use text_embeddings_core::tokenization::{into_tokens, SimpleToken as CoreSimpleToken};
 use text_embeddings_core::TextEmbeddingsError;
 use tokio::sync::OwnedSemaphorePermit;
@@ -345,31 +346,64 @@ async fn rerank(
         ErrorResponse::from(err)
     })?;
 
+    // Check if model is a listwise reranker (Qwen3-Reranker)
+    let is_listwise_reranker = infer.is_listwise_reranker();
+
     // Closure for rerank
-    let rerank_inner = move |query: String, text: String, truncate: bool, infer: Infer| async move {
-        let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+    let rerank_inner =
+        move |query: String,
+              text: String,
+              truncate: bool,
+              infer: Infer,
+              is_listwise: bool| async move {
+            let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
 
-        let response = infer
-            .predict(
-                (query, text),
-                truncate,
-                req.truncation_direction.into(),
-                req.raw_scores,
-                permit,
-            )
-            .await
-            .map_err(ErrorResponse::from)?;
+            // For ListwiseReranker (Qwen3-Reranker), apply the chat template
+            let input = if is_listwise {
+                let formatted = apply_qwen3_reranker_template(&query, &text, None);
+                // Use the formatted template as single input
+                formatted
+            } else {
+                // Traditional reranker: use (query, text) pair
+                format!("{}\t{}", query, text)
+            };
 
-        let score = response.results[0];
+            let response = if is_listwise {
+                // For Qwen3-Reranker, use single string input with template
+                infer
+                    .predict(
+                        input,
+                        truncate,
+                        req.truncation_direction.into(),
+                        req.raw_scores,
+                        permit,
+                    )
+                    .await
+                    .map_err(ErrorResponse::from)?
+            } else {
+                // Traditional reranker: use query/document pair
+                infer
+                    .predict(
+                        (query, text),
+                        truncate,
+                        req.truncation_direction.into(),
+                        req.raw_scores,
+                        permit,
+                    )
+                    .await
+                    .map_err(ErrorResponse::from)?
+            };
 
-        Ok::<(usize, Duration, Duration, Duration, f32), ErrorResponse>((
-            response.metadata.prompt_tokens,
-            response.metadata.tokenization,
-            response.metadata.queue,
-            response.metadata.inference,
-            score,
-        ))
-    };
+            let score = response.results[0];
+
+            Ok::<(usize, Duration, Duration, Duration, f32), ErrorResponse>((
+                response.metadata.prompt_tokens,
+                response.metadata.tokenization,
+                response.metadata.queue,
+                response.metadata.inference,
+                score,
+            ))
+        };
 
     let truncate = req.truncate.unwrap_or(info.auto_truncate);
 
@@ -405,6 +439,7 @@ async fn rerank(
                 text.clone(),
                 truncate,
                 local_infer.0,
+                is_listwise_reranker,
             ))
         }
         let results = join_all(futures)

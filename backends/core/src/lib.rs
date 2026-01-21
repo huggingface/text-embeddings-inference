@@ -51,6 +51,9 @@ pub trait Backend {
 pub enum ModelType {
     Classifier,
     Embedding(Pool),
+    /// Listwise reranker models that use generative approach (e.g., Qwen3-Reranker)
+    /// These models output yes/no token logits instead of classification scores
+    ListwiseReranker,
 }
 
 #[derive(Debug, PartialEq, Clone, Deserialize)]
