@@ -442,11 +442,21 @@ fn get_backend_model_type(
                     Pool::try_from(config)?
                 }
                 Err(err) => {
-                    if !config.model_type.to_lowercase().contains("bert") {
+                    let model_type = config.model_type.to_lowercase();
+                    if !["bert", "static-embedding"]
+                        .iter()
+                        .any(|&t| model_type.contains(t))
+                    {
                         return Err(err).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.");
                     }
-                    tracing::warn!("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model but the model is a BERT variant. Defaulting to `CLS` pooling.");
-                    text_embeddings_backend::Pool::Cls
+
+                    if model_type == "static-embedding" {
+                        tracing::warn!("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model but the model is a Static Embedding variant. Defaulting to `Mean` pooling.");
+                        text_embeddings_backend::Pool::Mean
+                    } else {
+                        tracing::warn!("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model but the model is a BERT variant. Defaulting to `CLS` pooling.");
+                        text_embeddings_backend::Pool::Cls
+                    }
                 }
             }
         }

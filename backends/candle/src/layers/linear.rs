@@ -5,8 +5,9 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize, PartialEq, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum HiddenAct {
-    #[serde(alias = "gelu_pytorch_tanh")]
     Gelu,
+    #[serde(alias = "gelu_new", alias = "gelu_pytorch_tanh")]
+    NewGelu,
     Relu,
     Silu,
     Swiglu,
@@ -15,7 +16,8 @@ pub enum HiddenAct {
 impl HiddenAct {
     pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
         match self {
-            Self::Gelu => x.gelu(),
+            Self::Gelu => x.gelu_erf(),
+            Self::NewGelu => x.gelu(),
             Self::Relu => x.relu(),
             Self::Silu => x.silu(),
             Self::Swiglu => candle_nn::ops::swiglu(x),
@@ -84,7 +86,8 @@ impl Linear {
 
             if let Some(act) = &self.act {
                 match act {
-                    HiddenAct::Gelu => x.gelu(),
+                    HiddenAct::Gelu => x.gelu_erf(),
+                    HiddenAct::NewGelu => x.gelu(),
                     HiddenAct::Relu => x.relu(),
                     HiddenAct::Silu => x.silu(),
                     HiddenAct::Swiglu => candle_nn::ops::swiglu(&x),

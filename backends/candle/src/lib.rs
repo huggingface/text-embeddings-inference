@@ -22,10 +22,11 @@ use crate::compute_cap::{
     compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
 };
 use crate::models::{
-    BertConfig, BertModel, Dense, DenseConfig, DenseLayer, DistilBertConfig, DistilBertModel,
-    GTEConfig, GTEModel, Gemma3Config, Gemma3Model, JinaBertModel, JinaCodeBertModel, MPNetConfig,
-    MPNetModel, MistralConfig, Model, ModernBertConfig, ModernBertModel, NomicBertModel,
-    NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model,
+    BertConfig, BertModel, DebertaV2Config, DebertaV2Model, Dense, DenseConfig, DenseLayer,
+    DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, Gemma3Config, Gemma3Model,
+    JinaBertModel, JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig, Model,
+    ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config, Qwen3Config,
+    Qwen3Model, StaticEmbeddingConfig, StaticEmbeddingModel,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -93,6 +94,8 @@ impl<'de> Deserialize<'de> for BertConfigWrapper {
 enum Config {
     Bert(BertConfigWrapper),
     Camembert(BertConfig),
+    #[serde(rename(deserialize = "deberta-v2"))]
+    DebertaV2(DebertaV2Config),
     #[serde(rename(deserialize = "distilbert"))]
     DistilBert(DistilBertConfig),
     #[serde(rename(deserialize = "gemma3_text"))]
@@ -112,6 +115,8 @@ enum Config {
     #[allow(dead_code)]
     Qwen3(Qwen3Config),
     Roberta(BertConfig),
+    #[serde(rename(deserialize = "static-embedding"))]
+    StaticEmbedding(StaticEmbeddingConfig),
     XlmRoberta(BertConfig),
 }
 
@@ -131,12 +136,15 @@ impl CandleBackend {
         // Default files
         let default_safetensors = model_path.join("model.safetensors");
         let default_pytorch = model_path.join("pytorch_model.bin");
+        let static_embedding_safetensors = model_path.join("0_StaticEmbedding/model.safetensors");
 
         // Single Files
         let model_files = if default_safetensors.exists() {
             vec![default_safetensors]
         } else if default_pytorch.exists() {
             vec![default_pytorch]
+        } else if static_embedding_safetensors.exists() {
+            vec![static_embedding_safetensors]
         }
         // Sharded weights
         else {
@@ -259,6 +267,10 @@ impl CandleBackend {
                     BertModel::load_roberta(vb, &config, model_type).s()?,
                 ))
             }
+            (Config::DebertaV2(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting DebertaV2 model on {:?}", device);
+                Ok(Box::new(DebertaV2Model::load(vb, &config, model_type).s()?))
+            }
             (Config::DistilBert(config), Device::Cpu | Device::Metal(_)) => {
                 tracing::info!("Starting DistilBert model on {:?}", device);
                 Ok(Box::new(
@@ -304,6 +316,12 @@ impl CandleBackend {
             (Config::Qwen3(config), Device::Cpu | Device::Metal(_)) => {
                 tracing::info!("Starting Qwen3 model on {:?}", device);
                 Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
+            }
+            (Config::StaticEmbedding(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting StaticEmbedding model on {:?}", device);
+                Ok(Box::new(
+                    StaticEmbeddingModel::load(vb, &config, model_type).s()?,
+                ))
             }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
@@ -371,6 +389,11 @@ impl CandleBackend {
                         BertModel::load_roberta(vb, &config, model_type).s()?,
                     ))
                 }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::DebertaV2(config), Device::Cuda(_)) => {
+                tracing::info!("Starting DebertaV2 model on {:?}", device);
+                Ok(Box::new(DebertaV2Model::load(vb, &config, model_type).s()?))
             }
             #[cfg(feature = "cuda")]
             (Config::DistilBert(config), Device::Cuda(_)) => {
@@ -508,6 +531,13 @@ impl CandleBackend {
                         FlashQwen3Model::load(vb, &config, model_type).s()?,
                     ))
                 }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::StaticEmbedding(config), Device::Cuda(_)) => {
+                tracing::info!("Starting StaticEmbedding model on {:?}", device);
+                Ok(Box::new(
+                    StaticEmbeddingModel::load(vb, &config, model_type).s()?,
+                ))
             }
         };
 
