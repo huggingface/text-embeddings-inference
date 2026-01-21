@@ -253,7 +253,7 @@ impl CandleBackend {
                     Ok(Box::new(BertModel::load(vb, &config, model_type).s()?))
                 }
             },
-            (Config::DebertaV2(config), Device::Cpu | Device::Metal(_)) => {
+            (Config::DebertaV2(config), Device::Cpu | Device::Metal(_) | Device::Cuda(_)) => {
                 tracing::info!("Starting DebertaV2 model on {:?}", device);
                 Ok(Box::new(DebertaV2Model::load(vb, &config, model_type).s()?))
             }
@@ -272,7 +272,7 @@ impl CandleBackend {
                     DistilBertModel::load(vb, &config, model_type).s()?,
                 ))
             }
-            (Config::Gemma3(config), Device::Cpu | Device::Metal(_)) => {
+            (Config::Gemma3(config), Device::Cpu | Device::Metal(_) | Device::Cuda(_)) => {
                 if dtype != DType::F32 {
                     Err(BackendError::Start(
                         "Gemma3 is only supported in fp32 precision".to_string(),
@@ -380,11 +380,6 @@ impl CandleBackend {
                 }
             }
             #[cfg(feature = "cuda")]
-            (Config::DebertaV2(config), Device::Cuda(_)) => {
-                tracing::info!("Starting DebertaV2 model on {:?}", device);
-                Ok(Box::new(DebertaV2Model::load(vb, &config, model_type).s()?))
-            }
-            #[cfg(feature = "cuda")]
             (Config::DistilBert(config), Device::Cuda(_)) => {
                 if cfg!(feature = "flash-attn")
                     && dtype == DType::F16
@@ -402,17 +397,6 @@ impl CandleBackend {
                     Ok(Box::new(
                         DistilBertModel::load(vb, &config, model_type).s()?,
                     ))
-                }
-            }
-            #[cfg(feature = "cuda")]
-            (Config::Gemma3(config), Device::Cuda(_)) => {
-                if dtype != DType::F32 {
-                    Err(BackendError::Start(
-                        "Gemma3 is only supported in fp32 precision".to_string(),
-                    ))
-                } else {
-                    tracing::info!("Starting Gemma3 model on {:?}", device);
-                    Ok(Box::new(Gemma3Model::load(vb, &config, model_type).s()?))
                 }
             }
             #[cfg(feature = "cuda")]
