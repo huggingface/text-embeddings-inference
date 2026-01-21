@@ -14,6 +14,10 @@ pub struct Batch {
     pub max_length: u32,
     pub pooled_indices: Vec<u32>,
     pub raw_indices: Vec<u32>,
+    pub compact_input_ids: Option<Vec<u32>>,
+    pub compact_position_ids: Option<Vec<u32>>,
+    pub scatter_unfold: Option<Vec<u32>>,
+    pub fold_gather: Option<Vec<u32>>,
 }
 
 impl Batch {
@@ -41,6 +45,10 @@ pub trait Backend {
     }
 
     fn is_padded(&self) -> bool;
+
+    fn supports_radix_mlp(&self) -> bool {
+        false
+    }
 
     fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError>;
 

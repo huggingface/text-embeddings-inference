@@ -1,5 +1,7 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{get_cos_sin, get_inv_freqs, index_select, HiddenAct, Linear, RMSNorm};
+use crate::layers::{
+    get_cos_sin, get_inv_freqs, index_select, CompactUnfoldTensors, HiddenAct, Linear, RMSNorm,
+};
 use crate::models::{Model, Qwen3Config};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
@@ -109,6 +111,7 @@ impl Qwen3Attention {
         cos: &Tensor,
         sin: &Tensor,
         max_s: usize,
+        compact_tensors: &CompactUnfoldTensors,
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
@@ -146,7 +149,13 @@ impl Qwen3Attention {
         let (q, _) = self.q_norm.forward(&q, None)?;
         let (k, _) = self.k_norm.forward(&k, None)?;
 
+        // Apply RoPE in COMPACT space
         apply_rotary_inplace(&q, &k, &cos, &sin, true)?;
+
+        // Expand Q, K, V to ORIGINAL layout for attention
+        let q = compact_tensors.scatter_unfold(&q)?;
+        let k = compact_tensors.scatter_unfold(&k)?;
+        let v = compact_tensors.scatter_unfold(&v)?;
 
         let attention = flash_attn_varlen(
             &q,
@@ -163,6 +172,9 @@ impl Qwen3Attention {
             None,
         )?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
+
+        // Compact attention output back to COMPACT layout before o_proj
+        let attention = compact_tensors.fold_gather(&attention)?;
 
         self.o_proj.forward(&attention)
     }
@@ -262,14 +274,20 @@ impl Qwen3Layer {
         cos: &Tensor,
         sin: &Tensor,
         max_s: usize,
+        compact_tensors: &CompactUnfoldTensors,
     ) -> Result<(Tensor, Tensor)> {
         let _enter = self.span.enter();
 
         let (normed_hidden_states, res) = self.input_layer_norm.forward(hidden_states, residual)?;
 
-        let attn_output =
-            self.attention
-                .forward(&normed_hidden_states, cu_seqlens, cos, sin, max_s)?;
+        let attn_output = self.attention.forward(
+            &normed_hidden_states,
+            cu_seqlens,
+            cos,
+            sin,
+            max_s,
+            compact_tensors,
+        )?;
 
         let (normed_attn_res_output, attn_res) = self
             .post_attention_layer_norm
@@ -360,21 +378,20 @@ impl FlashQwen3Model {
         let _enter = self.span.enter();
 
         let batch_size = batch.cumulative_seq_lengths.len() - 1;
-        let shape = batch.input_ids.len();
 
-        // Create Cuda tensors
-        let input_ids = Tensor::from_vec(batch.input_ids, shape, &self.device)?;
-        let position_ids = Tensor::from_vec(batch.position_ids, shape, &self.device)?;
+        // Create compact/unfold tensors and get embeddings
+        let (input_ids, compact_tensors) = CompactUnfoldTensors::from_batch(&batch, &self.device)?;
+        let mut hidden_states = self.embeddings.forward(&input_ids)?.contiguous()?;
+
         let cu_seqlens = Tensor::from_vec(
             batch.cumulative_seq_lengths.clone(),
             batch_size + 1,
             &self.device,
         )?;
 
-        let mut hidden_states = self.embeddings.forward(&input_ids)?;
-
-        let cos = index_select(&self.cos_cache, &position_ids, 0)?;
-        let sin = index_select(&self.sin_cache, &position_ids, 0)?;
+        // sin and cos are applied on the compact formation, therefore should be on the compact array
+        let cos = index_select(&self.cos_cache, &compact_tensors.position_ids_compact, 0)?;
+        let sin = index_select(&self.sin_cache, &compact_tensors.position_ids_compact, 0)?;
 
         let mut residual = None;
         for layer in &self.layers {
@@ -385,6 +402,7 @@ impl FlashQwen3Model {
                 &cos,
                 &sin,
                 batch.max_length as usize,
+                &compact_tensors,
             )?;
             hidden_states = h;
             residual = Some(r);
@@ -392,6 +410,8 @@ impl FlashQwen3Model {
 
         let (outputs, _) = self.norm.forward(&hidden_states, residual.as_ref())?;
 
+        // Expand final outputs to original layout for pooling/raw extraction
+        let outputs = compact_tensors.scatter_unfold(&outputs)?;
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();
 
@@ -474,6 +494,7 @@ impl FlashQwen3Model {
         let raw_embeddings = if has_raw_requests {
             if batch_size > 1 && has_pooling_requests {
                 // Create indexing vector for the embeddings
+                let shape = batch.input_ids.len();
                 let mut final_indices: Vec<u32> = Vec::with_capacity(shape);
                 for i in batch.raw_indices.into_iter() {
                     let i = i as usize;
@@ -507,6 +528,10 @@ impl FlashQwen3Model {
 impl Model for FlashQwen3Model {
     fn is_padded(&self) -> bool {
         false
+    }
+
+    fn supports_radix_mlp(&self) -> bool {
+        true
     }
 
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
