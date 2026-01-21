@@ -58,7 +58,6 @@ message InfoResponse {
     optional uint32 max_batch_requests = 11;
     uint32 max_client_batch_size = 12;
     uint32 tokenization_workers = 13;
-    optional string served_model_name = 14;
 }
 
 message Metadata {

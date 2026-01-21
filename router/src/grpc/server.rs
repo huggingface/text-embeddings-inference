@@ -573,7 +573,6 @@ impl grpc::info_server::Info for TextEmbeddingsService {
             model_id: self.info.model_id.clone(),
             model_sha: self.info.model_sha.clone(),
             model_dtype: self.info.model_dtype.clone(),
-            served_model_name: self.info.served_model_name.clone(),
             model_type: model_type.into(),
             max_concurrent_requests: self.info.max_concurrent_requests as u32,
             max_input_length: self.info.max_input_length as u32,
