@@ -422,6 +422,15 @@ fn get_backend_model_type(
         }
     }
 
+    if config
+        .architectures
+        .iter()
+        .any(|arch| arch == "JinaEmbeddingsV4Model")
+    {
+        let pool = pooling.unwrap_or(text_embeddings_backend::Pool::Mean);
+        return Ok(text_embeddings_backend::ModelType::Embedding(pool));
+    }
+
     if Some(text_embeddings_backend::Pool::Splade) == pooling {
         return Err(anyhow!(
             "Splade pooling is not supported: model is not a ForMaskedLM model"
@@ -458,6 +467,7 @@ fn get_backend_model_type(
 #[derive(Debug, Deserialize)]
 pub struct ModelConfig {
     pub architectures: Vec<String>,
+    #[serde(default)]
     pub model_type: String,
     #[serde(alias = "n_positions")]
     pub max_position_embeddings: usize,

@@ -31,8 +31,10 @@ use crate::models::{
 use crate::models::{
     FlashBertModel, FlashDistilBertModel, FlashGTEModel, FlashJinaBertModel,
     FlashJinaCodeBertModel, FlashMistralModel, FlashModernBertModel, FlashNomicBertModel,
-    FlashQwen2Model, FlashQwen3Model,
+    FlashQwen2Model, FlashQwen3Model, LoraWeights,
 };
+#[cfg(feature = "cuda")]
+use std::{env, fs};
 
 /// This enum is needed to be able to differentiate between jina models that also use
 /// the `bert` model type and valid Bert models.
@@ -88,6 +90,106 @@ impl<'de> Deserialize<'de> for BertConfigWrapper {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct JinaV4Config {
+    #[serde(default)]
+    task_names: Vec<String>,
+    text_config: Qwen2Config,
+}
+
+fn is_jina_v4_config(value: &serde_json::Value) -> bool {
+    value
+        .get("architectures")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .any(|item| item.as_str() == Some("JinaEmbeddingsV4Model"))
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(feature = "cuda")]
+fn load_jina_v4_lora(
+    model_path: &Path,
+    device: &Device,
+    dtype: DType,
+    config: &JinaV4Config,
+) -> Option<LoraWeights> {
+    #[derive(Deserialize)]
+    struct AdapterConfig {
+        r: usize,
+        lora_alpha: f32,
+    }
+
+    let adapter_dir = model_path.join("adapters");
+    let adapter_config_path = adapter_dir.join("adapter_config.json");
+    let adapter_model_path = adapter_dir.join("adapter_model.safetensors");
+
+    if !adapter_config_path.exists() || !adapter_model_path.exists() {
+        tracing::warn!("Jina v4 adapters not found; LoRA will be skipped.");
+        return None;
+    }
+
+    let adapter_config = match fs::read_to_string(&adapter_config_path) {
+        Ok(content) => match serde_json::from_str::<AdapterConfig>(&content) {
+            Ok(config) => config,
+            Err(err) => {
+                tracing::warn!("Failed to parse Jina v4 adapter_config.json: {err}");
+                return None;
+            }
+        },
+        Err(err) => {
+            tracing::warn!("Failed to read Jina v4 adapter_config.json: {err}");
+            return None;
+        }
+    };
+
+    let mut task = env::var("JINA_V4_TASK").unwrap_or_default();
+    if task.is_empty() {
+        task = config
+            .task_names
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "retrieval".to_string());
+    } else if !config.task_names.is_empty() && !config.task_names.contains(&task) {
+        tracing::warn!(
+            "JINA_V4_TASK={task} is not in config.task_names; defaulting to the first entry."
+        );
+        task = config
+            .task_names
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "retrieval".to_string());
+    }
+
+    let adapter_vb = unsafe { VarBuilder::from_mmaped_safetensors(&[adapter_model_path], dtype, device) };
+    let adapter_vb = match adapter_vb.s() {
+        Ok(vb) => vb,
+        Err(err) => {
+            tracing::warn!("Failed to load Jina v4 adapter weights: {err}");
+            return None;
+        }
+    };
+
+    let lora_prefix = "base_model.model.model.language_model".to_string();
+    let lora_check = format!(
+        "{lora_prefix}.layers.0.self_attn.q_proj.lora_A.{task}.weight"
+    );
+    if !adapter_vb.contains_tensor(&lora_check) {
+        tracing::warn!("Jina v4 adapter weights missing expected keys; LoRA will be skipped.");
+        return None;
+    }
+
+    Some(LoraWeights::new(
+        adapter_vb,
+        task,
+        adapter_config.r,
+        adapter_config.lora_alpha,
+        lora_prefix,
+    ))
+}
+
 #[derive(Deserialize)]
 #[serde(tag = "model_type", rename_all = "kebab-case")]
 enum Config {
@@ -111,6 +213,7 @@ enum Config {
     Qwen2(Qwen2Config),
     #[allow(dead_code)]
     Qwen3(Qwen3Config),
+    JinaV4(JinaV4Config),
     Roberta(BertConfig),
     XlmRoberta(BertConfig),
 }
@@ -180,9 +283,28 @@ impl CandleBackend {
         let config: String = std::fs::read_to_string(model_path.join("config.json"))
             .context("Unable to read config file")
             .map_err(|err| BackendError::Start(format!("{err:?}")))?;
-        let config: Config = serde_json::from_str(&config)
+        let config_value: serde_json::Value = serde_json::from_str(&config)
             .context("Model is not supported")
             .map_err(|err| BackendError::Start(format!("{err:?}")))?;
+        let config: Config = if is_jina_v4_config(&config_value) {
+            if config_value
+                .get("text_config")
+                .and_then(|text| text.get("rope_scaling"))
+                .is_some()
+            {
+                tracing::warn!(
+                    "Jina v4 rope_scaling is not supported in Candle; using base rope instead."
+                );
+            }
+            let jina_config: JinaV4Config = serde_json::from_value(config_value.clone())
+                .context("Model is not supported")
+                .map_err(|err| BackendError::Start(format!("{err:?}")))?;
+            Config::JinaV4(jina_config)
+        } else {
+            serde_json::from_value(config_value)
+                .context("Model is not supported")
+                .map_err(|err| BackendError::Start(format!("{err:?}")))?
+        };
 
         // Get candle device
         let device = if candle::utils::cuda_is_available() {
@@ -299,6 +421,10 @@ impl CandleBackend {
             }
             (Config::Qwen2(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
                 "Qwen2 is only supported on Cuda devices in fp16 with flash attention enabled"
+                    .to_string(),
+            )),
+            (Config::JinaV4(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
+                "Jina v4 is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
             )),
             (Config::Qwen3(config), Device::Cpu | Device::Metal(_)) => {
@@ -488,7 +614,34 @@ impl CandleBackend {
                 }
                 tracing::info!("Starting FlashQwen2 model on {:?}", device);
                 Ok(Box::new(
-                    FlashQwen2Model::load(vb, &config, model_type).s()?,
+                    FlashQwen2Model::load(vb, &config, model_type, None, false).s()?,
+                ))
+            }
+            #[cfg(feature = "cuda")]
+            (Config::JinaV4(config), Device::Cuda(_)) => {
+                if dtype != DType::F16
+                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                    || &std::env::var("USE_FLASH_ATTENTION")
+                        .unwrap_or("True".to_string())
+                        .to_lowercase()
+                        != "true"
+                {
+                    return Err(BackendError::Start(
+                        "Jina v4 is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string(),
+                    ));
+                }
+
+                let lora = load_jina_v4_lora(model_path, device, dtype, &config);
+                tracing::info!("Starting Jina v4 model on {:?}", device);
+                Ok(Box::new(
+                    FlashQwen2Model::load(
+                        vb,
+                        &config.text_config,
+                        model_type,
+                        lora,
+                        true,
+                    )
+                    .s()?,
                 ))
             }
             #[cfg(feature = "cuda")]
