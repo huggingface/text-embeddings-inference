@@ -17,8 +17,8 @@ pub enum HiddenAct {
 impl HiddenAct {
     pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
         match self {
-            Self::Gelu => x.gelu_erf(),
-            Self::NewGelu => x.gelu(),
+            Self::GeluErf => x.gelu_erf(),
+            Self::Gelu => x.gelu(),
             Self::Relu => x.relu(),
             Self::Silu => x.silu(),
             Self::Swiglu => candle_nn::ops::swiglu(x),
@@ -87,8 +87,8 @@ impl Linear {
 
             if let Some(act) = &self.act {
                 match act {
-                    HiddenAct::Gelu => x.gelu_erf(),
-                    HiddenAct::NewGelu => x.gelu(),
+                    HiddenAct::GeluErf => x.gelu_erf(),
+                    HiddenAct::Gelu => x.gelu(),
                     HiddenAct::Relu => x.relu(),
                     HiddenAct::Silu => x.silu(),
                     HiddenAct::Swiglu => candle_nn::ops::swiglu(&x),
