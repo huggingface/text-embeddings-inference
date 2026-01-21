@@ -3,6 +3,7 @@ mod alibi;
 mod compute_cap;
 #[cfg(feature = "cuda")]
 mod flash_attn;
+mod flash_attn_cpu;
 mod layers;
 mod models;
 
