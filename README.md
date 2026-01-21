@@ -141,7 +141,7 @@ Usage: text-embeddings-router [OPTIONS] --model-id <MODEL_ID>
 
 Options:
       --model-id <MODEL_ID>
-          The Hugging Face model ID, can be any model listed on <https://huggingface.co/models> with the `text-embeddings-inference` tag (meaning it's compatible with Text Embeddings Inference)
+          The Hugging Face model ID, can be any model listed on <https://huggingface.co/models> with the `text-embeddings-inference` tag (meaning it's compatible with Text Embeddings Inference).
 
           Alternatively, the specified ID can also be a path to a local directory containing the necessary model files saved by the `save_pretrained(...)` methods of either Transformers or Sentence Transformers.
 
@@ -164,7 +164,7 @@ Options:
           [possible values: float16, float32]
 
       --served-model-name <SERVED_MODEL_NAME>
-          The name of the model that is being served. If not specified, defaults to model-id
+          The name of the model that is being served. If not specified, defaults to `--model-id`. It is only used for the OpenAI-compatible endpoints via HTTP
 
           [env: SERVED_MODEL_NAME=]
 
@@ -259,7 +259,7 @@ Options:
           [env: HOSTNAME=]
           [default: 0.0.0.0]
 
-  -p, --port <PORT>
+      -p, --port <PORT>
           The port to listen on
 
           [env: PORT=]

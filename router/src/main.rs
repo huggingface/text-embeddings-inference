@@ -14,7 +14,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 struct Args {
     /// The Hugging Face model ID, can be any model listed on <https://huggingface.co/models> with
     /// the `text-embeddings-inference` tag (meaning it's compatible with Text Embeddings
-    /// Inference)
+    /// Inference).
     ///
     /// Alternatively, the specified ID can also be a path to a local directory containing the
     /// necessary model files saved by the `save_pretrained(...)` methods of either Transformers or
@@ -38,7 +38,8 @@ struct Args {
     #[clap(long, env, value_enum)]
     dtype: Option<DType>,
 
-    /// The name of the model that is being served. If not specified, defaults to `--model-id`.
+    /// The name of the model that is being served. If not specified, defaults to `--model-id`. It
+    /// is only used for the OpenAI-compatible endpoints via HTTP.
     #[clap(long, env)]
     served_model_name: Option<String>,
 

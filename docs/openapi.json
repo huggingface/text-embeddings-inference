@@ -1271,11 +1271,6 @@
             "description": "Model info",
             "example": "thenlper/gte-base"
           },
-          "served_model_name": {
-            "type": "string",
-            "description": "Model name specified by user",
-            "example": "thenlper/gte-base"
-          },
           "model_sha": {
             "type": "string",
             "example": "fca14538aa9956a46526bd1d0d11d69e19b5a101",
@@ -1283,6 +1278,10 @@
           },
           "model_type": {
             "$ref": "#/components/schemas/ModelType"
+          },
+          "served_model_name": {
+            "type": "string",
+            "example": "thenlper/gte-base"
           },
           "sha": {
             "type": "string",
