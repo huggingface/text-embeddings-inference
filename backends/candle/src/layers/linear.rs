@@ -5,9 +5,10 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize, PartialEq, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum HiddenAct {
-    Gelu,
+    #[serde(rename = "gelu")]
+    GeluErf,
     #[serde(alias = "gelu_new", alias = "gelu_pytorch_tanh")]
-    NewGelu,
+    Gelu,
     Relu,
     Silu,
     Swiglu,
