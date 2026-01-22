@@ -51,7 +51,9 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
     then  \
-        nvprune --generate-code code=sm_${CUDA_COMPUTE_CAP} /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
+        # When pruning cuBLAS for minor CC versions, ensure you retain the major CC version as well:
+        # https://docs.nvidia.com/cuda/cublas/#nvprune
+        nvprune --generate-code code=sm_70 --generate-code code=sm_${CUDA_COMPUTE_CAP} /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
     elif [ ${CUDA_COMPUTE_CAP} -ge 80 -a ${CUDA_COMPUTE_CAP} -lt 90 ]; \
     then  \
         nvprune --generate-code code=sm_80 --generate-code code=sm_${CUDA_COMPUTE_CAP} /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
