@@ -404,7 +404,7 @@ impl NomicMLP {
 
         if use_moe {
             Ok(Self::MoE(NomicMoELayer::load(vb, config)?))
-        } else if config.activation_function == HiddenAct::Gelu {
+        } else if config.activation_function == HiddenAct::GeluErf {
             Ok(Self::Mlp(NomicBertMLP::load(vb, config)?))
         } else {
             Ok(Self::GatedMLP(NomicBertGatedMLP::load(vb, config)?))
