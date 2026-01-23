@@ -59,6 +59,7 @@ impl CublasLtWrapper {
         #[cfg(feature = "cuda")]
         {
             let inner_act = match act {
+                Some(HiddenAct::GeluErf) => Some(Activation::GeluErf),
                 Some(HiddenAct::Gelu) => Some(Activation::Gelu),
                 Some(HiddenAct::Relu) => Some(Activation::Relu),
                 _ => None,
@@ -100,6 +101,7 @@ impl CublasLtWrapper {
         #[cfg(feature = "cuda")]
         {
             let inner_act = match act {
+                Some(HiddenAct::GeluErf) => Some(Activation::GeluErf),
                 Some(HiddenAct::Gelu) => Some(Activation::Gelu),
                 Some(HiddenAct::Relu) => Some(Activation::Relu),
                 _ => None,
