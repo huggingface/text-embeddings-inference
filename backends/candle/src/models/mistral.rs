@@ -1,10 +1,6 @@
 use crate::layers::{HiddenAct, RopeScaling};
 use serde::Deserialize;
 
-fn default_use_bidirectional_attention() -> bool {
-    false
-}
-
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct MistralConfig {
     pub vocab_size: usize,
