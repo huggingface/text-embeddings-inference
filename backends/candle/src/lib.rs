@@ -180,7 +180,19 @@ impl CandleBackend {
         let config: String = std::fs::read_to_string(model_path.join("config.json"))
             .context("Unable to read config file")
             .map_err(|err| BackendError::Start(format!("{err:?}")))?;
-        let config: Config = serde_json::from_str(&config)
+
+        let config_value: serde_json::Value = serde_json::from_str(&config)
+            .context("Unable to parse config.json")
+            .map_err(|err| BackendError::Start(format!("{err:?}")))?;
+
+        if let Some(hidden_act) = config_value.get("hidden_act").and_then(|v| v.as_str()) {
+            if hidden_act == "gelu" {
+                // NOTE: https://github.com/huggingface/text-embeddings-inference/pull/753
+                tracing::warn!("The `config.json` contains `hidden_act=gelu` and GeLU + tanh approximation will be used instead of exact GeLU (aka. GeLU erf), which might lead to subtle differences with Transformers or Sentence Transformers outputs which use exact GeLU when `hidden_act=gelu`, unless specified otherwise. GeLU + tanh is more efficient and more consistent across devices (e.g., cuBLASLt comes with fused GeLU + tanh), and will have negligible impact on the inference quality.");
+            }
+        }
+
+        let config: Config = serde_json::from_value(config_value)
             .context("Model is not supported")
             .map_err(|err| BackendError::Start(format!("{err:?}")))?;
 
