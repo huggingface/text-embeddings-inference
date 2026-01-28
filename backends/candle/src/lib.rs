@@ -25,13 +25,13 @@ use crate::models::{
     BertConfig, BertModel, Dense, DenseConfig, DenseLayer, DistilBertConfig, DistilBertModel,
     GTEConfig, GTEModel, Gemma3Config, Gemma3Model, JinaBertModel, JinaCodeBertModel, MPNetConfig,
     MPNetModel, MistralConfig, Model, ModernBertConfig, ModernBertModel, NomicBertModel,
-    NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model,
+    NomicConfig, PPLX1EmbedConfig, PPLX1EmbedModel, Qwen2Config, Qwen3Config, Qwen3Model,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
     FlashBertModel, FlashDistilBertModel, FlashGTEModel, FlashJinaBertModel,
     FlashJinaCodeBertModel, FlashMistralModel, FlashModernBertModel, FlashNomicBertModel,
-    FlashQwen2Model, FlashQwen3Model,
+    FlashPPLX1EmbedModel, FlashQwen2Model, FlashQwen3Model,
 };
 
 /// This enum is needed to be able to differentiate between jina models that also use
@@ -111,6 +111,12 @@ enum Config {
     Qwen2(Qwen2Config),
     #[allow(dead_code)]
     Qwen3(Qwen3Config),
+    #[allow(dead_code)]
+    #[serde(rename(deserialize = "pplx1embed"))]
+    PPLX1Embed(PPLX1EmbedConfig),
+    #[allow(dead_code)]
+    #[serde(rename(deserialize = "bidirectional_pplx_qwen3"))]
+    BidirectionalPPLXQwen3(PPLX1EmbedConfig),
     Roberta(BertConfig),
     XlmRoberta(BertConfig),
 }
@@ -304,6 +310,18 @@ impl CandleBackend {
             (Config::Qwen3(config), Device::Cpu | Device::Metal(_)) => {
                 tracing::info!("Starting Qwen3 model on {:?}", device);
                 Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
+            }
+            (Config::PPLX1Embed(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting PPLX1Embed model on {:?}", device);
+                Ok(Box::new(
+                    PPLX1EmbedModel::load(vb, &config, model_type).s()?,
+                ))
+            }
+            (Config::BidirectionalPPLXQwen3(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting BidirectionalPPLXQwen3 model on {:?}", device);
+                Ok(Box::new(
+                    PPLX1EmbedModel::load(vb, &config, model_type).s()?,
+                ))
             }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
@@ -506,6 +524,46 @@ impl CandleBackend {
                     tracing::info!("Starting FlashQwen3 model on {:?}", device);
                     Ok(Box::new(
                         FlashQwen3Model::load(vb, &config, model_type).s()?,
+                    ))
+                }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::PPLX1Embed(config), Device::Cuda(_)) => {
+                if dtype != DType::F16
+                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                    || &std::env::var("USE_FLASH_ATTENTION")
+                        .unwrap_or("True".to_string())
+                        .to_lowercase()
+                        != "true"
+                {
+                    tracing::info!("Starting PPLX1Embed model on {:?}", device);
+                    Ok(Box::new(
+                        PPLX1EmbedModel::load(vb, &config, model_type).s()?,
+                    ))
+                } else {
+                    tracing::info!("Starting FlashPPLX1Embed model on {:?}", device);
+                    Ok(Box::new(
+                        FlashPPLX1EmbedModel::load(vb, &config, model_type).s()?,
+                    ))
+                }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::BidirectionalPPLXQwen3(config), Device::Cuda(_)) => {
+                if dtype != DType::F16
+                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+                    || &std::env::var("USE_FLASH_ATTENTION")
+                        .unwrap_or("True".to_string())
+                        .to_lowercase()
+                        != "true"
+                {
+                    tracing::info!("Starting BidirectionalPPLXQwen3 model on {:?}", device);
+                    Ok(Box::new(
+                        PPLX1EmbedModel::load(vb, &config, model_type).s()?,
+                    ))
+                } else {
+                    tracing::info!("Starting FlashPPLX1Embed model on {:?}", device);
+                    Ok(Box::new(
+                        FlashPPLX1EmbedModel::load(vb, &config, model_type).s()?,
                     ))
                 }
             }
