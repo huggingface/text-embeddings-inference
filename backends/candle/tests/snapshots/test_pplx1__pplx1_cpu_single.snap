@@ -1,5 +1,6 @@
 ---
-source: backends/candle/tests/test_pplx1embed.rs
+source: backends/candle/tests/test_pplx1.rs
+assertion_line: 47
 expression: embeddings_single
 ---
 - - -67
@@ -1026,3 +1027,4 @@ expression: embeddings_single
   - -15
   - 90
   - 30
+

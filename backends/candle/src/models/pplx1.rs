@@ -8,7 +8,7 @@ use serde::Deserialize;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct PPLX1EmbedConfig {
+pub struct PPLX1Config {
     pub attention_bias: bool,
     pub vocab_size: usize,
     pub head_dim: Option<usize>,
@@ -26,7 +26,7 @@ pub struct PPLX1EmbedConfig {
     pub eos_token_id: usize,
 }
 
-struct PPLX1EmbedAttention {
+struct PPLX1Attention {
     q_proj: Linear,
     k_proj: Linear,
     v_proj: Linear,
@@ -43,10 +43,10 @@ struct PPLX1EmbedAttention {
     span: tracing::Span,
 }
 
-impl PPLX1EmbedAttention {
-    pub fn load(vb: VarBuilder, config: &PPLX1EmbedConfig) -> Result<Self> {
+impl PPLX1Attention {
+    pub fn load(vb: VarBuilder, config: &PPLX1Config) -> Result<Self> {
         if config.use_sliding_window {
-            candle::bail!("Sliding window is not supported for PPLX1Embed");
+            candle::bail!("Sliding window is not supported for PPLX1");
         }
 
         let num_attention_heads = config.num_attention_heads;
@@ -261,7 +261,7 @@ impl PPLX1EmbedAttention {
     }
 }
 
-struct PPLX1EmbedMLP {
+struct PPLX1MLP {
     gate_up_proj: Linear,
     down_proj: Linear,
 
@@ -271,8 +271,8 @@ struct PPLX1EmbedMLP {
     span: tracing::Span,
 }
 
-impl PPLX1EmbedMLP {
-    pub fn load(vb: VarBuilder, config: &PPLX1EmbedConfig) -> Result<Self> {
+impl PPLX1MLP {
+    pub fn load(vb: VarBuilder, config: &PPLX1Config) -> Result<Self> {
         let intermediate_size = config.intermediate_size;
 
         let gate_proj_weight = vb
@@ -313,19 +313,19 @@ impl PPLX1EmbedMLP {
     }
 }
 
-struct PPLX1EmbedLayer {
-    attention: PPLX1EmbedAttention,
-    mlp: PPLX1EmbedMLP,
+struct PPLX1Layer {
+    attention: PPLX1Attention,
+    mlp: PPLX1MLP,
     input_layer_norm: RMSNorm,
     post_attention_layer_norm: RMSNorm,
 
     span: tracing::Span,
 }
 
-impl PPLX1EmbedLayer {
-    pub fn load(vb: VarBuilder, config: &PPLX1EmbedConfig) -> Result<Self> {
-        let attention = PPLX1EmbedAttention::load(vb.pp("self_attn"), config)?;
-        let mlp = PPLX1EmbedMLP::load(vb.pp("mlp"), config)?;
+impl PPLX1Layer {
+    pub fn load(vb: VarBuilder, config: &PPLX1Config) -> Result<Self> {
+        let attention = PPLX1Attention::load(vb.pp("self_attn"), config)?;
+        let mlp = PPLX1MLP::load(vb.pp("mlp"), config)?;
 
         let input_layer_norm = RMSNorm::load(
             vb.pp("input_layernorm"),
@@ -375,9 +375,9 @@ impl PPLX1EmbedLayer {
     }
 }
 
-pub struct PPLX1EmbedModel {
+pub struct PPLX1Model {
     embeddings: Embedding,
-    layers: Vec<PPLX1EmbedLayer>,
+    layers: Vec<PPLX1Layer>,
     norm: RMSNorm,
     rotary_cache: (Tensor, Tensor),
     rotary_dim: usize,
@@ -390,15 +390,15 @@ pub struct PPLX1EmbedModel {
     span: tracing::Span,
 }
 
-impl PPLX1EmbedModel {
-    pub fn load(vb: VarBuilder, config: &PPLX1EmbedConfig, model_type: ModelType) -> Result<Self> {
+impl PPLX1Model {
+    pub fn load(vb: VarBuilder, config: &PPLX1Config, model_type: ModelType) -> Result<Self> {
         match model_type {
             ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for PPLX1Embed")
+                candle::bail!("`classifier` model type is not supported for PPLX1")
             }
             ModelType::Embedding(pool) => {
                 if pool != Pool::Mean {
-                    candle::bail!("PPLX1Embed only supports mean pooling, got {:?}", pool);
+                    candle::bail!("PPLX1 only supports mean pooling, got {:?}", pool);
                 }
             }
         };
@@ -410,7 +410,7 @@ impl PPLX1EmbedModel {
         );
 
         let layers = (0..config.num_hidden_layers)
-            .map(|index| PPLX1EmbedLayer::load(vb.pp(format!("layers.{index}")), config))
+            .map(|index| PPLX1Layer::load(vb.pp(format!("layers.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
 
         let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
@@ -462,7 +462,7 @@ impl PPLX1EmbedModel {
                 let seq_length = end - start;
                 input_lengths.push(seq_length);
 
-                // Left padding for PPLX1Embed (pad at the beginning)
+                // Left padding for PPLX1 (pad at the beginning)
                 let padding = max_length - seq_length;
                 if padding > 0 {
                     masking = true;
@@ -541,7 +541,7 @@ impl PPLX1EmbedModel {
         let has_raw_requests = !batch.raw_indices.is_empty();
 
         let pooled_embeddings = if has_pooling_requests {
-            // PPLX1Embed only supports mean pooling
+            // PPLX1 only supports mean pooling
             let pooled = if batch_size > 1 {
                 let results: Result<Vec<Tensor>> = batch
                     .pooled_indices
@@ -610,7 +610,7 @@ impl PPLX1EmbedModel {
     }
 }
 
-impl Model for PPLX1EmbedModel {
+impl Model for PPLX1Model {
     fn is_padded(&self) -> bool {
         true
     }

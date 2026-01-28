@@ -1,5 +1,6 @@
 ---
-source: backends/candle/tests/test_pplx1embed.rs
+source: backends/candle/tests/test_pplx1.rs
+assertion_line: 36
 expression: embeddings_batch
 ---
 - - -67
@@ -3074,3 +3075,4 @@ expression: embeddings_batch
   - -15
   - 90
   - 30
+

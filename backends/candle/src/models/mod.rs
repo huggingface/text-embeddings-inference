@@ -18,7 +18,7 @@ mod mistral;
 mod modernbert;
 mod mpnet;
 mod nomic;
-mod pplx1embed;
+mod pplx1;
 mod qwen2;
 mod qwen3;
 
@@ -53,7 +53,7 @@ mod flash_qwen2;
 mod flash_qwen3;
 
 #[cfg(feature = "cuda")]
-mod flash_pplx1embed;
+mod flash_pplx1;
 
 pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
 pub use dense::{Dense, DenseConfig, DenseLayer};
@@ -66,7 +66,7 @@ pub use mistral::MistralConfig;
 pub use modernbert::{ModernBertConfig, ModernBertModel};
 pub use mpnet::{MPNetConfig, MPNetModel};
 pub use nomic::{NomicBertModel, NomicConfig};
-pub use pplx1embed::{PPLX1EmbedConfig, PPLX1EmbedModel};
+pub use pplx1::{PPLX1Config, PPLX1Model};
 pub use qwen2::Qwen2Config;
 pub use qwen3::{Qwen3Config, Qwen3Model};
 
@@ -101,7 +101,7 @@ pub use flash_qwen2::FlashQwen2Model;
 pub use flash_qwen3::FlashQwen3Model;
 
 #[cfg(feature = "cuda")]
-pub use flash_pplx1embed::FlashPPLX1EmbedModel;
+pub use flash_pplx1::FlashPPLX1Model;
 
 pub(crate) trait Model {
     fn is_padded(&self) -> bool;

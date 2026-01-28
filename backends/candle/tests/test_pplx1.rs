@@ -1,4 +1,3 @@
-#![allow(dead_code, unused_imports)]
 mod common;
 
 use crate::common::{sort_embeddings, SnapshotEmbeddings};
@@ -9,14 +8,13 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
 #[test]
 #[serial_test::serial]
-#[cfg(all(feature = "cuda", feature = "flash-attn"))]
-fn test_flash_pplx1embed() -> Result<()> {
+fn test_pplx1() -> Result<()> {
     let model_root = std::path::PathBuf::from("/traindata/markus/pplx-embed-1-0.6b");
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
         &model_root,
-        "float16".to_string(),
+        "float32".to_string(),
         ModelType::Embedding(Pool::Mean),
         None,
     )?;
@@ -35,7 +33,7 @@ fn test_flash_pplx1embed() -> Result<()> {
 
     let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_batch)?);
     let embeddings_batch = SnapshotEmbeddings::from(pooled_embeddings);
-    insta::assert_yaml_snapshot!("pplx1embed_batch", embeddings_batch, &matcher);
+    insta::assert_yaml_snapshot!("pplx1_cpu_batch", embeddings_batch, &matcher);
 
     let input_single = batch(
         vec![tokenizer.encode("What is Deep Learning?", true).unwrap()],
@@ -46,7 +44,7 @@ fn test_flash_pplx1embed() -> Result<()> {
     let (pooled_embeddings, _) = sort_embeddings(backend.embed(input_single)?);
     let embeddings_single = SnapshotEmbeddings::from(pooled_embeddings);
 
-    insta::assert_yaml_snapshot!("pplx1embed_single", embeddings_single, &matcher);
+    insta::assert_yaml_snapshot!("pplx1_cpu_single", embeddings_single, &matcher);
     assert_eq!(embeddings_batch[0], embeddings_single[0]);
     assert_eq!(embeddings_batch[2], embeddings_single[0]);
 
@@ -55,14 +53,13 @@ fn test_flash_pplx1embed() -> Result<()> {
 
 #[test]
 #[serial_test::serial]
-#[cfg(all(feature = "cuda", feature = "flash-attn"))]
-fn test_flash_pplx1embed_quantization() -> Result<()> {
+fn test_pplx1_quantization() -> Result<()> {
     let model_root = std::path::PathBuf::from("/traindata/markus/pplx-embed-1-0.6b");
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
         &model_root,
-        "float16".to_string(),
+        "float32".to_string(),
         ModelType::Embedding(Pool::Mean),
         None,
     )?;

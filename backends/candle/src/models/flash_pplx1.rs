@@ -1,12 +1,12 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{get_cos_sin, get_inv_freqs, index_select, HiddenAct, Linear, RMSNorm};
-use crate::models::{Model, PPLX1EmbedConfig};
+use crate::models::{Model, PPLX1Config};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
 use candle_rotary::apply_rotary_inplace;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
-struct PPLX1EmbedAttention {
+struct PPLX1Attention {
     q_proj: Linear,
     k_proj: Linear,
     v_proj: Linear,
@@ -24,10 +24,10 @@ struct PPLX1EmbedAttention {
     span: tracing::Span,
 }
 
-impl PPLX1EmbedAttention {
-    pub fn load(vb: VarBuilder, config: &PPLX1EmbedConfig) -> Result<Self> {
+impl PPLX1Attention {
+    pub fn load(vb: VarBuilder, config: &PPLX1Config) -> Result<Self> {
         if config.use_sliding_window {
-            candle::bail!("Sliding window is not supported for PPLX1Embed");
+            candle::bail!("Sliding window is not supported for PPLX1");
         }
 
         let num_attention_heads = config.num_attention_heads;
@@ -169,7 +169,7 @@ impl PPLX1EmbedAttention {
     }
 }
 
-struct PPLX1EmbedMLP {
+struct PPLX1MLP {
     gate_up_proj: Linear,
     down_proj: Linear,
 
@@ -179,8 +179,8 @@ struct PPLX1EmbedMLP {
     span: tracing::Span,
 }
 
-impl PPLX1EmbedMLP {
-    pub fn load(vb: VarBuilder, config: &PPLX1EmbedConfig) -> Result<Self> {
+impl PPLX1MLP {
+    pub fn load(vb: VarBuilder, config: &PPLX1Config) -> Result<Self> {
         let intermediate_size = config.intermediate_size;
 
         let gate_proj_weight = vb
@@ -221,19 +221,19 @@ impl PPLX1EmbedMLP {
     }
 }
 
-struct PPLX1EmbedLayer {
-    attention: PPLX1EmbedAttention,
-    mlp: PPLX1EmbedMLP,
+struct PPLX1Layer {
+    attention: PPLX1Attention,
+    mlp: PPLX1MLP,
     input_layer_norm: RMSNorm,
     post_attention_layer_norm: RMSNorm,
 
     span: tracing::Span,
 }
 
-impl PPLX1EmbedLayer {
-    pub fn load(vb: VarBuilder, config: &PPLX1EmbedConfig) -> Result<Self> {
-        let attention = PPLX1EmbedAttention::load(vb.pp("self_attn"), config)?;
-        let mlp = PPLX1EmbedMLP::load(vb.pp("mlp"), config)?;
+impl PPLX1Layer {
+    pub fn load(vb: VarBuilder, config: &PPLX1Config) -> Result<Self> {
+        let attention = PPLX1Attention::load(vb.pp("self_attn"), config)?;
+        let mlp = PPLX1MLP::load(vb.pp("mlp"), config)?;
 
         let input_layer_norm = RMSNorm::load(
             vb.pp("input_layernorm"),
@@ -282,9 +282,9 @@ impl PPLX1EmbedLayer {
     }
 }
 
-pub struct FlashPPLX1EmbedModel {
+pub struct FlashPPLX1Model {
     embeddings: Embedding,
-    layers: Vec<PPLX1EmbedLayer>,
+    layers: Vec<PPLX1Layer>,
     norm: RMSNorm,
     cos_cache: Tensor,
     sin_cache: Tensor,
@@ -293,24 +293,24 @@ pub struct FlashPPLX1EmbedModel {
     span: tracing::Span,
 }
 
-impl FlashPPLX1EmbedModel {
-    pub fn load(vb: VarBuilder, config: &PPLX1EmbedConfig, model_type: ModelType) -> Result<Self> {
+impl FlashPPLX1Model {
+    pub fn load(vb: VarBuilder, config: &PPLX1Config, model_type: ModelType) -> Result<Self> {
         match vb.device() {
             Device::Cuda(_) => {}
-            _ => candle::bail!("FlashPPLX1Embed requires Cuda"),
+            _ => candle::bail!("FlashPPLX1 requires Cuda"),
         }
 
         if vb.dtype() != DType::F16 {
-            candle::bail!("FlashPPLX1Embed requires DType::F16")
+            candle::bail!("FlashPPLX1 requires DType::F16")
         }
 
         match model_type {
             ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for PPLX1Embed")
+                candle::bail!("`classifier` model type is not supported for PPLX1")
             }
             ModelType::Embedding(pool) => {
                 if pool != Pool::Mean {
-                    candle::bail!("PPLX1Embed only supports mean pooling, got {:?}", pool);
+                    candle::bail!("PPLX1 only supports mean pooling, got {:?}", pool);
                 }
             }
         };
@@ -322,7 +322,7 @@ impl FlashPPLX1EmbedModel {
         );
 
         let layers = (0..config.num_hidden_layers)
-            .map(|index| PPLX1EmbedLayer::load(vb.pp(format!("layers.{index}")), config))
+            .map(|index| PPLX1Layer::load(vb.pp(format!("layers.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
 
         let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
@@ -391,7 +391,7 @@ impl FlashPPLX1EmbedModel {
         let has_raw_requests = !batch.raw_indices.is_empty();
 
         let pooled_embeddings = if has_pooling_requests {
-            // PPLX1Embed only supports mean pooling
+            // PPLX1 only supports mean pooling
             let pooled = if batch_size > 1 {
                 // for each request that requires pooling
                 let results: Result<Vec<Tensor>> = batch
@@ -461,7 +461,7 @@ impl FlashPPLX1EmbedModel {
     }
 }
 
-impl Model for FlashPPLX1EmbedModel {
+impl Model for FlashPPLX1Model {
     fn is_padded(&self) -> bool {
         false
     }
