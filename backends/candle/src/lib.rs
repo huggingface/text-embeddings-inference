@@ -112,11 +112,8 @@ enum Config {
     #[allow(dead_code)]
     Qwen3(Qwen3Config),
     #[allow(dead_code)]
-    #[serde(rename(deserialize = "pplx1embed"))]
-    PPLX1Embed(PPLX1EmbedConfig),
-    #[allow(dead_code)]
     #[serde(rename(deserialize = "bidirectional_pplx_qwen3"))]
-    BidirectionalPPLXQwen3(PPLX1EmbedConfig),
+    PPLX1Embed(PPLX1EmbedConfig),
     Roberta(BertConfig),
     XlmRoberta(BertConfig),
 }
@@ -313,12 +310,6 @@ impl CandleBackend {
             }
             (Config::PPLX1Embed(config), Device::Cpu | Device::Metal(_)) => {
                 tracing::info!("Starting PPLX1Embed model on {:?}", device);
-                Ok(Box::new(
-                    PPLX1EmbedModel::load(vb, &config, model_type).s()?,
-                ))
-            }
-            (Config::BidirectionalPPLXQwen3(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting BidirectionalPPLXQwen3 model on {:?}", device);
                 Ok(Box::new(
                     PPLX1EmbedModel::load(vb, &config, model_type).s()?,
                 ))
@@ -537,26 +528,6 @@ impl CandleBackend {
                         != "true"
                 {
                     tracing::info!("Starting PPLX1Embed model on {:?}", device);
-                    Ok(Box::new(
-                        PPLX1EmbedModel::load(vb, &config, model_type).s()?,
-                    ))
-                } else {
-                    tracing::info!("Starting FlashPPLX1Embed model on {:?}", device);
-                    Ok(Box::new(
-                        FlashPPLX1EmbedModel::load(vb, &config, model_type).s()?,
-                    ))
-                }
-            }
-            #[cfg(feature = "cuda")]
-            (Config::BidirectionalPPLXQwen3(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
-                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    || &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        != "true"
-                {
-                    tracing::info!("Starting BidirectionalPPLXQwen3 model on {:?}", device);
                     Ok(Box::new(
                         PPLX1EmbedModel::load(vb, &config, model_type).s()?,
                     ))
