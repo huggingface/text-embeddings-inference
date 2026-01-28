@@ -288,7 +288,6 @@ pub struct FlashPPLX1EmbedModel {
     norm: RMSNorm,
     cos_cache: Tensor,
     sin_cache: Tensor,
-    pool: Pool,
     pub device: Device,
 
     span: tracing::Span,
@@ -305,15 +304,14 @@ impl FlashPPLX1EmbedModel {
             candle::bail!("FlashPPLX1Embed requires DType::F16")
         }
 
-        let pool = match model_type {
+        match model_type {
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for PPLX1Embed")
             }
             ModelType::Embedding(pool) => {
-                if pool == Pool::Splade {
-                    candle::bail!("`splade` is not supported for PPLX1Embed");
+                if pool != Pool::Mean {
+                    candle::bail!("PPLX1Embed only supports mean pooling, got {:?}", pool);
                 }
-                pool
             }
         };
 
@@ -348,7 +346,6 @@ impl FlashPPLX1EmbedModel {
             norm,
             cos_cache,
             sin_cache,
-            pool,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
@@ -394,76 +391,27 @@ impl FlashPPLX1EmbedModel {
         let has_raw_requests = !batch.raw_indices.is_empty();
 
         let pooled_embeddings = if has_pooling_requests {
-            let pooled = match self.pool {
-                // CLS and LastToken pooling
-                Pool::Cls | Pool::LastToken => {
-                    if batch_size > 1 {
-                        // Get token indices form cu_seqlens
-                        let mut indices = match self.pool {
-                            Pool::Cls => cu_seqlens.narrow(0, 0, batch_size)?,
-                            Pool::LastToken => {
-                                let end = cu_seqlens.narrow(0, 1, batch_size)?;
-                                (&end - &end.ones_like()?)?
-                            }
-                            _ => unreachable!(),
-                        };
+            // PPLX1Embed only supports mean pooling
+            let pooled = if batch_size > 1 {
+                // for each request that requires pooling
+                let results: Result<Vec<Tensor>> = batch
+                    .pooled_indices
+                    .into_iter()
+                    .map(|i| {
+                        let i = i as usize;
+                        let start = batch.cumulative_seq_lengths[i];
+                        let len = batch.cumulative_seq_lengths[i + 1] - start;
 
-                        // If raw_indices is empty, we don't need to do anything with
-                        // the pooled_indices
-                        if has_raw_requests {
-                            // We need the pooled indices to select the correct cls indices
-                            let pooled_indices = Tensor::from_vec(
-                                batch.pooled_indices.clone(),
-                                batch.pooled_indices.len(),
-                                &self.device,
-                            )?;
+                        // Mean
+                        let embeddings = outputs.narrow(0, start as usize, len as usize)?;
+                        embeddings.sum_keepdim(0)? / (len as f64)
+                    })
+                    .collect();
 
-                            // Only select indices that requires pooling
-                            indices = index_select(&indices, &pooled_indices, 0)?
-                        }
-
-                        // Select tokens
-                        Some(index_select(&outputs, &indices, 0)?)
-                    } else {
-                        Some(
-                            match self.pool {
-                                Pool::Cls => outputs.i(0)?,
-                                Pool::LastToken => {
-                                    outputs.i(batch.cumulative_seq_lengths[1] as usize - 1)?
-                                }
-                                _ => unreachable!(),
-                            }
-                            .unsqueeze(0)?,
-                        )
-                    }
-                }
-                // Mean pooling
-                Pool::Mean => {
-                    if batch_size > 1 {
-                        // for each request that requires pooling
-                        let results: Result<Vec<Tensor>> = batch
-                            .pooled_indices
-                            .into_iter()
-                            .map(|i| {
-                                let i = i as usize;
-                                let start = batch.cumulative_seq_lengths[i];
-                                let len = batch.cumulative_seq_lengths[i + 1] - start;
-
-                                // Mean
-                                let embeddings = outputs.narrow(0, start as usize, len as usize)?;
-                                embeddings.sum_keepdim(0)? / (len as f64)
-                            })
-                            .collect();
-
-                        // Concatenate all results
-                        Some(Tensor::cat(&results?, 0)?)
-                    } else {
-                        Some((outputs.sum_keepdim(0)? / (batch.max_length as f64))?)
-                    }
-                }
-                Pool::Splade => {
-                    unreachable!();
-                }
+                // Concatenate all results
+                Some(Tensor::cat(&results?, 0)?)
+            } else {
+                Some((outputs.sum_keepdim(0)? / (batch.max_length as f64))?)
             };
 
             // Apply quantization: round(127 * tanh(embedding))

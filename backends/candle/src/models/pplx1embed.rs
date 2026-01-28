@@ -381,7 +381,6 @@ pub struct PPLX1EmbedModel {
     norm: RMSNorm,
     rotary_cache: (Tensor, Tensor),
     rotary_dim: usize,
-    pool: Pool,
     num_attention_heads: usize,
     pad_token_id: u32,
 
@@ -393,15 +392,14 @@ pub struct PPLX1EmbedModel {
 
 impl PPLX1EmbedModel {
     pub fn load(vb: VarBuilder, config: &PPLX1EmbedConfig, model_type: ModelType) -> Result<Self> {
-        let pool = match model_type {
+        match model_type {
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for PPLX1Embed")
             }
             ModelType::Embedding(pool) => {
-                if pool == Pool::Splade {
-                    candle::bail!("`splade` is not supported for PPLX1Embed");
+                if pool != Pool::Mean {
+                    candle::bail!("PPLX1Embed only supports mean pooling, got {:?}", pool);
                 }
-                pool
             }
         };
 
@@ -432,7 +430,6 @@ impl PPLX1EmbedModel {
             norm,
             rotary_cache,
             rotary_dim,
-            pool,
             pad_token_id: config.eos_token_id as u32,
             num_attention_heads: config.num_attention_heads,
             dtype: vb.dtype(),
@@ -544,77 +541,28 @@ impl PPLX1EmbedModel {
         let has_raw_requests = !batch.raw_indices.is_empty();
 
         let pooled_embeddings = if has_pooling_requests {
-            let pooled = match self.pool {
-                Pool::Cls => {
-                    if batch_size > 1 {
-                        let pooled_indices = Tensor::from_vec(
-                            batch.pooled_indices.clone(),
-                            batch.pooled_indices.len(),
-                            &self.device,
-                        )?;
+            // PPLX1Embed only supports mean pooling
+            let pooled = if batch_size > 1 {
+                let results: Result<Vec<Tensor>> = batch
+                    .pooled_indices
+                    .iter()
+                    .map(|&i| {
+                        let i = i as usize;
+                        let length = input_lengths[i];
 
-                        let cls_indices = if has_raw_requests {
-                            Tensor::zeros(
-                                batch.pooled_indices.len(),
-                                candle::DType::U32,
-                                &self.device,
-                            )?
-                        } else {
-                            Tensor::arange(0u32, batch_size as u32, &self.device)?
-                        };
+                        // With left padding, actual tokens are at the end
+                        let padding = max_length - length;
+                        let embeddings = outputs.i((i, padding..))?;
+                        let sum = embeddings.sum_keepdim(0)?;
+                        sum / (length as f64)
+                    })
+                    .collect();
 
-                        Some(outputs.i((&pooled_indices, &cls_indices))?)
-                    } else {
-                        Some(outputs.i((0, 0))?.unsqueeze(0)?)
-                    }
-                }
-                Pool::LastToken => {
-                    if batch_size > 1 {
-                        let results: Result<Vec<Tensor>> = batch
-                            .pooled_indices
-                            .iter()
-                            .map(|&i| {
-                                let i = i as usize;
-                                // With left padding, the last token is always at max_length - 1
-                                let last_token_idx = max_length - 1;
-                                outputs.i((i, last_token_idx))?.unsqueeze(0)
-                            })
-                            .collect();
-
-                        Some(Tensor::cat(&results?, 0)?)
-                    } else {
-                        // For single inference, use the actual last token position from cumulative_seq_lengths
-                        let last_idx = batch.cumulative_seq_lengths[1] as usize - 1;
-                        Some(outputs.i((0, last_idx))?.unsqueeze(0)?)
-                    }
-                }
-                Pool::Mean => {
-                    if batch_size > 1 {
-                        let results: Result<Vec<Tensor>> = batch
-                            .pooled_indices
-                            .iter()
-                            .map(|&i| {
-                                let i = i as usize;
-                                let length = input_lengths[i];
-
-                                // With left padding, actual tokens are at the end
-                                let padding = max_length - length;
-                                let embeddings = outputs.i((i, padding..))?;
-                                let sum = embeddings.sum_keepdim(0)?;
-                                sum / (length as f64)
-                            })
-                            .collect();
-
-                        Some(Tensor::cat(&results?, 0)?)
-                    } else {
-                        let length = input_lengths[0] as f64;
-                        let embeddings = outputs.i((0, ..input_lengths[0]))?;
-                        Some((embeddings.sum_keepdim(0)? / length)?)
-                    }
-                }
-                Pool::Splade => {
-                    unreachable!("Splade is not supported for PPLX1Embed");
-                }
+                Some(Tensor::cat(&results?, 0)?)
+            } else {
+                let length = input_lengths[0] as f64;
+                let embeddings = outputs.i((0, ..input_lengths[0]))?;
+                Some((embeddings.sum_keepdim(0)? / length)?)
             };
 
             // Apply quantization: round(127 * tanh(embedding))
