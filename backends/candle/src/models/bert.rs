@@ -525,7 +525,7 @@ impl BertSpladeHead {
         let transform = Linear::new(
             transform_weight,
             Some(transform_bias),
-            Some(HiddenAct::GeluErf),
+            Some(HiddenAct::Gelu),
         );
 
         let transform_layer_norm = LayerNorm::load(

@@ -3,23 +3,21 @@ use candle::{Device, Result, Tensor};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, PartialEq, Clone)]
+#[serde(rename_all = "lowercase")]
 pub enum HiddenAct {
-    #[serde(rename = "gelu")]
-    GeluErf,
+    // NOTE: `GeluErf` is excluded due to incompatibility with cuBLASLt, as only GeLU + tanh
+    // approximation is implemented due to efficiency, so GeLU is standardized to tanh approx. with
+    // slight numerical deviation from GeLU erf (neglible on inference quality)
     #[serde(alias = "gelu_new", alias = "gelu_pytorch_tanh")]
     Gelu,
-    #[serde(alias = "relu")]
     Relu,
-    #[serde(alias = "silu")]
     Silu,
-    #[serde(rename = "swiglu")]
     Swiglu,
 }
 
 impl HiddenAct {
     pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
         match self {
-            Self::GeluErf => x.gelu_erf(),
             Self::Gelu => x.gelu(),
             Self::Relu => x.relu(),
             Self::Silu => x.silu(),
@@ -89,7 +87,6 @@ impl Linear {
 
             if let Some(act) = &self.act {
                 match act {
-                    HiddenAct::GeluErf => x.gelu_erf(),
                     HiddenAct::Gelu => x.gelu(),
                     HiddenAct::Relu => x.relu(),
                     HiddenAct::Silu => x.silu(),
