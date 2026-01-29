@@ -24,6 +24,8 @@ pub struct Qwen3Config {
     pub sliding_window: Option<usize>,
     pub use_sliding_window: bool,
     pub eos_token_id: usize,
+    #[serde(default)]
+    pub use_causal_mask: Option<bool>,
 }
 
 struct Qwen3Attention {
@@ -384,6 +386,7 @@ pub struct Qwen3Model {
     pool: Pool,
     num_attention_heads: usize,
     pad_token_id: u32,
+    use_causal_mask: bool,
 
     dtype: DType,
     device: Device,
@@ -438,6 +441,7 @@ impl Qwen3Model {
             pool,
             pad_token_id: config.eos_token_id as u32,
             num_attention_heads: config.num_attention_heads,
+            use_causal_mask: config.use_causal_mask.unwrap_or(true),
             dtype: vb.dtype(),
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
@@ -556,7 +560,11 @@ impl Qwen3Model {
         };
 
         let attention_bias = if let Some(attn_bias) = attention_bias {
-            Some(self.get_causal_attention_bias(attn_bias)?)
+            if self.use_causal_mask {
+                Some(self.get_causal_attention_bias(attn_bias)?)
+            } else {
+                Some(attn_bias)
+            }
         } else {
             None
         };

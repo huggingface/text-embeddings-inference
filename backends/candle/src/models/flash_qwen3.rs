@@ -158,7 +158,7 @@ impl Qwen3Attention {
             max_s,
             max_s,
             self.softmax_scale,
-            true,
+            self.use_causal_mask,
             None,
             None,
         )?;
@@ -288,6 +288,7 @@ pub struct FlashQwen3Model {
     cos_cache: Tensor,
     sin_cache: Tensor,
     pool: Pool,
+    use_causal_mask: bool,
     pub device: Device,
 
     span: tracing::Span,
@@ -351,6 +352,7 @@ impl FlashQwen3Model {
             cos_cache,
             sin_cache,
             pool,
+            use_causal_mask: config.use_causal_mask.unwrap_or(true),
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
