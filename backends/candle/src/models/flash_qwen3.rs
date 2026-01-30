@@ -19,7 +19,7 @@ struct Qwen3Attention {
     num_key_value_heads: usize,
     attention_head_size: usize,
 
-    use_causal_mask: bool,
+    use_bidirectional_attention: bool,
 
     softmax_scale: f32,
 
@@ -99,7 +99,7 @@ impl Qwen3Attention {
             num_attention_heads,
             num_key_value_heads,
             attention_head_size,
-            use_causal_mask: config.use_causal_mask.unwrap_or(true),
+            use_bidirectional_attention: config.use_bidirectional_attention.unwrap_or(false),
             softmax_scale,
             span: tracing::span!(tracing::Level::TRACE, "attention"),
         })
@@ -161,7 +161,8 @@ impl Qwen3Attention {
             max_s,
             max_s,
             self.softmax_scale,
-            self.use_causal_mask,
+            // NOTE: When `use_bidirectional_attention=true` then that implies that `causal=false`
+            !self.use_bidirectional_attention,
             None,
             None,
         )?;

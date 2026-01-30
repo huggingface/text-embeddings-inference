@@ -3,7 +3,6 @@ use candle::{Result, Tensor};
 use candle_nn::VarBuilder;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
-// Re-export Qwen3Config as Pplx1Config for API compatibility
 pub type Pplx1Config = Qwen3Config;
 
 pub struct Pplx1Model {
@@ -23,7 +22,7 @@ impl Pplx1Model {
             }
         };
 
-        // NOTE: Qwen3 but the `config` contains `use_causal_mask=false` (bidirectional attention)
+        // NOTE: Qwen3 but the `config` contains `use_bidirectional_attention=true`
         let inner = Qwen3Model::load(vb, config, model_type)?;
 
         Ok(Self { inner })
