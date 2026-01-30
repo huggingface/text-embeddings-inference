@@ -25,13 +25,13 @@ use crate::models::{
     BertConfig, BertModel, Dense, DenseConfig, DenseLayer, DistilBertConfig, DistilBertModel,
     GTEConfig, GTEModel, Gemma3Config, Gemma3Model, JinaBertModel, JinaCodeBertModel, MPNetConfig,
     MPNetModel, MistralConfig, Model, ModernBertConfig, ModernBertModel, NomicBertModel,
-    NomicConfig, PPLX1Config, PPLX1Model, Qwen2Config, Qwen3Config, Qwen3Model,
+    NomicConfig, Pplx1Config, Pplx1Model, Qwen2Config, Qwen3Config, Qwen3Model,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
     FlashBertModel, FlashDistilBertModel, FlashGTEModel, FlashJinaBertModel,
     FlashJinaCodeBertModel, FlashMistralModel, FlashModernBertModel, FlashNomicBertModel,
-    FlashPPLX1Model, FlashQwen2Model, FlashQwen3Model,
+    FlashPplx1Model, FlashQwen2Model, FlashQwen3Model,
 };
 
 /// This enum is needed to be able to differentiate between jina models that also use
@@ -101,19 +101,17 @@ enum Config {
     Gte(GTEConfig),
     #[serde(rename = "mpnet")]
     MPNet(MPNetConfig),
-    #[allow(dead_code)]
+    #[allow(dead_code)] // NOTE: As it's only used when `cuda` feature is enabled
     Mistral(MistralConfig),
     #[serde(rename(deserialize = "modernbert"))]
     ModernBert(ModernBertConfig),
     #[serde(rename(deserialize = "nomic_bert"))]
     NomicBert(NomicConfig),
-    #[allow(dead_code)]
+    #[allow(dead_code)] // NOTE: As it's only used when `cuda` feature is enabled
     Qwen2(Qwen2Config),
-    #[allow(dead_code)]
     Qwen3(Qwen3Config),
-    #[allow(dead_code)]
     #[serde(rename(deserialize = "bidirectional_pplx_qwen3"))]
-    PPLX1(PPLX1Config),
+    Pplx1(Pplx1Config),
     Roberta(BertConfig),
     XlmRoberta(BertConfig),
 }
@@ -308,11 +306,9 @@ impl CandleBackend {
                 tracing::info!("Starting Qwen3 model on {:?}", device);
                 Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
             }
-            (Config::PPLX1(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting PPLX1 model on {:?}", device);
-                Ok(Box::new(
-                    PPLX1Model::load(vb, &config, model_type).s()?,
-                ))
+            (Config::Pplx1(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting Pplx1 model on {:?}", device);
+                Ok(Box::new(Pplx1Model::load(vb, &config, model_type).s()?))
             }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
@@ -519,7 +515,7 @@ impl CandleBackend {
                 }
             }
             #[cfg(feature = "cuda")]
-            (Config::PPLX1(config), Device::Cuda(_)) => {
+            (Config::Pplx1(config), Device::Cuda(_)) => {
                 if dtype != DType::F16
                     || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
                     || &std::env::var("USE_FLASH_ATTENTION")
@@ -527,14 +523,12 @@ impl CandleBackend {
                         .to_lowercase()
                         != "true"
                 {
-                    tracing::info!("Starting PPLX1 model on {:?}", device);
-                    Ok(Box::new(
-                        PPLX1Model::load(vb, &config, model_type).s()?,
-                    ))
+                    tracing::info!("Starting Pplx1 model on {:?}", device);
+                    Ok(Box::new(Pplx1Model::load(vb, &config, model_type).s()?))
                 } else {
-                    tracing::info!("Starting FlashPPLX1 model on {:?}", device);
+                    tracing::info!("Starting FlashPplx1 model on {:?}", device);
                     Ok(Box::new(
-                        FlashPPLX1Model::load(vb, &config, model_type).s()?,
+                        FlashPplx1Model::load(vb, &config, model_type).s()?,
                     ))
                 }
             }

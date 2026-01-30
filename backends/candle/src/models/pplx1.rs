@@ -3,44 +3,42 @@ use candle::{Result, Tensor};
 use candle_nn::VarBuilder;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
-// Re-export Qwen3Config as PPLX1Config for API compatibility
-pub type PPLX1Config = Qwen3Config;
+// Re-export Qwen3Config as Pplx1Config for API compatibility
+pub type Pplx1Config = Qwen3Config;
 
-pub struct PPLX1Model {
+pub struct Pplx1Model {
     inner: Qwen3Model,
 }
 
-impl PPLX1Model {
-    pub fn load(vb: VarBuilder, config: &PPLX1Config, model_type: ModelType) -> Result<Self> {
-        // Validate: PPLX1 only supports mean pooling
-        match &model_type {
+impl Pplx1Model {
+    pub fn load(vb: VarBuilder, config: &Pplx1Config, model_type: ModelType) -> Result<Self> {
+        match model_type {
             ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for PPLX1")
+                candle::bail!("`classifier` model type is not supported for Pplx1")
             }
-            ModelType::Embedding(pool) => {
-                if *pool != Pool::Mean {
-                    candle::bail!("PPLX1 only supports mean pooling, got {:?}", pool);
+            ModelType::Embedding(ref pool) => {
+                if pool != &Pool::Mean {
+                    candle::bail!("Pplx1 only supports mean pooling, got {:?}", pool);
                 }
             }
         };
 
-        // Load the underlying Qwen3 model (with use_causal_mask from config)
+        // NOTE: Qwen3 but the `config` contains `use_causal_mask=false` (bidirectional attention)
         let inner = Qwen3Model::load(vb, config, model_type)?;
 
         Ok(Self { inner })
     }
 
     pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
-        // Call the underlying Qwen3 model
         let (pooled, raw) = self.inner.forward(batch)?;
 
-        // Apply PPLX1-specific quantization to pooled embeddings
+        // NOTE: Apply Pplx1-specific quantization to pooled embeddings
         let pooled = pooled
             .map(|embeddings| {
                 embeddings
-                    .tanh()                              // Apply tanh: [-1, 1]
-                    .and_then(|t| t.affine(127.0, 0.0)) // Scale: [-127, 127]
-                    .and_then(|t| t.round())             // Round to integers
+                    .tanh() // Apply tanh: [-1, 1]
+                    .and_then(|t| t.affine(127.0, 0.0)) // INT8 scale: [-127, 127]
+                    .and_then(|t| t.round()) // Round to integers
             })
             .transpose()?;
 
@@ -48,7 +46,7 @@ impl PPLX1Model {
     }
 }
 
-impl Model for PPLX1Model {
+impl Model for Pplx1Model {
     fn is_padded(&self) -> bool {
         self.inner.is_padded()
     }

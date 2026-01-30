@@ -66,7 +66,7 @@ pub use mistral::MistralConfig;
 pub use modernbert::{ModernBertConfig, ModernBertModel};
 pub use mpnet::{MPNetConfig, MPNetModel};
 pub use nomic::{NomicBertModel, NomicConfig};
-pub use pplx1::{PPLX1Config, PPLX1Model};
+pub use pplx1::{Pplx1Config, Pplx1Model};
 pub use qwen2::Qwen2Config;
 pub use qwen3::{Qwen3Config, Qwen3Model};
 
@@ -101,7 +101,7 @@ pub use flash_qwen2::FlashQwen2Model;
 pub use flash_qwen3::FlashQwen3Model;
 
 #[cfg(feature = "cuda")]
-pub use flash_pplx1::FlashPPLX1Model;
+pub use flash_pplx1::FlashPplx1Model;
 
 pub(crate) trait Model {
     fn is_padded(&self) -> bool;
