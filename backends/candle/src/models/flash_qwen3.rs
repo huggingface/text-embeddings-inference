@@ -19,6 +19,8 @@ struct Qwen3Attention {
     num_key_value_heads: usize,
     attention_head_size: usize,
 
+    use_causal_mask: bool,
+
     softmax_scale: f32,
 
     span: tracing::Span,
@@ -97,6 +99,7 @@ impl Qwen3Attention {
             num_attention_heads,
             num_key_value_heads,
             attention_head_size,
+            use_causal_mask: config.use_causal_mask.unwrap_or(true),
             softmax_scale,
             span: tracing::span!(tracing::Level::TRACE, "attention"),
         })
@@ -288,7 +291,6 @@ pub struct FlashQwen3Model {
     cos_cache: Tensor,
     sin_cache: Tensor,
     pool: Pool,
-    use_causal_mask: bool,
     pub device: Device,
 
     span: tracing::Span,
@@ -352,7 +354,6 @@ impl FlashQwen3Model {
             cos_cache,
             sin_cache,
             pool,
-            use_causal_mask: config.use_causal_mask.unwrap_or(true),
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
