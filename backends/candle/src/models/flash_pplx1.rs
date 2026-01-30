@@ -36,6 +36,9 @@ impl FlashPplx1Model {
             .map(|embeddings| {
                 embeddings
                     .tanh() // Apply tanh: [-1, 1]
+                    // NOTE: To benefit form the INT8 quantization / scaling, the `normalize`
+                    // parameter when generating embeddings should be set to `false`, otherwise the
+                    // quantization is "lost"
                     .and_then(|t| t.affine(127.0, 0.0)) // INT8 scale: [-127, 127]
                     .and_then(|t| t.round()) // Round to integers
             })
