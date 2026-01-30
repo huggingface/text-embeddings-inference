@@ -109,6 +109,7 @@ impl Qwen3Attention {
         cos: &Tensor,
         sin: &Tensor,
         max_s: usize,
+        causal: bool,
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
@@ -158,7 +159,7 @@ impl Qwen3Attention {
             max_s,
             max_s,
             self.softmax_scale,
-            true,
+            causal,
             None,
             None,
         )?;
@@ -262,6 +263,7 @@ impl Qwen3Layer {
         cos: &Tensor,
         sin: &Tensor,
         max_s: usize,
+        causal: bool,
     ) -> Result<(Tensor, Tensor)> {
         let _enter = self.span.enter();
 
@@ -269,7 +271,7 @@ impl Qwen3Layer {
 
         let attn_output =
             self.attention
-                .forward(&normed_hidden_states, cu_seqlens, cos, sin, max_s)?;
+                .forward(&normed_hidden_states, cu_seqlens, cos, sin, max_s, causal)?;
 
         let (normed_attn_res_output, attn_res) = self
             .post_attention_layer_norm
@@ -285,9 +287,11 @@ pub struct FlashQwen3Model {
     embeddings: Embedding,
     layers: Vec<Qwen3Layer>,
     norm: RMSNorm,
+    projection: Option<Linear>,
     cos_cache: Tensor,
     sin_cache: Tensor,
     pool: Pool,
+    use_bidirectional_attention: bool,
     pub device: Device,
 
     span: tracing::Span,
@@ -313,6 +317,8 @@ impl FlashQwen3Model {
 
         // The Qwen3-Reranker models contain the `model` key
         // https://huggingface.co/collections/Qwen/qwen3-reranker-6841b22d0192d7ade9cdefea
+        // Keep reference to root vb for loading projection layer
+        let vb_root = vb.clone();
         let vb = if vb.contains_tensor("model.embed_tokens.weight") {
             vb.pp("model")
         } else {
@@ -331,6 +337,23 @@ impl FlashQwen3Model {
 
         let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
 
+        let projection = if let Some(num_labels) = config.num_labels {
+            if vb_root.contains_tensor("linear.weight") {
+                let projection_weight =
+                    vb_root.get((num_labels, config.hidden_size), "linear.weight")?;
+                Some(Linear::new(projection_weight, None, None))
+            } else {
+                tracing::warn!(
+                    "num_labels is set but linear.weight not found, skipping projection layer"
+                );
+                None
+            }
+        } else {
+            None
+        };
+
+        let use_bidirectional_attention = config.use_bidirectional_attention.unwrap_or(false);
+
         let inv_freqs = get_inv_freqs(
             layers[0].attention.attention_head_size,
             config.rope_theta,
@@ -348,9 +371,11 @@ impl FlashQwen3Model {
             embeddings,
             layers,
             norm,
+            projection,
             cos_cache,
             sin_cache,
             pool,
+            use_bidirectional_attention,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
@@ -376,6 +401,8 @@ impl FlashQwen3Model {
         let cos = index_select(&self.cos_cache, &position_ids, 0)?;
         let sin = index_select(&self.sin_cache, &position_ids, 0)?;
 
+        let causal = !self.use_bidirectional_attention;
+
         let mut residual = None;
         for layer in &self.layers {
             let (h, r) = layer.forward(
@@ -385,12 +412,19 @@ impl FlashQwen3Model {
                 &cos,
                 &sin,
                 batch.max_length as usize,
+                causal,
             )?;
             hidden_states = h;
             residual = Some(r);
         }
 
         let (outputs, _) = self.norm.forward(&hidden_states, residual.as_ref())?;
+
+        let outputs = if let Some(ref projection) = self.projection {
+            projection.forward(&outputs)?
+        } else {
+            outputs
+        };
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();

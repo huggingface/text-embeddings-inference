@@ -24,6 +24,10 @@ pub struct Qwen3Config {
     pub sliding_window: Option<usize>,
     pub use_sliding_window: bool,
     pub eos_token_id: usize,
+    #[serde(default)]
+    pub use_bidirectional_attention: Option<bool>,
+    #[serde(default)]
+    pub num_labels: Option<usize>,
 }
 
 struct Qwen3Attention {
@@ -379,11 +383,13 @@ pub struct Qwen3Model {
     embeddings: Embedding,
     layers: Vec<Qwen3Layer>,
     norm: RMSNorm,
+    projection: Option<Linear>,
     rotary_cache: (Tensor, Tensor),
     rotary_dim: usize,
     pool: Pool,
     num_attention_heads: usize,
     pad_token_id: u32,
+    use_bidirectional_attention: bool,
 
     dtype: DType,
     device: Device,
@@ -402,6 +408,8 @@ impl Qwen3Model {
 
         // The Qwen3-Reranker models contain the `model` key
         // https://huggingface.co/collections/Qwen/qwen3-reranker-6841b22d0192d7ade9cdefea
+        // Keep reference to root vb for loading projection layer
+        let vb_root = vb.clone();
         let vb = if vb.contains_tensor("model.embed_tokens.weight") {
             vb.pp("model")
         } else {
@@ -420,6 +428,23 @@ impl Qwen3Model {
 
         let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
 
+        let projection = if let Some(num_labels) = config.num_labels {
+            if vb_root.contains_tensor("linear.weight") {
+                let projection_weight =
+                    vb_root.get((num_labels, config.hidden_size), "linear.weight")?;
+                Some(Linear::new(projection_weight, None, None))
+            } else {
+                tracing::warn!(
+                    "num_labels is set but linear.weight not found, skipping projection layer"
+                );
+                None
+            }
+        } else {
+            None
+        };
+
+        let use_bidirectional_attention = config.use_bidirectional_attention.unwrap_or(false);
+
         let rotary_dim = config
             .head_dim
             .unwrap_or(config.hidden_size / config.num_attention_heads);
@@ -433,11 +458,13 @@ impl Qwen3Model {
             embeddings,
             layers,
             norm,
+            projection,
             rotary_cache,
             rotary_dim,
             pool,
             pad_token_id: config.eos_token_id as u32,
             num_attention_heads: config.num_attention_heads,
+            use_bidirectional_attention,
             dtype: vb.dtype(),
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
@@ -555,7 +582,9 @@ impl Qwen3Model {
             (input_ids, position_ids, input_lengths, Some(attention_bias))
         };
 
-        let attention_bias = if let Some(attn_bias) = attention_bias {
+        let attention_bias = if self.use_bidirectional_attention {
+            attention_bias
+        } else if let Some(attn_bias) = attention_bias {
             Some(self.get_causal_attention_bias(attn_bias)?)
         } else {
             None
@@ -580,6 +609,12 @@ impl Qwen3Model {
         }
 
         let (outputs, _) = self.norm.forward(&hidden_states, None)?;
+
+        let outputs = if let Some(ref projection) = self.projection {
+            projection.forward(&outputs)?
+        } else {
+            outputs
+        };
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();

@@ -91,6 +91,7 @@ Below are some examples of the currently supported models:
 | N/A       | 396M                   | ModernBERT     | [answerdotai/ModernBERT-large](https://hf.co/answerdotai/ModernBERT-large)                       |
 | N/A       | 137M                   | JinaBERT       | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)             |
 | N/A       | 137M                   | JinaBERT       | [jinaai/jina-embeddings-v2-base-code](https://hf.co/jinaai/jina-embeddings-v2-base-code)         |
+| N/A       | 340M                   | Qwen3          | [voyageai/voyage-4-nano](https://hf.co/voyageai/voyage-4-nano)                                   |
 
 To explore the list of best performing text embeddings models, visit the
 [Massive Text Embedding Benchmark (MTEB) Leaderboard](https://huggingface.co/spaces/mteb/leaderboard).
