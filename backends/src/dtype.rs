@@ -84,5 +84,9 @@ impl Default for DType {
         {
             DType::Float16
         }
+        #[cfg(feature = "python")]
+        {
+            DType::Bfloat16
+        }
     }
 }
