@@ -211,12 +211,40 @@ impl CandleBackend {
         }
         .map_err(|err| BackendError::Start(err.to_string()))?;
 
-        // Get candle dtype
         let dtype = if &dtype == "float32" {
             Ok(DType::F32)
         } else if &dtype == "float16" {
             Ok(DType::F16)
         } else if &dtype == "bfloat16" {
+            match &device {
+                Device::Cpu => {
+                    return Err(BackendError::Start(
+                        "BFloat16 is not supported on CPU. Use float16 or float32 instead."
+                            .to_string(),
+                    ));
+                }
+                #[cfg(feature = "cuda")]
+                Device::Cuda(_) => {
+                    let compute_cap = get_runtime_compute_cap().map_err(|e| {
+                        BackendError::Start(format!("Failed to get CUDA compute capability: {e:?}"))
+                    })?;
+                    if compute_cap < 80 {
+                        return Err(BackendError::Start(format!(
+                            "BFloat16 requires CUDA compute capability >= 8.0 (Ampere or newer), \
+                             but found {}.{}. Use float16 or float32 instead.",
+                            compute_cap / 10,
+                            compute_cap % 10
+                        )));
+                    }
+                }
+                #[cfg(not(feature = "cuda"))]
+                Device::Cuda(_) => {
+                    return Err(BackendError::Start(
+                        "CUDA feature is not enabled".to_string(),
+                    ));
+                }
+                Device::Metal(_) => (),
+            }
             Ok(DType::BF16)
         } else {
             Err(BackendError::Start(format!(
