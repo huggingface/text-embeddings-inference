@@ -46,6 +46,7 @@ pub async fn run(
     revision: Option<String>,
     tokenization_workers: Option<usize>,
     dtype: Option<DType>,
+    served_model_name: String,
     pooling: Option<text_embeddings_backend::Pool>,
     max_concurrent_requests: usize,
     max_batch_tokens: usize,
@@ -331,6 +332,7 @@ pub async fn run(
         model_id,
         model_sha: revision,
         model_dtype: dtype.to_string(),
+        served_model_name,
         model_type,
         max_concurrent_requests,
         max_input_length,
@@ -557,6 +559,8 @@ pub struct Info {
     pub model_sha: Option<String>,
     #[cfg_attr(feature = "http", schema(example = "float16"))]
     pub model_dtype: String,
+    #[cfg_attr(feature = "http", schema(example = "thenlper/gte-base"))]
+    pub served_model_name: String,
     pub model_type: ModelType,
     /// Router Parameters
     #[cfg_attr(feature = "http", schema(example = "128"))]
