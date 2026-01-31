@@ -15,6 +15,8 @@ pub enum DType {
     Float32,
     #[cfg(any(
         feature = "python",
+        // NOTE: It needs to exclude Turing (and Volta) i.e., anything before Ampere, as it won't
+        // have support for BF16
         all(feature = "candle", any(feature = "metal", feature = "cuda"))
     ))]
     Bfloat16,
