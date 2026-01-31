@@ -270,7 +270,7 @@ pub async fn run(
     });
 
     if dtype == DType::Bfloat16 {
-        tracing::warn!("`--dtype bfloat16` support is still experimental, so bear in mind that it might not be stable on all the models.");
+        tracing::warn!("`--dtype bfloat16` support is still experimental on Metal and CUDA.");
     }
 
     tracing::info!("Starting model backend");
