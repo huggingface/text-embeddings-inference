@@ -6,7 +6,6 @@ use clap::ValueEnum;
 #[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "clap", derive(Clone, ValueEnum))]
 pub enum DType {
-    // Float16 is not available on accelerate
     #[cfg(any(
         feature = "python",
         all(feature = "candle", not(feature = "accelerate"))
@@ -14,7 +13,10 @@ pub enum DType {
     Float16,
     #[cfg(any(feature = "python", feature = "candle", feature = "ort"))]
     Float32,
-    #[cfg(any(feature = "python", feature = "candle"))]
+    #[cfg(any(
+        feature = "python",
+        all(feature = "candle", any(features = "metal", feature = "cuda"))
+    ))]
     Bfloat16,
 }
 
@@ -32,7 +34,10 @@ impl FromStr for DType {
                 all(feature = "candle", not(feature = "accelerate"))
             ))]
             "float16" => DType::Float16,
-            #[cfg(any(feature = "python", feature = "candle"))]
+            #[cfg(any(
+                feature = "python",
+                all(feature = "candle", any(features = "metal", feature = "cuda"))
+            ))]
             "bfloat16" => DType::Bfloat16,
             _ => return Err(DTypeParseError),
         };
@@ -44,7 +49,6 @@ impl FromStr for DType {
 impl fmt::Display for DType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            // Float16 is not available on accelerate
             #[cfg(any(
                 feature = "python",
                 all(feature = "candle", not(feature = "accelerate"))
@@ -52,7 +56,10 @@ impl fmt::Display for DType {
             DType::Float16 => write!(f, "float16"),
             #[cfg(any(feature = "python", feature = "candle", feature = "ort"))]
             DType::Float32 => write!(f, "float32"),
-            #[cfg(any(feature = "python", feature = "candle"))]
+            #[cfg(any(
+                feature = "python",
+                all(feature = "candle", any(features = "metal", feature = "cuda"))
+            ))]
             DType::Bfloat16 => write!(f, "bfloat16"),
         }
     }
@@ -74,7 +81,10 @@ impl Default for DType {
         {
             DType::Float16
         }
-        #[cfg(feature = "python")]
+        #[cfg(any(
+            feature = "python",
+            all(feature = "candle", any(features = "metal", feature = "cuda"))
+        ))]
         {
             DType::Bfloat16
         }
