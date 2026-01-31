@@ -1,12 +1,13 @@
-use crate::layers::{
-    apply_rotary, get_cos_sin, get_cublas_lt_wrapper, get_inv_freqs, HiddenAct, Linear, RMSNorm,
-};
-use crate::models::Model;
 use candle::{DType, Device, IndexOp, Result, Tensor, D};
 use candle_nn::{Embedding, Module, VarBuilder};
 use serde::Deserialize;
 
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
+
+use crate::layers::{
+    apply_rotary, get_cos_sin, get_cublas_lt_wrapper, get_inv_freqs, HiddenAct, Linear, RMSNorm,
+};
+use crate::models::Model;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Qwen3Config {
@@ -18,7 +19,6 @@ pub struct Qwen3Config {
     pub num_hidden_layers: usize,
     pub num_attention_heads: usize,
     pub num_key_value_heads: usize,
-    pub num_labels: usize,
     pub hidden_act: HiddenAct,
     pub max_position_embeddings: usize,
     pub rms_norm_eps: f32,
@@ -386,7 +386,6 @@ pub struct Qwen3Model {
     pool: Pool,
     num_attention_heads: usize,
     pad_token_id: u32,
-    linear: Linear,
 
     dtype: DType,
     device: Device,
@@ -405,27 +404,23 @@ impl Qwen3Model {
 
         // The Qwen3-Reranker models contain the `model` key
         // https://huggingface.co/collections/Qwen/qwen3-reranker-6841b22d0192d7ade9cdefea
-        let prefix = if vb.contains_tensor("model.embed_tokens.weight") {
-            "model."
+        let vb = if vb.contains_tensor("model.embed_tokens.weight") {
+            vb.pp("model")
         } else {
-            ""
+            vb
         };
 
         let embeddings = Embedding::new(
-            vb.pp(format!("{prefix}embed_tokens"))
+            vb.pp("embed_tokens")
                 .get((config.vocab_size, config.hidden_size), "weight")?,
             config.hidden_size,
         );
 
         let layers = (0..config.num_hidden_layers)
-            .map(|index| Qwen3Layer::load(vb.pp(format!("{prefix}layers.{index}")), config))
+            .map(|index| Qwen3Layer::load(vb.pp(format!("layers.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
 
-        let norm = RMSNorm::load(
-            vb.pp(format!("{prefix}norm")),
-            config.hidden_size,
-            config.rms_norm_eps,
-        )?;
+        let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
 
         let rotary_dim = config
             .head_dim
@@ -436,13 +431,6 @@ impl Qwen3Model {
         let rotary_cache =
             get_cos_sin(config.max_position_embeddings, &inv_freqs, vb.dtype(), true)?;
 
-        let linear = Linear::new(
-            vb.pp("linear")
-                .get((config.num_labels, config.hidden_size), "weight")?,
-            None,
-            None,
-        );
-
         Ok(Self {
             embeddings,
             layers,
@@ -452,7 +440,6 @@ impl Qwen3Model {
             pool,
             pad_token_id: config.eos_token_id as u32,
             num_attention_heads: config.num_attention_heads,
-            linear,
             dtype: vb.dtype(),
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
@@ -462,8 +449,12 @@ impl Qwen3Model {
     fn get_causal_attention_bias(&self, attention_bias: Tensor) -> Result<Tensor> {
         let (bs, dim, seq_len, _) = attention_bias.dims4()?;
 
-        let mask: Vec<u8> = vec![1u8; seq_len * seq_len];
-        let causal_mask = Tensor::from_slice(&mask, (seq_len, seq_len), &self.device)?;
+        let mask: Vec<u8> = (0..seq_len)
+            .flat_map(|i| (0..seq_len).map(move |j| (j > i) as u8))
+            .collect();
+
+        let device = attention_bias.device();
+        let causal_mask = Tensor::from_slice(&mask, (seq_len, seq_len), device)?;
         let causal_mask = causal_mask.expand(&[bs, dim, seq_len, seq_len])?;
 
         let min_value = match self.dtype {
@@ -472,13 +463,13 @@ impl Qwen3Model {
             DType::F16 | _ => -65504.0_f32,
         };
 
-        let zeros = Tensor::zeros((bs, dim, seq_len, seq_len), self.dtype, &self.device)?;
-        let negatives = Tensor::full(min_value, (bs, dim, seq_len, seq_len), &self.device)?
-            .to_dtype(self.dtype)?;
+        let negatives =
+            Tensor::full(min_value, attention_bias.shape(), device)?.to_dtype(self.dtype)?;
+        let zeros = Tensor::zeros_like(&attention_bias)?.to_dtype(self.dtype)?;
 
         let causal_mask = causal_mask
-            .where_cond(&zeros, &negatives)?
-            .to_device(&self.device)?;
+            .where_cond(&negatives, &zeros)?
+            .to_device(device)?;
 
         attention_bias.broadcast_add(&causal_mask)
     }
@@ -590,8 +581,8 @@ impl Qwen3Model {
         for layer in &self.layers {
             hidden_states = layer.forward(&hidden_states, attention_bias.as_ref(), &cos, &sin)?;
         }
+
         let (outputs, _) = self.norm.forward(&hidden_states, None)?;
-        let outputs = self.linear.forward(&outputs)?;
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();
