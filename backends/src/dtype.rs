@@ -15,7 +15,7 @@ pub enum DType {
     Float32,
     #[cfg(any(
         feature = "python",
-        all(feature = "candle", any(features = "metal", feature = "cuda"))
+        all(feature = "candle", any(feature = "metal", feature = "cuda"))
     ))]
     Bfloat16,
 }
@@ -36,7 +36,7 @@ impl FromStr for DType {
             "float16" => DType::Float16,
             #[cfg(any(
                 feature = "python",
-                all(feature = "candle", any(features = "metal", feature = "cuda"))
+                all(feature = "candle", any(feature = "metal", feature = "cuda"))
             ))]
             "bfloat16" => DType::Bfloat16,
             _ => return Err(DTypeParseError),
@@ -58,7 +58,7 @@ impl fmt::Display for DType {
             DType::Float32 => write!(f, "float32"),
             #[cfg(any(
                 feature = "python",
-                all(feature = "candle", any(features = "metal", feature = "cuda"))
+                all(feature = "candle", any(feature = "metal", feature = "cuda"))
             ))]
             DType::Bfloat16 => write!(f, "bfloat16"),
         }
@@ -80,13 +80,6 @@ impl Default for DType {
         )))]
         {
             DType::Float16
-        }
-        #[cfg(any(
-            feature = "python",
-            all(feature = "candle", any(features = "metal", feature = "cuda"))
-        ))]
-        {
-            DType::Bfloat16
         }
     }
 }
