@@ -681,7 +681,8 @@ impl ModernBertModel {
 
         let min_value = match self.dtype {
             DType::F32 => f32::MIN as f64,
-            _ => -65504.0, // f16 minimum value
+            DType::BF16 => -3.3895314e38_f64,
+            DType::F16 | _ => -65504.0_f64,
         };
 
         let global_attention_mask = ((1.0 - global_attention_mask)? * min_value)?;

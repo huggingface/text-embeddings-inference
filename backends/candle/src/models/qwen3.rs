@@ -468,9 +468,8 @@ impl Qwen3Model {
 
         let min_value = match self.dtype {
             DType::F32 => f32::MIN,
-            DType::BF16 => 65407.0,
-            DType::F16 => -65504.0,
-            _ => panic!("Unsupported dtype {}", self.dtype.as_str()),
+            DType::BF16 => -3.3895314e38_f32,
+            DType::F16 | _ => -65504.0_f32,
         };
 
         let zeros = Tensor::zeros((bs, dim, seq_len, seq_len), self.dtype, &self.device)?;
