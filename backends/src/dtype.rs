@@ -13,7 +13,7 @@ pub enum DType {
     Float16,
     #[cfg(any(feature = "python", feature = "candle", feature = "ort"))]
     Float32,
-    // NOTE: For CUDA, BFloat16 requires Ampere (SM 80) or newer, which is validated at runtime, as
+    // NOTE: For CUDA, BF16 requires Ampere (SM 80) or newer, which is validated at runtime, as
     // there are no specific features for the different CUDA compute capabilities to filter out
     // Turing and Volta from having `DType::Bfloat16`.
     #[cfg(any(
