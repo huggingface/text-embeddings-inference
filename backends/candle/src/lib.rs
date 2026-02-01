@@ -18,6 +18,9 @@ use text_embeddings_backend_core::{
 };
 
 #[cfg(feature = "cuda")]
+use crate::flash_attn::supports_flash_attn;
+
+#[cfg(feature = "cuda")]
 use crate::compute_cap::{
     compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
 };
@@ -349,12 +352,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
-                if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    && dtype == DType::F16
-                    // Allow disabling because of flash attention v1 precision problems
-                    // See: https://github.com/huggingface/text-embeddings-inference/issues/37
-                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
-                {
+                if supports_flash_attn(&dtype) {
                     match config {
                         BertConfigWrapper::JinaBert(config) => {
                             tracing::info!("Starting FlashJinaBert model on {:?}", device);
@@ -447,18 +445,12 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Gte(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
-                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    || &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        != "true"
-                {
-                    tracing::info!("Starting GTE model on {:?}", device);
-                    Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
-                } else {
+                if supports_flash_attn(&dtype) {
                     tracing::info!("Starting FlashGTE model on {:?}", device);
                     Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))
+                } else {
+                    tracing::info!("Starting GTE model on {:?}", device);
+                    Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
                 }
             }
             #[cfg(feature = "cuda")]
@@ -535,20 +527,14 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Qwen3(config), Device::Cuda(_)) => {
-                if (dtype != DType::F16 && dtype != DType::BF16)
-                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    || &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        != "true"
-                {
-                    tracing::info!("Starting Qwen3 model on {:?}", device);
-                    Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
-                } else {
+                if supports_flash_attn(&dtype) {
                     tracing::info!("Starting FlashQwen3 model on {:?}", device);
                     Ok(Box::new(
                         FlashQwen3Model::load(vb, &config, model_type).s()?,
                     ))
+                } else {
+                    tracing::info!("Starting Qwen3 model on {:?}", device);
+                    Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
                 }
             }
         };

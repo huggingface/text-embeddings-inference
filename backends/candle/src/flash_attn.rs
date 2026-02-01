@@ -1,8 +1,9 @@
-use candle::Tensor;
+use candle::{DType, Tensor};
 use std::sync::Once;
 
 static INIT: Once = Once::new();
 static mut RUNTIME_COMPUTE_CAP: usize = 0;
+
 fn init_runtime_compute_cap() {
     unsafe {
         INIT.call_once(|| {
@@ -17,6 +18,15 @@ pub fn get_runtime_compute_cap() -> usize {
         init_runtime_compute_cap();
         RUNTIME_COMPUTE_CAP
     }
+}
+
+pub fn supports_flash_attn(dtype: &DType) -> bool {
+    (dtype == &DType::F16 || dtype == &DType::BF16)
+        && cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+        && &std::env::var("USE_FLASH_ATTENTION")
+            .unwrap_or("True".to_string())
+            .to_lowercase()
+            == "true"
 }
 
 #[allow(clippy::too_many_arguments, unused)]
