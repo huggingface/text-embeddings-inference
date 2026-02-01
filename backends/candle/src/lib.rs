@@ -535,7 +535,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Qwen3(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
+                if (dtype != DType::F16 && dtype != DType::BF16)
                     || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
                     || &std::env::var("USE_FLASH_ATTENTION")
                         .unwrap_or("True".to_string())
