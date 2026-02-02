@@ -9,6 +9,15 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
 #[test]
 #[serial_test::serial]
 fn test_gemma3() -> Result<()> {
+    // NOTE: Given that `google/embeddinggemma-300m` is a gated model, this test requires the
+    // `HF_TOKEN` environment variable to be set
+    if std::env::var("HF_TOKEN").is_err()
+        || std::env::var("HF_TOKEN").is_ok_and(|token| token.is_empty())
+    {
+        println!("Skipping `test_gemma3` because `HF_TOKEN` is either not set or set empty.");
+        return;
+    }
+
     let (model_root, dense_paths) = download_artifacts("google/embeddinggemma-300m", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
