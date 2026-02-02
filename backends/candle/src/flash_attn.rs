@@ -20,9 +20,19 @@ pub fn get_runtime_compute_cap() -> usize {
     }
 }
 
-pub fn supports_flash_attn(dtype: &DType) -> bool {
-    (dtype == &DType::F16 || dtype == &DType::BF16)
-        && cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
+pub fn supports_flash_attn_v1(dtype: &DType) -> bool {
+    dtype == &DType::F16
+        && cfg!(feature = "flash-attn-v1")
+        && &std::env::var("USE_FLASH_ATTENTION")
+            .unwrap_or("True".to_string())
+            .to_lowercase()
+            == "true"
+}
+
+pub fn supports_flash_attn_v2(dtype: &DType) -> bool {
+    dtype == &DType::F16
+        && cfg!(feature = "flash-attn")
+        && get_runtime_compute_cap().unwrap() >= 80
         && &std::env::var("USE_FLASH_ATTENTION")
             .unwrap_or("True".to_string())
             .to_lowercase()

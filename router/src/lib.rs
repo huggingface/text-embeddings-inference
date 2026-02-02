@@ -270,11 +270,9 @@ pub async fn run(
             .unwrap_or_default()
     });
 
-    #[cfg(any(all(feature = "candle", feature = "metal"), feature = "candle-cuda"))]
+    #[cfg(all(feature = "candle", feature = "metal"))]
     if dtype == DType::Bfloat16 {
-        tracing::warn!(
-            "`--dtype bfloat16` support is still experimental on Metal and CUDA (Ampere onwards)."
-        );
+        tracing::warn!("`--dtype bfloat16` support is still experimental on Metal.");
     }
 
     tracing::info!("Starting model backend");
