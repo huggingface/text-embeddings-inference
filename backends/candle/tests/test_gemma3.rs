@@ -15,7 +15,7 @@ fn test_gemma3() -> Result<()> {
         || std::env::var("HF_TOKEN").is_ok_and(|token| token.is_empty())
     {
         println!("Skipping `test_gemma3` because `HF_TOKEN` is either not set or set empty.");
-        return;
+        return Ok(());
     }
 
     let (model_root, dense_paths) = download_artifacts("google/embeddinggemma-300m", None, None)?;
