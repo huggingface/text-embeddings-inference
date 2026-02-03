@@ -425,14 +425,23 @@ async fn init_backend(
                     .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
 
                 if model_files.is_empty() {
-                    tracing::error!(
+                    tracing::warn!(
                         "Neuron model files not found in the repository. \
-                        You can easily compile your model to neuron format following the guide: \
+                        The Python backend will attempt to compile the model on-the-fly using optimum-neuron. \
+                        This may take several minutes. For faster startup, consider pre-compiling your model: \
                         https://huggingface.co/docs/optimum-neuron/en/model_doc/sentence_transformers/overview "
                     );
-                    return Err(BackendError::WeightsNotFound(
-                        "No Neuron model files found".into(),
-                    ));
+                    // Fall back to downloading regular model files for on-the-fly compilation
+                    if download_safetensors(api_repo).await.is_err() {
+                        tracing::warn!(
+                            "safetensors weights not found. Using `pytorch_model.bin` instead."
+                        );
+                        tracing::info!("Downloading `pytorch_model.bin`");
+                        api_repo
+                            .get("pytorch_model.bin")
+                            .await
+                            .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
+                    }
                 }
 
                 tracing::info!("Neuron model downloaded in {:?}", start.elapsed());

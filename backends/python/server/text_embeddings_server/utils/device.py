@@ -65,7 +65,7 @@ def get_neuron_major() -> int:
     return -1
 
 def is_neuron() -> bool:
-    return get_neuron_major > -1
+    return get_neuron_major() > -1
 
 def use_ipex() -> bool:
     value = os.environ.get("USE_IPEX", "True").lower()

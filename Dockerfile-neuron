@@ -4,7 +4,7 @@ WORKDIR /usr/src
 ENV SCCACHE=0.10.0
 ENV RUSTC_WRAPPER=/usr/local/bin/sccache
 
-# Donwload, configure sccache
+# Download, configure sccache
 RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sccache-v$SCCACHE-x86_64-unknown-linux-musl.tar.gz | tar -xzv --strip-components=1 -C /usr/local/bin sccache-v$SCCACHE-x86_64-unknown-linux-musl/sccache && \
     chmod +x /usr/local/bin/sccache
 
@@ -62,6 +62,8 @@ FROM public.ecr.aws/docker/library/ubuntu:22.04 AS neuron
 
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80
+
+ENV PATH="/usr/local/bin:/root/.local/bin:${PATH}"
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     python3 \
@@ -123,8 +125,9 @@ RUN apt-get update \
  && rm -rf /tmp/tmp* \
  && apt-get clean
 
-RUN echo "deb https://apt.repos.neuron.amazonaws.com focal main" > /etc/apt/sources.list.d/neuron.list
-RUN wget -qO - https://apt.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB | apt-key add -
+# Ubuntu 22.04 = jammy; use signed-by (apt-key is deprecated)
+RUN wget -qO - https://apt.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB | gpg --dearmor -o /usr/share/keyrings/neuron-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/neuron-archive-keyring.gpg] https://apt.repos.neuron.amazonaws.com jammy main" > /etc/apt/sources.list.d/neuron.list
 
 RUN apt-get update \
  && apt-get install -y \
@@ -147,7 +150,8 @@ RUN pip install --index-url https://pip.repos.neuron.amazonaws.com \
  && rm -rf ~/.cache/pip/*
 
 # HF ARGS
-ARG TRANSFORMERS_VERSION=4.57.1
+# Note: optimum-neuron 0.4.1 requires transformers~=4.55.4
+ARG TRANSFORMERS_VERSION=4.55.4
 ARG DIFFUSERS_VERSION=0.35.2
 ARG HUGGINGFACE_HUB_VERSION=0.36.0
 ARG OPTIMUM_NEURON_VERSION=0.4.1
@@ -155,20 +159,19 @@ ARG SENTENCE_TRANSFORMERS=5.1.2
 ARG PEFT_VERSION=0.17.0
 ARG DATASETS_VERSION=4.1.1
 
-# install Hugging Face libraries and its dependencies
-# optimum-neuron==${OPTIMUM_NEURON_VERSION} \
+# Install Hugging Face libraries and dependencies for TEI on Neuron
 RUN pip install --no-cache-dir -U \
-	networkx==2.8.8 \
-	transformers[sentencepiece,audio,vision]==${TRANSFORMERS_VERSION} \
+    networkx==2.8.8 \
+    transformers[sentencepiece,audio,vision]==${TRANSFORMERS_VERSION} \
     diffusers==${DIFFUSERS_VERSION} \
     compel \
     controlnet-aux \
     huggingface_hub==${HUGGINGFACE_HUB_VERSION} \
     hf_transfer \
     datasets==${DATASETS_VERSION} \
-    "optimum-neuron @ git+https://github.com/huggingface/optimum-neuron@main" \
- 	sentence_transformers==${SENTENCE_TRANSFORMERS} \
-	peft==${PEFT_VERSION} \
+    optimum-neuron==${OPTIMUM_NEURON_VERSION} \
+    sentence_transformers==${SENTENCE_TRANSFORMERS} \
+    peft==${PEFT_VERSION} \
  && rm -rf ~/.cache/pip/*
 
 
