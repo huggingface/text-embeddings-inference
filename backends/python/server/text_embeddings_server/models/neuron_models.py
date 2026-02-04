@@ -13,13 +13,13 @@ from text_embeddings_server.models.types import PaddedBatch, Embedding, Score
 
 tracer = trace.get_tracer(__name__)
 
-# Neuron compilation parameters from environment variables
+# Neuron static shapes compilation parameters
 NEURON_BATCH_SIZE = int(os.getenv("NEURON_BATCH_SIZE", "1"))
 NEURON_SEQUENCE_LENGTH = int(os.getenv("NEURON_SEQUENCE_LENGTH", "512"))
 
 
 class NeuronBaseModel(Model, ABC):
-    """Base class for all Neuron models with common functionality."""
+    """Base class for all Neuron models."""
 
     def __init__(
         self,
@@ -83,12 +83,12 @@ class NeuronBaseModel(Model, ABC):
         return kwargs
 
 
-class NeuronSentenceTransformersModel(NeuronBaseModel):
+class NeuronSentenceTransformersModel(Model):
     """
-    Neuron-optimized model for sentence-transformers.
+    Neuron model for sentence-transformers.
 
-    Uses optimum.neuron.NeuronModelForSentenceTransformers which is designed
-    for sentence embedding models that output sentence_embedding directly.
+    Uses optimum.neuron.NeuronSentenceTransformers which is designed
+    for sentence embedding models.
     """
 
     def __init__(
@@ -99,29 +99,43 @@ class NeuronSentenceTransformersModel(NeuronBaseModel):
         pool: str = "cls",
         trust_remote: bool = False,
     ):
-        try:
-            from optimum.neuron import NeuronModelForSentenceTransformers
-            is_compiled = self._is_neuron_compiled(model_path)
-            export_kwargs = {}
-            if not is_compiled:
-                export_kwargs = {
-                    "export": True,
-                    "batch_size": NEURON_BATCH_SIZE,
-                    "sequence_length": NEURON_SEQUENCE_LENGTH,
-                }
-                logger.info(f"Compiling model for Neuron with batch_size={NEURON_BATCH_SIZE}, sequence_length={NEURON_SEQUENCE_LENGTH}")
-            model = NeuronModelForSentenceTransformers.from_pretrained(
-                model_path,
-                **export_kwargs,
+        from optimum.neuron import NeuronSentenceTransformers
+        from transformers import AutoConfig
+
+        # Load config separately for reliable access
+        config = AutoConfig.from_pretrained(model_path, trust_remote_code=trust_remote)
+        self.hidden_size = config.hidden_size
+
+        # Calculate max input length
+        position_offset = 0
+        model_type = config.model_type
+        if model_type in ["xlm-roberta", "camembert", "roberta"]:
+            position_offset = getattr(config, "pad_token_id", 1) + 1
+
+        if hasattr(config, "max_seq_length"):
+            self.max_input_length = config.max_seq_length
+        elif hasattr(config, "n_positions"):
+            self.max_input_length = config.n_positions
+        else:
+            self.max_input_length = (
+                config.max_position_embeddings - position_offset
             )
-        except ImportError:
-            # Fallback to legacy import
-            from optimum.neuron import NeuronSentenceTransformers
+
+        is_compiled = self._is_neuron_compiled(model_path)
+        if not is_compiled:
+            logger.info(f"Compiling model for Neuron with batch_size={NEURON_BATCH_SIZE}, sequence_length={NEURON_SEQUENCE_LENGTH}")
+            model = NeuronSentenceTransformers.from_pretrained(
+                model_path,
+                export=True,
+                batch_size=NEURON_BATCH_SIZE,
+                sequence_length=NEURON_SEQUENCE_LENGTH,
+            )
+        else:
             model = NeuronSentenceTransformers.from_pretrained(model_path)
 
-        super().__init__(model, model_path, device, dtype)
         self.pool = pool
-        logger.info(f"Loaded NeuronSentenceTransformersModel with pool={pool}")
+        super().__init__(model=model, dtype=dtype, device=device)
+        logger.info(f"Loaded NeuronSentenceTransformersModel with pool={pool}, hidden_size={self.hidden_size}")
 
     @staticmethod
     def _is_neuron_compiled(model_path: Path) -> bool:
@@ -129,37 +143,67 @@ class NeuronSentenceTransformersModel(NeuronBaseModel):
         neuron_files = list(model_path.glob("*.neuron")) if model_path.is_dir() else []
         return len(neuron_files) > 0
 
+    @property
+    def batch_type(self) -> Type[PaddedBatch]:
+        return PaddedBatch
+
     @tracer.start_as_current_span("embed")
     def embed(self, batch: PaddedBatch) -> List[Embedding]:
-        kwargs = self._prepare_inputs(batch)
-        output = self.model(**kwargs)
+        # Prepare inputs
+        input_ids = batch.input_ids.to(torch.long)
+        attention_mask = batch.attention_mask.to(torch.long)
 
+        # NeuronSentenceTransformers forward pass expects positional arguments
+        output = self.model(input_ids, attention_mask)
+
+        # Get sentence embeddings from output
         sentence_embedding = None
-        # NeuronModelForSentenceTransformers returns sentence_embedding directly
-        if hasattr(output, "sentence_embedding") and output.sentence_embedding is not None:
-            candidate = output.sentence_embedding
-            if candidate.abs().sum() > 0:
-                sentence_embedding = candidate
-        
-        # If sentence_embedding is invalid, fall back to manual pooling of token_embeddings
-        if sentence_embedding is None:
-            # Get token embeddings
-            if hasattr(output, "token_embeddings") and output.token_embeddings is not None:
-                token_embeddings = output.token_embeddings
-            else:
-                raise ValueError(f"Cannot extract embeddings from model output: {type(output)}")
+        if isinstance(output, dict):
+            # Check if sentence_embedding exists and has non-zero values
+            # NeuronSentenceTransformers may return zeros for sentence_embedding when pooling fails
+            has_valid_sentence_embedding = (
+                "sentence_embedding" in output
+                and output["sentence_embedding"] is not None
+                and output["sentence_embedding"].abs().sum() > 0
+            )
+            if has_valid_sentence_embedding:
+                sentence_embedding = output["sentence_embedding"]
+            elif "token_embeddings" in output and output["token_embeddings"] is not None:
+                # Apply manual pooling when sentence_embedding is not valid
+                logger.debug(f"Using token_embeddings with manual {self.pool} pooling")
+                token_embeddings = output["token_embeddings"]
 
-            # Apply pooling based on self.pool setting
+                if self.pool == "cls":
+                    sentence_embedding = token_embeddings[:, 0, :]
+                elif self.pool == "mean":
+                    mask = attention_mask.unsqueeze(-1).float()
+                    sentence_embedding = (token_embeddings * mask).sum(dim=1) / mask.sum(dim=1)
+                elif self.pool == "last_token":
+                    seq_lengths = attention_mask.sum(dim=1) - 1
+                    sentence_embedding = token_embeddings[torch.arange(token_embeddings.size(0)), seq_lengths]
+                else:
+                    raise ValueError(f"Invalid pooling mode: {self.pool}")
+            else:
+                raise ValueError(f"Cannot extract embeddings from model output dict: {output.keys()}")
+        elif hasattr(output, "sentence_embedding") and output.sentence_embedding is not None:
+            sentence_embedding = output.sentence_embedding
+        elif hasattr(output, "token_embeddings") and output.token_embeddings is not None:
+            token_embeddings = output.token_embeddings
             if self.pool == "cls":
                 sentence_embedding = token_embeddings[:, 0, :]
             elif self.pool == "mean":
-                attention_mask = kwargs["attention_mask"].unsqueeze(-1).float()
-                sentence_embedding = (token_embeddings * attention_mask).sum(dim=1) / attention_mask.sum(dim=1)
+                mask = attention_mask.unsqueeze(-1).float()
+                sentence_embedding = (token_embeddings * mask).sum(dim=1) / mask.sum(dim=1)
             elif self.pool == "last_token":
-                seq_lengths = kwargs["attention_mask"].sum(dim=1) - 1
+                seq_lengths = attention_mask.sum(dim=1) - 1
                 sentence_embedding = token_embeddings[torch.arange(token_embeddings.size(0)), seq_lengths]
             else:
                 raise ValueError(f"Invalid pooling mode: {self.pool}")
+        elif torch.is_tensor(output):
+            # Assume output is the sentence embedding tensor directly
+            sentence_embedding = output
+        else:
+            raise ValueError(f"Cannot extract embeddings from model output: type={type(output)}")
 
         # Convert to list format expected by the gRPC interface
         cpu_results = sentence_embedding.view(-1).tolist()
@@ -174,77 +218,6 @@ class NeuronSentenceTransformersModel(NeuronBaseModel):
     @tracer.start_as_current_span("predict")
     def predict(self, batch: PaddedBatch) -> List[Score]:
         raise NotImplementedError("Prediction not supported for sentence transformer models")
-
-
-class NeuronEmbeddingModel(NeuronBaseModel):
-    """
-    Neuron-optimized model for feature extraction / embeddings.
-
-    Uses optimum.neuron.NeuronModelForFeatureExtraction for models that
-    output hidden states which need to be pooled.
-    """
-
-    def __init__(
-        self,
-        model_path: Path,
-        device: torch.device,
-        dtype: torch.dtype,
-        pool: str = "cls",
-        trust_remote: bool = False,
-    ):
-        from optimum.neuron import NeuronModelForFeatureExtraction
-
-        is_compiled = self._is_neuron_compiled(model_path)
-        export_kwargs = {}
-        if not is_compiled:
-            export_kwargs = {
-                "export": True,
-                "batch_size": NEURON_BATCH_SIZE,
-                "sequence_length": NEURON_SEQUENCE_LENGTH,
-            }
-            logger.info(f"Compiling model for Neuron with batch_size={NEURON_BATCH_SIZE}, sequence_length={NEURON_SEQUENCE_LENGTH}")
-        model = NeuronModelForFeatureExtraction.from_pretrained(
-            model_path,
-            **export_kwargs,
-        )
-
-        logger.info(f"DEBUG: model type = {type(model)}")
-
-        super().__init__(model, model_path, device, dtype)
-        self.pool = pool
-
-        # Initialize pooling layer
-        from text_embeddings_server.models.pooling import DefaultPooling
-        self.pooling = DefaultPooling(self.hidden_size, pooling_mode=pool)
-
-        logger.info(f"Loaded NeuronEmbeddingModel with pool={pool}")
-
-    @staticmethod
-    def _is_neuron_compiled(model_path: Path) -> bool:
-        """Check if the model is already compiled for Neuron."""
-        neuron_files = list(model_path.glob("*.neuron")) if model_path.is_dir() else []
-        return len(neuron_files) > 0
-
-    @tracer.start_as_current_span("embed")
-    def embed(self, batch: PaddedBatch) -> List[Embedding]:
-        kwargs = self._prepare_inputs(batch)
-        output = self.model(**kwargs)
-
-        # Apply pooling to get sentence embeddings
-        embedding = self.pooling.forward(output, batch.attention_mask)
-
-        cpu_results = embedding.view(-1).tolist()
-
-        return [
-            Embedding(
-                values=cpu_results[i * self.hidden_size : (i + 1) * self.hidden_size]
-            )
-            for i in range(len(batch))
-        ]
-
-    @tracer.start_as_current_span("predict")
-    def predict(self, batch: PaddedBatch) -> List[Score]:
-        raise NotImplementedError("Prediction not supported for embedding models")
 
 
 class NeuronClassificationModel(NeuronBaseModel):
@@ -420,24 +393,5 @@ def create_neuron_model(
     if pool == "splade" or architecture.endswith("ForMaskedLM"):
         return NeuronMaskedLMModel(model_path, device, dtype, pool, trust_remote)
 
-    # Check for sentence-transformers models
-    # These typically have specific config attributes or are in specific repositories
-    is_sentence_transformer = (
-        hasattr(config, "sentence_transformers_config") or
-        hasattr(config, "_name_or_path") and "sentence-transformers" in str(config._name_or_path).lower() or
-        hasattr(config, "pooling_mode") or
-        (model_path / "sentence_bert_config.json").exists() if model_path.is_dir() else False
-    )
-
-    if is_sentence_transformer:
-        try:
-            return NeuronSentenceTransformersModel(model_path, device, dtype, pool, trust_remote)
-        except Exception as e:
-            logger.warning(f"Failed to load as SentenceTransformer, falling back to FeatureExtraction: {e}")
-
-    # Default to feature extraction model
-    try:
-        return NeuronEmbeddingModel(model_path, device, dtype, pool, trust_remote)
-    except Exception as e:
-        logger.warning(f"Failed to load NeuronEmbeddingModel, trying NeuronSentenceTransformersModel: {e}")
-        return NeuronSentenceTransformersModel(model_path, device, dtype, pool, trust_remote)
+    # Default to NeuronSentenceTransformers for all embedding models
+    return NeuronSentenceTransformersModel(model_path, device, dtype, pool, trust_remote)

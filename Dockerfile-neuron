@@ -150,11 +150,11 @@ RUN pip install --index-url https://pip.repos.neuron.amazonaws.com \
  && rm -rf ~/.cache/pip/*
 
 # HF ARGS
-# Note: optimum-neuron 0.4.1 requires transformers~=4.55.4
-ARG TRANSFORMERS_VERSION=4.55.4
+# Note: optimum-neuron 0.4.4 requires transformers~=4.57.1
+ARG TRANSFORMERS_VERSION=4.57.1
 ARG DIFFUSERS_VERSION=0.35.2
 ARG HUGGINGFACE_HUB_VERSION=0.36.0
-ARG OPTIMUM_NEURON_VERSION=0.4.1
+ARG OPTIMUM_NEURON_VERSION=0.4.4
 ARG SENTENCE_TRANSFORMERS=5.1.2
 ARG PEFT_VERSION=0.17.0
 ARG DATASETS_VERSION=4.1.1

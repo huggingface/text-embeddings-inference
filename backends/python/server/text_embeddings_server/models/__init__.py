@@ -45,7 +45,6 @@ if FLASH_ATTENTION:
 
 # Neuron models - only import when on Neuron device to avoid unnecessary dependencies
 NeuronSentenceTransformersModel = None
-NeuronEmbeddingModel = None
 NeuronClassificationModel = None
 NeuronMaskedLMModel = None
 create_neuron_model = None
@@ -54,7 +53,6 @@ if is_neuron():
     try:
         from text_embeddings_server.models.neuron_models import (
             NeuronSentenceTransformersModel,
-            NeuronEmbeddingModel,
             NeuronClassificationModel,
             NeuronMaskedLMModel,
             create_neuron_model,

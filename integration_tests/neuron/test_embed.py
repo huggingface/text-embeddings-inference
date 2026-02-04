@@ -8,41 +8,41 @@ import numpy as np
 
 # Test configurations for Neuron backend
 TEST_CONFIGS = {
-    # # On-the-fly Neuron compilation
-    # "sentence-transformers/all-MiniLM-L6-v2": {
-    #     "model_id": "sentence-transformers/all-MiniLM-L6-v2",
-    #     "input": "What is Deep Learning?",
-    #     "batch_inputs": [
-    #         "What is Deep Learning?",
-    #         "How does machine learning work?",
-    #         "Tell me about neural networks.",
-    #     ],
-    #     "expected_output_prefix": None,
-    #     "args": [
-    #         "--dtype", "float32",
-    #         "--max-batch-requests", "1",
-    #     ],
-    #     "env_config": {
-    #         "MAX_WARMUP_SEQUENCE_LENGTH": "512",
-    #     },
-    # },
-    # "BAAI/bge-base-en-v1.5": {
-    #     "model_id": "BAAI/bge-base-en-v1.5",
-    #     "input": "What is Deep Learning?",
-    #     "batch_inputs": [
-    #         "What is Deep Learning?",
-    #         "How does machine learning work?",
-    #         "Tell me about neural networks.",
-    #     ],
-    #     "expected_output_prefix": None,
-    #     "args": [
-    #         "--dtype", "float32",
-    #         "--max-batch-requests", "1",
-    #     ],
-    #     "env_config": {
-    #         "MAX_WARMUP_SEQUENCE_LENGTH": "512",
-    #     },
-    # },
+    # On-the-fly Neuron compilation
+    "sentence-transformers/all-MiniLM-L6-v2": {
+        "model_id": "sentence-transformers/all-MiniLM-L6-v2",
+        "input": "What is Deep Learning?",
+        "batch_inputs": [
+            "What is Deep Learning?",
+            "How does machine learning work?",
+            "Tell me about neural networks.",
+        ],
+        "expected_output_prefix": None,
+        "args": [
+            "--dtype", "float32",
+            "--max-batch-requests", "1",
+        ],
+        "env_config": {
+            "MAX_WARMUP_SEQUENCE_LENGTH": "512",
+        },
+    },
+    "BAAI/bge-base-en-v1.5": {
+        "model_id": "BAAI/bge-base-en-v1.5",
+        "input": "What is Deep Learning?",
+        "batch_inputs": [
+            "What is Deep Learning?",
+            "How does machine learning work?",
+            "Tell me about neural networks.",
+        ],
+        "expected_output_prefix": None,
+        "args": [
+            "--dtype", "float32",
+            "--max-batch-requests", "1",
+        ],
+        "env_config": {
+            "MAX_WARMUP_SEQUENCE_LENGTH": "512",
+        },
+    },
     # Pre-compiled Neuron model
     "optimum/bge-base-en-v1.5-neuronx": {
         "model_id": "optimum/bge-base-en-v1.5-neuronx",
