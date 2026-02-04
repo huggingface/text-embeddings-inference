@@ -241,6 +241,7 @@ impl Backend {
         max_input_length: usize,
         max_batch_tokens: usize,
         max_batch_requests: Option<usize>,
+        padded_model: bool,
     ) -> Result<(), BackendError> {
         if is_hpu() {
             return self
@@ -248,15 +249,23 @@ impl Backend {
                 .await;
         }
 
-        let mut input_ids = Vec::with_capacity(max_batch_tokens);
-        let mut token_type_ids = Vec::with_capacity(max_batch_tokens);
-        let mut position_ids = Vec::with_capacity(max_batch_tokens);
+        // In padded_model (CPU), use minimal warmup size (max_input_length tokens) for fast startup
+        // Non-padded (GPU), use full max_batch_tokens to exercise production batching limits
+        let warmup_tokens = if padded_model {
+            max_input_length.min(max_batch_tokens)
+        } else {
+            max_batch_tokens
+        };
+
+        let mut input_ids = Vec::with_capacity(warmup_tokens);
+        let mut token_type_ids = Vec::with_capacity(warmup_tokens);
+        let mut position_ids = Vec::with_capacity(warmup_tokens);
 
         let mut cumulative_seq_lengths = vec![0];
         let mut pooled_indices = Vec::new();
 
         let mut i = 0_u32;
-        let mut remaining = max_batch_tokens;
+        let mut remaining = warmup_tokens;
         let mut cumulative_length = 0;
         let mut max_length = 0;
 
@@ -373,6 +382,7 @@ async fn init_backend(
     otlp_service_name: String,
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     let mut backend_start_failed = false;
+    let api_repo = api_repo.map(Arc::new);
 
     if cfg!(feature = "ort") {
         #[cfg(feature = "ort")]
@@ -622,7 +632,7 @@ enum BackendCommand {
     ),
 }
 
-async fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
+async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
     // Single file
     tracing::info!("Downloading `model.safetensors`");
     match api.get("model.safetensors").await {
@@ -652,10 +662,22 @@ async fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     }
 
     // Download weight files
-    let mut safetensors_files = Vec::new();
-    for n in safetensors_filenames {
-        tracing::info!("Downloading `{}`", n);
-        safetensors_files.push(api.get(&n).await?);
+    let handles: Vec<_> = safetensors_filenames
+        .into_iter()
+        .map(|n| {
+            let api = Arc::clone(&api);
+            tokio::spawn(async move {
+                tracing::info!("Downloading `{}`", n);
+                api.get(&n).await
+            })
+        })
+        .collect();
+
+    let mut safetensors_files = Vec::with_capacity(handles.len());
+    for handle in handles {
+        // Await the JoinHandle to get the result of the task,
+        // then unpack the inner result from api.get()
+        safetensors_files.push(handle.await??);
     }
 
     Ok(safetensors_files)
