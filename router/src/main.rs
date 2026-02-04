@@ -135,7 +135,9 @@ struct Args {
     #[redact(partial)]
     hf_api_token: Option<String>,
 
-    /// Your Hugging Face Hub token
+    /// Your Hugging Face Hub token. If neither `--hf-token` nor `HF_TOKEN` is set, the token
+    /// will be read from the `$HF_HOME/token` path, if it exists. This ensures access to private
+    /// or gated models, and allows for a more permissive rate limiting.
     #[clap(long, env, conflicts_with = "hf_api_token")]
     #[redact(partial)]
     hf_token: Option<String>,
