@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+// use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
@@ -232,49 +232,6 @@ async fn main() -> Result<()> {
         tracing::warn!("The `--hf-api-token` argument (and the `HF_API_TOKEN` env var) is deprecated and will be removed in a future version. Please use `--hf-token` (or the `HF_TOKEN` env var) instead.");
     }
     let token = args.hf_token.or(args.hf_api_token);
-
-    // If the `--hf-token` is not set, check if the file `.cache/huggingface/token` is available,
-    // and in such case pull the default value for the token (useful not only for gated / private
-    // models, but also for preventing rate-limiting on unauthenticated requests)
-    let token = if token.is_none() {
-        let home = std::env::var("HF_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                let path = if cfg!(target_os = "linux") {
-                    // NOTE: https://huggingface.co/docs/huggingface_hub/en/package_reference/environment_variables#xdgcachehome
-                    std::env::var("XDG_CACHE_HOME")
-                        .map(|p| Path::new(&p).join("huggingface"))
-                        .unwrap_or_else(|_| PathBuf::from(".cache/huggingface"))
-                } else {
-                    PathBuf::from(".cache/huggingface")
-                };
-                path
-            });
-
-        let path = if home.is_absolute() {
-            home.join("token")
-        } else {
-            // NOTE: `std::env::home_dir` might not be stable on Windows
-            // https://doc.rust-lang.org/std/env/fn.home_dir.html
-            #[allow(deprecated)]
-            std::env::home_dir()
-                .map(|p| p.join(home.clone()).join("token"))
-                .unwrap_or_else(|| home.join("token"))
-        };
-
-        if path.exists() {
-            let token = std::fs::read_to_string(&path)
-                .ok()
-                .map(|t| t.trim().to_string())
-                .filter(|t| !t.is_empty());
-            tracing::info!("`--hf-token` (or `HF_TOKEN` environment variable) not set, but using token file found in {path:?} for the authentication headers when sending requests to the Hugging Face Hub.");
-            token
-        } else {
-            None
-        }
-    } else {
-        token
-    };
 
     let served_model_name = args
         .served_model_name
