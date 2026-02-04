@@ -4,7 +4,7 @@ import torch
 
 from abc import ABC
 from pathlib import Path
-from typing import Type, List, Optional
+from typing import Type, List
 from opentelemetry import trace
 from loguru import logger
 
@@ -148,18 +148,18 @@ class NeuronSentenceTransformersModel(NeuronBaseModel):
                 token_embeddings = output.token_embeddings
             else:
                 raise ValueError(f"Cannot extract embeddings from model output: {type(output)}")
-        
-        # Apply pooling based on self.pool setting
-        if self.pool == "cls":
-            sentence_embedding = token_embeddings[:, 0, :]
-        elif self.pool == "mean":
-            attention_mask = kwargs["attention_mask"].unsqueeze(-1).float()
-            sentence_embedding = (token_embeddings * attention_mask).sum(dim=1) / attention_mask.sum(dim=1)
-        elif self.pool == "last_token":
-            seq_lengths = kwargs["attention_mask"].sum(dim=1) - 1
-            sentence_embedding = token_embeddings[torch.arange(token_embeddings.size(0)), seq_lengths]
-        else:
-            raise ValueError(f"Invalid pooling mode: {self.pool}")
+
+            # Apply pooling based on self.pool setting
+            if self.pool == "cls":
+                sentence_embedding = token_embeddings[:, 0, :]
+            elif self.pool == "mean":
+                attention_mask = kwargs["attention_mask"].unsqueeze(-1).float()
+                sentence_embedding = (token_embeddings * attention_mask).sum(dim=1) / attention_mask.sum(dim=1)
+            elif self.pool == "last_token":
+                seq_lengths = kwargs["attention_mask"].sum(dim=1) - 1
+                sentence_embedding = token_embeddings[torch.arange(token_embeddings.size(0)), seq_lengths]
+            else:
+                raise ValueError(f"Invalid pooling mode: {self.pool}")
 
         # Convert to list format expected by the gRPC interface
         cpu_results = sentence_embedding.view(-1).tolist()

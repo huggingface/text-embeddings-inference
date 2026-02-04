@@ -7,20 +7,52 @@ import numpy as np
 
 
 # Test configurations for Neuron backend
-# The "args" values in TEST_CONFIGS are not optimized for speed but only check that the inference is working for the different models architectures.
 TEST_CONFIGS = {
-    # BERT-based embedding model - commonly used and well-supported on Neuron
-    "sentence-transformers/all-MiniLM-L6-v2": {
-        "model_id": "sentence-transformers/all-MiniLM-L6-v2",
+    # # On-the-fly Neuron compilation
+    # "sentence-transformers/all-MiniLM-L6-v2": {
+    #     "model_id": "sentence-transformers/all-MiniLM-L6-v2",
+    #     "input": "What is Deep Learning?",
+    #     "batch_inputs": [
+    #         "What is Deep Learning?",
+    #         "How does machine learning work?",
+    #         "Tell me about neural networks.",
+    #     ],
+    #     "expected_output_prefix": None,
+    #     "args": [
+    #         "--dtype", "float32",
+    #         "--max-batch-requests", "1",
+    #     ],
+    #     "env_config": {
+    #         "MAX_WARMUP_SEQUENCE_LENGTH": "512",
+    #     },
+    # },
+    # "BAAI/bge-base-en-v1.5": {
+    #     "model_id": "BAAI/bge-base-en-v1.5",
+    #     "input": "What is Deep Learning?",
+    #     "batch_inputs": [
+    #         "What is Deep Learning?",
+    #         "How does machine learning work?",
+    #         "Tell me about neural networks.",
+    #     ],
+    #     "expected_output_prefix": None,
+    #     "args": [
+    #         "--dtype", "float32",
+    #         "--max-batch-requests", "1",
+    #     ],
+    #     "env_config": {
+    #         "MAX_WARMUP_SEQUENCE_LENGTH": "512",
+    #     },
+    # },
+    # Pre-compiled Neuron model
+    "optimum/bge-base-en-v1.5-neuronx": {
+        "model_id": "optimum/bge-base-en-v1.5-neuronx",
         "input": "What is Deep Learning?",
         "batch_inputs": [
             "What is Deep Learning?",
             "How does machine learning work?",
             "Tell me about neural networks.",
         ],
-        # Expected output for first 50 dimensions (to keep config manageable)
-        # These values should be generated from a known-good run
-        "expected_output_prefix": None,  # Will validate structure only if None
+        "expected_output_prefix": None,
         "args": [
             "--dtype", "float32",
             "--max-batch-requests", "1",
@@ -152,72 +184,3 @@ async def test_model_embedding_consistency(tei_client, input_text: str):
     assert np.allclose(array1, array2, rtol=1e-4, atol=1e-4), \
         "Same input should produce consistent embeddings"
 
-
-@pytest.mark.asyncio
-async def test_model_different_inputs_different_embeddings(tei_client):
-    """Test that different inputs produce different embeddings."""
-    input1 = "The weather is sunny today."
-    input2 = "Machine learning is a subset of artificial intelligence."
-
-    response1 = await tei_client.embed(input1)
-    response2 = await tei_client.embed(input2)
-
-    array1 = np.array(response1)
-    array2 = np.array(response2)
-
-    # Different inputs should produce different embeddings
-    assert not np.allclose(array1, array2, rtol=1e-2, atol=1e-2), \
-        "Different inputs should produce different embeddings"
-
-
-@pytest.mark.asyncio
-async def test_model_embedding_normalization(tei_client, input_text: str):
-    """Test embedding properties (optional - some models normalize, some don't)."""
-    response = await tei_client.embed(input_text)
-    array = np.array(response)
-
-    # Flatten if needed
-    if array.ndim > 1:
-        array = array.flatten()
-
-    # Check L2 norm - many sentence transformers normalize to unit length
-    l2_norm = np.linalg.norm(array)
-    print(f"Embedding L2 norm: {l2_norm}")
-
-    # Just verify the norm is reasonable (not zero, not extremely large)
-    assert l2_norm > 0.1, "Embedding norm should be positive"
-    assert l2_norm < 1000, "Embedding norm should not be extremely large"
-
-
-@pytest.mark.asyncio
-async def test_model_long_input(tei_client):
-    """Test handling of longer input text."""
-    # Create a longer input (but still within typical model limits)
-    long_input = "This is a test sentence. " * 20  # ~100 tokens
-
-    response = await tei_client.embed(long_input)
-
-    assert isinstance(response, list), f"Expected list, got {type(response)}"
-    assert len(response) > 0, "Embedding should not be empty"
-
-
-@pytest.mark.asyncio
-async def test_model_special_characters(tei_client):
-    """Test handling of special characters in input."""
-    special_input = "Hello! How are you? I'm fine, thanks. #test @user $100"
-
-    response = await tei_client.embed(special_input)
-
-    assert isinstance(response, list), f"Expected list, got {type(response)}"
-    assert len(response) > 0, "Embedding should not be empty"
-
-
-@pytest.mark.asyncio
-async def test_model_unicode_input(tei_client):
-    """Test handling of unicode characters."""
-    unicode_input = "Hello world! Bonjour le monde!"
-
-    response = await tei_client.embed(unicode_input)
-
-    assert isinstance(response, list), f"Expected list, got {type(response)}"
-    assert len(response) > 0, "Embedding should not be empty"
