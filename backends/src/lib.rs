@@ -442,7 +442,7 @@ async fn init_backend(
                         https://huggingface.co/docs/optimum-neuron/en/model_doc/sentence_transformers/overview "
                     );
                     // Fall back to downloading regular model files for on-the-fly compilation
-                    if download_safetensors(api_repo).await.is_err() {
+                    if download_safetensors(api_repo.clone()).await.is_err() {
                         tracing::warn!(
                             "safetensors weights not found. Using `pytorch_model.bin` instead."
                         );
@@ -456,7 +456,7 @@ async fn init_backend(
 
                 tracing::info!("Neuron model downloaded in {:?}", start.elapsed());
             } else {
-                if download_safetensors(api_repo).await.is_err() {
+                if download_safetensors(api_repo.clone()).await.is_err() {
                     tracing::warn!(
                         "safetensors weights not found. Using `pytorch_model.bin` instead. \
                         Model loading will be significantly slower."
