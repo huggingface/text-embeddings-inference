@@ -121,7 +121,7 @@ async fn predict(
                               info: Info,
                               permit: Option<OwnedSemaphorePermit>| async move {
         let permit = match permit {
-            None => infer.acquire_permit().await,
+            None => infer.try_acquire_permit().map_err(ErrorResponse::from)?,
             Some(permit) => permit,
         };
 
@@ -347,7 +347,7 @@ async fn rerank(
 
     // Closure for rerank
     let rerank_inner = move |query: String, text: String, truncate: bool, infer: Infer| async move {
-        let permit = infer.acquire_permit().await;
+        let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
 
         let response = infer
             .predict(
@@ -672,8 +672,12 @@ async fn embed(
 
                 let local_infer = infer.clone();
                 let prompt_name = req.prompt_name.clone();
+
+                let permit = local_infer
+                    .try_acquire_permit()
+                    .map_err(ErrorResponse::from)?;
+
                 futures.push(async move {
-                    let permit = local_infer.acquire_permit().await;
                     local_infer
                         .embed_pooled(
                             input,
@@ -855,8 +859,12 @@ async fn embed_sparse(
 
                 let local_infer = infer.clone();
                 let prompt_name = req.prompt_name.clone();
+
+                let permit = local_infer
+                    .try_acquire_permit()
+                    .map_err(ErrorResponse::from)?;
+
                 futures.push(async move {
-                    let permit = local_infer.acquire_permit().await;
                     let response = local_infer
                         .embed_sparse(
                             input,
@@ -1029,8 +1037,12 @@ async fn embed_all(
 
                 let local_infer = infer.clone();
                 let prompt_name = req.prompt_name.clone();
+
+                let permit = local_infer
+                    .try_acquire_permit()
+                    .map_err(ErrorResponse::from)?;
+
                 futures.push(async move {
-                    let permit = local_infer.acquire_permit().await;
                     local_infer
                         .embed_all(
                             input,
@@ -1141,6 +1153,18 @@ async fn openai_embed(
         span.set_parent(context);
     }
 
+    // NOTE: Validation of `model` won't fail for the time being given that Text Embeddings
+    // Inference can only serve a single model at a time so no need for the `model` parameter to
+    // differentiate one model from the other, but we at least raise a warning.
+    if let Some(requested_model) = &req.model {
+        if requested_model != &info.served_model_name {
+            tracing::warn!(
+                "The provided `model={}` has not been found, the `model` parameter should be provided either empty or with `model={}` instead.",
+                requested_model, info.served_model_name
+            );
+        }
+    }
+
     let start_time = Instant::now();
 
     let truncate = info.auto_truncate;
@@ -1223,8 +1247,12 @@ async fn openai_embed(
                 compute_chars += input.count_chars();
 
                 let local_infer = infer.clone();
+
+                let permit = local_infer
+                    .try_acquire_permit()
+                    .map_err(ErrorResponse::from)?;
+
                 futures.push(async move {
-                    let permit = local_infer.acquire_permit().await;
                     local_infer
                         .embed_pooled(
                             input,
@@ -1292,7 +1320,7 @@ async fn openai_embed(
     let response = OpenAICompatResponse {
         object: "list",
         data: embeddings,
-        model: info.model_id.clone(),
+        model: info.served_model_name.clone(),
         usage: OpenAICompatUsage {
             prompt_tokens: compute_tokens,
             total_tokens: compute_tokens,

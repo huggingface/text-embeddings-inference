@@ -5,7 +5,10 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize, PartialEq, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum HiddenAct {
-    #[serde(alias = "gelu_pytorch_tanh")]
+    // NOTE: `GeluErf` is excluded due to incompatibility with cuBLASLt, as only GeLU + tanh
+    // approximation is implemented due to efficiency, so GeLU is standardized to tanh approx. with
+    // slight numerical deviation from GeLU erf (neglible on inference quality)
+    #[serde(alias = "gelu_new", alias = "gelu_pytorch_tanh")]
     Gelu,
     GeluExact,
     Relu,
