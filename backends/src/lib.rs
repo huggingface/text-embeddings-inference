@@ -68,9 +68,7 @@ fn is_hpu() -> bool {
 }
 
 fn is_neuron() -> bool {
-    match Command::new("neuron-ls")
-        .output()
-    {
+    match Command::new("neuron-ls").output() {
         Ok(output) => output.status.success(),
         Err(_) => false,
     }

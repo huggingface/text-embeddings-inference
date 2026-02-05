@@ -183,4 +183,3 @@ async def test_model_embedding_consistency(tei_client, input_text: str):
     # Embeddings for the same input should be identical (or very close)
     assert np.allclose(array1, array2, rtol=1e-4, atol=1e-4), \
         "Same input should produce consistent embeddings"
-
