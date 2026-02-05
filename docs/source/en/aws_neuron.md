@@ -15,7 +15,7 @@ rendered properly in your Markdown viewer.
 -->
 # Using TEI with AWS Trainium and Inferentia
 
-Text Embeddings Inference (TEI) supports AWS Trainium and Inferentia accelerators through the [optimum-neuron](https://huggingface.co/docs/optimum-neuron) library. This integration uses `NeuronSentenceTransformers` to run embedding models efficiently on AWS Neuron devices.
+Text Embeddings Inference (TEI) supports AWS Trainium and Inferentia accelerators through the [optimum-neuron](https://huggingface.co/docs/optimum-neuron) library.
 
 ## Supported Model Types
 
@@ -87,7 +87,7 @@ When using on-the-fly compilation, you can configure the following environment v
 
 ## Pre-compiled Models
 
-For faster startup, use pre-compiled Neuron models from the Hugging Face Hub:
+For faster startup, use pre-compiled Neuron models from the Hugging Face Hub like:
 
 - [optimum/bge-base-en-v1.5-neuronx](https://huggingface.co/optimum/bge-base-en-v1.5-neuronx)
 

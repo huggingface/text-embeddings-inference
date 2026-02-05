@@ -106,7 +106,6 @@ class NeuronSentenceTransformersModel(Model):
         config = AutoConfig.from_pretrained(model_path, trust_remote_code=trust_remote)
         self.hidden_size = config.hidden_size
 
-        # Calculate max input length
         position_offset = 0
         model_type = config.model_type
         if model_type in ["xlm-roberta", "camembert", "roberta"]:
@@ -153,7 +152,6 @@ class NeuronSentenceTransformersModel(Model):
         input_ids = batch.input_ids.to(torch.long)
         attention_mask = batch.attention_mask.to(torch.long)
 
-        # NeuronSentenceTransformers forward pass expects positional arguments
         output = self.model(input_ids, attention_mask)
 
         # Get sentence embeddings from output
