@@ -93,7 +93,6 @@ impl<'de> Deserialize<'de> for BertConfigWrapper {
 #[serde(tag = "model_type", rename_all = "kebab-case")]
 enum Config {
     Bert(BertConfigWrapper),
-    #[serde(rename(deserialize = "deberta-v2"))]
     DebertaV2(DebertaV2Config),
     Camembert(BertConfig),
     #[serde(rename(deserialize = "distilbert"))]
