@@ -10,7 +10,6 @@ pub enum HiddenAct {
     // slight numerical deviation from GeLU erf (neglible on inference quality)
     #[serde(alias = "gelu_new", alias = "gelu_pytorch_tanh")]
     Gelu,
-    GeluExact,
     Relu,
     Silu,
     Swiglu,
@@ -20,7 +19,6 @@ impl HiddenAct {
     pub fn forward(&self, x: &Tensor) -> Result<Tensor> {
         match self {
             Self::Gelu => x.gelu(),
-            Self::GeluExact => x.gelu_erf(),
             Self::Relu => x.relu(),
             Self::Silu => x.silu(),
             Self::Swiglu => candle_nn::ops::swiglu(x),
@@ -90,7 +88,6 @@ impl Linear {
             if let Some(act) = &self.act {
                 match act {
                     HiddenAct::Gelu => x.gelu(),
-                    HiddenAct::GeluExact => x.gelu_erf(),
                     HiddenAct::Relu => x.relu(),
                     HiddenAct::Silu => x.silu(),
                     HiddenAct::Swiglu => candle_nn::ops::swiglu(&x),
