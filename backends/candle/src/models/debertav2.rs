@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use candle::{DType, Device, Result, Tensor, D};
+use candle::{Context, DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{conv1d, Conv1d, Conv1dConfig, Embedding, VarBuilder};
 use serde::{Deserialize, Deserializer};
 
