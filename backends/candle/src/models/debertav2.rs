@@ -198,7 +198,6 @@ impl DebertaV2Embeddings {
     }
 }
 
-// https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L605
 pub struct DebertaV2DisentangledSelfAttention {
     num_attention_heads: usize,
     query_proj: Linear,
@@ -616,7 +615,6 @@ impl DebertaV2DisentangledSelfAttention {
     }
 }
 
-// https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L270
 pub struct DebertaV2Attention {
     dsa: DebertaV2DisentangledSelfAttention,
     output: DebertaV2SelfOutput,
@@ -656,7 +654,6 @@ impl DebertaV2Attention {
     }
 }
 
-// https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L255
 pub struct DebertaV2SelfOutput {
     dense: Linear,
     layer_norm: LayerNorm,
@@ -1419,8 +1416,8 @@ pub(crate) fn make_log_bucket_position(
     let gt_neg_mid = relative_pos.gt(-mid as i64)?;
 
     let condition = lt_mid
-        .to_dtype(candle::DType::F32)?
-        .mul(&gt_neg_mid.to_dtype(candle::DType::F32)?)?
+        .to_dtype(DType::F32)?
+        .mul(&gt_neg_mid.to_dtype(DType::F32)?)?
         .to_dtype(DType::U8)?;
 
     let on_true = Tensor::new(&[(mid - 1) as u32], device)?
