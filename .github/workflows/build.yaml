@@ -18,6 +18,7 @@ on:
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - "Dockerfile"
+      - "Dockerfile-neuron"
     branches:
       - 'main'
 
