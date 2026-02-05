@@ -26,7 +26,6 @@ pub struct DebertaV2Config {
     pub num_hidden_layers: usize,
     pub num_attention_heads: usize,
     pub intermediate_size: usize,
-    #[serde(deserialize_with = "deberta_hidden_act_deserializer::deserialize")]
     pub hidden_act: HiddenAct,
     pub max_position_embeddings: usize,
     pub type_vocab_size: usize,
@@ -48,11 +47,11 @@ pub struct DebertaV2Config {
     pub conv_act: Option<String>,
     pub id2label: Option<Id2Label>,
     pub label2id: Option<Label2Id>,
-    #[serde(deserialize_with = "deberta_hidden_act_deserializer::deserialize_optional")]
     pub pooler_hidden_act: Option<HiddenAct>,
     pub pooler_hidden_size: Option<usize>,
 }
 
+// NOTE: https://huggingface.co/microsoft/deberta-v3-base/blob/main/config.json#L14
 fn deserialize_pos_att_type<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
 where
     D: Deserializer<'de>,
@@ -70,39 +69,6 @@ where
     }
 }
 
-// Custom deserializer for DeBERTa hidden_act: maps "gelu" to GeluExact (exact GELU)
-mod deberta_hidden_act_deserializer {
-    use super::*;
-
-    fn parse(s: &str) -> std::result::Result<HiddenAct, String> {
-        match s.to_lowercase().as_str() {
-            "gelu" => Ok(HiddenAct::GeluExact),
-            "relu" => Ok(HiddenAct::Relu),
-            _ => Err(format!("Unknown hidden_act: {}", s)),
-        }
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> std::result::Result<HiddenAct, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        parse(&s).map_err(serde::de::Error::custom)
-    }
-
-    pub fn deserialize_optional<'de, D>(
-        deserializer: D,
-    ) -> std::result::Result<Option<HiddenAct>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Option::<String>::deserialize(deserializer)?
-            .map(|s| parse(&s).map_err(serde::de::Error::custom))
-            .transpose()
-    }
-}
-
-// https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L823
 pub struct DebertaV2Embeddings {
     word_embeddings: Embedding,
     position_embeddings: Option<Embedding>,
@@ -698,7 +664,6 @@ impl DebertaV2SelfOutput {
     }
 }
 
-// https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L307
 pub struct DebertaV2Intermediate {
     dense: Linear,
     intermediate_act: HiddenAct,
@@ -727,7 +692,6 @@ impl DebertaV2Intermediate {
     }
 }
 
-// https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L323
 pub struct DebertaV2Output {
     dense: Linear,
     layer_norm: LayerNorm,
@@ -764,7 +728,6 @@ impl DebertaV2Output {
     }
 }
 
-// https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L339
 pub struct DebertaV2Layer {
     attention: DebertaV2Attention,
     intermediate: DebertaV2Intermediate,
@@ -911,8 +874,8 @@ impl DebertaV2Encoder {
             )?);
         }
 
-        // NOTE: The Python code assumes that the config attribute "norm_rel_ebd" is an array of some kind, but most examples have it as a string.
-        // So it might need to be updated at some point.
+        // NOTE: The Python counterpart in Transformers assumes that the config attribute
+        // `norm_rel_ebd` is an array, but most examples have it as a string.
         let norm_rel_ebd = match config.norm_rel_ebd.as_ref() {
             Some(nre) => nre.trim().to_string(),
             None => "none".to_string(),
@@ -974,10 +937,6 @@ impl DebertaV2Encoder {
         let mut query_states: Option<Tensor> = query_states.cloned();
 
         for (i, layer_module) in self.layer.iter().enumerate() {
-            // NOTE: The original python code branches here if this model is being
-            // used for training vs. inferencing. For now, we will only handle the
-            // inferencing side of things
-
             output_states = layer_module.forward(
                 next_kv.as_ref(),
                 &attention_mask,
@@ -1358,7 +1317,6 @@ pub struct DebertaV2ContextPooler {
     span: tracing::Span,
 }
 
-// https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L49
 impl DebertaV2ContextPooler {
     pub fn load(vb: VarBuilder, config: &DebertaV2Config) -> Result<Self> {
         let pooler_hidden_size = config
