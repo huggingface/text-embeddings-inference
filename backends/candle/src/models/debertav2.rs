@@ -799,19 +799,22 @@ impl DebertaV2Layer {
 // `conv_kernel_size` exists and is > 0
 // https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L373
 pub struct ConvLayer {
-    _conv_act: String,
-    _conv: Conv1d,
-    _layer_norm: LayerNorm,
+    conv_act: HiddenAct,
+    conv: Conv1d,
+    layer_norm: LayerNorm,
 }
 
 impl ConvLayer {
     pub fn load(vb: VarBuilder, config: &DebertaV2Config) -> Result<Self> {
         let kernel_size = config.conv_kernel_size.unwrap_or(3);
         let groups = config.conv_groups.unwrap_or(1);
-        let conv_act = config
+        let conv_act_str = config
             .conv_act
             .clone()
             .unwrap_or_else(|| "tanh".to_string());
+        let conv_act: HiddenAct =
+            serde_json::from_value(serde_json::Value::String(conv_act_str))
+                .map_err(|e| candle::Error::Msg(format!("Invalid conv_act: {e}")))?;
 
         let conv_conf = Conv1dConfig {
             padding: (kernel_size - 1) / 2,
@@ -834,19 +837,39 @@ impl ConvLayer {
         )?;
 
         Ok(Self {
-            _conv_act: conv_act,
-            _conv: conv,
-            _layer_norm: layer_norm,
+            conv_act,
+            conv,
+            layer_norm,
         })
     }
 
     pub fn forward(
         &self,
-        _hidden_states: &Tensor,
-        _residual_states: &Tensor,
-        _input_mask: &Tensor,
+        hidden_states: &Tensor,
+        residual_states: &Tensor,
+        input_mask: &Tensor,
     ) -> Result<Tensor> {
-        todo!("Need a model that contains a conv layer to test against.")
+        let out = hidden_states.transpose(1, 2)?;
+
+        let out = self.conv.forward(&out)?;
+
+        let out = out.transpose(1, 2)?;
+
+        let mask = input_mask
+            .to_dtype(out.dtype())?
+            .unsqueeze(2)?
+            .broadcast_as(out.shape())?;
+        let out = out.broadcast_mul(&mask)?;
+
+        let out = self.conv_act.forward(&out)?;
+
+        let layer_norm_input = residual_states.broadcast_add(&out)?;
+
+        let output = self.layer_norm.forward(&layer_norm_input, None)?;
+
+        let output_states = output.broadcast_mul(&mask)?;
+
+        Ok(output_states)
     }
 }
 
