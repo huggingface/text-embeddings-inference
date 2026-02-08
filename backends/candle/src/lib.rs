@@ -114,7 +114,7 @@ enum Config {
     Roberta(BertConfig),
     XlmRoberta(BertConfig),
     #[allow(dead_code)]
-    #[serde(alias = "llama_bidirec")] // Also accept llama_bidirec
+    #[serde(alias = "llama_bidirec")]
     Llama(LLamaConfig),
 }
 
