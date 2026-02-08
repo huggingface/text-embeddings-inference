@@ -20,6 +20,7 @@ struct Qwen3Attention {
     attention_head_size: usize,
 
     softmax_scale: f32,
+    use_bidirectional_attention: bool,
 
     span: tracing::Span,
 }
@@ -98,6 +99,7 @@ impl Qwen3Attention {
             num_key_value_heads,
             attention_head_size,
             softmax_scale,
+            use_bidirectional_attention: config.use_bidirectional_attention.unwrap_or(false),
             span: tracing::span!(tracing::Level::TRACE, "attention"),
         })
     }
@@ -109,7 +111,6 @@ impl Qwen3Attention {
         cos: &Tensor,
         sin: &Tensor,
         max_s: usize,
-        causal: bool,
     ) -> Result<Tensor> {
         let _enter = self.span.enter();
 
@@ -159,7 +160,7 @@ impl Qwen3Attention {
             max_s,
             max_s,
             self.softmax_scale,
-            causal,
+            !self.use_bidirectional_attention,
             None,
             None,
         )?;
@@ -263,7 +264,6 @@ impl Qwen3Layer {
         cos: &Tensor,
         sin: &Tensor,
         max_s: usize,
-        causal: bool,
     ) -> Result<(Tensor, Tensor)> {
         let _enter = self.span.enter();
 
@@ -271,7 +271,7 @@ impl Qwen3Layer {
 
         let attn_output =
             self.attention
-                .forward(&normed_hidden_states, cu_seqlens, cos, sin, max_s, causal)?;
+                .forward(&normed_hidden_states, cu_seqlens, cos, sin, max_s)?;
 
         let (normed_attn_res_output, attn_res) = self
             .post_attention_layer_norm
@@ -291,7 +291,6 @@ pub struct FlashQwen3Model {
     cos_cache: Tensor,
     sin_cache: Tensor,
     pool: Pool,
-    use_bidirectional_attention: bool,
     pub device: Device,
 
     span: tracing::Span,
@@ -317,30 +316,32 @@ impl FlashQwen3Model {
 
         // The Qwen3-Reranker models contain the `model` key
         // https://huggingface.co/collections/Qwen/qwen3-reranker-6841b22d0192d7ade9cdefea
-        // Keep reference to root vb for loading projection layer
-        let vb_root = vb.clone();
-        let vb = if vb.contains_tensor("model.embed_tokens.weight") {
-            vb.pp("model")
+        let model_prefix = if vb.contains_tensor("model.embed_tokens.weight") {
+            "model."
         } else {
-            vb
+            ""
         };
 
         let embeddings = Embedding::new(
-            vb.pp("embed_tokens")
+            vb.pp(format!("{model_prefix}embed_tokens"))
                 .get((config.vocab_size, config.hidden_size), "weight")?,
             config.hidden_size,
         );
 
         let layers = (0..config.num_hidden_layers)
-            .map(|index| Qwen3Layer::load(vb.pp(format!("layers.{index}")), config))
+            .map(|index| Qwen3Layer::load(vb.pp(format!("{model_prefix}layers.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
 
-        let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
+        let norm = RMSNorm::load(
+            vb.pp(format!("{model_prefix}norm")),
+            config.hidden_size,
+            config.rms_norm_eps,
+        )?;
 
         let projection = if let Some(num_labels) = config.num_labels {
-            if vb_root.contains_tensor("linear.weight") {
+            if vb.contains_tensor("linear.weight") {
                 let projection_weight =
-                    vb_root.get((num_labels, config.hidden_size), "linear.weight")?;
+                    vb.get((num_labels, config.hidden_size), "linear.weight")?;
                 Some(Linear::new(projection_weight, None, None))
             } else {
                 tracing::warn!(
@@ -351,8 +352,6 @@ impl FlashQwen3Model {
         } else {
             None
         };
-
-        let use_bidirectional_attention = config.use_bidirectional_attention.unwrap_or(false);
 
         let inv_freqs = get_inv_freqs(
             layers[0].attention.attention_head_size,
@@ -375,7 +374,6 @@ impl FlashQwen3Model {
             cos_cache,
             sin_cache,
             pool,
-            use_bidirectional_attention,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
@@ -401,8 +399,6 @@ impl FlashQwen3Model {
         let cos = index_select(&self.cos_cache, &position_ids, 0)?;
         let sin = index_select(&self.sin_cache, &position_ids, 0)?;
 
-        let causal = !self.use_bidirectional_attention;
-
         let mut residual = None;
         for layer in &self.layers {
             let (h, r) = layer.forward(
@@ -412,7 +408,6 @@ impl FlashQwen3Model {
                 &cos,
                 &sin,
                 batch.max_length as usize,
-                causal,
             )?;
             hidden_states = h;
             residual = Some(r);
