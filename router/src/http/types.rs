@@ -224,6 +224,19 @@ pub(crate) struct PredictRequest {
     pub raw_scores: bool,
 }
 
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct PredictTokensRequest {
+    pub inputs: PredictInput,
+    #[schema(default = "false", example = "false", nullable = true)]
+    pub truncate: Option<bool>,
+    #[serde(default)]
+    #[schema(default = "right", example = "right")]
+    pub truncation_direction: TruncationDirection,
+    #[serde(default)]
+    #[schema(default = "false", example = "false")]
+    pub raw_scores: bool,
+}
+
 #[derive(Serialize, ToSchema)]
 pub(crate) struct Prediction {
     #[schema(example = "0.5")]
@@ -602,4 +615,25 @@ pub(crate) enum VertexPrediction {
 #[derive(Serialize, ToSchema)]
 pub(crate) struct VertexResponse {
     pub predictions: Vec<VertexPrediction>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct TokenPrediction {
+    #[schema(example = "Hello")]
+    pub token: String,
+    #[schema(example = 0)]
+    pub token_id: u32,
+    #[schema(example = 0)]
+    pub start: Option<usize>,
+    #[schema(example = 5)]
+    pub end: Option<usize>,
+    #[schema(example = json!({"O": 9.41, "B-MISC": -1.15, "I-MISC": -0.85}))]
+    pub results: std::collections::HashMap<String, f32>,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(untagged)]
+pub(crate) enum TokenPredictResponse {
+    Single(Vec<TokenPrediction>),
+    Batch(Vec<Vec<TokenPrediction>>),
 }

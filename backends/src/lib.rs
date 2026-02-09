@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 pub use crate::dtype::DType;
 pub use text_embeddings_backend_core::{
-    BackendError, Batch, Embedding, Embeddings, ModelType, Pool,
+    BackendError, Batch, Embedding, Embeddings, ModelType, Pool, TokenPredictions,
 };
 
 #[cfg(feature = "candle")]
@@ -232,6 +232,8 @@ impl Backend {
             compact_position_ids: None,
             fold_gather: None,
             scatter_unfold: None,
+            tokens: vec![],
+            offsets: vec![],
         }
     }
 
@@ -302,6 +304,8 @@ impl Backend {
             compact_position_ids: None,
             fold_gather: None,
             scatter_unfold: None,
+            tokens: vec![],
+            offsets: vec![],
         };
 
         match &self.model_type {
@@ -340,6 +344,8 @@ impl Backend {
                 compact_position_ids: None,
                 fold_gather: None,
                 scatter_unfold: None,
+                tokens: vec![],
+                offsets: vec![],
             };
             match &self.model_type {
                 ModelType::Classifier => self.predict(batch).await.map(|_| ()),
@@ -371,6 +377,25 @@ impl Backend {
 
         self.backend_sender
             .try_send(BackendCommand::Predict(batch, Span::current(), sender))
+            .expect("No backend receiver. This is a bug.");
+        receiver.await.expect(
+            "Backend blocking task dropped the sender without send a response. This is a bug.",
+        )
+    }
+
+    #[instrument(skip_all)]
+    pub async fn predict_tokens(
+        &self,
+        batch: Batch,
+    ) -> Result<(TokenPredictions, Duration), BackendError> {
+        let (sender, receiver) = oneshot::channel();
+
+        self.backend_sender
+            .try_send(BackendCommand::PredictTokens(
+                batch,
+                Span::current(),
+                sender,
+            ))
             .expect("No backend receiver. This is a bug.");
         receiver.await.expect(
             "Backend blocking task dropped the sender without send a response. This is a bug.",
@@ -581,6 +606,13 @@ impl BackendThread {
                             (e, start.elapsed())
                         }));
                     }
+                    BackendCommand::PredictTokens(batch, span, sender) => {
+                        let _span = span.entered();
+                        let _ = sender.send(backend.predict_tokens(batch).map(|e| {
+                            healthy = true;
+                            (e, start.elapsed())
+                        }));
+                    }
                 };
                 let _ = health_sender.send(healthy);
             }
@@ -607,6 +639,12 @@ enum BackendCommand {
         Span,
         #[allow(clippy::type_complexity)]
         oneshot::Sender<Result<(Predictions, Duration), BackendError>>,
+    ),
+    PredictTokens(
+        Batch,
+        Span,
+        #[allow(clippy::type_complexity)]
+        oneshot::Sender<Result<(TokenPredictions, Duration), BackendError>>,
     ),
 }
 

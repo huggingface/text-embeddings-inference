@@ -29,6 +29,8 @@ pub struct Metadata {
     pub(crate) prompt_tokens: usize,
     /// Pooled embedding
     pub(crate) pooling: bool,
+    /// Token classification
+    pub(crate) token_classification: bool,
 }
 
 /// Request Queue
@@ -116,7 +118,7 @@ fn queue_blocking_task(
     while let Some(cmd) = queue_receiver.blocking_recv() {
         match cmd {
             QueueCommand::Append(entry, span) => {
-                let _span = span.entered(); 
+                let _span = span.entered();
                 entries.push_back(*entry);
                 let gauge = metrics::gauge!("te_queue_size");
                 gauge.increment(1.0);
@@ -130,6 +132,8 @@ fn queue_blocking_task(
                 let mut input_ids = Vec::with_capacity(max_batch_tokens);
                 let mut token_type_ids = Vec::with_capacity(max_batch_tokens);
                 let mut position_ids = Vec::with_capacity(max_batch_tokens);
+                let mut tokens = Vec::with_capacity(max_batch_tokens);
+                let mut offsets = Vec::with_capacity(max_batch_tokens);
 
                 let mut pooled_indices = Vec::with_capacity(capacity);
                 let mut raw_indices = Vec::with_capacity(capacity);
@@ -176,6 +180,8 @@ fn queue_blocking_task(
                     input_ids.extend(entry.encoding.input_ids);
                     token_type_ids.extend(entry.encoding.token_type_ids);
                     position_ids.extend(entry.encoding.position_ids);
+                    tokens.extend(entry.encoding.tokens);
+                    offsets.extend(entry.encoding.offsets);
 
                     current_tokens += entry_tokens;
                     metadata.push(entry.metadata);
@@ -240,7 +246,9 @@ fn queue_blocking_task(
                             compact_input_ids,
                             compact_position_ids,
                             scatter_unfold,
-                            fold_gather, // Add the second mapping
+                            fold_gather,
+                            tokens,
+                            offsets,
                         },
                     ))
                 };
