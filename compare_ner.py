@@ -54,6 +54,8 @@ for text_idx, text in enumerate(test_texts):
         # check out the BEI docs on docs.baseten.co/engines
     )
     bei_data = bei_response.data[0]
+    latency = bei_response.total_time
+    print(f"BEI latency: {latency:.2f} seconds (incl network)")
 
     # Get Transformers predictions
     print("\n--- Transformers Predictions ---")
@@ -146,6 +148,8 @@ bei_response = client.batch_post(
     "/predict_tokens", payloads=[{"inputs": [[text]], "raw_scores": False}]
 )
 bei_data = bei_response.data[0]
+latency = bei_response.total_time
+print(f"BEI prediction latency: {latency:.2f} seconds")
 
 # Get Transformers predictions
 with torch.no_grad():
@@ -190,3 +194,20 @@ if isinstance(bei_data, list) and len(bei_data) > 0:
 print(f"\n{'=' * 80}")
 print("Comparison completed!")
 print(f"{'=' * 80}")
+
+print("running: latency tests")
+times = []
+for i in range(30):
+    bei_response = client.batch_post(
+        "/predict_tokens", payloads=[{"inputs": [[text]], "raw_scores": False}]
+    )
+    bei_data = bei_response.data[0]
+    latency = bei_response.total_time
+    if i > 10: # warmup
+        times.append(latency)
+print("mean latency:", sum(times) / len(times), "for 1 sentence at a time")
+print("running throughput tests")
+bei_response = client.batch_post(
+    "/predict_tokens", payloads=[{"inputs": [[text],[text],[text],[text],[text],[text],[text],[text]], "raw_scores": False}] * 32
+)
+print(f"running 256 sentences in 32 requests took {bei_response.total_time:.2f} seconds")
