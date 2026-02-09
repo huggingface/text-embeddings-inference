@@ -40,7 +40,8 @@ pub(crate) fn prometheus_builer(
     // Compression ratio buckets (for values between 0 and 1)
     let compression_ratio_matcher = Matcher::Full(String::from("te_radix_mlp_compression_ratio"));
     let compression_ratio_buckets: Vec<f64> = vec![
-        0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99, 1.0
+        0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95,
+        0.96, 0.97, 0.98, 0.99, 1.0,
     ];
 
     // Prometheus handler

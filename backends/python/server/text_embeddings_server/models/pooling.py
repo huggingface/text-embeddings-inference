@@ -16,9 +16,9 @@ class _Pooling(ABC):
 
 class DefaultPooling(_Pooling):
     def __init__(self, hidden_size, pooling_mode) -> None:
-        assert (
-            pooling_mode != "splade"
-        ), "Splade pooling is not supported for DefaultPooling"
+        assert pooling_mode != "splade", (
+            "Splade pooling is not supported for DefaultPooling"
+        )
         self.pooling = Pooling(hidden_size, pooling_mode=pooling_mode)
 
     @tracer.start_as_current_span("pooling")

@@ -16,10 +16,12 @@ TEST_CONFIGS = {
             "MAX_WARMUP_SEQUENCE_LENGTH": "512",
         },
         "args": [
-            "--dtype", "bfloat16",
+            "--dtype",
+            "bfloat16",
         ],
     },
 }
+
 
 @pytest.fixture(scope="module", params=TEST_CONFIGS.keys())
 def test_config(request: SubRequest) -> Dict[str, Any]:
@@ -81,4 +83,6 @@ async def test_model_single_request(
         print(f"{expected_array.tolist()}")
         print("\nReceived output:")
         print(f"{response_array.tolist()}")
-        raise AssertionError("Response array does not match expected array within tolerance")
+        raise AssertionError(
+            "Response array does not match expected array within tolerance"
+        )

@@ -43,6 +43,7 @@ HABANA_RUN_ARGS = {
     "runtime": "habana",
 }
 
+
 def stream_container_logs(container, test_name):
     """Stream container logs in a separate thread."""
     try:
@@ -67,11 +68,13 @@ class LauncherHandle:
             async with session.post(
                 f"{self.base_url}/embed",
                 json={"inputs": prompt},
-                headers={"Content-Type": "application/json"}
+                headers={"Content-Type": "application/json"},
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    raise RuntimeError(f"Request failed with status {response.status}: {error_text}")
+                    raise RuntimeError(
+                        f"Request failed with status {response.status}: {error_text}"
+                    )
                 return await response.json()
 
     def _inner_health(self):
@@ -98,11 +101,14 @@ class LauncherHandle:
                     logger.error(f"Health check failed after {timeout}s: {str(e)}")
                     raise RuntimeError(f"Health check failed: {str(e)}")
                 if attempt % 10 == 0 and attempt != 0:  # Only log every 10th attempt
-                    logger.debug(f"Connection attempt {attempt}/{timeout} failed: {str(e)}")
+                    logger.debug(
+                        f"Connection attempt {attempt}/{timeout} failed: {str(e)}"
+                    )
                 await asyncio.sleep(1)
             except Exception as e:
                 logger.error(f"Unexpected error during health check: {str(e)}")
                 import traceback
+
                 logger.error(f"Full traceback:\n{traceback.format_exc()}")
                 raise
 
@@ -127,6 +133,7 @@ class ContainerLauncherHandle(LauncherHandle):
         except Exception as e:
             logger.error(f"Error checking container health: {str(e)}")
             return False
+
 
 class ProcessLauncherHandle(LauncherHandle):
     def __init__(self, process, port: int):
@@ -158,7 +165,6 @@ def gaudi_launcher(event_loop):
         logger.info(
             f"Starting docker launcher for model {model_id} and test {test_name}"
         )
-
 
         port = 8080
 

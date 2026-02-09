@@ -7,7 +7,7 @@
 set -euo pipefail
 
 # Configuration
-VERSION="1.8.6"
+VERSION="1.8.6.ner"
 REGISTRIES=(
     # "registry.internal.huggingface.tech/api-inference/text-embeddings-inference"
     # "ghcr.io/huggingface/text-embeddings-inference"
@@ -103,7 +103,7 @@ build_and_push_variant() {
     local tags=()
     for registry in "${REGISTRIES[@]}"; do
         tags+=("-t" "${registry}:${prefix}${VERSION}")
-        tags+=("-t" "${registry}:${prefix}latest")
+        # tags+=("-t" "${registry}:${prefix}latest")
     done
     
     # Build standard image
@@ -157,7 +157,7 @@ build_all_variants() {
         pids+=($!)
         
         # Limit parallel builds to avoid overwhelming the system
-        if [[ ${#pids[@]} -ge 5 ]]; then
+        if [[ ${#pids[@]} -ge 8 ]]; then
             for pid in "${pids[@]}"; do
                 wait "$pid"
             done
