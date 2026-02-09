@@ -1895,7 +1895,7 @@ impl From<&ErrorType> for StatusCode {
             ErrorType::Backend => StatusCode::FAILED_DEPENDENCY,
             ErrorType::Overloaded => StatusCode::TOO_MANY_REQUESTS,
             ErrorType::Tokenizer => StatusCode::UNPROCESSABLE_ENTITY,
-            ErrorType::Validation => StatusCode::PAYLOAD_TOO_LARGE,
+            ErrorType::Validation => StatusCode::UNPROCESSABLE_ENTITY,
             ErrorType::Empty => StatusCode::BAD_REQUEST,
         }
     }
