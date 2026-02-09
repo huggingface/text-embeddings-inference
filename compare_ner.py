@@ -6,10 +6,14 @@ import requests
 import torch
 from transformers import AutoTokenizer, AutoModelForTokenClassification
 import json
+from baseten_performance_client import PerformanceClient
+
+client = PerformanceClient(
+    base_url="https://model-3ydjdkv3.api.baseten.co/environments/production/sync"
+)
 
 # Configuration
-TEI_URL = "http://localhost:3000"
-MODEL_PATH = "./bert-base-NER-uncased"
+MODEL_PATH = "dslim/bert-base-NER-uncased"
 
 # Test texts
 test_texts = [
@@ -40,10 +44,16 @@ for text_idx, text in enumerate(test_texts):
 
     # Get BEI predictions
     print("\n--- BEI Predictions ---")
-    bei_response = requests.post(
-        f"{TEI_URL}/predict_tokens", json={"inputs": [[text]], "raw_scores": False}
+    bei_response = client.batch_post(
+        "/predict_tokens", payloads=[{"inputs": [[text]], "raw_scores": False}]
+        # TIPS FOR HIGH CONCURRENCY / batch loads
+        # For sending two requests and join them
+        # "/predict_tokens", payloads=[{"inputs": [[text]], "raw_scores": False},{"inputs": [[text2]], "raw_scores": False}]
+        # or sending two texts in a single requests (1 replica processes them)
+        # "/predict_tokens", payloads=[{"inputs": [[text],[text2]], "raw_scores": False}]
+        # check out the BEI docs on docs.baseten.co/engines
     )
-    bei_data = bei_response.json()
+    bei_data = bei_response.data[0]
 
     # Get Transformers predictions
     print("\n--- Transformers Predictions ---")
@@ -132,10 +142,10 @@ print(f"{'=' * 80}")
 text = test_texts[0]
 
 # Get BEI predictions with raw scores
-bei_response = requests.post(
-    f"{TEI_URL}/predict_tokens", json={"inputs": [[text]], "raw_scores": False}
+bei_response = client.batch_post(
+    "/predict_tokens", payloads=[{"inputs": [[text]], "raw_scores": False}]
 )
-bei_data = bei_response.json()
+bei_data = bei_response.data[0]
 
 # Get Transformers predictions
 with torch.no_grad():
