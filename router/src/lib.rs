@@ -46,6 +46,7 @@ pub async fn run(
     revision: Option<String>,
     tokenization_workers: Option<usize>,
     dtype: Option<DType>,
+    served_model_name: String,
     pooling: Option<text_embeddings_backend::Pool>,
     max_concurrent_requests: usize,
     max_batch_tokens: usize,
@@ -72,12 +73,16 @@ pub async fn run(
         // Using a local model
         (model_id_path.to_path_buf(), None)
     } else {
-        let mut builder = ApiBuilder::from_env()
-            .with_progress(false)
-            .with_token(hf_token);
+        let mut builder = ApiBuilder::from_env().with_progress(false);
 
         if let Some(cache_dir) = huggingface_hub_cache {
             builder = builder.with_cache_dir(cache_dir.into());
+        }
+
+        // NOTE: Only set the `token` if it's not None, otherwise leave it as default so that the
+        // token from the cache location is pulled instead, if exists
+        if hf_token.is_some() {
+            builder = builder.with_token(hf_token);
         }
 
         if let Ok(origin) = std::env::var("HF_HUB_USER_AGENT_ORIGIN") {
@@ -323,6 +328,7 @@ pub async fn run(
         model_id,
         model_sha: revision,
         model_dtype: dtype.to_string(),
+        served_model_name,
         model_type,
         max_concurrent_requests,
         max_input_length,
@@ -539,6 +545,8 @@ pub struct Info {
     pub model_sha: Option<String>,
     #[cfg_attr(feature = "http", schema(example = "float16"))]
     pub model_dtype: String,
+    #[cfg_attr(feature = "http", schema(example = "thenlper/gte-base"))]
+    pub served_model_name: String,
     pub model_type: ModelType,
     /// Router Parameters
     #[cfg_attr(feature = "http", schema(example = "128"))]
