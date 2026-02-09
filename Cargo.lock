@@ -551,6 +551,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "candle-flash-attn-3"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d952728fd456ab48f94ed46e0ef761e5b68bdd7eba5d45cb0638eb37f7d700c"
+dependencies = [
+ "anyhow",
+ "candle-core",
+ "half",
+ "num_cpus",
+ "rayon",
+]
+
+[[package]]
 name = "candle-flash-attn-v1"
 version = "0.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4513,6 +4526,7 @@ dependencies = [
  "candle-core",
  "candle-cublaslt",
  "candle-flash-attn",
+ "candle-flash-attn-3",
  "candle-flash-attn-v1",
  "candle-index-select-cu",
  "candle-layer-norm",
