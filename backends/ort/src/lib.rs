@@ -430,14 +430,14 @@ impl Backend for OrtBackend {
                     "Unknown output keys: {:?}",
                     outputs
                 )))?
-                // NOTE: This might not be correct as we're using the tanh approximation when
-                // quantizing to INT8, but then we're converting the [-127,127] range into `f32`
-                .try_extract_array::<f32>()
+                // NOTE: The ONNX model outputs INT8 tensors in [-127,127] range,
+                // so we extract as i8 and convert to f32. Temporary Solution.
+                .try_extract_array::<i8>()
                 .e()?
                 .to_owned();
 
             for (i, e) in outputs.rows().into_iter().enumerate() {
-                embeddings.insert(i, Embedding::Pooled(e.to_vec()));
+                embeddings.insert(i, Embedding::Pooled(e.iter().map(|&v| v as f32).collect()));
             }
         } else if outputs.contains_key("sentence_embedding") {
             let outputs = outputs
