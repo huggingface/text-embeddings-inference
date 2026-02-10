@@ -2,14 +2,14 @@ mod common;
 
 use crate::common::{sort_embeddings, SnapshotEmbeddings};
 use anyhow::Result;
-use common::{batch, cosine_matcher, load_tokenizer};
+use common::{batch, cosine_matcher, download_artifacts, load_tokenizer};
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
 
 #[test]
 #[serial_test::serial]
 fn test_pplx1() -> Result<()> {
-    let model_root = std::path::PathBuf::from("/traindata/markus/pplx-embed-1-0.6b");
+    let (model_root, _) = download_artifacts("perplexity-ai/pplx-embed-v1-0.6b", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
@@ -54,7 +54,7 @@ fn test_pplx1() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_pplx1_quantization() -> Result<()> {
-    let model_root = std::path::PathBuf::from("/traindata/markus/pplx-embed-1-0.6b");
+    let (model_root, _) = download_artifacts("perplexity-ai/pplx-embed-v1-0.6b", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
