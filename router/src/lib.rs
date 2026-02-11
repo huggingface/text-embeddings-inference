@@ -133,6 +133,14 @@ pub async fn run(
                 ModelType::Reranker(classifier_model)
             }
         }
+        text_embeddings_backend::ModelType::ListwiseReranker => {
+            // Qwen3-Reranker uses yes/no tokens, create dummy id2label
+            let mut id2label = HashMap::new();
+            id2label.insert("0".to_string(), "LABEL_0".to_string());
+            let mut label2id = HashMap::new();
+            label2id.insert("LABEL_0".to_string(), 0);
+            ModelType::Reranker(ClassifierModel { id2label, label2id })
+        }
         text_embeddings_backend::ModelType::Embedding(pool) => {
             ModelType::Embedding(EmbeddingModel {
                 pooling: pool.to_string(),
@@ -402,6 +410,22 @@ fn get_backend_model_type(
     model_root: &Path,
     pooling: Option<text_embeddings_backend::Pool>,
 ) -> Result<text_embeddings_backend::ModelType> {
+    // Check for Qwen3-Reranker (ListwiseReranker)
+    // Only detect as ListwiseReranker if:
+    // 1. is_reranker=true explicitly set, OR
+    // 2. model_type is "qwen3" with CausalLM architecture AND no Sentence Transformers pooling config
+    //    (Qwen3-Embedding has 1_Pooling/config.json, Qwen3-Reranker does not)
+    let has_pooling_config = model_root.join("1_Pooling/config.json").exists();
+    
+    if config.is_reranker == Some(true)
+        || (config.model_type.to_lowercase() == "qwen3"
+            && config.architectures.iter().any(|a| a.contains("CausalLM"))
+            && !has_pooling_config)
+    {
+        tracing::info!("Detected Qwen3-Reranker model (ListwiseReranker)");
+        return Ok(text_embeddings_backend::ModelType::ListwiseReranker);
+    }
+
     for arch in &config.architectures {
         // Edge case affecting `Alibaba-NLP/gte-multilingual-base` and possibly other fine-tunes of
         // the same base model. More context at https://huggingface.co/Alibaba-NLP/gte-multilingual-base/discussions/7
@@ -470,6 +494,9 @@ pub struct ModelConfig {
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
     pub auto_map: Option<HashMap<String, String>>,
+    /// Flag indicating if this is a reranker model (used by Qwen3-Reranker)
+    #[serde(default)]
+    pub is_reranker: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
