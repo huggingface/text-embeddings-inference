@@ -23,9 +23,9 @@ use crate::compute_cap::{
 };
 use crate::models::{
     BertConfig, BertModel, Dense, DenseConfig, DenseLayer, DistilBertConfig, DistilBertModel,
-    GTEConfig, GTEModel, Gemma3Config, Gemma3Model, JinaBertModel, JinaCodeBertModel, MPNetConfig,
-    MPNetModel, MistralConfig, Model, ModernBertConfig, ModernBertModel, NomicBertModel,
-    NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model,
+    GTEConfig, GTEModel, Gemma3Config, Gemma3Model, JinaBertModel, JinaCodeBertModel, LLamaConfig,
+    MPNetConfig, MPNetModel, MistralConfig, Model, ModernBertConfig, ModernBertModel,
+    NomicBertModel, NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -113,6 +113,9 @@ enum Config {
     Qwen3(Qwen3Config),
     Roberta(BertConfig),
     XlmRoberta(BertConfig),
+    #[allow(dead_code)]
+    #[serde(alias = "llama_bidirec")]
+    Llama(LLamaConfig),
 }
 
 pub struct CandleBackend {
@@ -180,7 +183,19 @@ impl CandleBackend {
         let config: String = std::fs::read_to_string(model_path.join("config.json"))
             .context("Unable to read config file")
             .map_err(|err| BackendError::Start(format!("{err:?}")))?;
-        let config: Config = serde_json::from_str(&config)
+
+        let config_value: serde_json::Value = serde_json::from_str(&config)
+            .context("Unable to parse config.json")
+            .map_err(|err| BackendError::Start(format!("{err:?}")))?;
+
+        if let Some(hidden_act) = config_value.get("hidden_act").and_then(|v| v.as_str()) {
+            if hidden_act == "gelu" {
+                // NOTE: https://github.com/huggingface/text-embeddings-inference/pull/753
+                tracing::warn!("The `config.json` contains `hidden_act=gelu` and GeLU + tanh approximation will be used instead of exact GeLU (aka. GeLU erf), which might lead to subtle differences with Transformers or Sentence Transformers outputs which use exact GeLU when `hidden_act=gelu`, unless specified otherwise. GeLU + tanh is more efficient and more consistent across devices (e.g., cuBLASLt comes with fused GeLU + tanh), and will have negligible impact on the inference quality.");
+            }
+        }
+
+        let config: Config = serde_json::from_value(config_value)
             .context("Model is not supported")
             .map_err(|err| BackendError::Start(format!("{err:?}")))?;
 
@@ -283,6 +298,10 @@ impl CandleBackend {
                 tracing::info!("Starting MPNet model on {:?}", device);
                 Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
             }
+            (Config::Llama(_config), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
+                "Llama is only supported on Cuda devices in fp16 with flash attention enabled"
+                    .to_string(),
+            )),
             (Config::Mistral(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
                 "Mistral is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
@@ -509,11 +528,41 @@ impl CandleBackend {
                     ))
                 }
             }
+            #[cfg(feature = "cuda")]
+            (Config::Llama(config), Device::Cuda(_)) => {
+                match config.rope_scaling {
+                    Some(ref _rope_scaling) => {
+                        // error, as no rope scaling is supported for FlashLlama yet
+                        Err(BackendError::Start(
+                            "Rope scaling is not supported for FlashLlama yet".to_string(),
+                        ))
+                    }
+                    None => {
+                        let cfg_mistral = MistralConfig {
+                            vocab_size: config.vocab_size,
+                            hidden_size: config.hidden_size,
+                            intermediate_size: config.intermediate_size,
+                            num_hidden_layers: config.num_hidden_layers,
+                            num_attention_heads: config.num_attention_heads,
+                            num_key_value_heads: config.num_key_value_heads,
+                            hidden_act: config.hidden_act,
+                            max_position_embeddings: config.max_position_embeddings,
+                            initializer_range: config.initializer_range,
+                            rms_norm_eps: config.rms_norm_eps,
+                            model_type: config.model_type.clone(),
+                            rope_theta: config.rope_theta,
+                            sliding_window: config.sliding_window,
+                        };
+                        Ok(Box::new(
+                            FlashMistralModel::load(vb, &cfg_mistral, model_type).s()?,
+                        ))
+                    }
+                }
+            }
         };
 
-        // Load Dense layers from the provided Dense paths
         let mut dense_layers = Vec::new();
-        if let Some(dense_paths) = &dense_paths {
+        if let Some(dense_paths) = dense_paths {
             if !dense_paths.is_empty() {
                 tracing::info!("Loading Dense module/s from path/s: {dense_paths:?}");
 

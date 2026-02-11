@@ -1,7 +1,3 @@
-mod dtype;
-
-use hf_hub::api::tokio::{ApiError, ApiRepo};
-use rand::Rng;
 use std::cmp::{max, min};
 use std::env;
 use std::path::PathBuf;
@@ -9,17 +5,22 @@ use std::process::Command;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
-use text_embeddings_backend_core::{Backend as CoreBackend, Predictions};
+
+use hf_hub::api::tokio::{ApiError, ApiRepo};
+use rand::Rng;
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{instrument, Span};
 
-#[cfg(feature = "candle")]
-use serde::Deserialize;
-
-pub use crate::dtype::DType;
+use text_embeddings_backend_core::{Backend as CoreBackend, Predictions};
 pub use text_embeddings_backend_core::{
     BackendError, Batch, Embedding, Embeddings, ModelType, Pool,
 };
+
+mod dtype;
+pub use crate::dtype::DType;
+
+#[cfg(feature = "candle")]
+use serde::Deserialize;
 
 #[cfg(feature = "candle")]
 use text_embeddings_backend_candle::CandleBackend;
@@ -232,6 +233,7 @@ impl Backend {
         max_input_length: usize,
         max_batch_tokens: usize,
         max_batch_requests: Option<usize>,
+        padded_model: bool,
     ) -> Result<(), BackendError> {
         if is_hpu() {
             return self
@@ -239,15 +241,23 @@ impl Backend {
                 .await;
         }
 
-        let mut input_ids = Vec::with_capacity(max_batch_tokens);
-        let mut token_type_ids = Vec::with_capacity(max_batch_tokens);
-        let mut position_ids = Vec::with_capacity(max_batch_tokens);
+        // In padded_model (CPU), use minimal warmup size (max_input_length tokens) for fast startup
+        // Non-padded (GPU), use full max_batch_tokens to exercise production batching limits
+        let warmup_tokens = if padded_model {
+            max_input_length.min(max_batch_tokens)
+        } else {
+            max_batch_tokens
+        };
+
+        let mut input_ids = Vec::with_capacity(warmup_tokens);
+        let mut token_type_ids = Vec::with_capacity(warmup_tokens);
+        let mut position_ids = Vec::with_capacity(warmup_tokens);
 
         let mut cumulative_seq_lengths = vec![0];
         let mut pooled_indices = Vec::new();
 
         let mut i = 0_u32;
-        let mut remaining = max_batch_tokens;
+        let mut remaining = warmup_tokens;
         let mut cumulative_length = 0;
         let mut max_length = 0;
 
@@ -364,44 +374,43 @@ async fn init_backend(
     otlp_service_name: String,
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     let mut backend_start_failed = false;
+    let api_repo = api_repo.map(Arc::new);
 
-    if cfg!(feature = "ort") {
-        #[cfg(feature = "ort")]
-        {
-            if let Some(api_repo) = api_repo.as_ref() {
-                let start = std::time::Instant::now();
-                let model_files = download_onnx(api_repo)
-                    .await
-                    .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
-                match model_files.is_empty() {
-                    true => {
-                        tracing::error!("Model ONNX files not found in the repository. You can easily create ONNX files using the following scripts: https://gist.github.com/tomaarsen/4b00b0e3be8884efa64cfab9230b161f, or use this Space: https://huggingface.co/spaces/sentence-transformers/backend-export")
-                    }
-                    false => {
-                        tracing::info!("Model ONNX weights downloaded in {:?}", start.elapsed())
-                    }
+    #[cfg(feature = "ort")]
+    {
+        if let Some(api_repo) = api_repo.as_ref() {
+            let start = std::time::Instant::now();
+            let model_files = download_onnx(api_repo.clone())
+                .await
+                .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
+            match model_files.is_empty() {
+                true => {
+                    tracing::error!("Model ONNX files not found in the repository. You can easily create ONNX files using the following scripts: https://gist.github.com/tomaarsen/4b00b0e3be8884efa64cfab9230b161f, or use this Space: https://huggingface.co/spaces/sentence-transformers/backend-export")
+                }
+                false => {
+                    tracing::info!("Model ONNX weights downloaded in {:?}", start.elapsed())
                 }
             }
+        }
 
-            // NOTE: for ONNX we need to retrieve the `tokenizer_config.json` to identify which
-            // `padding_side` needs to be applied for the input processing and the pooling
-            if let Some(api_repo) = api_repo.as_ref() {
-                tracing::info!("Downloading `tokenizer_config.json`");
-                match api_repo.get("tokenizer_config.json").await {
-                    Ok(_) => (),
-                    Err(err) => {
-                        tracing::warn!("Could not download `tokenizer_config.json`: {}", err)
-                    }
-                }
-            }
-
-            let backend = OrtBackend::new(&model_path, dtype.to_string(), model_type.clone());
-            match backend {
-                Ok(b) => return Ok(Box::new(b)),
+        // NOTE: for ONNX we need to retrieve the `tokenizer_config.json` to identify which
+        // `padding_side` needs to be applied for the input processing and the pooling
+        if let Some(api_repo) = api_repo.as_ref() {
+            tracing::info!("Downloading `tokenizer_config.json`");
+            match api_repo.get("tokenizer_config.json").await {
+                Ok(_) => (),
                 Err(err) => {
-                    tracing::error!("Could not start ORT backend: {err}");
-                    backend_start_failed = true;
+                    tracing::warn!("Could not download `tokenizer_config.json`: {}", err)
                 }
+            }
+        }
+
+        let backend = OrtBackend::new(&model_path, dtype.to_string(), model_type.clone());
+        match backend {
+            Ok(b) => return Ok(Box::new(b)),
+            Err(err) => {
+                tracing::error!("Could not start ORT backend: {err}");
+                backend_start_failed = true;
             }
         }
     }
@@ -409,7 +418,7 @@ async fn init_backend(
     if let Some(api_repo) = api_repo.as_ref() {
         if cfg!(feature = "python") || cfg!(feature = "candle") {
             let start = std::time::Instant::now();
-            if download_safetensors(api_repo).await.is_err() {
+            if download_safetensors(api_repo.clone()).await.is_err() {
                 tracing::warn!("safetensors weights not found. Using `pytorch_model.bin` instead. Model loading will be significantly slower.");
                 tracing::info!("Downloading `pytorch_model.bin`");
                 api_repo
@@ -433,7 +442,40 @@ async fn init_backend(
                 tracing::info!("Dense modules downloaded in {:?}", start.elapsed());
                 Some(dense_paths)
             } else {
-                None
+                // TODO(alvarobartt): eventually detach the Sentence Transformers module handling
+                // to prevent from duplicated code here and there
+                // For local models, try to parse modules.json and handle dense_path logic
+                let modules_json_path = model_path.join("modules.json");
+                if modules_json_path.exists() {
+                    match parse_dense_paths_from_modules(&modules_json_path).await {
+                        Ok(module_paths) => match module_paths.len() {
+                            0 => Some(vec![]),
+                            1 => {
+                                let path_to_use = if let Some(ref user_path) = dense_path {
+                                    if user_path != &module_paths[0] {
+                                        tracing::info!("`{}` found in `modules.json`, but using provided `--dense-path={user_path}` instead", module_paths[0]);
+                                    }
+                                    user_path.clone()
+                                } else {
+                                    module_paths[0].clone()
+                                };
+                                Some(vec![path_to_use])
+                            }
+                            _ => {
+                                if dense_path.is_some() {
+                                    tracing::warn!("A value for `--dense-path` was provided, but since there's more than one subsequent Dense module, then the provided value will be ignored.");
+                                }
+                                Some(module_paths)
+                            }
+                        },
+                        Err(err) => {
+                            tracing::warn!("Failed to parse local modules.json: {err}");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
             };
 
             let backend = CandleBackend::new(
@@ -548,7 +590,7 @@ enum BackendCommand {
     ),
 }
 
-async fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
+async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
     // Single file
     tracing::info!("Downloading `model.safetensors`");
     match api.get("model.safetensors").await {
@@ -578,48 +620,120 @@ async fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     }
 
     // Download weight files
-    let mut safetensors_files = Vec::new();
-    for n in safetensors_filenames {
-        tracing::info!("Downloading `{}`", n);
-        safetensors_files.push(api.get(&n).await?);
+    let handles: Vec<_> = safetensors_filenames
+        .into_iter()
+        .map(|n| {
+            let api = Arc::clone(&api);
+            tokio::spawn(async move {
+                tracing::info!("Downloading `{}`", n);
+                api.get(&n).await
+            })
+        })
+        .collect();
+
+    let mut safetensors_files = Vec::with_capacity(handles.len());
+    for handle in handles {
+        // Await the JoinHandle to get the result of the task,
+        // then unpack the inner result from api.get()
+        safetensors_files.push(handle.await??);
     }
 
     Ok(safetensors_files)
 }
 
 #[cfg(feature = "ort")]
-async fn download_onnx(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
-    let mut model_files: Vec<PathBuf> = Vec::new();
-
-    tracing::info!("Downloading `model.onnx`");
-    match api.get("model.onnx").await {
-        Ok(p) => model_files.push(p),
-        Err(err) => {
-            tracing::warn!("Could not download `model.onnx`: {err}");
-            tracing::info!("Downloading `onnx/model.onnx`");
-
-            match api.get("onnx/model.onnx").await {
-                Ok(p) => model_files.push(p.parent().unwrap().to_path_buf()),
-                Err(err) => tracing::warn!("Could not download `onnx/model.onnx`: {err}"),
-            };
-        }
+async fn download_onnx(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
+    // TODO: Most likely all the download functions could benefit from the information defined in
+    // `info()` so that we just need to run the HTTP GET request once (and more efficiently
+    // download the required and existing files only).
+    let filenames = match api.info().await {
+        Ok(info) => Some(
+            info.siblings
+                .iter()
+                .filter_map(|s| {
+                    if s.rfilename.starts_with("model.onnx")
+                        || s.rfilename.starts_with("onnx/model.onnx")
+                    {
+                        Some(s.rfilename.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<String>>(),
+        ),
+        Err(_) => None,
     };
 
-    tracing::info!("Downloading `model.onnx_data`");
-    match api.get("model.onnx_data").await {
-        Ok(p) => model_files.push(p),
-        Err(err) => {
-            tracing::warn!("Could not download `model.onnx_data`: {err}");
-            tracing::info!("Downloading `onnx/model.onnx_data`");
+    match filenames {
+        Some(files) if !files.is_empty() => {
+            let handles: Vec<_> = files
+                .into_iter()
+                .map(|file| {
+                    let api = Arc::clone(&api);
+                    tokio::spawn(async move {
+                        tracing::info!("Downloading `{}`", file);
+                        let time = std::time::Instant::now();
+                        match api.get(&file).await {
+                            Ok(f) => {
+                                tracing::info!(
+                                    "Successfully downloaded `{}` in {} s",
+                                    file,
+                                    time.elapsed().as_secs_f32()
+                                );
+                                Some(f)
+                            }
+                            Err(err) => {
+                                tracing::warn!("Could not download `{file}`: {err}");
+                                None
+                            }
+                        }
+                    })
+                })
+                .collect();
 
-            match api.get("onnx/model.onnx_data").await {
-                Ok(p) => model_files.push(p.parent().unwrap().to_path_buf()),
-                Err(err) => tracing::warn!("Could not download `onnx/model.onnx_data`: {err}"),
+            let mut downloaded_files = Vec::<PathBuf>::with_capacity(handles.len());
+            for handle in handles {
+                match handle.await {
+                    Ok(Some(f)) => downloaded_files.push(f),
+                    _ => (),
+                }
             }
+            Ok(downloaded_files)
+        }
+        _ => {
+            let mut downloaded_files = Vec::<PathBuf>::new();
+
+            tracing::info!("Downloading `onnx/model.onnx`");
+            match api.get("onnx/model.onnx").await {
+                Ok(p) => downloaded_files.push(p),
+                Err(err) => {
+                    tracing::warn!("Could not download `onnx/model.onnx`: {err}");
+                    tracing::info!("Downloading `model.onnx`");
+
+                    match api.get("model.onnx").await {
+                        Ok(p) => downloaded_files.push(p),
+                        Err(err) => tracing::warn!("Could not download `model.onnx`: {err}"),
+                    };
+                }
+            };
+
+            tracing::info!("Downloading `onnx/model.onnx_data`");
+            match api.get("onnx/model.onnx_data").await {
+                Ok(p) => downloaded_files.push(p),
+                Err(err) => {
+                    tracing::warn!("Could not download `onnx/model.onnx_data`: {err}");
+                    tracing::info!("Downloading `model.onnx_data`");
+
+                    match api.get("model.onnx_data").await {
+                        Ok(p) => downloaded_files.push(p),
+                        Err(err) => tracing::warn!("Could not download `model.onnx_data`: {err}"),
+                    }
+                }
+            }
+
+            Ok(downloaded_files)
         }
     }
-
-    Ok(model_files)
 }
 
 #[cfg(feature = "candle")]
