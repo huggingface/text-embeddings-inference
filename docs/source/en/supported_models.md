@@ -73,7 +73,7 @@ The library does **not** support CUDA compute capabilities < 7.5, which means V1
 
 To leverage your GPUs, make sure to install the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html), and use
-NVIDIA drivers with CUDA version 12.2 or higher.
+NVIDIA drivers with CUDA version 12.6 or higher.
 
 Find the appropriate Docker image for your hardware in the following table:
 
