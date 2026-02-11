@@ -37,11 +37,18 @@ pub(crate) fn prometheus_builer(
     let batch_tokens_matcher = Matcher::Full(String::from("te_batch_next_tokens"));
     let batch_tokens_buckets: Vec<f64> = (0..21).map(|x| 2.0_f64.powi(x)).collect();
 
+    // Compression ratio buckets (for values between 0 and 1)
+    let compression_ratio_matcher = Matcher::Full(String::from("te_radix_mlp_compression_ratio"));
+    let compression_ratio_buckets: Vec<f64> = vec![
+        0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99, 1.0
+    ];
+
     // Prometheus handler
     PrometheusBuilder::new()
         .with_http_listener(addr)
         .set_buckets_for_metric(duration_matcher, &duration_buckets)?
         .set_buckets_for_metric(input_length_matcher, &input_length_buckets)?
         .set_buckets_for_metric(batch_size_matcher, &batch_size_buckets)?
-        .set_buckets_for_metric(batch_tokens_matcher, &batch_tokens_buckets)
+        .set_buckets_for_metric(batch_tokens_matcher, &batch_tokens_buckets)?
+        .set_buckets_for_metric(compression_ratio_matcher, &compression_ratio_buckets)
 }

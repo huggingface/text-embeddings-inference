@@ -350,5 +350,9 @@ pub fn batch(encodings: Vec<Encoding>, pooled_indices: Vec<u32>, raw_indices: Ve
         max_length,
         pooled_indices,
         raw_indices,
+        compact_input_ids: None,
+        compact_position_ids: None,
+        scatter_unfold: None,
+        fold_gather: None,
     }
 }

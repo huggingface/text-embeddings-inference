@@ -1,0 +1,29 @@
+[package]
+name = "candle-bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+text-embeddings-backend-candle = { path = "../candle" }
+text-embeddings-backend = { path = ".." }
+text-embeddings-backend-core = { path = "../core" }
+text-embeddings-core = { path = "../../core" }
+anyhow = { workspace = true }
+cudarc = { workspace = true, optional = true }
+hf-hub = { workspace = true , features = ["ureq"] }
+radix_mlp = { workspace = true }
+serde_json = "*"
+tracing = "*"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "radix_mlp_benchmark"
+harness = false
+
+[features]
+metal = ["text-embeddings-backend-candle/metal"]
+cuda = ["text-embeddings-backend-candle/cuda", "text-embeddings-backend-candle/flash-attn", "dep:cudarc","cudarc?/dynamic-linking"]
+candle = ["text-embeddings-backend/candle"]
