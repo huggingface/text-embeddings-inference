@@ -129,7 +129,7 @@ curl 127.0.0.1:8080/embed \
 
 **Note:** To use GPUs, you need to install
 the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
-NVIDIA drivers on your machine need to be compatible with CUDA version 12.2 or higher.
+NVIDIA drivers on your machine need to be compatible with CUDA version 12.6 or higher.
 
 To see all options to serve your models:
 
@@ -528,27 +528,24 @@ sudo apt-get install libssl-dev gcc -y
 
 GPUs with CUDA compute capabilities < 7.5 are not supported (V100, Titan V, GTX 1000 series, ...).
 
-Make sure you have CUDA and the nvidia drivers installed. NVIDIA drivers on your device need to be compatible with CUDA
-version 12.2 or higher.
-You also need to add the nvidia binaries to your path:
+Make sure you have CUDA and the NVIDIA drivers installed. NVIDIA drivers on your device need to be compatible with CUDA
+version 12.6 or higher. You also need to add the NVIDIA binaries to your path:
 
 ```shell
 export PATH=$PATH:/usr/local/cuda/bin
 ```
 
-Then run:
+Then run the following (might take a while as it needs to compile the CUDA kernels):
 
 ```shell
-# This can take a while as we need to compile a lot of CUDA kernels
-
 # On Turing GPUs (T4, RTX 2000 series ... )
 cargo install --path router -F candle-cuda-turing
 
-# On Ampere and Hopper
+# On Ampere, Ada Lovelace, Hopper and Blackwell
 cargo install --path router -F candle-cuda
 ```
 
-You can now launch Text Embeddings Inference on GPU with:
+You can now launch Text Embeddings Inference on GPU as follows:
 
 ```shell
 model=Qwen/Qwen3-Embedding-0.6B
@@ -556,20 +553,17 @@ model=Qwen/Qwen3-Embedding-0.6B
 text-embeddings-router --model-id $model --port 8080
 ```
 
-## Docker build
+## Docker
 
-You can build the CPU container with:
+You can build the CPU container with Docker as:
 
 ```shell
-docker build .
+docker build -f Dockerfile .
 ```
 
-### CUDA - Pre Blackwell architecture
-
 To build the CUDA containers, you need to know the compute cap of the GPU you will be using
-at runtime.
-
-Then you can build the container with:
+at runtime. If the compute capability is < 10.0 i.e., CUDA architecture is any of
+Turing, Ampere, Ada Lovelace, or Hopper; then run the following:
 
 ```shell
 # Get submodule dependencies
@@ -578,49 +572,32 @@ git submodule update --init
 # Example for Turing (T4, RTX 2000 series, ...)
 runtime_compute_cap=75
 
-# Example for A100
+# Example for Ampere (A100, ...)
 runtime_compute_cap=80
 
-# Example for A10
+# Example for Ampere (A10, ...)
 runtime_compute_cap=86
 
 # Example for Ada Lovelace (RTX 4000 series, ...)
 runtime_compute_cap=89
 
-# Example for H100
+# Example for Hopper (H100, ...)
 runtime_compute_cap=90
 
 docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
 ```
 
-### CUDA - Blackwell architecture
-
-To build the CUDA containers for the Blackwell architecture CUDA 12.9 is required, you need to use a different Dockerfile
-and set the compute cap to 120.
-This Dockerfile can still be used to build for previous architectures.
-
-Commands to build the container:
+If your CUDA device architecture is Blackwell, then you need to run the following
+instead, as CUDA 12.9 is required, hence the Dockerfile differs:
 
 ```shell
 # Get submodule dependencies
 git submodule update --init
 
-# Example for Turing (T4, RTX 2000 series, ...)
-runtime_compute_cap=75
+# Example for Blackwell (B200, GB200, ...)
+runtime_compute_cap=100
 
-# Example for A100
-runtime_compute_cap=80
-
-# Example for A10
-runtime_compute_cap=86
-
-# Example for Ada Lovelace (RTX 4000 series, ...)
-runtime_compute_cap=89
-
-# Example for H100
-runtime_compute_cap=90
-
-# Example for Blackwell (RTX 5000 series, ...)
+# Example for Blackwell (GeForce RTX 50X0, RTX PRO 6000, ...)
 runtime_compute_cap=120
 
 docker build . -f Dockerfile-cuda-blackwell --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
