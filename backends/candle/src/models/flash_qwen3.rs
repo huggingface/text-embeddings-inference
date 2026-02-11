@@ -415,6 +415,7 @@ impl FlashQwen3Model {
 
         let (outputs, _) = self.norm.forward(&hidden_states, residual.as_ref())?;
 
+        // NOTE: `projection` required by https://huggingface.co/voyageai/voyage-4-nano 
         let outputs = if let Some(ref projection) = self.projection {
             projection.forward(&outputs)?
         } else {

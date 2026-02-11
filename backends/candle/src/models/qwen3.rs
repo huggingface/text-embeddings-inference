@@ -24,6 +24,8 @@ pub struct Qwen3Config {
     pub sliding_window: Option<usize>,
     pub use_sliding_window: bool,
     pub eos_token_id: usize,
+    // TODO(alvarobartt): Migrate to `is_causal` instead
+    // https://github.com/huggingface/transformers/pull/43705
     #[serde(default)]
     pub use_bidirectional_attention: Option<bool>,
     #[serde(default)]
@@ -383,6 +385,7 @@ pub struct Qwen3Model {
     embeddings: Embedding,
     layers: Vec<Qwen3Layer>,
     norm: RMSNorm,
+    // TODO(alvarobartt): Eventually extend Qwen3 for Voyage instead of adding `projection` here
     projection: Option<Linear>,
     rotary_cache: (Tensor, Tensor),
     rotary_dim: usize,
