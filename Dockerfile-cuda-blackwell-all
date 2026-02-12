@@ -36,13 +36,13 @@ FROM base-builder AS builder
 ARG GIT_SHA
 ARG DOCKER_LABEL
 
-# Limit parallelism
-ARG RAYON_NUM_THREADS
-ARG CARGO_BUILD_JOBS
-ARG CARGO_BUILD_INCREMENTAL
-
 # sccache specific variables
 ARG SCCACHE_GHA_ENABLED
+
+# Limit parallelism
+ARG RAYON_NUM_THREADS=4
+ARG CARGO_BUILD_JOBS
+ARG CARGO_BUILD_INCREMENTAL
 
 WORKDIR /usr/src
 
@@ -50,15 +50,15 @@ COPY --from=planner /usr/src/recipe.json recipe.json
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    cp /usr/local/cuda/lib64/libcublas_static.a /usr/local/cuda/lib64/libcublas_static_original.a && \
-    nvprune --generate-code code=sm_100 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a && \
-    CUDA_COMPUTE_CAP=100 cargo chef cook --release --features candle-cuda --features static-linking --no-default-features --recipe-path recipe.json && sccache -s;
+    cargo chef cook --release --recipe-path recipe.json && sccache -s;
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    cp /usr/local/cuda/lib64/libcublas_static_original.a /usr/local/cuda/lib64/libcublas_static.a && \
-    nvprune --generate-code code=sm_120 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a && \
-    CUDA_COMPUTE_CAP=120 cargo chef cook --release --features candle-cuda --features static-linking --no-default-features --recipe-path recipe.json && sccache -s;
+    CUDA_COMPUTE_CAP=100 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s;
+
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    CUDA_COMPUTE_CAP=120 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s;
 
 COPY backends backends
 COPY core core
@@ -66,51 +66,17 @@ COPY router router
 COPY Cargo.toml ./
 COPY Cargo.lock ./
 
-FROM builder AS http-builder-100
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    CUDA_COMPUTE_CAP=100 cargo build --release --bin text-embeddings-router -F candle-cuda && sccache -s;
+
+RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-100
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    cp /usr/local/cuda/lib64/libcublas_static_original.a /usr/local/cuda/lib64/libcublas_static.a && \
-    nvprune --generate-code code=sm_100 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a && \
-    CUDA_COMPUTE_CAP=100 cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F http --no-default-features && sccache -s;
+    CUDA_COMPUTE_CAP=120 cargo build --release --bin text-embeddings-router -F candle-cuda && sccache -s;
 
-FROM builder AS http-builder-120
-
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    cp /usr/local/cuda/lib64/libcublas_static_original.a /usr/local/cuda/lib64/libcublas_static.a && \
-    nvprune --generate-code code=sm_120 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a && \
-    CUDA_COMPUTE_CAP=120 cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F http --no-default-features && sccache -s;
-
-FROM builder AS grpc-builder-setup
-
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    unzip \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN PROTOC_ZIP=protoc-21.12-linux-x86_64.zip && \
-    curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v21.12/$PROTOC_ZIP && \
-    unzip -o $PROTOC_ZIP -d /usr/local bin/protoc && \
-    unzip -o $PROTOC_ZIP -d /usr/local 'include/*' && \
-    rm -f $PROTOC_ZIP
-
-COPY proto proto
-
-FROM grpc-builder-setup AS grpc-builder-100
-
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    cp /usr/local/cuda/lib64/libcublas_static_original.a /usr/local/cuda/lib64/libcublas_static.a && \
-    nvprune --generate-code code=sm_100 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a && \
-    CUDA_COMPUTE_CAP=100 cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F grpc --no-default-features && sccache -s;
-
-FROM grpc-builder-setup AS grpc-builder-120
-
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    cp /usr/local/cuda/lib64/libcublas_static_original.a /usr/local/cuda/lib64/libcublas_static.a && \
-    nvprune --generate-code code=sm_120 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a && \
-    CUDA_COMPUTE_CAP=120 cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F grpc --no-default-features && sccache -s;
+RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-120
 
 FROM nvidia/cuda:12.9.0-base-ubuntu24.04 AS base
 
@@ -118,28 +84,18 @@ ARG DEFAULT_USE_FLASH_ATTENTION=True
 
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80 \
-    USE_FLASH_ATTENTION=$DEFAULT_USE_FLASH_ATTENTION
+    USE_FLASH_ATTENTION=$DEFAULT_USE_FLASH_ATTENTION \
+    LD_LIBRARY_PATH="/usr/local/cuda/compat:${LD_LIBRARY_PATH}"
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl-dev \
     curl \
+    cuda-compat-12-9 \
     && rm -rf /var/lib/apt/lists/*
 
-FROM base AS grpc
-
-COPY --from=grpc-builder-100 /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router-100
-COPY --from=grpc-builder-120 /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router-120
-
-COPY --chmod=775 cuda-blackwell-all-entrypoint.sh entrypoint.sh
-
-ENTRYPOINT ["./entrypoint.sh"]
-CMD ["--json-output"]
-
-FROM base
-
-COPY --from=http-builder-100 /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router-100
-COPY --from=http-builder-120 /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router-120
+COPY --from=builder /usr/src/target/release/text-embeddings-router-100 /usr/local/bin/text-embeddings-router-100
+COPY --from=builder /usr/src/target/release/text-embeddings-router-120 /usr/local/bin/text-embeddings-router-120
 
 COPY --chmod=775 cuda-blackwell-all-entrypoint.sh entrypoint.sh
 
