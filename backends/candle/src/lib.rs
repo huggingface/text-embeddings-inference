@@ -41,6 +41,7 @@ pub enum FlashAttn {
     V2,
 }
 
+#[allow(unused)]
 fn use_flash_attn(supported: &[FlashAttn]) -> bool {
     #[cfg(not(feature = "cuda"))]
     {
