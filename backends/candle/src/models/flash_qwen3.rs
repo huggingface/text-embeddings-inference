@@ -19,8 +19,6 @@ struct Qwen3Attention {
     num_key_value_heads: usize,
     attention_head_size: usize,
 
-    use_bidirectional_attention: bool,
-
     softmax_scale: f32,
     use_bidirectional_attention: bool,
 
@@ -100,7 +98,6 @@ impl Qwen3Attention {
             num_attention_heads,
             num_key_value_heads,
             attention_head_size,
-            use_bidirectional_attention: config.use_bidirectional_attention.unwrap_or(false),
             softmax_scale,
             use_bidirectional_attention: config.use_bidirectional_attention.unwrap_or(false),
             span: tracing::span!(tracing::Level::TRACE, "attention"),
