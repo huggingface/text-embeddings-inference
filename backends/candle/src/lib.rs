@@ -24,7 +24,7 @@ use crate::compute_cap::{
 use crate::models::{
     BertConfig, BertModel, DebertaV2Config, DebertaV2Model, Dense, DenseConfig, DenseLayer,
     DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, Gemma3Config, Gemma3Model,
-    JinaBertModel, JinaCodeBertModel, LLamaConfig, MPNetConfig, MPNetModel, MistralConfig, Model,
+    JinaBertModel, JinaCodeBertModel, LlamaConfig, MPNetConfig, MPNetModel, MistralConfig, Model,
     ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config, Qwen3Config,
     Qwen3Model,
 };
@@ -117,7 +117,7 @@ enum Config {
     XlmRoberta(BertConfig),
     #[allow(dead_code)]
     #[serde(alias = "llama_bidirec")]
-    Llama(LLamaConfig),
+    Llama(LlamaConfig),
 }
 
 pub struct CandleBackend {

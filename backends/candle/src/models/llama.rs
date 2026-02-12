@@ -13,7 +13,7 @@ pub enum RopeScaling {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct LLamaConfig {
+pub struct LlamaConfig {
     pub vocab_size: usize,
     pub hidden_size: usize,
     pub intermediate_size: usize,
@@ -29,7 +29,7 @@ pub struct LLamaConfig {
     pub sliding_window: Option<usize>,
     pub rope_scaling: Option<RopeScaling>,
     #[serde(default)]
-    pub use_bidirectional_attention: bool,
+    pub use_bidirectional_attention: Option<bool>,
     pub head_dim: Option<usize>,
     pub attention_bias: Option<bool>,
     pub attention_dropout: Option<f32>,
