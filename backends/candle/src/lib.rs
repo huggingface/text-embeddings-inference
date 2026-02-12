@@ -18,6 +18,11 @@ use text_embeddings_backend_core::{
 };
 
 #[cfg(feature = "cuda")]
+use crate::flash_attn::supports_flash_attn_v1;
+#[cfg(feature = "cuda")]
+use crate::flash_attn::supports_flash_attn_v2;
+
+#[cfg(feature = "cuda")]
 use crate::compute_cap::{
     compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
 };
@@ -228,11 +233,42 @@ impl CandleBackend {
         }
         .map_err(|err| BackendError::Start(err.to_string()))?;
 
-        // Get candle dtype
         let dtype = if &dtype == "float32" {
             Ok(DType::F32)
         } else if &dtype == "float16" {
             Ok(DType::F16)
+        } else if &dtype == "bfloat16" {
+            match &device {
+                Device::Cpu => {
+                    return Err(BackendError::Start(
+                        "BFloat16 is not supported on CPU. Use float16 or float32 instead."
+                            .to_string(),
+                    ));
+                }
+                Device::Cuda(_) => {
+                    return Err(BackendError::Start(
+                        "CUDA feature is not enabled".to_string(),
+                    ));
+                }
+                // NOTE: Temporarily left out given that supporting BF16 w/ Flash Attn requires an
+                // update on `candle` and `candle-extensions` which is still in progress
+                // #[cfg(feature = "cuda")]
+                // Device::Cuda(_) => {
+                //     let compute_cap = get_runtime_compute_cap().map_err(|e| {
+                //         BackendError::Start(format!("Failed to get CUDA compute capability: {e:?}"))
+                //     })?;
+                //     if compute_cap < 80 {
+                //         return Err(BackendError::Start(format!(
+                //             "BFloat16 requires CUDA compute capability >= 8.0 (Ampere or newer), \
+                //              but found {}.{}. Use float16 or float32 instead.",
+                //             compute_cap / 10,
+                //             compute_cap % 10
+                //         )));
+                //     }
+                // }
+                Device::Metal(_) => (),
+            }
+            Ok(DType::BF16)
         } else {
             Err(BackendError::Start(format!(
                 "DType {dtype} is not supported"
@@ -332,12 +368,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
-                if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    && dtype == DType::F16
-                    // Allow disabling because of flash attention v1 precision problems
-                    // See: https://github.com/huggingface/text-embeddings-inference/issues/37
-                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
-                {
+                if supports_flash_attn_v1(&dtype) || supports_flash_attn_v2(&dtype) {
                     match config {
                         BertConfigWrapper::JinaBert(config) => {
                             tracing::info!("Starting FlashJinaBert model on {:?}", device);
@@ -380,12 +411,7 @@ impl CandleBackend {
                 Config::Camembert(config) | Config::Roberta(config) | Config::XlmRoberta(config),
                 Device::Cuda(_),
             ) => {
-                if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    && dtype == DType::F16
-                    // Allow disabling because of flash attention v1 precision problems
-                    // See: https://github.com/huggingface/text-embeddings-inference/issues/37
-                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
-                {
+                if supports_flash_attn_v1(&dtype) || supports_flash_attn_v2(&dtype) {
                     tracing::info!("Starting FlashBert model on {:?}", device);
                     Ok(Box::new(
                         FlashBertModel::load_roberta(vb, &config, model_type).s()?,
@@ -404,13 +430,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::DistilBert(config), Device::Cuda(_)) => {
-                if cfg!(feature = "flash-attn")
-                    && dtype == DType::F16
-                    && &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        == "true"
-                {
+                if supports_flash_attn_v2(&dtype) {
                     tracing::info!("Starting FlashDistilBert model on {:?}", device);
                     Ok(Box::new(
                         FlashDistilBertModel::load(vb, &config, model_type).s()?,
@@ -435,30 +455,17 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Gte(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
-                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    || &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        != "true"
-                {
-                    tracing::info!("Starting GTE model on {:?}", device);
-                    Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
-                } else {
+                if supports_flash_attn_v1(&dtype) || supports_flash_attn_v2(&dtype) {
                     tracing::info!("Starting FlashGTE model on {:?}", device);
                     Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))
+                } else {
+                    tracing::info!("Starting GTE model on {:?}", device);
+                    Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
                 }
             }
             #[cfg(feature = "cuda")]
             (Config::Mistral(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
-                    || !cfg!(feature = "flash-attn")
-                    || get_runtime_compute_cap().unwrap() < 80
-                    || &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        != "true"
-                {
+                if !supports_flash_attn_v2(&dtype) {
                     return Err(BackendError::Start("Mistral is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
                 }
                 tracing::info!("Starting FlashMistral model on {:?}", device);
@@ -468,12 +475,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::ModernBert(config), Device::Cuda(_)) => {
-                if cfg!(feature = "flash-attn")
-                    && dtype == DType::F16
-                    // Allow disabling because of flash attention v1 precision problems
-                    // See: https://github.com/huggingface/text-embeddings-inference/issues/37
-                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
-                {
+                if supports_flash_attn_v2(&dtype) {
                     tracing::info!("Starting FlashModernBert model on {:?}", device);
                     Ok(Box::new(
                         FlashModernBertModel::load(vb, &config, model_type).s()?,
@@ -489,13 +491,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::NomicBert(config), Device::Cuda(_)) => {
-                if cfg!(feature = "flash-attn")
-                    && dtype == DType::F16
-                    && &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        == "true"
-                {
+                if supports_flash_attn_v2(&dtype) {
                     tracing::info!("Starting FlashNomicBert model on {:?}", device);
                     Ok(Box::new(
                         FlashNomicBertModel::load(vb, &config, model_type).s()?,
@@ -507,13 +503,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Qwen2(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
-                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    || &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        != "true"
-                {
+                if !supports_flash_attn_v2(&dtype) {
                     return Err(BackendError::Start("Qwen2 is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
                 }
                 tracing::info!("Starting FlashQwen2 model on {:?}", device);
@@ -523,20 +513,14 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Qwen3(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
-                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    || &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        != "true"
-                {
-                    tracing::info!("Starting Qwen3 model on {:?}", device);
-                    Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
-                } else {
+                if supports_flash_attn_v1(&dtype) || supports_flash_attn_v2(&dtype) {
                     tracing::info!("Starting FlashQwen3 model on {:?}", device);
                     Ok(Box::new(
                         FlashQwen3Model::load(vb, &config, model_type).s()?,
                     ))
+                } else {
+                    tracing::info!("Starting Qwen3 model on {:?}", device);
+                    Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
                 }
             }
             #[cfg(feature = "cuda")]

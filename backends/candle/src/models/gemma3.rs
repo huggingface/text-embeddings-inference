@@ -253,7 +253,11 @@ impl Gemma3Attention {
     ) -> Result<Tensor> {
         let min_value = match dtype {
             DType::F32 => f32::MIN,
-            _ => -65504.0, // f16 minimum value
+            DType::BF16 => -3.3895314e38_f32,
+            DType::F16 => -65504.0_f32,
+            // SAFETY: Default to F16 min finite value, even if dtype will always match any of the
+            // previous variants
+            _ => -65504.0_f32,
         };
 
         let mask: Vec<u8> = if let Some(window_size) = sliding_window {
@@ -263,7 +267,7 @@ impl Gemma3Attention {
             (0..seq_len)
                 .flat_map(|i| {
                     (0..seq_len).map(move |j| {
-                        let distance = if i > j { i - j } else { j - i };
+                        let distance = i.abs_diff(j);
                         (distance <= half_window) as u8
                     })
                 })

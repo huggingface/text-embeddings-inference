@@ -1,11 +1,13 @@
+use candle::{DType, Device, IndexOp, Result, Tensor, D};
+use candle_nn::{Embedding, Module, VarBuilder};
+use serde::Deserialize;
+
+use text_embeddings_backend_core::{Batch, ModelType, Pool};
+
 use crate::layers::{
     apply_rotary, get_cos_sin, get_cublas_lt_wrapper, get_inv_freqs, HiddenAct, Linear, RMSNorm,
 };
 use crate::models::Model;
-use candle::{DType, Device, IndexOp, Result, Tensor, D};
-use candle_nn::{Embedding, Module, VarBuilder};
-use serde::Deserialize;
-use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Qwen3Config {
@@ -489,7 +491,11 @@ impl Qwen3Model {
 
         let min_value = match self.dtype {
             DType::F32 => f32::MIN,
-            _ => -65504.0, // f16 minimum value
+            DType::BF16 => -3.3895314e38_f32,
+            DType::F16 => -65504.0_f32,
+            // SAFETY: Default to F16 min finite value, even if dtype will always match any of the
+            // previous variants
+            _ => -65504.0_f32,
         };
 
         let negatives =
