@@ -26,7 +26,7 @@ use crate::models::{
     DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, Gemma3Config, Gemma3Model,
     JinaBertModel, JinaCodeBertModel, LlamaConfig, MPNetConfig, MPNetModel, MistralConfig, Model,
     ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config, Qwen3Config,
-    Qwen3Model, StaticEmbeddingConfig, StaticEmbeddingModel
+    Qwen3Model, StaticEmbeddingConfig, StaticEmbeddingModel,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
