@@ -46,7 +46,7 @@ fn use_flash_attn(supported: &[FlashAttn]) -> bool {
     #[cfg(not(feature = "cuda"))]
     {
         tracing::warn!("Flash Attention is not supported on CPU yet");
-        return false;
+        false
     }
     #[cfg(feature = "cuda")]
     {
@@ -55,15 +55,15 @@ fn use_flash_attn(supported: &[FlashAttn]) -> bool {
             .to_lowercase()
             != "true"
         {
-            return false;
+            false
+        } else {
+            supported.iter().any(|v| match v {
+                FlashAttn::V1 => cfg!(feature = "flash-attn-v1"),
+                FlashAttn::V2 => {
+                    cfg!(feature = "flash-attn") && get_runtime_compute_cap().is_ok_and(|x| x >= 80)
+                }
+            })
         }
-
-        return supported.iter().any(|v| match v {
-            FlashAttn::V1 => cfg!(feature = "flash-attn-v1"),
-            FlashAttn::V2 => {
-                cfg!(feature = "flash-attn") && get_runtime_compute_cap().is_ok_and(|x| x >= 80)
-            }
-        });
     }
 }
 
