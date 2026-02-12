@@ -18,5 +18,5 @@ pub struct MistralConfig {
     pub sliding_window: Option<usize>,
     pub rope_scaling: Option<RopeScaling>,
     #[serde(default)]
-    pub use_bidirectional_attention: bool,
+    pub use_bidirectional_attention: Option<bool>,
 }

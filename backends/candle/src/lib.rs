@@ -24,7 +24,7 @@ use crate::compute_cap::{
 use crate::models::{
     BertConfig, BertModel, DebertaV2Config, DebertaV2Model, Dense, DenseConfig, DenseLayer,
     DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, Gemma3Config, Gemma3Model,
-    JinaBertModel, JinaCodeBertModel, LLamaConfig, MPNetConfig, MPNetModel, MistralConfig, Model,
+    JinaBertModel, JinaCodeBertModel, LlamaConfig, MPNetConfig, MPNetModel, MistralConfig, Model,
     ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config, Qwen3Config,
     Qwen3Model,
 };
@@ -117,7 +117,7 @@ enum Config {
     XlmRoberta(BertConfig),
     #[allow(dead_code)]
     #[serde(alias = "llama_bidirec")]
-    Llama(LLamaConfig),
+    Llama(LlamaConfig),
 }
 
 pub struct CandleBackend {
@@ -540,35 +540,33 @@ impl CandleBackend {
                 }
             }
             #[cfg(feature = "cuda")]
-            (Config::Llama(config), Device::Cuda(_)) => {
-                match config.rope_scaling {
-                    Some(_) => {
-                        Err(BackendError::Start(
-                            "Rope scaling is not supported for FlashLlama yet".to_string(),
-                        ))
-                    }
-                    None => {
-                        let cfg_mistral = MistralConfig {
-                            vocab_size: config.vocab_size,
-                            hidden_size: config.hidden_size,
-                            intermediate_size: config.intermediate_size,
-                            num_hidden_layers: config.num_hidden_layers,
-                            num_attention_heads: config.num_attention_heads,
-                            num_key_value_heads: config.num_key_value_heads,
-                            hidden_act: config.hidden_act,
-                            max_position_embeddings: config.max_position_embeddings,
-                            initializer_range: config.initializer_range,
-                            rms_norm_eps: config.rms_norm_eps,
-                            model_type: config.model_type.clone(),
-                            rope_theta: config.rope_theta,
-                            sliding_window: config.sliding_window,
-                        };
-                        Ok(Box::new(
-                            FlashMistralModel::load(vb, &cfg_mistral, model_type).s()?,
-                        ))
-                    }
+            (Config::Llama(config), Device::Cuda(_)) => match config.rope_scaling {
+                Some(_) => Err(BackendError::Start(
+                    "Rope scaling is not supported for FlashLlama yet".to_string(),
+                )),
+                None => {
+                    let config = MistralConfig {
+                        vocab_size: config.vocab_size,
+                        hidden_size: config.hidden_size,
+                        intermediate_size: config.intermediate_size,
+                        num_hidden_layers: config.num_hidden_layers,
+                        num_attention_heads: config.num_attention_heads,
+                        num_key_value_heads: config.num_key_value_heads,
+                        hidden_act: config.hidden_act,
+                        max_position_embeddings: config.max_position_embeddings,
+                        initializer_range: config.initializer_range,
+                        rms_norm_eps: config.rms_norm_eps,
+                        model_type: config.model_type.clone(),
+                        rope_theta: config.rope_theta,
+                        sliding_window: config.sliding_window,
+                        rope_scaling: config.rope_scaling,
+                        use_bidirectional_attention: config.use_bidirectional_attention,
+                    };
+                    Ok(Box::new(
+                        FlashMistralModel::load(vb, &config, model_type).s()?,
+                    ))
                 }
-            }
+            },
         };
 
         let mut dense_layers = Vec::new();

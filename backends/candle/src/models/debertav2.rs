@@ -9,13 +9,6 @@ use text_embeddings_backend_core::{Batch, ModelType, Pool};
 use crate::layers::{HiddenAct, LayerNorm, Linear};
 use crate::models::Model;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-enum PositionEmbeddingType {
-    #[default]
-    Absolute,
-}
-
 pub type Id2Label = HashMap<String, String>;
 pub type Label2Id = HashMap<String, u32>;
 

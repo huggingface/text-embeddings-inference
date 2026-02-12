@@ -10,7 +10,7 @@
     "dockerfile": "Dockerfile-cuda"
   },
   {
-    "name": "ampere",
+    "name": "ampere-80",
     "imageNamePrefix": "",
     "runOn": "always",
     "sccache": true,
@@ -19,7 +19,7 @@
     "dockerfile": "Dockerfile-cuda"
   },
   {
-    "name": "a10",
+    "name": "ampere-86",
     "imageNamePrefix": "86-",
     "runOn": "always",
     "sccache": true,
@@ -28,7 +28,7 @@
     "dockerfile": "Dockerfile-cuda"
   },
   {
-    "name": "RTX 4000",
+    "name": "ada-lovelace",
     "imageNamePrefix": "89-",
     "runOn": "always",
     "sccache": true,
@@ -37,7 +37,7 @@
     "dockerfile": "Dockerfile-cuda"
   },
   {
-    "name": "Hopper",
+    "name": "hopper",
     "imageNamePrefix": "hopper-",
     "runOn": "always",
     "sccache": true,
@@ -46,7 +46,15 @@
     "dockerfile": "Dockerfile-cuda"
   },
   {
-    "name": "Blackwell (10.0)",
+    "name": "turing-ampere-ada-hopper",
+    "imageNamePrefix": "cuda-",
+    "runOn": "always",
+    "sccache": false,
+    "grpc": false,
+    "dockerfile": "Dockerfile-cuda-all"
+  },
+  {
+    "name": "blackwell-100",
     "imageNamePrefix": "100-",
     "runOn": "always",
     "sccache": true,
@@ -55,7 +63,7 @@
     "dockerfile": "Dockerfile-cuda-blackwell"
   },
   {
-    "name": "Blackwell (12.0)",
+    "name": "blackwell-120",
     "imageNamePrefix": "120-",
     "runOn": "always",
     "sccache": true,
@@ -64,12 +72,12 @@
     "dockerfile": "Dockerfile-cuda-blackwell"
   },
   {
-    "name": "All",
-    "imageNamePrefix": "cuda-",
+    "name": "blackwell",
+    "imageNamePrefix": "blackwell-",
     "runOn": "always",
     "sccache": false,
     "grpc": false,
-    "dockerfile": "Dockerfile-cuda-all"
+    "dockerfile": "Dockerfile-cuda-blackwell-all"
   },
   {
     "name": "cpu",
