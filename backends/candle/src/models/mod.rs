@@ -54,9 +54,6 @@ mod flash_qwen2;
 #[cfg(feature = "cuda")]
 mod flash_qwen3;
 
-#[cfg(feature = "cuda")]
-mod flash_pplx1;
-
 pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
 pub use debertav2::{DebertaV2Config, DebertaV2Model};
 pub use dense::{Dense, DenseConfig, DenseLayer};
