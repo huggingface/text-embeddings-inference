@@ -1,10 +1,10 @@
-FROM nvidia/cuda:12.2.0-devel-ubuntu22.04 AS base-builder
+FROM nvidia/cuda:12.6.3-devel-ubuntu24.04 AS base-builder
 
 ENV SCCACHE=0.10.0
 ENV RUSTC_WRAPPER=/usr/local/bin/sccache
 ENV PATH="/root/.cargo/bin:${PATH}"
-# aligned with `cargo-chef` version in `lukemathwalker/cargo-chef:latest-rust-1.85-bookworm`
-ENV CARGO_CHEF=0.1.71
+# aligned with `cargo-chef` version in `lukemathwalker/cargo-chef:latest-rust-1.92-bookworm`
+ENV CARGO_CHEF=0.1.73
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     curl \
@@ -88,18 +88,20 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
 
 RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-90
 
-FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04 AS base
+FROM nvidia/cuda:12.6.3-base-ubuntu24.04 AS base
 
 ARG DEFAULT_USE_FLASH_ATTENTION=True
 
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80 \
-    USE_FLASH_ATTENTION=$DEFAULT_USE_FLASH_ATTENTION
+    USE_FLASH_ATTENTION=$DEFAULT_USE_FLASH_ATTENTION \
+    LD_LIBRARY_PATH="/usr/local/cuda/compat:${LD_LIBRARY_PATH}"
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl-dev \
     curl \
+    cuda-compat-12-6 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/src/target/release/text-embeddings-router-75 /usr/local/bin/text-embeddings-router-75
