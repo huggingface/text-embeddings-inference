@@ -19,13 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
         with:
-          # Released on: 28 December, 2023
-          # Branched from master on: 10 November, 2023
-          # https://releases.rs/docs/1.85.0/
-          toolchain: 1.85.0
-          override: true
           components: rustfmt, clippy
       - name: Install Protoc
         uses: arduino/setup-protoc@v1
