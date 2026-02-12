@@ -298,7 +298,7 @@ impl CandleBackend {
                 tracing::info!("Starting MPNet model on {:?}", device);
                 Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
             }
-            (Config::Llama(_config), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
+            (Config::Llama(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
                 "Llama is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
             )),
@@ -531,8 +531,7 @@ impl CandleBackend {
             #[cfg(feature = "cuda")]
             (Config::Llama(config), Device::Cuda(_)) => {
                 match config.rope_scaling {
-                    Some(ref _rope_scaling) => {
-                        // error, as no rope scaling is supported for FlashLlama yet
+                    Some(_) => {
                         Err(BackendError::Start(
                             "Rope scaling is not supported for FlashLlama yet".to_string(),
                         ))
