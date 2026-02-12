@@ -104,9 +104,6 @@ pub use flash_qwen2::FlashQwen2Model;
 #[cfg(feature = "cuda")]
 pub use flash_qwen3::FlashQwen3Model;
 
-#[cfg(feature = "cuda")]
-pub use flash_pplx1::FlashPplx1Model;
-
 pub(crate) trait Model {
     fn is_padded(&self) -> bool;
 

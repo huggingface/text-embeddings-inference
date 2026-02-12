@@ -32,7 +32,7 @@ use crate::models::{
 use crate::models::{
     FlashBertModel, FlashDistilBertModel, FlashGTEModel, FlashJinaBertModel,
     FlashJinaCodeBertModel, FlashMistralModel, FlashModernBertModel, FlashNomicBertModel,
-    FlashPplx1Model, FlashQwen2Model, FlashQwen3Model,
+    FlashQwen2Model, FlashQwen3Model,
 };
 
 /// This enum is needed to be able to differentiate between jina models that also use
@@ -288,6 +288,7 @@ impl CandleBackend {
                 ))
             }
             (Config::Gemma3(config), Device::Cpu | Device::Metal(_)) => {
+                // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on Metal
                 if dtype != DType::F32 {
                     Err(BackendError::Start(
                         "Gemma3 is only supported in fp32 precision".to_string(),
@@ -332,8 +333,15 @@ impl CandleBackend {
                 Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
             }
             (Config::Pplx1(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting Pplx1 model on {:?}", device);
-                Ok(Box::new(Pplx1Model::load(vb, &config, model_type).s()?))
+                // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on Metal
+                if dtype != DType::F32 {
+                    Err(BackendError::Start(
+                        "Pplx1 is only supported in fp32 precision".to_string(),
+                    ))
+                } else {
+                    tracing::info!("Starting Pplx1 model on {:?}", device);
+                    Ok(Box::new(Pplx1Model::load(vb, &config, model_type).s()?))
+                }
             }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
@@ -429,6 +437,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Gemma3(config), Device::Cuda(_)) => {
+                // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on CUDA
                 if dtype != DType::F32 {
                     Err(BackendError::Start(
                         "Gemma3 is only supported in fp32 precision".to_string(),
@@ -546,20 +555,14 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Pplx1(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
-                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    || &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        != "true"
-                {
+                // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on CUDA
+                if dtype != DType::F32 {
+                    Err(BackendError::Start(
+                        "Pplx1 is only supported in fp32 precision".to_string(),
+                    ))
+                } else {
                     tracing::info!("Starting Pplx1 model on {:?}", device);
                     Ok(Box::new(Pplx1Model::load(vb, &config, model_type).s()?))
-                } else {
-                    tracing::info!("Starting FlashPplx1 model on {:?}", device);
-                    Ok(Box::new(
-                        FlashPplx1Model::load(vb, &config, model_type).s()?,
-                    ))
                 }
             }
             #[cfg(feature = "cuda")]
