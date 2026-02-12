@@ -263,7 +263,7 @@ impl Gemma3Attention {
             (0..seq_len)
                 .flat_map(|i| {
                     (0..seq_len).map(move |j| {
-                        let distance = if i > j { i - j } else { j - i };
+                        let distance = i.abs_diff(j);
                         (distance <= half_window) as u8
                     })
                 })
