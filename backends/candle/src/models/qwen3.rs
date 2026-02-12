@@ -24,8 +24,12 @@ pub struct Qwen3Config {
     pub sliding_window: Option<usize>,
     pub use_sliding_window: bool,
     pub eos_token_id: usize,
+    // TODO(alvarobartt): Migrate to `is_causal` instead
+    // https://github.com/huggingface/transformers/pull/43705
     #[serde(default)]
     pub use_bidirectional_attention: Option<bool>,
+    #[serde(default)]
+    pub num_labels: Option<usize>,
 }
 
 struct Qwen3Attention {
@@ -381,6 +385,8 @@ pub struct Qwen3Model {
     embeddings: Embedding,
     layers: Vec<Qwen3Layer>,
     norm: RMSNorm,
+    // TODO(alvarobartt): Eventually extend Qwen3 for Voyage instead of adding `projection` here
+    projection: Option<Linear>,
     rotary_cache: (Tensor, Tensor),
     rotary_dim: usize,
     pool: Pool,
@@ -406,23 +412,42 @@ impl Qwen3Model {
 
         // The Qwen3-Reranker models contain the `model` key
         // https://huggingface.co/collections/Qwen/qwen3-reranker-6841b22d0192d7ade9cdefea
-        let vb = if vb.contains_tensor("model.embed_tokens.weight") {
-            vb.pp("model")
+        let model_prefix = if vb.contains_tensor("model.embed_tokens.weight") {
+            "model."
         } else {
-            vb
+            ""
         };
 
         let embeddings = Embedding::new(
-            vb.pp("embed_tokens")
+            vb.pp(format!("{model_prefix}embed_tokens"))
                 .get((config.vocab_size, config.hidden_size), "weight")?,
             config.hidden_size,
         );
 
         let layers = (0..config.num_hidden_layers)
-            .map(|index| Qwen3Layer::load(vb.pp(format!("layers.{index}")), config))
+            .map(|index| Qwen3Layer::load(vb.pp(format!("{model_prefix}layers.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
 
-        let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
+        let norm = RMSNorm::load(
+            vb.pp(format!("{model_prefix}norm")),
+            config.hidden_size,
+            config.rms_norm_eps,
+        )?;
+
+        let projection = if let Some(num_labels) = config.num_labels {
+            if vb.contains_tensor("linear.weight") {
+                let projection_weight =
+                    vb.get((num_labels, config.hidden_size), "linear.weight")?;
+                Some(Linear::new(projection_weight, None, None))
+            } else {
+                tracing::warn!(
+                    "num_labels is set but linear.weight not found, skipping projection layer"
+                );
+                None
+            }
+        } else {
+            None
+        };
 
         let rotary_dim = config
             .head_dim
@@ -437,6 +462,7 @@ impl Qwen3Model {
             embeddings,
             layers,
             norm,
+            projection,
             rotary_cache,
             rotary_dim,
             pool,
@@ -560,12 +586,10 @@ impl Qwen3Model {
             (input_ids, position_ids, input_lengths, Some(attention_bias))
         };
 
-        let attention_bias = if let Some(attn_bias) = attention_bias {
-            if !self.use_bidirectional_attention {
-                Some(self.get_causal_attention_bias(attn_bias)?)
-            } else {
-                Some(attn_bias)
-            }
+        let attention_bias = if self.use_bidirectional_attention {
+            attention_bias
+        } else if let Some(attn_bias) = attention_bias {
+            Some(self.get_causal_attention_bias(attn_bias)?)
         } else {
             None
         };
@@ -589,6 +613,12 @@ impl Qwen3Model {
         }
 
         let (outputs, _) = self.norm.forward(&hidden_states, None)?;
+
+        let outputs = if let Some(ref projection) = self.projection {
+            projection.forward(&outputs)?
+        } else {
+            outputs
+        };
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();

@@ -22,6 +22,7 @@ struct Qwen3Attention {
     use_bidirectional_attention: bool,
 
     softmax_scale: f32,
+    use_bidirectional_attention: bool,
 
     span: tracing::Span,
 }
@@ -101,6 +102,7 @@ impl Qwen3Attention {
             attention_head_size,
             use_bidirectional_attention: config.use_bidirectional_attention.unwrap_or(false),
             softmax_scale,
+            use_bidirectional_attention: config.use_bidirectional_attention.unwrap_or(false),
             span: tracing::span!(tracing::Level::TRACE, "attention"),
         })
     }
@@ -289,6 +291,7 @@ pub struct FlashQwen3Model {
     embeddings: Embedding,
     layers: Vec<Qwen3Layer>,
     norm: RMSNorm,
+    projection: Option<Linear>,
     cos_cache: Tensor,
     sin_cache: Tensor,
     pool: Pool,
@@ -317,23 +320,42 @@ impl FlashQwen3Model {
 
         // The Qwen3-Reranker models contain the `model` key
         // https://huggingface.co/collections/Qwen/qwen3-reranker-6841b22d0192d7ade9cdefea
-        let vb = if vb.contains_tensor("model.embed_tokens.weight") {
-            vb.pp("model")
+        let model_prefix = if vb.contains_tensor("model.embed_tokens.weight") {
+            "model."
         } else {
-            vb
+            ""
         };
 
         let embeddings = Embedding::new(
-            vb.pp("embed_tokens")
+            vb.pp(format!("{model_prefix}embed_tokens"))
                 .get((config.vocab_size, config.hidden_size), "weight")?,
             config.hidden_size,
         );
 
         let layers = (0..config.num_hidden_layers)
-            .map(|index| Qwen3Layer::load(vb.pp(format!("layers.{index}")), config))
+            .map(|index| Qwen3Layer::load(vb.pp(format!("{model_prefix}layers.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
 
-        let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
+        let norm = RMSNorm::load(
+            vb.pp(format!("{model_prefix}norm")),
+            config.hidden_size,
+            config.rms_norm_eps,
+        )?;
+
+        let projection = if let Some(num_labels) = config.num_labels {
+            if vb.contains_tensor("linear.weight") {
+                let projection_weight =
+                    vb.get((num_labels, config.hidden_size), "linear.weight")?;
+                Some(Linear::new(projection_weight, None, None))
+            } else {
+                tracing::warn!(
+                    "num_labels is set but linear.weight not found, skipping projection layer"
+                );
+                None
+            }
+        } else {
+            None
+        };
 
         let inv_freqs = get_inv_freqs(
             layers[0].attention.attention_head_size,
@@ -352,6 +374,7 @@ impl FlashQwen3Model {
             embeddings,
             layers,
             norm,
+            projection,
             cos_cache,
             sin_cache,
             pool,
@@ -395,6 +418,13 @@ impl FlashQwen3Model {
         }
 
         let (outputs, _) = self.norm.forward(&hidden_states, residual.as_ref())?;
+
+        // NOTE: `projection` required by https://huggingface.co/voyageai/voyage-4-nano
+        let outputs = if let Some(ref projection) = self.projection {
+            projection.forward(&outputs)?
+        } else {
+            outputs
+        };
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();
