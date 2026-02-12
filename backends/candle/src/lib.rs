@@ -545,7 +545,7 @@ impl CandleBackend {
                     "Rope scaling is not supported for FlashLlama yet".to_string(),
                 )),
                 None => {
-                    let cfg_mistral = MistralConfig {
+                    let config = MistralConfig {
                         vocab_size: config.vocab_size,
                         hidden_size: config.hidden_size,
                         intermediate_size: config.intermediate_size,
@@ -559,9 +559,11 @@ impl CandleBackend {
                         model_type: config.model_type.clone(),
                         rope_theta: config.rope_theta,
                         sliding_window: config.sliding_window,
+                        rope_scaling: config.rope_scaling,
+                        use_bidirectional_attention: config.use_bidirectional_attention,
                     };
                     Ok(Box::new(
-                        FlashMistralModel::load(vb, &cfg_mistral, model_type).s()?,
+                        FlashMistralModel::load(vb, &config, model_type).s()?,
                     ))
                 }
             },
