@@ -64,12 +64,20 @@
     "dockerfile": "Dockerfile-cuda-blackwell"
   },
   {
-    "name": "All",
+    "name": "Turing, Ampere and Hopper",
     "imageNamePrefix": "cuda-",
     "runOn": "always",
     "sccache": false,
     "grpc": false,
     "dockerfile": "Dockerfile-cuda-all"
+  },
+  {
+    "name": "Blackwell",
+    "imageNamePrefix": "cuda-blackwell-",
+    "runOn": "always",
+    "sccache": false,
+    "grpc": false,
+    "dockerfile": "Dockerfile-cuda-blackwell-all"
   },
   {
     "name": "cpu",
