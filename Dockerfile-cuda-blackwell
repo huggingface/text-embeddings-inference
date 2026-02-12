@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.6.3-devel-ubuntu24.04 AS base-builder
+FROM nvidia/cuda:12.9.0-devel-ubuntu24.04 AS base-builder
 
 ENV SCCACHE=0.10.0
 ENV RUSTC_WRAPPER=/usr/local/bin/sccache
@@ -49,15 +49,12 @@ WORKDIR /usr/src
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
+    if [ ${CUDA_COMPUTE_CAP} -eq 100 ]; \
     then  \
-    nvprune --generate-code code=sm_${CUDA_COMPUTE_CAP} /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
-    elif [ ${CUDA_COMPUTE_CAP} -ge 80 -a ${CUDA_COMPUTE_CAP} -lt 90 ]; \
+    nvprune --generate-code code=sm_100 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
+    elif [ ${CUDA_COMPUTE_CAP} -eq 120 ]; \
     then  \
-    nvprune --generate-code code=sm_80 --generate-code code=sm_${CUDA_COMPUTE_CAP} /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
-    elif [ ${CUDA_COMPUTE_CAP} -eq 90 ]; \
-    then  \
-    nvprune --generate-code code=sm_90 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
+    nvprune --generate-code code=sm_120 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
     else  \
     echo "cuda compute cap ${CUDA_COMPUTE_CAP} is not supported"; exit 1; \
     fi;
@@ -66,12 +63,7 @@ COPY --from=planner /usr/src/recipe.json recipe.json
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
-    then \
-    cargo chef cook --release --features candle-cuda-turing --features static-linking --no-default-features --recipe-path recipe.json && sccache -s; \
-    else \
-    cargo chef cook --release --features candle-cuda --features static-linking --no-default-features --recipe-path recipe.json && sccache -s; \
-    fi;
+    cargo chef cook --release --features candle-cuda --features static-linking --no-default-features --recipe-path recipe.json && sccache -s;
 
 COPY backends backends
 COPY core core
@@ -83,12 +75,7 @@ FROM builder AS http-builder
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
-    then \
-    cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F static-linking -F http --no-default-features && sccache -s; \
-    else \
-    cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F http --no-default-features && sccache -s; \
-    fi;
+    cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F http --no-default-features && sccache -s;
 
 FROM builder AS grpc-builder
 
@@ -106,27 +93,20 @@ COPY proto proto
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
-    then \
-    cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F static-linking -F grpc --no-default-features && sccache -s; \
-    else \
-    cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F grpc --no-default-features && sccache -s; \
-    fi;
+    cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F grpc --no-default-features && sccache -s;
 
-FROM nvidia/cuda:12.6.3-base-ubuntu24.04 AS base
+FROM nvidia/cuda:12.9.0-base-ubuntu24.04 AS base
 
 ARG DEFAULT_USE_FLASH_ATTENTION=True
 
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80 \
-    USE_FLASH_ATTENTION=$DEFAULT_USE_FLASH_ATTENTION \
-    LD_LIBRARY_PATH="/usr/local/cuda/compat:${LD_LIBRARY_PATH}"
+    USE_FLASH_ATTENTION=$DEFAULT_USE_FLASH_ATTENTION
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl-dev \
     curl \
-    cuda-compat-12-6 \
     && rm -rf /var/lib/apt/lists/*
 
 FROM base AS grpc

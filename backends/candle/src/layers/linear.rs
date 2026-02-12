@@ -13,6 +13,7 @@ pub enum HiddenAct {
     Relu,
     Silu,
     Swiglu,
+    Tanh,
 }
 
 impl HiddenAct {
@@ -22,6 +23,7 @@ impl HiddenAct {
             Self::Relu => x.relu(),
             Self::Silu => x.silu(),
             Self::Swiglu => candle_nn::ops::swiglu(x),
+            Self::Tanh => x.tanh(),
         }
     }
 }
@@ -91,6 +93,7 @@ impl Linear {
                     HiddenAct::Relu => x.relu(),
                     HiddenAct::Silu => x.silu(),
                     HiddenAct::Swiglu => candle_nn::ops::swiglu(&x),
+                    HiddenAct::Tanh => x.tanh(),
                 }
             } else {
                 Ok(x)

@@ -1,5 +1,5 @@
 ARG PLATFORM=cpu
-FROM lukemathwalker/cargo-chef:latest-rust-1.85-bookworm AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.92-bookworm AS chef
 WORKDIR /usr/src
 
 ENV SCCACHE=0.10.0
@@ -64,12 +64,12 @@ ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        build-essential \
-        git \
-        cmake \
-        ninja-build \
-        python3-dev &&\
-        rm -rf /var/lib/apt/lists/*
+    build-essential \
+    git \
+    cmake \
+    ninja-build \
+    python3-dev &&\
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src
 COPY backends backends
@@ -88,12 +88,12 @@ ENV HUGGINGFACE_HUB_CACHE=/data \
 ENV PT_HPU_LAZY_MODE=1
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        build-essential \
-        git \
-        cmake \
-        ninja-build \
-        python3-dev &&\
-        rm -rf /var/lib/apt/lists/*
+    build-essential \
+    git \
+    cmake \
+    ninja-build \
+    python3-dev &&\
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src
 COPY backends backends
@@ -114,7 +114,7 @@ RUN wget http://nz2.archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.
 RUN wget -qO - https://repositories.intel.com/gpu/intel-graphics.key | gpg --dearmor | tee /usr/share/keyrings/intel-graphics.gpg > /dev/null
 
 RUN wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
-| gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null && echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | tee /etc/apt/sources.list.d/oneAPI.list
+    | gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null && echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | tee /etc/apt/sources.list.d/oneAPI.list
 
 RUN apt-get update && apt install -y intel-basekit cmake vim python3-dev ninja-build pciutils
 WORKDIR /usr/src

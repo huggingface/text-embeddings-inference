@@ -22,11 +22,11 @@ use crate::compute_cap::{
     compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
 };
 use crate::models::{
-    BertConfig, BertModel, Dense, DenseConfig, DenseLayer, DistilBertConfig, DistilBertModel,
-    GTEConfig, GTEModel, Gemma3Config, Gemma3Model, JinaBertModel, JinaCodeBertModel, LLamaConfig,
-    MPNetConfig, MPNetModel, MistralConfig, Model, ModernBertConfig, ModernBertModel,
-    NomicBertModel, NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model, StaticEmbeddingConfig, 
-    StaticEmbeddingModel,
+    BertConfig, BertModel, DebertaV2Config, DebertaV2Model, Dense, DenseConfig, DenseLayer,
+    DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, Gemma3Config, Gemma3Model,
+    JinaBertModel, JinaCodeBertModel, LlamaConfig, MPNetConfig, MPNetModel, MistralConfig, Model,
+    ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config, Qwen3Config,
+    Qwen3Model, StaticEmbeddingConfig, StaticEmbeddingModel
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -93,6 +93,7 @@ impl<'de> Deserialize<'de> for BertConfigWrapper {
 #[serde(tag = "model_type", rename_all = "kebab-case")]
 enum Config {
     Bert(BertConfigWrapper),
+    DebertaV2(DebertaV2Config),
     Camembert(BertConfig),
     #[serde(rename(deserialize = "distilbert"))]
     DistilBert(DistilBertConfig),
@@ -272,6 +273,10 @@ impl CandleBackend {
                     Ok(Box::new(BertModel::load(vb, &config, model_type).s()?))
                 }
             },
+            (Config::DebertaV2(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting DebertaV2 model on {:?}", device);
+                Ok(Box::new(DebertaV2Model::load(vb, &config, model_type).s()?))
+            }
             (
                 Config::Camembert(config) | Config::Roberta(config) | Config::XlmRoberta(config),
                 Device::Cpu | Device::Metal(_),
@@ -305,7 +310,7 @@ impl CandleBackend {
                 tracing::info!("Starting MPNet model on {:?}", device);
                 Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
             }
-            (Config::Llama(_config), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
+            (Config::Llama(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
                 "Llama is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
             )),
@@ -403,6 +408,11 @@ impl CandleBackend {
                         BertModel::load_roberta(vb, &config, model_type).s()?,
                     ))
                 }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::DebertaV2(config), Device::Cuda(_)) => {
+                tracing::info!("Starting DebertaV2 model on {:?}", device);
+                Ok(Box::new(DebertaV2Model::load(vb, &config, model_type).s()?))
             }
             #[cfg(feature = "cuda")]
             (Config::DistilBert(config), Device::Cuda(_)) => {
@@ -577,7 +587,7 @@ impl CandleBackend {
                         ))
                     }
                 }
-            }
+            },
         };
 
         let mut dense_layers = Vec::new();
