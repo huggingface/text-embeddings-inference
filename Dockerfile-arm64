@@ -6,7 +6,7 @@ ENV RUSTC_WRAPPER=/usr/local/bin/sccache
 
 # Download and configure ARM64-compatible sccache
 RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sccache-v$SCCACHE-aarch64-unknown-linux-musl.tar.gz | tar -xzv --strip-components=1 -C /usr/local/bin sccache-v$SCCACHE-aarch64-unknown-linux-musl/sccache && \
-    chmod +x /usr/local/bin/sccacheExpand commentComment on line R9Resolved
+    chmod +x /usr/local/bin/sccache
 
 FROM chef AS planner
 
@@ -50,7 +50,7 @@ RUN PROTOC_ZIP=protoc-21.12-linux-aarch_64.zip && \
     curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v21.12/$PROTOC_ZIP && \
     unzip -o $PROTOC_ZIP -d /usr/local bin/protoc && \
     unzip -o $PROTOC_ZIP -d /usr/local 'include/*' && \
-    rm -f $PROTOC_ZIPExpand commentComment on line R53Resolved
+    rm -f $PROTOC_ZIP
 
 COPY proto proto
 
