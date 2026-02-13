@@ -329,33 +329,77 @@ async fn predict_tokens(
 
     let truncate = req.truncate.unwrap_or(info.auto_truncate);
 
-    let (response, metadata) = match req.inputs {
-        PredictInput::Single(inputs) => {
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+    let (response, metadata) = {
+        let counter = metrics::counter!("te_request_count", "method" => "batch");
+        counter.increment(1);
 
-            let compute_chars = inputs.count_chars();
-            let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
-
-            let (token_predictions, prompt_tokens, tokenization, queue, inference) = infer
-                .predict_tokens(
-                    inputs,
-                    truncate,
-                    req.truncation_direction.into(),
-                    req.raw_scores,
-                    permit,
-                    None,
-                )
-                .await
-                .map_err(ErrorResponse::from)?;
-
-            let id2label = match &info.model_type {
-                ModelType::Classifier(classifier) => &classifier.id2label,
-                ModelType::Reranker(classifier) => &classifier.id2label,
-                _ => panic!(),
+        let batch_size = req.inputs.len();
+        if batch_size > info.max_client_batch_size {
+            let message = format!(
+                "batch size {batch_size} > maximum allowed batch size {}",
+                info.max_client_batch_size
+            );
+            tracing::error!("{message}");
+            let err = ErrorResponse {
+                error: message,
+                error_type: ErrorType::Validation,
             };
+            let counter = metrics::counter!("te_request_failure", "err" => "batch_size");
+            counter.increment(1);
+            Err(err)?;
+        }
 
-            let mut predictions = Vec::new();
+        let batch_counter = if batch_size == 1 {
+            None
+        } else {
+            Some(Arc::new(AtomicUsize::new(batch_size)))
+        };
+        let mut futures = Vec::with_capacity(batch_size);
+        let mut compute_chars = 0;
+
+        for input in req.inputs {
+            compute_chars += input.len();
+            let local_infer = infer.clone();
+            let local_batch_counter = batch_counter.clone();
+            futures.push(async move {
+                let permit = local_infer.acquire_permit().await;
+                local_infer
+                    .predict_tokens(
+                        input,
+                        truncate,
+                        req.truncation_direction.into(),
+                        req.raw_scores,
+                        permit,
+                        local_batch_counter,
+                    )
+                    .await
+            })
+        }
+        let results = join_all(futures)
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, TextEmbeddingsError>>()
+            .map_err(ErrorResponse::from)?;
+
+        let id2label = match &info.model_type {
+            ModelType::Classifier(classifier) => &classifier.id2label,
+            ModelType::Reranker(classifier) => &classifier.id2label,
+            _ => panic!(),
+        };
+
+        let mut predictions = Vec::with_capacity(batch_size);
+        let mut total_tokenization_time = 0;
+        let mut total_queue_time = 0;
+        let mut total_inference_time = 0;
+        let mut total_compute_tokens = 0;
+
+        for (token_predictions, prompt_tokens, tokenization, queue, inference) in results {
+            total_compute_tokens += prompt_tokens;
+            total_tokenization_time += tokenization.as_nanos() as u64;
+            total_queue_time += queue.as_nanos() as u64;
+            total_inference_time += inference.as_nanos() as u64;
+
+            let mut token_predictions_result = Vec::with_capacity(token_predictions.len());
             for (token, token_id, scores, start, end) in token_predictions {
                 // Check for NaN scores
                 if scores.iter().any(|s| s.is_nan()) {
@@ -375,7 +419,7 @@ async fn predict_tokens(
                     results.insert(label, s);
                 }
 
-                predictions.push(crate::http::types::TokenPrediction {
+                token_predictions_result.push(crate::http::types::TokenPrediction {
                     token,
                     token_id,
                     start,
@@ -383,151 +427,39 @@ async fn predict_tokens(
                     results,
                 });
             }
-            
-            let predictions = apply_aggregation(predictions, &req.aggregation_strategy, id2label, &req.ignore_labels);
-
-            let counter = metrics::counter!("te_request_success", "method" => "single");
-            counter.increment(1);
-
-            (
-                TokenPredictResponse::Single(predictions),
-                ResponseMetadata::new(
-                    compute_chars,
-                    prompt_tokens,
-                    start_time,
-                    tokenization,
-                    queue,
-                    inference,
-                ),
-            )
+            predictions.push(token_predictions_result);
         }
-        PredictInput::Batch(inputs) => {
-            let counter = metrics::counter!("te_request_count", "method" => "batch");
-            counter.increment(1);
+        let batch_size = batch_size as u64;
 
-            let batch_size = inputs.len();
-            if batch_size > info.max_client_batch_size {
-                let message = format!(
-                    "batch size {batch_size} > maximum allowed batch size {}",
-                    info.max_client_batch_size
-                );
-                tracing::error!("{message}");
-                let err = ErrorResponse {
-                    error: message,
-                    error_type: ErrorType::Validation,
-                };
-                let counter = metrics::counter!("te_request_failure", "err" => "batch_size");
-                counter.increment(1);
-                Err(err)?;
-            }
+        // Apply aggregation strategy
+        let predictions = predictions
+            .into_iter()
+            .map(|batch_predictions| {
+                apply_aggregation(
+                    batch_predictions,
+                    &req.aggregation_strategy,
+                    id2label,
+                    &req.ignore_labels,
+                )
+            })
+            .collect();
 
-            let batch_counter = if batch_size == 1 {
-                None
-            } else {
-                Some(Arc::new(AtomicUsize::new(batch_size)))
-            };
-            let mut futures = Vec::with_capacity(batch_size);
-            let mut compute_chars = 0;
+        let counter = metrics::counter!("te_request_success", "method" => "batch");
+        counter.increment(1);
 
-            for input in inputs {
-                compute_chars += input.count_chars();
-                let local_infer = infer.clone();
-                let local_batch_counter = batch_counter.clone();
-                futures.push(async move {
-                    let permit = local_infer.acquire_permit().await;
-                    local_infer
-                        .predict_tokens(
-                            input,
-                            truncate,
-                            req.truncation_direction.into(),
-                            req.raw_scores,
-                            permit,
-                            local_batch_counter,
-                        )
-                        .await
-                })
-            }
-            let results = join_all(futures)
-                .await
-                .into_iter()
-                .collect::<Result<Vec<_>, TextEmbeddingsError>>()
-                .map_err(ErrorResponse::from)?;
+        let predictions = predictions; // No flattening needed
 
-            let id2label = match &info.model_type {
-                ModelType::Classifier(classifier) => &classifier.id2label,
-                ModelType::Reranker(classifier) => &classifier.id2label,
-                _ => panic!(),
-            };
-
-            let mut predictions = Vec::with_capacity(batch_size);
-            let mut total_tokenization_time = 0;
-            let mut total_queue_time = 0;
-            let mut total_inference_time = 0;
-            let mut total_compute_tokens = 0;
-
-            for (token_predictions, prompt_tokens, tokenization, queue, inference) in results {
-                total_compute_tokens += prompt_tokens;
-                total_tokenization_time += tokenization.as_nanos() as u64;
-                total_queue_time += queue.as_nanos() as u64;
-                total_inference_time += inference.as_nanos() as u64;
-
-                let mut token_predictions_result = Vec::with_capacity(token_predictions.len());
-                for (token, token_id, scores, start, end) in token_predictions {
-                    // Check for NaN scores
-                    if scores.iter().any(|s| s.is_nan()) {
-                        return Err((
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(ErrorResponse {
-                                error: "score is NaN".to_string(),
-                                error_type: ErrorType::Backend,
-                            }),
-                        ));
-                    }
-
-                    // Create results dictionary with labels and scores
-                    let mut results = std::collections::HashMap::new();
-                    for (i, s) in scores.into_iter().enumerate() {
-                        let label = id2label.get(&i.to_string()).unwrap().clone();
-                        results.insert(label, s);
-                    }
-
-                    token_predictions_result.push(crate::http::types::TokenPrediction {
-                        token,
-                        token_id,
-                        start,
-                        end,
-                        results,
-                    });
-                }
-                predictions.push(token_predictions_result);
-            }
-            let batch_size = batch_size as u64;
-
-            // Apply aggregation strategy
-            let predictions = predictions
-                .into_iter()
-                .map(|batch_predictions| {
-                    apply_aggregation(batch_predictions, &req.aggregation_strategy, id2label, &req.ignore_labels)
-                })
-                .collect();
-
-            let counter = metrics::counter!("te_request_success", "method" => "batch");
-            counter.increment(1);
-
-            let predictions = predictions; // No flattening needed
-
-            (
-                TokenPredictResponse::Batch(predictions),
-                ResponseMetadata::new(
-                    compute_chars,
-                    total_compute_tokens,
-                    start_time,
-                    Duration::from_nanos(total_tokenization_time / batch_size),
-                    Duration::from_nanos(total_queue_time / batch_size),
-                    Duration::from_nanos(total_inference_time / batch_size),
-                ),
-            )
-        }
+        (
+            TokenPredictResponse::Batch(predictions),
+            ResponseMetadata::new(
+                compute_chars,
+                total_compute_tokens,
+                start_time,
+                Duration::from_nanos(total_tokenization_time / batch_size),
+                Duration::from_nanos(total_queue_time / batch_size),
+                Duration::from_nanos(total_inference_time / batch_size),
+            ),
+        )
     };
 
     metadata.record_span(&span);

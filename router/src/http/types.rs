@@ -232,7 +232,7 @@ pub(crate) struct PredictRequest {
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct PredictTokensRequest {
-    pub inputs: PredictInput,
+    pub inputs: Vec<String>,
     #[schema(default = "false", example = "false", nullable = true)]
     pub truncate: Option<bool>,
     #[serde(default)]
@@ -645,6 +645,5 @@ pub(crate) struct TokenPrediction {
 #[derive(Serialize, ToSchema)]
 #[serde(untagged)]
 pub(crate) enum TokenPredictResponse {
-    Single(Vec<TokenPrediction>),
     Batch(Vec<Vec<TokenPrediction>>),
 }
