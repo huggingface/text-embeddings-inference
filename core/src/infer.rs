@@ -296,6 +296,7 @@ impl Infer {
 
         if normalize {
             // Normalize embedding
+            // TODO: Should this be normalized with a background thread etc. instead of doing it synchronously here?
             let scale = (1.0
                 / response
                     .results

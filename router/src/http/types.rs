@@ -7,6 +7,8 @@ use text_embeddings_core::tokenization::EncodingInput;
 use utoipa::openapi::{RefOr, Schema};
 use utoipa::ToSchema;
 
+use crate::http::ner::AggregationStrategy;
+
 #[derive(Debug)]
 pub(crate) enum Sequence {
     Single(String),
@@ -235,6 +237,8 @@ pub(crate) struct PredictTokensRequest {
     #[serde(default)]
     #[schema(default = "false", example = "false")]
     pub raw_scores: bool,
+    #[schema(default = "none", example = "none")]
+    pub aggregation_strategy: AggregationStrategy,
 }
 
 #[derive(Serialize, ToSchema)]

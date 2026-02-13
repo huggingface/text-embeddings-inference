@@ -392,6 +392,12 @@ impl Backend for OrtBackend {
         true
     }
 
+    fn predict_tokens(&self, _batch: Batch) -> Result<Predictions, BackendError> {
+        Err(BackendError::Inference(
+            "Token-level predictions are not supported for `ort` backend.".to_string(),
+        ))
+    }
+
     fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError> {
         let batch_size = batch.len();
         let max_length = batch.max_length as usize;

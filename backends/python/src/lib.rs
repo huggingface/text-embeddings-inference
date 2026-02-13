@@ -68,6 +68,12 @@ impl Backend for PythonBackend {
         Ok(())
     }
 
+    fn predict_tokens(&self, _batch: Batch) -> Result<Predictions, BackendError> {
+        Err(BackendError::Inference(
+            "Token-level predictions are not supported for the Python backend.".to_string(),
+        ))
+    }
+
     fn is_padded(&self) -> bool {
         false
     }

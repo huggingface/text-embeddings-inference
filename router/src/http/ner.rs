@@ -1,0 +1,646 @@
+// aggregation_strategy (str, optional, defaults to "none") — The strategy to fuse (or not) tokens based on the model prediction.
+// "none" : Will simply not do any aggregation and simply return raw results from the model
+// "simple" : Will attempt to group entities following the default schema. (A, B-TAG), (B, I-TAG), (C, I-TAG), (D, B-TAG2) (E, B-TAG2) will end up being [{"word": ABC, "entity": "TAG"}, {"word": "D", "entity": "TAG2"}, {"word": "E", "entity": "TAG2"}] Notice that two consecutive B tags will end up as different entities. On word based languages, we might end up splitting words undesirably : Imagine Microsoft being tagged as [{"word": "Micro", "entity": "ENTERPRISE"}, {"word": "soft", "entity": "NAME"}]. Look for FIRST, MAX, AVERAGE for ways to mitigate that and disambiguate words (on languages that support that meaning, which is basically tokens separated by a space). These mitigations will only work on real words, "New york" might still be tagged with two different entities.
+// "first" : (works only on word based models) Will use the SIMPLE strategy except that words, cannot end up with different tags. Words will simply use the tag of the first token of the word when there is ambiguity.
+// "average" : (works only on word based models) Will use the SIMPLE strategy except that words, cannot end up with different tags. scores will be averaged first across tokens, and then the maximum label is applied.
+// "max" : (works only on word based models) Will use the SIMPLE strategy except that words, cannot end up with different tags. Word entity will simply be the token with the maximum score.
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum AggregationStrategy {
+    None,
+    Simple,
+    First,
+    Average,
+    Max,
+}
+
+pub fn apply_aggregation(
+    predictions: Vec<crate::http::types::TokenPrediction>,
+    strategy: &AggregationStrategy,
+    id2label: &std::collections::HashMap<String, String>,
+) -> Vec<crate::http::types::TokenPrediction> {
+    match strategy {
+        AggregationStrategy::None => predictions,
+        AggregationStrategy::Simple => simple_aggregation(predictions, id2label),
+        AggregationStrategy::First => first_aggregation(predictions, id2label),
+        AggregationStrategy::Average => average_aggregation(predictions, id2label),
+        AggregationStrategy::Max => max_aggregation(predictions, id2label),
+    }
+}
+
+/// Helper structure to represent pre-entities for aggregation
+#[derive(Debug, Clone)]
+struct PreEntity {
+    word: String,
+    scores: Vec<f32>,
+    start: Option<usize>,
+    end: Option<usize>,
+    index: usize,
+    is_subword: bool,
+}
+
+/// Safe detokenization from tokens (BERT-friendly version)
+fn detok(tokens: impl Iterator<Item = String>) -> String {
+    let mut out = String::new();
+    for (i, tok) in tokens.enumerate() {
+        if let Some(rest) = tok.strip_prefix("##") {
+            out.push_str(rest);
+            continue;
+        }
+        if let Some(rest) = tok.strip_prefix("Ġ").or_else(|| tok.strip_prefix("▁")) {
+            if i > 0 {
+                out.push(' ');
+            }
+            out.push_str(rest);
+            continue;
+        }
+        // BERT/plain token (word start): put a space if not first and previous wasn't empty
+        if i > 0 {
+            out.push(' ');
+        }
+        out.push_str(&tok);
+    }
+    out
+}
+
+/// Detect if a token is a subword based on common tokenizer patterns
+fn is_subword_token(token: &str) -> bool {
+    // BERT WordPiece: ## marks continuation
+    if token.starts_with("##") {
+        return true;
+    }
+
+    // RoBERTa/SentencePiece: Ġ/▁ marks word start, so anything without these is continuation
+    // But we need to be careful not to mark BERT tokens as subwords
+    // If we see Ġ or ▁, we know it's RoBERTa/SentencePiece and this is a word start
+    if token.starts_with('Ġ') || token.starts_with('▁') {
+        return false;
+    }
+
+    // For tokens without any markers:
+    // - In BERT, these are regular word starts (not subwords)
+    // - In RoBERTa/SentencePiece, these would be continuations
+    // Since we can't distinguish, we'll assume BERT behavior (most common for NER)
+    // This means regular tokens without markers are treated as word starts
+    false
+}
+
+/// Gather pre-entities from predictions
+fn gather_pre_entities(
+    predictions: Vec<crate::http::types::TokenPrediction>,
+    id2label: &std::collections::HashMap<String, String>,
+) -> Vec<PreEntity> {
+    // Build label list in index order: 0..N-1
+    let mut labels: Vec<(usize, String)> = id2label
+        .iter()
+        .filter_map(|(k, v)| k.parse::<usize>().ok().map(|i| (i, v.clone())))
+        .collect();
+    labels.sort_by_key(|(i, _)| *i);
+
+    predictions
+        .into_iter()
+        .enumerate()
+        .map(|(idx, p)| {
+            let scores: Vec<f32> = labels
+                .iter()
+                .map(|(_, label)| *p.results.get(label).unwrap_or(&0.0))
+                .collect();
+
+            let is_subword = is_subword_token(&p.token);
+
+            PreEntity {
+                word: p.token,
+                scores,
+                start: p.start,
+                end: p.end,
+                index: idx,
+                is_subword,
+            }
+        })
+        .collect()
+}
+
+/// Get the BIO tag and entity type from a label
+fn get_tag(entity_name: &str) -> (String, String) {
+    if entity_name.starts_with("B-") {
+        ("B".to_string(), entity_name[2..].to_string())
+    } else if entity_name.starts_with("I-") {
+        ("I".to_string(), entity_name[2..].to_string())
+    } else {
+        ("I".to_string(), entity_name.to_string())
+    }
+}
+
+/// Entity structure matching Hugging Face's format
+#[derive(Debug, Clone)]
+struct Entity {
+    entity: String,
+    score: f32,
+    index: usize,
+    word: String,
+    start: Option<usize>,
+    end: Option<usize>,
+}
+
+/// EntityGroup structure matching Hugging Face's format
+#[derive(Debug, Clone)]
+struct EntityGroup {
+    entity_group: String,
+    score: f32,
+    word: String,
+    start: Option<usize>,
+    end: Option<usize>,
+}
+
+/// Aggregate pre-entities based on the strategy
+fn aggregate(
+    pre_entities: Vec<PreEntity>,
+    aggregation_strategy: &AggregationStrategy,
+    id2label: &std::collections::HashMap<String, String>,
+) -> Vec<EntityGroup> {
+    if matches!(
+        aggregation_strategy,
+        AggregationStrategy::None | AggregationStrategy::Simple
+    ) {
+        let mut entities = Vec::new();
+        for pre_entity in pre_entities {
+            let entity_idx = pre_entity
+                .scores
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+
+            let score = pre_entity.scores[entity_idx];
+
+            let entity_label = id2label
+                .get(&entity_idx.to_string())
+                .cloned()
+                .unwrap_or_else(|| format!("UNKNOWN_{}", entity_idx));
+
+            let entity = Entity {
+                entity: entity_label,
+                score,
+                index: pre_entity.index,
+                word: pre_entity.word.clone(),
+                start: pre_entity.start,
+                end: pre_entity.end,
+            };
+            entities.push(entity);
+        }
+
+        if matches!(aggregation_strategy, AggregationStrategy::None) {
+            return entities
+                .into_iter()
+                .map(|e| EntityGroup {
+                    entity_group: e.entity,
+                    score: e.score,
+                    word: e.word,
+                    start: e.start,
+                    end: e.end,
+                })
+                .collect();
+        }
+
+        group_entities(entities)
+    } else {
+        let word_entities = aggregate_words(pre_entities, aggregation_strategy, id2label);
+        group_entities(word_entities)
+    }
+}
+
+/// Aggregate a word using the specified strategy
+fn aggregate_word(
+    entities: &[PreEntity],
+    aggregation_strategy: &AggregationStrategy,
+    id2label: &std::collections::HashMap<String, String>,
+) -> Entity {
+    let word = detok(entities.iter().map(|e| e.word.clone()));
+
+    let (entity, score) = match aggregation_strategy {
+        AggregationStrategy::First => {
+            if entities.is_empty() {
+                return Entity {
+                    entity: "UNKNOWN".to_string(),
+                    score: 0.0,
+                    word: String::new(),
+                    start: None,
+                    end: None,
+                    index: 0,
+                };
+            }
+            let scores = &entities[0].scores;
+            let idx = scores
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+            let score = scores[idx];
+            let entity = id2label
+                .get(&idx.to_string())
+                .cloned()
+                .unwrap_or_else(|| format!("UNKNOWN_{}", idx));
+            (entity, score)
+        }
+        AggregationStrategy::Max => {
+            if entities.is_empty() {
+                return Entity {
+                    entity: "O".to_string(),
+                    score: 0.0,
+                    word: String::new(),
+                    start: None,
+                    end: None,
+                    index: 0,
+                };
+            }
+            let max_entity = entities
+                .iter()
+                .max_by(|a, b| {
+                    let a_max = a
+                        .scores
+                        .iter()
+                        .filter(|score| score.is_finite())
+                        .max_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal))
+                        .unwrap_or(&0.0);
+                    let b_max = b
+                        .scores
+                        .iter()
+                        .filter(|score| score.is_finite())
+                        .max_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal))
+                        .unwrap_or(&0.0);
+                    a_max
+                        .partial_cmp(b_max)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .unwrap_or(&entities[0]);
+
+            let scores = &max_entity.scores;
+            let idx = scores
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+            let score = scores[idx];
+            let entity = id2label
+                .get(&idx.to_string())
+                .cloned()
+                .unwrap_or_else(|| format!("UNKNOWN_{}", idx));
+            (entity, score)
+        }
+        AggregationStrategy::Average => {
+            if entities.is_empty() {
+                return Entity {
+                    entity: "O".to_string(),
+                    score: 0.0,
+                    word: String::new(),
+                    start: None,
+                    end: None,
+                    index: 0,
+                };
+            }
+            let mut averaged_scores = Vec::new();
+            let num_scores = entities[0].scores.len();
+            averaged_scores.resize(num_scores, 0.0);
+
+            for entity in entities {
+                for (i, score) in entity.scores.iter().enumerate() {
+                    if i < averaged_scores.len() {
+                        averaged_scores[i] += score;
+                    }
+                }
+            }
+
+            for score in &mut averaged_scores {
+                if entities.len() > 0 {
+                    *score /= entities.len() as f32;
+                }
+            }
+
+            let entity_idx = averaged_scores
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+            let score = averaged_scores[entity_idx];
+            let entity = id2label
+                .get(&entity_idx.to_string())
+                .cloned()
+                .unwrap_or_else(|| format!("UNKNOWN_{}", entity_idx));
+            (entity, score)
+        }
+        _ => ("O".to_string(), 0.0),
+    };
+
+    Entity {
+        entity,
+        score,
+        word,
+        start: entities.first().and_then(|e| e.start),
+        end: entities.last().and_then(|e| e.end),
+        index: entities.first().map(|e| e.index).unwrap_or(0),
+    }
+}
+
+/// Aggregate words for FIRST, AVERAGE, and MAX strategies
+fn aggregate_words(
+    pre_entities: Vec<PreEntity>,
+    aggregation_strategy: &AggregationStrategy,
+    id2label: &std::collections::HashMap<String, String>,
+) -> Vec<Entity> {
+    if matches!(
+        aggregation_strategy,
+        AggregationStrategy::None | AggregationStrategy::Simple
+    ) {
+        panic!("NONE and SIMPLE strategies are invalid for word aggregation");
+    }
+
+    let mut word_entities = Vec::new();
+    let mut word_group: Option<Vec<PreEntity>> = None;
+
+    for entity in pre_entities {
+        if word_group.is_none() {
+            word_group = Some(vec![entity]);
+        } else if entity.is_subword {
+            if let Some(group) = word_group.as_mut() {
+                group.push(entity);
+            } else {
+                word_group = Some(vec![entity]);
+            }
+        } else {
+            if let Some(group) = word_group {
+                word_entities.push(aggregate_word(&group, aggregation_strategy, id2label));
+            }
+            word_group = Some(vec![entity]);
+        }
+    }
+
+    if let Some(group) = word_group {
+        word_entities.push(aggregate_word(&group, aggregation_strategy, id2label));
+    }
+
+    word_entities
+}
+
+/// Group sub-entities together
+fn group_sub_entities(entities: &[Entity]) -> EntityGroup {
+    if entities.is_empty() {
+        return EntityGroup {
+            entity_group: "O".to_string(),
+            score: 0.0,
+            word: String::new(),
+            start: None,
+            end: None,
+        };
+    }
+
+    let entity = entities[0]
+        .entity
+        .split('-')
+        .last()
+        .unwrap_or(&entities[0].entity);
+
+    let mut total_score = 0.0;
+    let mut count = 0;
+    for entity in entities {
+        if entity.score.is_finite() {
+            total_score += entity.score;
+            count += 1;
+        }
+    }
+    let score = if count > 0 {
+        total_score / count as f32
+    } else {
+        0.0
+    };
+
+    let word = entities
+        .iter()
+        .map(|e| e.word.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    EntityGroup {
+        entity_group: entity.to_string(),
+        score,
+        word,
+        start: entities[0].start,
+        end: entities[entities.len() - 1].end,
+    }
+}
+
+/// Group entities according to BIO tagging scheme
+fn group_entities(entities: Vec<Entity>) -> Vec<EntityGroup> {
+    let mut entity_groups = Vec::new();
+    let mut entity_group_disagg = Vec::new();
+
+    for entity in entities {
+        if entity_group_disagg.is_empty() {
+            entity_group_disagg.push(entity);
+            continue;
+        }
+
+        let (bi, tag) = get_tag(&entity.entity);
+        let (_last_bi, last_tag) = if let Some(last_entity) = entity_group_disagg.last() {
+            get_tag(&last_entity.entity)
+        } else {
+            ("I".to_string(), "".to_string())
+        };
+
+        if tag == last_tag && bi != "B" {
+            entity_group_disagg.push(entity);
+        } else {
+            entity_groups.push(group_sub_entities(&entity_group_disagg));
+            entity_group_disagg = vec![entity];
+        }
+    }
+
+    if !entity_group_disagg.is_empty() {
+        entity_groups.push(group_sub_entities(&entity_group_disagg));
+    }
+
+    entity_groups
+}
+
+/// Convert EntityGroup back to TokenPrediction for our API
+fn entity_group_to_token_prediction(group: EntityGroup) -> crate::http::types::TokenPrediction {
+    crate::http::types::TokenPrediction {
+        token: group.word,
+        token_id: 0,
+        start: group.start,
+        end: group.end,
+        results: std::collections::HashMap::from([(group.entity_group, group.score)]),
+    }
+}
+
+/// Simple aggregation strategy
+fn simple_aggregation(
+    predictions: Vec<crate::http::types::TokenPrediction>,
+    id2label: &std::collections::HashMap<String, String>,
+) -> Vec<crate::http::types::TokenPrediction> {
+    let pre_entities = gather_pre_entities(predictions, id2label);
+    let entities = aggregate(pre_entities, &AggregationStrategy::Simple, id2label);
+    entities
+        .into_iter()
+        .map(entity_group_to_token_prediction)
+        .collect()
+}
+
+/// First aggregation strategy
+fn first_aggregation(
+    predictions: Vec<crate::http::types::TokenPrediction>,
+    id2label: &std::collections::HashMap<String, String>,
+) -> Vec<crate::http::types::TokenPrediction> {
+    let pre_entities = gather_pre_entities(predictions, id2label);
+    let entities = aggregate(pre_entities, &AggregationStrategy::First, id2label);
+    entities
+        .into_iter()
+        .map(entity_group_to_token_prediction)
+        .collect()
+}
+
+/// Average aggregation strategy
+fn average_aggregation(
+    predictions: Vec<crate::http::types::TokenPrediction>,
+    id2label: &std::collections::HashMap<String, String>,
+) -> Vec<crate::http::types::TokenPrediction> {
+    let pre_entities = gather_pre_entities(predictions, id2label);
+    let entities = aggregate(pre_entities, &AggregationStrategy::Average, id2label);
+    entities
+        .into_iter()
+        .map(entity_group_to_token_prediction)
+        .collect()
+}
+
+/// Max aggregation strategy
+fn max_aggregation(
+    predictions: Vec<crate::http::types::TokenPrediction>,
+    id2label: &std::collections::HashMap<String, String>,
+) -> Vec<crate::http::types::TokenPrediction> {
+    let pre_entities = gather_pre_entities(predictions, id2label);
+    let entities = aggregate(pre_entities, &AggregationStrategy::Max, id2label);
+    entities
+        .into_iter()
+        .map(entity_group_to_token_prediction)
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_subword_token_bert() {
+        // BERT WordPiece tokens
+        assert!(!is_subword_token("microsoft")); // Regular word start
+        assert!(is_subword_token("##soft")); // Continuation
+        assert!(!is_subword_token("is")); // Regular word start
+        assert!(!is_subword_token("great")); // Regular word start
+        assert!(is_subword_token("##ing")); // Continuation
+    }
+
+    #[test]
+    fn test_is_subword_token_roberta() {
+        // RoBERTa BPE tokens - we can only reliably detect word starts with Ġ
+        assert!(!is_subword_token("Ġmicrosoft")); // Word start with Ġ
+        assert!(!is_subword_token("soft")); // Ambiguous - could be BERT word start or RoBERTa continuation
+        assert!(!is_subword_token("Ġis")); // Word start with Ġ
+    }
+
+    #[test]
+    fn test_is_subword_token_sentencepiece() {
+        // SentencePiece tokens - we can only reliably detect word starts with ▁
+        assert!(!is_subword_token("▁microsoft")); // Word start with ▁
+        assert!(!is_subword_token("soft")); // Ambiguous - could be BERT word start or SentencePiece continuation
+        assert!(!is_subword_token("▁is")); // Word start with ▁
+    }
+
+    #[test]
+    fn test_detok_bert() {
+        let tokens = vec![
+            "micro".to_string(),
+            "##soft".to_string(),
+            "is".to_string(),
+            "great".to_string(),
+        ];
+        let result = detok(tokens.into_iter());
+        assert_eq!(result, "microsoft is great");
+    }
+
+    #[test]
+    fn test_detok_roberta() {
+        let tokens = vec![
+            "Ġmicro".to_string(),
+            "soft".to_string(),
+            "Ġis".to_string(),
+            "Ġgreat".to_string(),
+        ];
+        let result = detok(tokens.into_iter());
+        assert_eq!(result, "micro soft is great");
+    }
+
+    #[test]
+    fn test_detok_sentencepiece() {
+        let tokens = vec![
+            "▁micro".to_string(),
+            "soft".to_string(),
+            "▁is".to_string(),
+            "▁great".to_string(),
+        ];
+        let results = detok(tokens.into_iter());
+        assert_eq!(results, "micro soft is great");
+    }
+
+    #[test]
+    fn test_detok_mixed() {
+        let tokens = vec!["i".to_string(), "like".to_string(), "pizza".to_string()];
+        let result = detok(tokens.into_iter());
+        assert_eq!(result, "i like pizza");
+    }
+
+    #[test]
+    fn test_word_grouping() {
+        // Test that BERT tokens are grouped correctly into words
+        let tokens = vec![
+            "micro".to_string(),
+            "##soft".to_string(), // Should be one word: "microsoft"
+            "is".to_string(),     // Should be one word: "is"
+            "very".to_string(),
+            "##great".to_string(), // Should be one word: "verygreat"
+        ];
+
+        let mut word_groups = Vec::new();
+        let mut current_group: Option<Vec<String>> = None;
+
+        for token in tokens {
+            if is_subword_token(&token) {
+                if let Some(group) = current_group.as_mut() {
+                    group.push(token);
+                } else {
+                    current_group = Some(vec![token]);
+                }
+            } else {
+                if let Some(group) = current_group {
+                    word_groups.push(group);
+                }
+                current_group = Some(vec![token]);
+            }
+        }
+
+        if let Some(group) = current_group {
+            word_groups.push(group);
+        }
+
+        // Convert groups to words
+        let words: Vec<String> = word_groups
+            .iter()
+            .map(|group| detok(group.iter().cloned()))
+            .collect();
+
+        assert_eq!(words, vec!["microsoft", "is", "verygreat"]);
+    }
+}

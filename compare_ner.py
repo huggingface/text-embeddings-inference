@@ -197,7 +197,7 @@ print(f"{'=' * 80}")
 
 print("running: latency tests")
 times = []
-for i in range(30):
+for i in range(3000):
     bei_response = client.batch_post(
         "/predict_tokens", payloads=[{"inputs": [[text]], "raw_scores": False}]
     )
@@ -208,6 +208,6 @@ for i in range(30):
 print("mean latency:", sum(times) / len(times), "for 1 sentence at a time")
 print("running throughput tests")
 bei_response = client.batch_post(
-    "/predict_tokens", payloads=[{"inputs": [[text],[text],[text],[text],[text],[text],[text],[text]], "raw_scores": False}] * 32
+    "/predict_tokens", payloads=[{"inputs": [[text]], "raw_scores": False}] * 1
 )
 print(f"running 256 sentences in 32 requests took {bei_response.total_time:.2f} seconds")

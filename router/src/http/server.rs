@@ -1,3 +1,4 @@
+use crate::http::ner::apply_aggregation;
 /// HTTP Server logic
 use crate::http::types::{
     DecodeRequest, DecodeResponse, EmbedAllRequest, EmbedAllResponse, EmbedRequest, EmbedResponse,
@@ -6,8 +7,8 @@ use crate::http::types::{
     OpenAICompatUsage, PredictInput, PredictRequest, PredictResponse, PredictTokensRequest,
     Prediction, Rank, RerankRequest, RerankResponse, Sequence, SimilarityInput,
     SimilarityParameters, SimilarityRequest, SimilarityResponse, SimpleToken, SparseValue,
-    TokenPredictResponse, TokenPrediction, TokenizeInput, TokenizeRequest, TokenizeResponse,
-    TruncationDirection, VertexPrediction, VertexRequest, VertexResponse,
+    TokenPredictResponse, TokenizeInput, TokenizeRequest, TokenizeResponse, TruncationDirection,
+    VertexPrediction, VertexRequest, VertexResponse,
 };
 use crate::{
     logging, shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
@@ -374,7 +375,7 @@ async fn predict_tokens(
                     results.insert(label, s);
                 }
 
-                predictions.push(TokenPrediction {
+                predictions.push(crate::http::types::TokenPrediction {
                     token,
                     token_id,
                     start,
@@ -382,6 +383,8 @@ async fn predict_tokens(
                     results,
                 });
             }
+            
+            let predictions = apply_aggregation(predictions, &req.aggregation_strategy, id2label);
 
             let counter = metrics::counter!("te_request_success", "method" => "single");
             counter.increment(1);
@@ -488,7 +491,7 @@ async fn predict_tokens(
                         results.insert(label, s);
                     }
 
-                    token_predictions_result.push(TokenPrediction {
+                    token_predictions_result.push(crate::http::types::TokenPrediction {
                         token,
                         token_id,
                         start,
@@ -499,6 +502,14 @@ async fn predict_tokens(
                 predictions.push(token_predictions_result);
             }
             let batch_size = batch_size as u64;
+
+            // Apply aggregation strategy
+            let predictions = predictions
+                .into_iter()
+                .map(|batch_predictions| {
+                    apply_aggregation(batch_predictions, &req.aggregation_strategy, id2label)
+                })
+                .collect();
 
             let counter = metrics::counter!("te_request_success", "method" => "batch");
             counter.increment(1);
