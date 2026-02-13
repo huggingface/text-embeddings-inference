@@ -357,7 +357,7 @@ async fn predict_tokens(
         let mut futures = Vec::with_capacity(batch_size);
         let mut compute_chars = 0;
 
-        for input in req.inputs {
+        for input in &req.inputs {
             compute_chars += input.len();
             let local_infer = infer.clone();
             let local_batch_counter = batch_counter.clone();
@@ -365,7 +365,7 @@ async fn predict_tokens(
                 let permit = local_infer.acquire_permit().await;
                 local_infer
                     .predict_tokens(
-                        input,
+                        input.clone(),
                         truncate,
                         req.truncation_direction.into(),
                         req.raw_scores,
@@ -373,7 +373,7 @@ async fn predict_tokens(
                         local_batch_counter,
                     )
                     .await
-            })
+            });
         }
         let results = join_all(futures)
             .await
@@ -434,8 +434,10 @@ async fn predict_tokens(
         // Apply aggregation strategy
         let predictions = predictions
             .into_iter()
-            .map(|batch_predictions| {
+            .zip(&req.inputs)
+            .map(|(batch_predictions, sentence)| {
                 apply_aggregation(
+                    sentence,
                     batch_predictions,
                     &req.aggregation_strategy,
                     id2label,

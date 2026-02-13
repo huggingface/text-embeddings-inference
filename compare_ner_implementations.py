@@ -109,58 +109,111 @@ def normalize_entities(entities):
     return normalized
 
 
-def compare_entities(tei_entities, hf_entities):
-    """Compare entities between TEI and HF"""
-    tei_norm = normalize_entities(tei_entities)
-    hf_norm = normalize_entities(hf_entities)
+def compare_entities(tei_entities, hf_entities, sentence):
+    """Compare entities between TEI and HF using position-based comparison"""
 
-    # Calculate metrics
+    # Create position-based mappings
+    tei_by_position = {}
+    hf_by_position = {}
+
+    for entity in tei_entities:
+        start = entity.get("start")
+        end = entity.get("end")
+        if start is not None and end is not None:
+            key = (start, end)
+            tei_by_position[key] = entity
+
+    for entity in hf_entities:
+        start = entity.get("start")
+        end = entity.get("end")
+        if start is not None and end is not None:
+            key = (start, end)
+            hf_by_position[key] = entity
+
+    # Compare by position
     exact_matches = 0
     partial_matches = 0
-
-    # Create word-entity mappings for comparison
-    tei_word_to_entity = {e["word"]: e for e in tei_norm}
-    hf_word_to_entity = {e["word"]: e for e in hf_norm}
-
-    # Check matches
-    all_words = set(tei_word_to_entity.keys()) | set(hf_word_to_entity.keys())
-
     matches = []
-    for word in all_words:
-        tei_entity = tei_word_to_entity.get(word)
-        hf_entity = hf_word_to_entity.get(word)
+
+    all_positions = set(tei_by_position.keys()) | set(hf_by_position.keys())
+
+    for pos in all_positions:
+        tei_entity = tei_by_position.get(pos)
+        hf_entity = hf_by_position.get(pos)
 
         if tei_entity and hf_entity:
-            # Both have this word
-            entity_match = tei_entity["entity_group"] == hf_entity["entity_group"]
-            score_diff = abs(tei_entity["score"] - hf_entity["score"])
+            # Both have this position
+            tei_label = get_entity_label(tei_entity)
+            hf_label = get_entity_label(hf_entity)
 
-            if entity_match and score_diff < 0.1:
+            tei_score = get_entity_score(tei_entity)
+            hf_score = get_entity_score(hf_entity)
+
+            # Get the actual text from the sentence
+            start, end = pos
+            actual_text = sentence[start:end]
+
+            label_match = tei_label == hf_label
+            score_diff = abs(tei_score - hf_score)
+
+            if label_match and score_diff < 0.1:
                 exact_matches += 1
                 matches.append(
-                    f"✓ {word}: {tei_entity['entity_group']} (diff: {score_diff:.3f})"
+                    f"✓ [{start},{end}): '{actual_text}' - {tei_label} (diff: {score_diff:.3f})"
                 )
-            elif entity_match:
+            elif label_match:
                 partial_matches += 1
                 matches.append(
-                    f"~ {word}: {tei_entity['entity_group']} (diff: {score_diff:.3f})"
+                    f"~ [{start},{end}): '{actual_text}' - {tei_label} (diff: {score_diff:.3f})"
                 )
             else:
                 matches.append(
-                    f"✗ {word}: TEI={tei_entity['entity_group']} vs HF={hf_entity['entity_group']}"
+                    f"✗ [{start},{end}): '{actual_text}' - TEI={tei_label} vs HF={hf_label}"
                 )
         elif tei_entity:
-            matches.append(f"- {word}: TEI only ({tei_entity['entity_group']})")
+            start, end = pos
+            actual_text = sentence[start:end]
+            tei_label = get_entity_label(tei_entity)
+            matches.append(
+                f"- [{start},{end}): '{actual_text}' - TEI only ({tei_label})"
+            )
         elif hf_entity:
-            matches.append(f"+ {word}: HF only ({hf_entity['entity_group']})")
+            start, end = pos
+            actual_text = sentence[start:end]
+            hf_label = get_entity_label(hf_entity)
+            matches.append(f"+ [{start},{end}): '{actual_text}' - HF only ({hf_label})")
 
     return {
         "exact_matches": exact_matches,
         "partial_matches": partial_matches,
-        "total_te": len(tei_norm),
-        "total_hf": len(hf_norm),
+        "total_te": len(tei_by_position),
+        "total_hf": len(hf_by_position),
         "matches": matches,
     }
+
+
+def get_entity_label(entity):
+    """Extract entity label from different formats"""
+    if "results" in entity:
+        # TEI format
+        best_label = max(entity["results"].items(), key=lambda x: x[1])
+        return best_label[0]
+    elif "entity_group" in entity:
+        # HF format
+        return entity["entity_group"]
+    return "UNKNOWN"
+
+
+def get_entity_score(entity):
+    """Extract entity score from different formats"""
+    if "results" in entity:
+        # TEI format
+        best_label = max(entity["results"].items(), key=lambda x: x[1])
+        return best_label[1]
+    elif "score" in entity:
+        # HF format
+        return entity["score"]
+    return 0.0
 
 
 # Test each strategy
@@ -189,7 +242,7 @@ for strategy in strategies:
         hf_pred = get_hf_predictions(sentence)
 
         if tei_pred and hf_pred:
-            comparison = compare_entities(tei_pred, hf_pred)
+            comparison = compare_entities(tei_pred, hf_pred, sentence)
 
             print(
                 f"TEI entities: {comparison['total_te']}, HF entities: {comparison['total_hf']}"

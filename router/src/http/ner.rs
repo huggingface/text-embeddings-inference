@@ -17,6 +17,7 @@ pub(crate) enum AggregationStrategy {
 }
 
 pub fn apply_aggregation(
+    sentence: &str,
     predictions: Vec<crate::http::types::TokenPrediction>,
     strategy: &AggregationStrategy,
     id2label: &std::collections::HashMap<String, String>,
@@ -68,10 +69,12 @@ pub fn apply_aggregation(
                 })
                 .collect()
         }
-        AggregationStrategy::Simple => simple_aggregation(filtered_predictions, id2label),
-        AggregationStrategy::First => first_aggregation(filtered_predictions, id2label),
-        AggregationStrategy::Average => average_aggregation(filtered_predictions, id2label),
-        AggregationStrategy::Max => max_aggregation(filtered_predictions, id2label),
+        AggregationStrategy::Simple => simple_aggregation(sentence, filtered_predictions, id2label),
+        AggregationStrategy::First => first_aggregation(sentence, filtered_predictions, id2label),
+        AggregationStrategy::Average => {
+            average_aggregation(sentence, filtered_predictions, id2label)
+        }
+        AggregationStrategy::Max => max_aggregation(sentence, filtered_predictions, id2label),
     };
 
     // Filter out ignored labels (like Hugging Face does)
@@ -241,6 +244,7 @@ struct EntityGroup {
 
 /// Aggregate pre-entities based on the strategy
 fn aggregate(
+    sentence: &str,
     pre_entities: Vec<PreEntity>,
     aggregation_strategy: &AggregationStrategy,
     id2label: &std::collections::HashMap<String, String>,
@@ -266,11 +270,20 @@ fn aggregate(
                 .cloned()
                 .unwrap_or_else(|| format!("UNKNOWN_{}", entity_idx));
 
+            // Use offset slicing for None strategy as well
+            let word = match (pre_entity.start, pre_entity.end) {
+                (Some(start), Some(end)) if start <= end => sentence
+                    .get(start..end)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| pre_entity.word.clone()),
+                _ => pre_entity.word.clone(),
+            };
+
             let entity = Entity {
                 entity: entity_label,
                 score,
                 index: pre_entity.index,
-                word: pre_entity.word.clone(),
+                word,
                 start: pre_entity.start,
                 end: pre_entity.end,
             };
@@ -290,20 +303,31 @@ fn aggregate(
                 .collect();
         }
 
-        group_entities(entities)
+        group_entities(sentence, entities)
     } else {
-        let word_entities = aggregate_words(pre_entities, aggregation_strategy, id2label);
-        group_entities(word_entities)
+        let word_entities = aggregate_words(sentence, pre_entities, aggregation_strategy, id2label);
+        group_entities(sentence, word_entities)
     }
 }
 
 /// Aggregate a word using the specified strategy
 fn aggregate_word(
+    sentence: &str,
     entities: &[PreEntity],
     aggregation_strategy: &AggregationStrategy,
     id2label: &std::collections::HashMap<String, String>,
 ) -> Entity {
-    let word = detok(entities.iter().map(|e| e.word.clone()));
+    // Use offset slicing instead of token reconstruction
+    let word = match (
+        entities.first().and_then(|e| e.start),
+        entities.last().and_then(|e| e.end),
+    ) {
+        (Some(start), Some(end)) if start <= end => sentence
+            .get(start..end)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| detok(entities.iter().map(|e| e.word.clone()))),
+        _ => detok(entities.iter().map(|e| e.word.clone())),
+    };
 
     let (entity, score) = match aggregation_strategy {
         AggregationStrategy::First => {
@@ -432,8 +456,9 @@ fn aggregate_word(
     }
 }
 
-/// Aggregate words for FIRST, AVERAGE, and MAX strategies
+/// Aggregate words for FIRST, AVERAGE, and MAX strategies using offset-based grouping
 fn aggregate_words(
+    sentence: &str,
     pre_entities: Vec<PreEntity>,
     aggregation_strategy: &AggregationStrategy,
     id2label: &std::collections::HashMap<String, String>,
@@ -451,29 +476,61 @@ fn aggregate_words(
     for entity in pre_entities {
         if word_group.is_none() {
             word_group = Some(vec![entity]);
-        } else if entity.is_subword {
-            if let Some(group) = word_group.as_mut() {
-                group.push(entity);
-            } else {
-                word_group = Some(vec![entity]);
-            }
         } else {
-            if let Some(group) = word_group {
-                word_entities.push(aggregate_word(&group, aggregation_strategy, id2label));
+            let group = word_group.as_mut().unwrap();
+            let last_entity = group.last().unwrap();
+
+            // Check if we should start a new word group based on offsets
+            let should_split = match (last_entity.end, entity.start) {
+                (Some(last_end), Some(curr_start)) => {
+                    if curr_start < last_end {
+                        // Overlapping tokens - split
+                        true
+                    } else if curr_start > last_end {
+                        // Gap between tokens - check if it contains whitespace
+                        let gap = sentence.get(last_end..curr_start).unwrap_or("");
+                        gap.chars().any(|c| c.is_whitespace())
+                    } else {
+                        // Adjacent tokens - check if this is a subword
+                        entity.is_subword
+                    }
+                }
+                _ => {
+                    // Missing offsets - fall back to subword detection
+                    !entity.is_subword
+                }
+            };
+
+            if should_split {
+                // Start a new word group
+                word_entities.push(aggregate_word(
+                    sentence,
+                    group,
+                    aggregation_strategy,
+                    id2label,
+                ));
+                word_group = Some(vec![entity]);
+            } else {
+                // Continue current word group
+                group.push(entity);
             }
-            word_group = Some(vec![entity]);
         }
     }
 
     if let Some(group) = word_group {
-        word_entities.push(aggregate_word(&group, aggregation_strategy, id2label));
+        word_entities.push(aggregate_word(
+            sentence,
+            &group,
+            aggregation_strategy,
+            id2label,
+        ));
     }
 
     word_entities
 }
 
 /// Group sub-entities together
-fn group_sub_entities(entities: &[Entity]) -> EntityGroup {
+fn group_sub_entities(sentence: &str, entities: &[Entity]) -> EntityGroup {
     if entities.is_empty() {
         return EntityGroup {
             entity_group: "O".to_string(),
@@ -504,11 +561,23 @@ fn group_sub_entities(entities: &[Entity]) -> EntityGroup {
         0.0
     };
 
-    let word = entities
+    // Use offset slicing instead of joining with spaces
+    let fallback = entities
         .iter()
         .map(|e| e.word.as_str())
         .collect::<Vec<_>>()
         .join(" ");
+
+    let word = match (
+        entities.first().and_then(|e| e.start),
+        entities.last().and_then(|e| e.end),
+    ) {
+        (Some(start), Some(end)) if start <= end => sentence
+            .get(start..end)
+            .map(str::to_string)
+            .unwrap_or(fallback),
+        _ => fallback,
+    };
 
     EntityGroup {
         entity_group: entity.to_string(),
@@ -520,7 +589,7 @@ fn group_sub_entities(entities: &[Entity]) -> EntityGroup {
 }
 
 /// Group entities according to BIO tagging scheme
-fn group_entities(entities: Vec<Entity>) -> Vec<EntityGroup> {
+fn group_entities(sentence: &str, entities: Vec<Entity>) -> Vec<EntityGroup> {
     let mut entity_groups = Vec::new();
     let mut entity_group_disagg = Vec::new();
 
@@ -540,13 +609,13 @@ fn group_entities(entities: Vec<Entity>) -> Vec<EntityGroup> {
         if tag == last_tag && bi != "B" {
             entity_group_disagg.push(entity);
         } else {
-            entity_groups.push(group_sub_entities(&entity_group_disagg));
+            entity_groups.push(group_sub_entities(sentence, &entity_group_disagg));
             entity_group_disagg = vec![entity];
         }
     }
 
     if !entity_group_disagg.is_empty() {
-        entity_groups.push(group_sub_entities(&entity_group_disagg));
+        entity_groups.push(group_sub_entities(sentence, &entity_group_disagg));
     }
 
     entity_groups
@@ -565,11 +634,17 @@ fn entity_group_to_token_prediction(group: EntityGroup) -> crate::http::types::T
 
 /// Simple aggregation strategy
 fn simple_aggregation(
+    sentence: &str,
     predictions: Vec<crate::http::types::TokenPrediction>,
     id2label: &std::collections::HashMap<String, String>,
 ) -> Vec<crate::http::types::TokenPrediction> {
     let pre_entities = gather_pre_entities(predictions, id2label);
-    let entities = aggregate(pre_entities, &AggregationStrategy::Simple, id2label);
+    let entities = aggregate(
+        sentence,
+        pre_entities,
+        &AggregationStrategy::Simple,
+        id2label,
+    );
     entities
         .into_iter()
         .map(entity_group_to_token_prediction)
@@ -578,11 +653,17 @@ fn simple_aggregation(
 
 /// First aggregation strategy
 fn first_aggregation(
+    sentence: &str,
     predictions: Vec<crate::http::types::TokenPrediction>,
     id2label: &std::collections::HashMap<String, String>,
 ) -> Vec<crate::http::types::TokenPrediction> {
     let pre_entities = gather_pre_entities(predictions, id2label);
-    let entities = aggregate(pre_entities, &AggregationStrategy::First, id2label);
+    let entities = aggregate(
+        sentence,
+        pre_entities,
+        &AggregationStrategy::First,
+        id2label,
+    );
     entities
         .into_iter()
         .map(entity_group_to_token_prediction)
@@ -591,11 +672,17 @@ fn first_aggregation(
 
 /// Average aggregation strategy
 fn average_aggregation(
+    sentence: &str,
     predictions: Vec<crate::http::types::TokenPrediction>,
     id2label: &std::collections::HashMap<String, String>,
 ) -> Vec<crate::http::types::TokenPrediction> {
     let pre_entities = gather_pre_entities(predictions, id2label);
-    let entities = aggregate(pre_entities, &AggregationStrategy::Average, id2label);
+    let entities = aggregate(
+        sentence,
+        pre_entities,
+        &AggregationStrategy::Average,
+        id2label,
+    );
     entities
         .into_iter()
         .map(entity_group_to_token_prediction)
@@ -604,11 +691,12 @@ fn average_aggregation(
 
 /// Max aggregation strategy
 fn max_aggregation(
+    sentence: &str,
     predictions: Vec<crate::http::types::TokenPrediction>,
     id2label: &std::collections::HashMap<String, String>,
 ) -> Vec<crate::http::types::TokenPrediction> {
     let pre_entities = gather_pre_entities(predictions, id2label);
-    let entities = aggregate(pre_entities, &AggregationStrategy::Max, id2label);
+    let entities = aggregate(sentence, pre_entities, &AggregationStrategy::Max, id2label);
     entities
         .into_iter()
         .map(entity_group_to_token_prediction)
@@ -785,6 +873,7 @@ mod tests {
 
         // Test None strategy (should filter special tokens and compute best label)
         let results = apply_aggregation(
+            "Hello John",
             predictions.clone(),
             &AggregationStrategy::None,
             &id2label,
@@ -799,6 +888,7 @@ mod tests {
 
         // Test Simple strategy (should also filter special tokens)
         let results_simple = apply_aggregation(
+            "Hello John",
             predictions.clone(),
             &AggregationStrategy::Simple,
             &id2label,
