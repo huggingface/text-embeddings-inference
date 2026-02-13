@@ -5,9 +5,10 @@
 // "average" : (works only on word based models) Will use the SIMPLE strategy except that words, cannot end up with different tags. scores will be averaged first across tokens, and then the maximum label is applied.
 // "max" : (works only on word based models) Will use the SIMPLE strategy except that words, cannot end up with different tags. Word entity will simply be the token with the maximum score.
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum AggregationStrategy {
+    #[default]
     None,
     Simple,
     First,
@@ -19,14 +20,76 @@ pub fn apply_aggregation(
     predictions: Vec<crate::http::types::TokenPrediction>,
     strategy: &AggregationStrategy,
     id2label: &std::collections::HashMap<String, String>,
+    ignore_labels: &[String],
 ) -> Vec<crate::http::types::TokenPrediction> {
-    match strategy {
-        AggregationStrategy::None => predictions,
-        AggregationStrategy::Simple => simple_aggregation(predictions, id2label),
-        AggregationStrategy::First => first_aggregation(predictions, id2label),
-        AggregationStrategy::Average => average_aggregation(predictions, id2label),
-        AggregationStrategy::Max => max_aggregation(predictions, id2label),
+    // First, filter out special tokens for ALL strategies (like HF does)
+    let filtered_predictions: Vec<crate::http::types::TokenPrediction> = predictions
+        .into_iter()
+        .filter(|prediction| !is_special_token(&prediction.token, prediction.start, prediction.end))
+        .collect();
+
+    let mut results = match strategy {
+        AggregationStrategy::None => {
+            // For None strategy, we need to compute the best label using HF's approach
+            // Build score vector in id2label index order
+            let mut labels: Vec<(usize, String)> = id2label
+                .iter()
+                .filter_map(|(k, v)| k.parse::<usize>().ok().map(|i| (i, v.clone())))
+                .collect();
+            labels.sort_by_key(|(i, _)| *i);
+
+            filtered_predictions
+                .into_iter()
+                .map(|mut prediction| {
+                    // Compute best label using HF's approach: argmax over score vector in index order
+                    let scores: Vec<f32> = labels
+                        .iter()
+                        .map(|(_, label)| *prediction.results.get(label).unwrap_or(&0.0))
+                        .collect();
+
+                    let entity_idx = scores
+                        .iter()
+                        .enumerate()
+                        .max_by(|(_, a), (_, b)| {
+                            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                        .map(|(idx, _)| idx)
+                        .unwrap_or(0);
+
+                    let best_label = id2label
+                        .get(&entity_idx.to_string())
+                        .cloned()
+                        .unwrap_or_else(|| format!("UNKNOWN_{}", entity_idx));
+
+                    // Update results to contain only the best label (HF-like format)
+                    prediction.results =
+                        std::collections::HashMap::from([(best_label, scores[entity_idx])]);
+                    prediction
+                })
+                .collect()
+        }
+        AggregationStrategy::Simple => simple_aggregation(filtered_predictions, id2label),
+        AggregationStrategy::First => first_aggregation(filtered_predictions, id2label),
+        AggregationStrategy::Average => average_aggregation(filtered_predictions, id2label),
+        AggregationStrategy::Max => max_aggregation(filtered_predictions, id2label),
+    };
+
+    // Filter out ignored labels (like Hugging Face does)
+    if !ignore_labels.is_empty() {
+        results.retain(|prediction| {
+            if let Some((best_label, _)) = prediction
+                .results
+                .iter()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+            {
+                !ignore_labels.contains(best_label)
+            } else {
+                true
+            }
+        });
     }
+
+    results
 }
 
 /// Helper structure to represent pre-entities for aggregation
@@ -64,25 +127,48 @@ fn detok(tokens: impl Iterator<Item = String>) -> String {
     out
 }
 
-/// Detect if a token is a subword based on common tokenizer patterns
-fn is_subword_token(token: &str) -> bool {
+/// Detect if a token is a special token that should be filtered out
+fn is_special_token(token: &str, start: Option<usize>, end: Option<usize>) -> bool {
+    // Hard-coded special token patterns
+    if token == "[CLS]"
+        || token == "[SEP]"
+        || token == "[PAD]"
+        || token == "[MASK]"
+        || token == "[UNK]"
+    {
+        return true;
+    }
+
+    // Length-based detection: tokens with zero length are special tokens
+    if let (Some(start), Some(end)) = (start, end) {
+        if start >= end {
+            return true;
+        }
+    }
+
+    // Additional common special token patterns
+    if token.starts_with("<") && token.ends_with(">") {
+        // <s>, </s>, <pad>, etc.
+        return true;
+    }
+
+    false
+}
+
+/// Detect if a token is a subword using marker-only approach (HF-compatible without sentence text)
+fn is_subword_token(token: &str, _start: Option<usize>, _end: Option<usize>) -> bool {
     // BERT WordPiece: ## marks continuation
     if token.starts_with("##") {
         return true;
     }
 
-    // RoBERTa/SentencePiece: Ġ/▁ marks word start, so anything without these is continuation
-    // But we need to be careful not to mark BERT tokens as subwords
-    // If we see Ġ or ▁, we know it's RoBERTa/SentencePiece and this is a word start
+    // RoBERTa/SentencePiece: Ġ/▁ marks word start, so subword = !starts_with("Ġ/▁")
     if token.starts_with('Ġ') || token.starts_with('▁') {
         return false;
     }
 
-    // For tokens without any markers:
-    // - In BERT, these are regular word starts (not subwords)
-    // - In RoBERTa/SentencePiece, these would be continuations
-    // Since we can't distinguish, we'll assume BERT behavior (most common for NER)
-    // This means regular tokens without markers are treated as word starts
+    // For all other tokens without markers, treat as word start (not subword)
+    // This is the least harmful default without sentence text for whitespace checking
     false
 }
 
@@ -107,7 +193,7 @@ fn gather_pre_entities(
                 .map(|(_, label)| *p.results.get(label).unwrap_or(&0.0))
                 .collect();
 
-            let is_subword = is_subword_token(&p.token);
+            let is_subword = is_subword_token(&p.token, p.start, p.end);
 
             PreEntity {
                 word: p.token,
@@ -535,28 +621,40 @@ mod tests {
 
     #[test]
     fn test_is_subword_token_bert() {
-        // BERT WordPiece tokens
-        assert!(!is_subword_token("microsoft")); // Regular word start
-        assert!(is_subword_token("##soft")); // Continuation
-        assert!(!is_subword_token("is")); // Regular word start
-        assert!(!is_subword_token("great")); // Regular word start
-        assert!(is_subword_token("##ing")); // Continuation
+        // BERT WordPiece tokens - marker-only approach
+        assert!(!is_subword_token("microsoft", None, None)); // Regular word start
+        assert!(is_subword_token("##soft", None, None)); // Continuation
+        assert!(!is_subword_token("is", None, None)); // Regular word start
+        assert!(!is_subword_token("great", None, None)); // Regular word start
+        assert!(is_subword_token("##ing", None, None)); // Continuation
     }
 
     #[test]
     fn test_is_subword_token_roberta() {
-        // RoBERTa BPE tokens - we can only reliably detect word starts with Ġ
-        assert!(!is_subword_token("Ġmicrosoft")); // Word start with Ġ
-        assert!(!is_subword_token("soft")); // Ambiguous - could be BERT word start or RoBERTa continuation
-        assert!(!is_subword_token("Ġis")); // Word start with Ġ
+        // RoBERTa BPE tokens - marker-only approach
+        assert!(!is_subword_token("Ġmicrosoft", None, None)); // Word start with Ġ
+        assert!(!is_subword_token("soft", None, None)); // No marker = word start
+        assert!(!is_subword_token("Ġis", None, None)); // Word start with Ġ
     }
 
     #[test]
     fn test_is_subword_token_sentencepiece() {
-        // SentencePiece tokens - we can only reliably detect word starts with ▁
-        assert!(!is_subword_token("▁microsoft")); // Word start with ▁
-        assert!(!is_subword_token("soft")); // Ambiguous - could be BERT word start or SentencePiece continuation
-        assert!(!is_subword_token("▁is")); // Word start with ▁
+        // SentencePiece tokens - marker-only approach
+        assert!(!is_subword_token("▁microsoft", None, None)); // Word start with ▁
+        assert!(!is_subword_token("soft", None, None)); // No marker = word start
+        assert!(!is_subword_token("▁is", None, None)); // Word start with ▁
+    }
+
+    #[test]
+    fn test_is_subword_token_edge_cases() {
+        // Test edge cases with marker-only approach
+        assert!(!is_subword_token("hello", None, None)); // Regular word
+        assert!(!is_subword_token("world", None, None)); // Regular word
+        assert!(!is_subword_token(".", None, None)); // Punctuation = word start
+        assert!(!is_subword_token(",", None, None)); // Punctuation = word start
+        assert!(is_subword_token("##ly", None, None)); // BERT continuation
+        assert!(!is_subword_token("Ġtest", None, None)); // RoBERTa word start
+        assert!(!is_subword_token("▁test", None, None)); // SentencePiece word start
     }
 
     #[test]
@@ -569,37 +667,6 @@ mod tests {
         ];
         let result = detok(tokens.into_iter());
         assert_eq!(result, "microsoft is great");
-    }
-
-    #[test]
-    fn test_detok_roberta() {
-        let tokens = vec![
-            "Ġmicro".to_string(),
-            "soft".to_string(),
-            "Ġis".to_string(),
-            "Ġgreat".to_string(),
-        ];
-        let result = detok(tokens.into_iter());
-        assert_eq!(result, "micro soft is great");
-    }
-
-    #[test]
-    fn test_detok_sentencepiece() {
-        let tokens = vec![
-            "▁micro".to_string(),
-            "soft".to_string(),
-            "▁is".to_string(),
-            "▁great".to_string(),
-        ];
-        let results = detok(tokens.into_iter());
-        assert_eq!(results, "micro soft is great");
-    }
-
-    #[test]
-    fn test_detok_mixed() {
-        let tokens = vec!["i".to_string(), "like".to_string(), "pizza".to_string()];
-        let result = detok(tokens.into_iter());
-        assert_eq!(result, "i like pizza");
     }
 
     #[test]
@@ -617,7 +684,7 @@ mod tests {
         let mut current_group: Option<Vec<String>> = None;
 
         for token in tokens {
-            if is_subword_token(&token) {
+            if is_subword_token(&token, None, None) {
                 if let Some(group) = current_group.as_mut() {
                     group.push(token);
                 } else {
@@ -642,5 +709,123 @@ mod tests {
             .collect();
 
         assert_eq!(words, vec!["microsoft", "is", "verygreat"]);
+    }
+
+    #[test]
+    fn test_special_token_detection() {
+        // Test hard-coded special tokens
+        assert!(is_special_token("[CLS]", Some(0), Some(5)));
+        assert!(is_special_token("[SEP]", Some(10), Some(15)));
+        assert!(is_special_token("[PAD]", Some(20), Some(25)));
+        assert!(is_special_token("[UNK]", Some(30), Some(35)));
+
+        // Test length-based detection (zero-length tokens)
+        assert!(is_special_token("something", Some(10), Some(10))); // start == end
+        assert!(is_special_token("something", Some(15), Some(10))); // start > end
+
+        // Test angle bracket tokens
+        assert!(is_special_token("<s>", Some(0), Some(3)));
+        assert!(is_special_token("</s>", Some(5), Some(9)));
+        assert!(is_special_token("<pad>", Some(10), Some(15)));
+
+        // Test normal tokens (should not be filtered)
+        assert!(!is_special_token("hello", Some(0), Some(5)));
+        assert!(!is_special_token("world", Some(6), Some(11)));
+        assert!(!is_special_token("John", Some(12), Some(16)));
+
+        // Test tokens without position info (should not be filtered unless hard-coded)
+        assert!(!is_special_token("hello", None, None));
+        assert!(is_special_token("[CLS]", None, None)); // Hard-coded still works
+    }
+
+    #[test]
+    fn test_apply_aggregation_filters_special_tokens() {
+        // Create mock predictions including special tokens
+        let predictions = vec![
+            crate::http::types::TokenPrediction {
+                token: "[CLS]".to_string(),
+                token_id: 0,
+                start: Some(0),
+                end: Some(5),
+                results: {
+                    let mut map = std::collections::HashMap::new();
+                    map.insert("O".to_string(), 0.99);
+                    map
+                },
+            },
+            crate::http::types::TokenPrediction {
+                token: "John".to_string(),
+                token_id: 1,
+                start: Some(6),
+                end: Some(10),
+                results: {
+                    let mut map = std::collections::HashMap::new();
+                    map.insert("B-PER".to_string(), 0.95);
+                    map.insert("O".to_string(), 0.05);
+                    map
+                },
+            },
+            crate::http::types::TokenPrediction {
+                token: "[SEP]".to_string(),
+                token_id: 2,
+                start: Some(11),
+                end: Some(15),
+                results: {
+                    let mut map = std::collections::HashMap::new();
+                    map.insert("O".to_string(), 0.98);
+                    map
+                },
+            },
+        ];
+
+        // Create mock id2label
+        let mut id2label = std::collections::HashMap::new();
+        id2label.insert("0".to_string(), "O".to_string());
+        id2label.insert("1".to_string(), "B-PER".to_string());
+
+        // Test None strategy (should filter special tokens and compute best label)
+        let results = apply_aggregation(
+            predictions.clone(),
+            &AggregationStrategy::None,
+            &id2label,
+            &["O".to_string()],
+        );
+
+        // Should only contain "John" with B-PER, not "[CLS]" or "[SEP]"
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].token, "John");
+        assert_eq!(results[0].results.len(), 1);
+        assert!(results[0].results.contains_key("B-PER"));
+
+        // Test Simple strategy (should also filter special tokens)
+        let results_simple = apply_aggregation(
+            predictions.clone(),
+            &AggregationStrategy::Simple,
+            &id2label,
+            &["O".to_string()],
+        );
+
+        // Should also only contain "John" entity
+        assert_eq!(results_simple.len(), 1);
+        assert_eq!(results_simple[0].token, "John");
+    }
+
+    #[test]
+    fn test_detok_sentencepiece() {
+        let tokens = vec![
+            "▁micro".to_string(),
+            "soft".to_string(),
+            "▁is".to_string(),
+            "▁great".to_string(),
+        ];
+        let results = detok(tokens.into_iter());
+        assert_eq!(results, "micro soft is great");
+    }
+
+    #[test]
+    fn test_detok_mixed() {
+        let tokens = vec!["i".to_string(), "like".to_string(), "pizza".to_string()];
+        let result = detok(tokens.into_iter());
+        assert_eq!(result, "i like pizza");
     }
 }

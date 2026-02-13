@@ -9,6 +9,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use text_embeddings_backend_core::{
     Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool, Predictions,
+    TokenPredictions,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -392,7 +393,7 @@ impl Backend for OrtBackend {
         true
     }
 
-    fn predict_tokens(&self, _batch: Batch) -> Result<Predictions, BackendError> {
+    fn predict_tokens(&self, _batch: Batch) -> Result<TokenPredictions, BackendError> {
         Err(BackendError::Inference(
             "Token-level predictions are not supported for `ort` backend.".to_string(),
         ))

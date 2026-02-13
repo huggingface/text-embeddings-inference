@@ -384,7 +384,7 @@ async fn predict_tokens(
                 });
             }
             
-            let predictions = apply_aggregation(predictions, &req.aggregation_strategy, id2label);
+            let predictions = apply_aggregation(predictions, &req.aggregation_strategy, id2label, &req.ignore_labels);
 
             let counter = metrics::counter!("te_request_success", "method" => "single");
             counter.increment(1);
@@ -507,7 +507,7 @@ async fn predict_tokens(
             let predictions = predictions
                 .into_iter()
                 .map(|batch_predictions| {
-                    apply_aggregation(batch_predictions, &req.aggregation_strategy, id2label)
+                    apply_aggregation(batch_predictions, &req.aggregation_strategy, id2label, &req.ignore_labels)
                 })
                 .collect();
 

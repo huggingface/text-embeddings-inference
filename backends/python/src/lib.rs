@@ -6,6 +6,7 @@ use nohash_hasher::BuildNoHashHasher;
 use std::collections::HashMap;
 use text_embeddings_backend_core::{
     Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool, Predictions,
+    TokenPredictions,
 };
 use tokio::runtime::Runtime;
 
@@ -68,7 +69,7 @@ impl Backend for PythonBackend {
         Ok(())
     }
 
-    fn predict_tokens(&self, _batch: Batch) -> Result<Predictions, BackendError> {
+    fn predict_tokens(&self, _batch: Batch) -> Result<TokenPredictions, BackendError> {
         Err(BackendError::Inference(
             "Token-level predictions are not supported for the Python backend.".to_string(),
         ))

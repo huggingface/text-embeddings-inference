@@ -7,6 +7,10 @@ use text_embeddings_core::tokenization::EncodingInput;
 use utoipa::openapi::{RefOr, Schema};
 use utoipa::ToSchema;
 
+fn default_ignore_labels() -> Vec<String> {
+    vec!["O".to_string()]
+}
+
 use crate::http::ner::AggregationStrategy;
 
 #[derive(Debug)]
@@ -237,8 +241,11 @@ pub(crate) struct PredictTokensRequest {
     #[serde(default)]
     #[schema(default = "false", example = "false")]
     pub raw_scores: bool,
+    #[serde(default)]
     #[schema(default = "none", example = "none")]
     pub aggregation_strategy: AggregationStrategy,
+    #[serde(default = "default_ignore_labels")]
+    pub ignore_labels: Vec<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -621,7 +628,7 @@ pub(crate) struct VertexResponse {
     pub predictions: Vec<VertexPrediction>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, Clone)]
 pub(crate) struct TokenPrediction {
     #[schema(example = "Hello")]
     pub token: String,
