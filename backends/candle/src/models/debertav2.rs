@@ -212,7 +212,10 @@ pub struct DebertaV2DisentangledSelfAttention {
 
 impl DebertaV2DisentangledSelfAttention {
     pub fn load(vb: VarBuilder, config: &DebertaV2Config) -> Result<Self> {
-        if config.hidden_size % config.num_attention_heads != 0 {
+        if !config
+            .hidden_size
+            .is_multiple_of(config.num_attention_heads)
+        {
             return Err(candle::Error::Msg(format!(
                 "The hidden size {} is not a multiple of the number of attention heads {}",
                 config.hidden_size, config.num_attention_heads

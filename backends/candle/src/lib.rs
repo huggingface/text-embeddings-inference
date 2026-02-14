@@ -35,6 +35,38 @@ use crate::models::{
     FlashQwen2Model, FlashQwen3Model,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FlashAttn {
+    V1,
+    V2,
+}
+
+#[allow(unused)]
+fn use_flash_attn(supported: &[FlashAttn]) -> bool {
+    #[cfg(not(feature = "cuda"))]
+    {
+        tracing::warn!("Flash Attention is not supported on CPU yet");
+        false
+    }
+    #[cfg(feature = "cuda")]
+    {
+        if std::env::var("USE_FLASH_ATTENTION")
+            .unwrap_or_else(|_| "True".to_string())
+            .to_lowercase()
+            != "true"
+        {
+            false
+        } else {
+            supported.iter().any(|v| match v {
+                FlashAttn::V1 => cfg!(feature = "flash-attn-v1"),
+                FlashAttn::V2 => {
+                    cfg!(feature = "flash-attn") && get_runtime_compute_cap().is_ok_and(|x| x >= 80)
+                }
+            })
+        }
+    }
+}
+
 /// This enum is needed to be able to differentiate between jina models that also use
 /// the `bert` model type and valid Bert models.
 #[derive(Debug, Clone, PartialEq)]
@@ -344,12 +376,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
-                if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    && dtype == DType::F16
-                    // Allow disabling because of flash attention v1 precision problems
-                    // See: https://github.com/huggingface/text-embeddings-inference/issues/37
-                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
-                {
+                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2]) {
                     match config {
                         BertConfigWrapper::JinaBert(config) => {
                             tracing::info!("Starting FlashJinaBert model on {:?}", device);
@@ -392,12 +419,7 @@ impl CandleBackend {
                 Config::Camembert(config) | Config::Roberta(config) | Config::XlmRoberta(config),
                 Device::Cuda(_),
             ) => {
-                if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    && dtype == DType::F16
-                    // Allow disabling because of flash attention v1 precision problems
-                    // See: https://github.com/huggingface/text-embeddings-inference/issues/37
-                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
-                {
+                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2]) {
                     tracing::info!("Starting FlashBert model on {:?}", device);
                     Ok(Box::new(
                         FlashBertModel::load_roberta(vb, &config, model_type).s()?,
@@ -416,13 +438,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::DistilBert(config), Device::Cuda(_)) => {
-                if cfg!(feature = "flash-attn")
-                    && dtype == DType::F16
-                    && &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        == "true"
-                {
+                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V2]) {
                     tracing::info!("Starting FlashDistilBert model on {:?}", device);
                     Ok(Box::new(
                         FlashDistilBertModel::load(vb, &config, model_type).s()?,
@@ -447,30 +463,17 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Gte(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
-                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    || &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        != "true"
-                {
-                    tracing::info!("Starting GTE model on {:?}", device);
-                    Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
-                } else {
+                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2]) {
                     tracing::info!("Starting FlashGTE model on {:?}", device);
                     Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))
+                } else {
+                    tracing::info!("Starting GTE model on {:?}", device);
+                    Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
                 }
             }
             #[cfg(feature = "cuda")]
             (Config::Mistral(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
-                    || !cfg!(feature = "flash-attn")
-                    || get_runtime_compute_cap().unwrap() < 80
-                    || &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        != "true"
-                {
+                if !(dtype == DType::F16 && use_flash_attn(&[FlashAttn::V2])) {
                     return Err(BackendError::Start("Mistral is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
                 }
                 tracing::info!("Starting FlashMistral model on {:?}", device);
@@ -480,12 +483,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::ModernBert(config), Device::Cuda(_)) => {
-                if cfg!(feature = "flash-attn")
-                    && dtype == DType::F16
-                    // Allow disabling because of flash attention v1 precision problems
-                    // See: https://github.com/huggingface/text-embeddings-inference/issues/37
-                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
-                {
+                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V2]) {
                     tracing::info!("Starting FlashModernBert model on {:?}", device);
                     Ok(Box::new(
                         FlashModernBertModel::load(vb, &config, model_type).s()?,
@@ -501,13 +499,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::NomicBert(config), Device::Cuda(_)) => {
-                if cfg!(feature = "flash-attn")
-                    && dtype == DType::F16
-                    && &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        == "true"
-                {
+                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V2]) {
                     tracing::info!("Starting FlashNomicBert model on {:?}", device);
                     Ok(Box::new(
                         FlashNomicBertModel::load(vb, &config, model_type).s()?,
@@ -519,13 +511,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Qwen2(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
-                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    || &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        != "true"
-                {
+                if !(dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2])) {
                     return Err(BackendError::Start("Qwen2 is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
                 }
                 tracing::info!("Starting FlashQwen2 model on {:?}", device);
@@ -535,20 +521,14 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Qwen3(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
-                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    || &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        != "true"
-                {
-                    tracing::info!("Starting Qwen3 model on {:?}", device);
-                    Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
-                } else {
+                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2]) {
                     tracing::info!("Starting FlashQwen3 model on {:?}", device);
                     Ok(Box::new(
                         FlashQwen3Model::load(vb, &config, model_type).s()?,
                     ))
+                } else {
+                    tracing::info!("Starting Qwen3 model on {:?}", device);
+                    Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
                 }
             }
             #[cfg(feature = "cuda")]
