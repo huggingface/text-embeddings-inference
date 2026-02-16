@@ -212,10 +212,10 @@ fn gather_pre_entities(
 
 /// Get the BIO tag and entity type from a label
 fn get_tag(entity_name: &str) -> (String, String) {
-    if entity_name.starts_with("B-") {
-        ("B".to_string(), entity_name[2..].to_string())
-    } else if entity_name.starts_with("I-") {
-        ("I".to_string(), entity_name[2..].to_string())
+    if let Some(stripped) = entity_name.strip_prefix("B-") {
+        ("B".to_string(), stripped.to_string())
+    } else if let Some(stripped) = entity_name.strip_prefix("I-") {
+        ("I".to_string(), stripped.to_string())
     } else {
         ("I".to_string(), entity_name.to_string())
     }
@@ -226,6 +226,7 @@ fn get_tag(entity_name: &str) -> (String, String) {
 struct Entity {
     entity: String,
     score: f32,
+    #[allow(dead_code)]
     index: usize,
     word: String,
     start: Option<usize>,
@@ -483,16 +484,20 @@ fn aggregate_words(
             // Check if we should start a new word group based on offsets
             let should_split = match (last_entity.end, entity.start) {
                 (Some(last_end), Some(curr_start)) => {
-                    if curr_start < last_end {
-                        // Overlapping tokens - split
-                        true
-                    } else if curr_start > last_end {
-                        // Gap between tokens - check if it contains whitespace
-                        let gap = sentence.get(last_end..curr_start).unwrap_or("");
-                        gap.chars().any(|c| c.is_whitespace())
-                    } else {
-                        // Adjacent tokens - check if this is a subword
-                        entity.is_subword
+                    match curr_start.cmp(&last_end) {
+                        std::cmp::Ordering::Less => {
+                            // Overlapping tokens - split
+                            true
+                        }
+                        std::cmp::Ordering::Greater => {
+                            // Gap between tokens - check if it contains whitespace
+                            let gap = sentence.get(last_end..curr_start).unwrap_or("");
+                            gap.chars().any(|c| c.is_whitespace())
+                        }
+                        std::cmp::Ordering::Equal => {
+                            // Adjacent tokens - check if this is a subword
+                            entity.is_subword
+                        }
                     }
                 }
                 _ => {

@@ -449,8 +449,6 @@ async fn predict_tokens(
         let counter = metrics::counter!("te_request_success", "method" => "batch");
         counter.increment(1);
 
-        let predictions = predictions; // No flattening needed
-
         (
             TokenPredictResponse::Batch(predictions),
             ResponseMetadata::new(

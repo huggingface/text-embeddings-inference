@@ -722,10 +722,8 @@ async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextB
                                     "prediction not found in results. This is a backend bug.",
                                 );
 
-                                let start_idx =
-                                    encoding.cumulative_seq_lengths[i] as usize;
-                                let _end_idx =
-                                    encoding.cumulative_seq_lengths[i + 1] as usize;
+                                let start_idx = encoding.cumulative_seq_lengths[i] as usize;
+                                let _end_idx = encoding.cumulative_seq_lengths[i + 1] as usize;
 
                                 let token_predictions: Vec<(
                                     String,
