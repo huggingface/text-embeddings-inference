@@ -65,7 +65,6 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     then  \
     nvprune --generate-code code=sm_120 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
     else  \
-    else  \
     echo "cuda compute cap ${CUDA_COMPUTE_CAP} is not supported"; exit 1; \
     fi;
 
