@@ -739,10 +739,12 @@ impl Backend for CandleBackend {
         let results = self.model.predict_tokens(batch).e()?;
 
         // add assertion for not is_padded!
-        assert!(
-            !self.is_padded(),
-            "predict_tokens does not support padded inputs"
-        );
+        if self.is_padded() {
+            return Err(BackendError::Inference(
+                "predict_tokens does not support padded inputs".to_string(),
+            ));
+        }
+
 
         let results = results.to_dtype(DType::F32).e()?.to_vec2().e()?;
 
