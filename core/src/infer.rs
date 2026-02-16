@@ -723,9 +723,9 @@ async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextB
                                 );
 
                                 let start_idx =
-                                    encoding.cumulative_seq_lengths[i as usize] as usize;
+                                    encoding.cumulative_seq_lengths[i] as usize;
                                 let _end_idx =
-                                    encoding.cumulative_seq_lengths[i as usize + 1] as usize;
+                                    encoding.cumulative_seq_lengths[i + 1] as usize;
 
                                 let token_predictions: Vec<(
                                     String,

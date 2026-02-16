@@ -425,7 +425,7 @@ fn aggregate_word(
             }
 
             for score in &mut averaged_scores {
-                if entities.len() > 0 {
+                if !entities.is_empty() {
                     *score /= entities.len() as f32;
                 }
             }
