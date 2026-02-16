@@ -745,7 +745,6 @@ impl Backend for CandleBackend {
             ));
         }
 
-
         let results = results.to_dtype(DType::F32).e()?.to_vec2().e()?;
 
         let mut predictions =
