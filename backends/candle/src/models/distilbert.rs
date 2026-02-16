@@ -323,6 +323,8 @@ impl DistilBertEncoder {
 
 pub trait ClassificationHead {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
+
+    fn forward_tokens(&self, hidden_states: &Tensor) -> Result<Tensor>;
 }
 
 pub struct DistilBertClassificationHead {
@@ -367,6 +369,15 @@ impl ClassificationHead for DistilBertClassificationHead {
 
         let hidden_states = self.classifier.forward(&hidden_states)?;
         let hidden_states = hidden_states.squeeze(1)?;
+        Ok(hidden_states)
+    }
+
+    fn forward_tokens(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let hidden_states = self.pre_classifier.forward(hidden_states)?;
+        let hidden_states = hidden_states.relu()?;
+        let hidden_states = self.classifier.forward(&hidden_states)?;
         Ok(hidden_states)
     }
 }
