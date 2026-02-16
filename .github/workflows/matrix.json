@@ -46,21 +46,13 @@
     "dockerfile": "Dockerfile-cuda"
   },
   {
-    "name": "turing-ampere-ada-hopper",
-    "imageNamePrefix": "cuda-",
-    "runOn": "always",
-    "sccache": false,
-    "grpc": false,
-    "dockerfile": "Dockerfile-cuda-all"
-  },
-  {
     "name": "blackwell-100",
     "imageNamePrefix": "100-",
     "runOn": "always",
     "sccache": true,
     "cudaComputeCap": 100,
     "grpc": true,
-    "dockerfile": "Dockerfile-cuda-blackwell"
+    "dockerfile": "Dockerfile-cuda"
   },
   {
     "name": "blackwell-120",
@@ -69,15 +61,15 @@
     "sccache": true,
     "cudaComputeCap": 120,
     "grpc": true,
-    "dockerfile": "Dockerfile-cuda-blackwell"
+    "dockerfile": "Dockerfile-cuda"
   },
   {
-    "name": "blackwell",
-    "imageNamePrefix": "blackwell-",
+    "name": "all",
+    "imageNamePrefix": "cuda-",
     "runOn": "always",
     "sccache": false,
     "grpc": false,
-    "dockerfile": "Dockerfile-cuda-blackwell-all"
+    "dockerfile": "Dockerfile-cuda-all"
   },
   {
     "name": "cpu",
