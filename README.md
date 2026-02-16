@@ -587,23 +587,13 @@ runtime_compute_cap=89
 # Example for Hopper (H100, ...)
 runtime_compute_cap=90
 
-docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
-```
-
-If your CUDA device architecture is Blackwell, then you need to run the following
-instead, as CUDA 12.9 is required, hence the Dockerfile differs:
-
-```shell
-# Get submodule dependencies
-git submodule update --init
-
 # Example for Blackwell (B200, GB200, ...)
 runtime_compute_cap=100
 
 # Example for Blackwell (GeForce RTX 50X0, RTX PRO 6000, ...)
 runtime_compute_cap=120
 
-docker build . -f Dockerfile-cuda-blackwell --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
+docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
 ```
 
 ### Apple M1/M2 arm64 architectures
