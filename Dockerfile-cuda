@@ -126,7 +126,7 @@ ARG DEFAULT_USE_FLASH_ATTENTION=True
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80 \
     USE_FLASH_ATTENTION=$DEFAULT_USE_FLASH_ATTENTION \
-    LD_LIBRARY_PATH="/usr/local/cuda/compat:${LD_LIBRARY_PATH}"
+    LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -135,16 +135,17 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     cuda-compat-12-9 \
     && rm -rf /var/lib/apt/lists/*
 
+COPY --chmod=775 cuda-entrypoint.sh entrypoint.sh
+
 FROM base AS grpc
 
 COPY --from=grpc-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
 
-ENTRYPOINT ["text-embeddings-router"]
+ENTRYPOINT ["./entrypoint.sh"]
 CMD ["--json-output"]
 
 FROM base
 
 COPY --from=http-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
-
-ENTRYPOINT ["text-embeddings-router"]
+ENTRYPOINT ["./entrypoint.sh"]
 CMD ["--json-output"]
