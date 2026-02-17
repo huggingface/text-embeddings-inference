@@ -565,8 +565,7 @@ docker build -f Dockerfile .
 ```
 
 To build the CUDA containers, you need to know the compute cap of the GPU you will be using
-at runtime. If the compute capability is < 10.0 i.e., CUDA architecture is any of
-Turing, Ampere, Ada Lovelace, or Hopper; then run the following:
+at runtime, to build the image accordingly:
 
 ```shell
 # Get submodule dependencies
