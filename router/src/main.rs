@@ -81,10 +81,13 @@ struct Args {
     #[clap(default_value = "32", long, env)]
     max_client_batch_size: usize,
 
-    /// Automatically truncate inputs that are longer than the maximum supported size
+    /// Control automatic truncation of inputs that exceed the model's maximum supported size.
+    /// Defaults to `true` (truncation enabled). Set to `false` to disable truncation; when
+    /// disabled and the model's maximum input length exceeds `--max-batch-tokens`, the server
+    /// will refuse to start with an error instead of silently truncating sequences.
     ///
     /// Unused for gRPC servers
-    #[clap(long, env)]
+    #[clap(long, env, default_value = "true")]
     auto_truncate: bool,
 
     /// The name of the prompt that should be used by default for encoding. If not set, no prompt
