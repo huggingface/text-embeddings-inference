@@ -1,13 +1,15 @@
 /// HTTP Server logic
 use crate::http::types::{
-    DecodeRequest, DecodeResponse, EmbedAllRequest, EmbedAllResponse, EmbedRequest, EmbedResponse,
-    EmbedSparseRequest, EmbedSparseResponse, Embedding, EncodingFormat, Input, InputIds, InputType,
-    OpenAICompatEmbedding, OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse,
-    OpenAICompatUsage, PredictInput, PredictRequest, PredictResponse, Prediction, Rank,
-    RerankRequest, RerankResponse, Sequence, SimilarityInput, SimilarityParameters,
-    SimilarityRequest, SimilarityResponse, SimpleToken, SparseValue, TokenizeInput,
-    TokenizeRequest, TokenizeResponse, TruncationDirection, VertexPrediction, VertexRequest,
-    VertexResponse,
+    CohereApiVersion, CohereErrorResponse, CohereMeta, CohereMetaTokens, CohereRerankRequest,
+    CohereRerankResponse, CohereResult, DecodeRequest, DecodeResponse, EmbedAllRequest,
+    EmbedAllResponse, EmbedRequest, EmbedResponse, EmbedSparseRequest, EmbedSparseResponse,
+    Embedding, EncodingFormat, Input, InputIds, InputType, JinaAIDocument, JinaAIErrorResponse,
+    JinaAIRerankRequest, JinaAIRerankResponse, JinaAIResult, JinaAIUsage, OpenAICompatEmbedding,
+    OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage,
+    PredictInput, PredictRequest, PredictResponse, Prediction, Rank, RerankRequest, RerankResponse,
+    Sequence, SimilarityInput, SimilarityParameters, SimilarityRequest, SimilarityResponse,
+    SimpleToken, SparseValue, TokenizeInput, TokenizeRequest, TokenizeResponse,
+    TruncationDirection, VertexPrediction, VertexRequest, VertexResponse,
 };
 use crate::{
     logging, shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
@@ -15,7 +17,7 @@ use crate::{
 };
 use ::http::HeaderMap;
 use anyhow::Context;
-use axum::extract::{DefaultBodyLimit, Extension};
+use axum::extract::{rejection::JsonRejection, DefaultBodyLimit, Extension};
 use axum::http::HeaderValue;
 use axum::http::{Method, StatusCode};
 use axum::routing::{get, post};
@@ -42,6 +44,7 @@ use tracing::instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
+use uuid::Uuid;
 
 ///Text Embeddings Inference endpoint info
 #[utoipa::path(
@@ -471,6 +474,473 @@ async fn rerank(
     tracing::info!("Success");
 
     Ok((headers, Json(response)))
+}
+
+#[utoipa::path(
+post,
+tag = "Text Embeddings Inference",
+path = "/v1/rerank",
+request_body = JinaAIRerankRequest,
+responses(
+(status = 200, description = "Ranks", body = JinaAIRerankResponse),
+(status = 424, description = "Rerank Error", body = JinaAIErrorResponse,
+example = json ! ({"detail": "[RID: 12345678-1234-1234-1234-123456789abc] Inference failed"})),
+(status = 429, description = "Model is overloaded", body = JinaAIErrorResponse,
+example = json ! ({"detail": "[RID: 12345678-1234-1234-1234-123456789abc] Model is overloaded"})),
+(status = 422, description = "Tokenization error", body = JinaAIErrorResponse,
+example = json ! ({"detail": "[RID: 12345678-1234-1234-1234-123456789abc] Tokenization error"})),
+(status = 400, description = "Batch is empty", body = JinaAIErrorResponse,
+example = json ! ({"detail": "[RID: 12345678-1234-1234-1234-123456789abc] Batch is empty"})),
+(status = 413, description = "Batch size error", body = JinaAIErrorResponse,
+example = json ! ({"detail": "[RID: 12345678-1234-1234-1234-123456789abc] Batch size error"})),
+)
+)]
+#[instrument(
+    skip_all,
+    fields(total_time, tokenization_time, queue_time, inference_time,)
+)]
+async fn jinaai_rerank(
+    infer: Extension<Infer>,
+    info: Extension<Info>,
+    Extension(context): Extension<Option<opentelemetry::Context>>,
+    payload: Result<Json<JinaAIRerankRequest>, JsonRejection>,
+) -> Result<(HeaderMap, Json<JinaAIRerankResponse>), (StatusCode, Json<JinaAIErrorResponse>)> {
+    let span = tracing::Span::current();
+    if let Some(context) = context {
+        span.set_parent(context);
+    }
+
+    // NOTE: Required to capture the JSON parsing errors, so that those follow the specification
+    // for the JinaAI Rerank API, otherwise those are returned as strings
+    let req = match payload {
+        Ok(req) => req,
+        Err(rejection) => {
+            let message = format!("Invalid JSON format: {}", rejection.body_text());
+            tracing::error!(message);
+
+            let response = JinaAIErrorResponse {
+                detail: Some(format!("[RID: {}] {}", uuid::Uuid::new_v4(), message)),
+                errors: None,
+            };
+            return Err((StatusCode::BAD_REQUEST, Json(response)));
+        }
+    };
+
+    let start_time = Instant::now();
+
+    if req.documents.is_empty() {
+        let message = "`documents` cannot be empty".to_string();
+        tracing::error!("{message}");
+        let err = ErrorResponse {
+            error: message,
+            error_type: ErrorType::Empty,
+        };
+        let counter = metrics::counter!("te_request_failure", "err" => "validation");
+        counter.increment(1);
+        Err(err)?;
+    }
+
+    match &info.model_type {
+        ModelType::Reranker(_) => Ok(()),
+        ModelType::Classifier(_) | ModelType::Embedding(_) => {
+            let counter = metrics::counter!("te_request_failure", "err" => "model_type");
+            counter.increment(1);
+            let message = "model is not a re-ranker model".to_string();
+            Err(TextEmbeddingsError::Backend(BackendError::Inference(
+                message,
+            )))
+        }
+    }
+    .map_err(|err| {
+        tracing::error!("{err}");
+        ErrorResponse::from(err)
+    })?;
+
+    let rerank_inner = move |query: String, document: String, infer: Infer| async move {
+        let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+
+        let response = infer
+            .predict(
+                (query, document),
+                false,
+                TruncationDirection::Right.into(),
+                false,
+                permit,
+            )
+            .await
+            .map_err(ErrorResponse::from)?;
+
+        let score = response.results[0];
+
+        Ok::<(usize, Duration, Duration, Duration, f32), ErrorResponse>((
+            response.metadata.prompt_tokens,
+            response.metadata.tokenization,
+            response.metadata.queue,
+            response.metadata.inference,
+            score,
+        ))
+    };
+
+    let (response, metadata) = {
+        let counter = metrics::counter!("te_request_count", "method" => "batch");
+        counter.increment(1);
+
+        let batch_size = req.documents.len();
+        if batch_size > info.max_client_batch_size {
+            let message = format!(
+                "batch size {batch_size} > maximum allowed batch size {}",
+                info.max_client_batch_size
+            );
+            tracing::error!("{message}");
+            let err = ErrorResponse {
+                error: message,
+                error_type: ErrorType::Validation,
+            };
+            let counter = metrics::counter!("te_request_failure", "err" => "batch_size");
+            counter.increment(1);
+            Err(err)?;
+        }
+
+        let mut futures = Vec::with_capacity(batch_size);
+        let query_chars = req.query.chars().count();
+        let mut compute_chars = query_chars * batch_size;
+
+        for document in &req.documents {
+            compute_chars += document.chars().count();
+            let local_infer = infer.clone();
+            futures.push(rerank_inner(
+                req.query.clone(),
+                document.clone(),
+                local_infer.0,
+            ))
+        }
+        let results = join_all(futures)
+            .await
+            .into_iter()
+            .collect::<Result<Vec<(usize, Duration, Duration, Duration, f32)>, ErrorResponse>>()?;
+
+        let mut ranks = Vec::with_capacity(batch_size);
+        let mut total_tokenization_time = 0;
+        let mut total_queue_time = 0;
+        let mut total_inference_time = 0;
+        let mut total_compute_tokens = 0;
+
+        for (index, r) in results.into_iter().enumerate() {
+            total_compute_tokens += r.0;
+            total_tokenization_time += r.1.as_nanos() as u64;
+            total_queue_time += r.2.as_nanos() as u64;
+            total_inference_time += r.3.as_nanos() as u64;
+            let document = if req.return_documents {
+                Some(JinaAIDocument {
+                    text: req.documents[index].clone(),
+                })
+            } else {
+                None
+            };
+
+            let score = r.4;
+            // Check that s is not NaN or the partial_cmp below will panic
+            if score.is_nan() {
+                Err(ErrorResponse {
+                    error: "score is NaN".to_string(),
+                    error_type: ErrorType::Backend,
+                })?;
+            }
+
+            ranks.push(JinaAIResult {
+                index,
+                document,
+                relevance_score: score,
+            });
+        }
+
+        ranks.sort_by(|x, y| x.relevance_score.partial_cmp(&y.relevance_score).unwrap());
+        ranks.reverse();
+        ranks.truncate(req.top_n.map_or(ranks.len(), |x| x.min(ranks.len())));
+
+        let batch_size = batch_size as u64;
+
+        let counter = metrics::counter!("te_request_success", "method" => "batch");
+        counter.increment(1);
+
+        (
+            ranks,
+            ResponseMetadata::new(
+                compute_chars,
+                total_compute_tokens,
+                start_time,
+                Duration::from_nanos(total_tokenization_time / batch_size),
+                Duration::from_nanos(total_queue_time / batch_size),
+                Duration::from_nanos(total_inference_time / batch_size),
+            ),
+        )
+    };
+
+    metadata.record_span(&span);
+    metadata.record_metrics();
+
+    let response = JinaAIRerankResponse {
+        model: info.model_id.clone(),
+        object: "list",
+        results: response,
+        usage: JinaAIUsage {
+            prompt_tokens: metadata.compute_tokens,
+            total_tokens: metadata.compute_tokens,
+        },
+    };
+
+    tracing::info!("Success");
+
+    Ok((HeaderMap::from(metadata), Json(response)))
+}
+
+#[utoipa::path(
+post,
+tag = "Text Embeddings Inference",
+path = "/v2/rerank",
+request_body = CohereRerankRequest,
+responses(
+(status = 200, description = "Ranks", body = CohereRerankResponse),
+(status = 424, description = "Rerank Error", body = CohereErrorResponse,
+example = json ! ({"id": "12345678-1234-1234-1234-123456789abc", "message": "Inference failed"})),
+(status = 429, description = "Model is overloaded", body = CohereErrorResponse,
+example = json ! ({"id": "12345678-1234-1234-1234-123456789abc", "message": "Model is overloaded"})),
+(status = 422, description = "Tokenization error", body = CohereErrorResponse,
+example = json ! ({"id": "12345678-1234-1234-1234-123456789abc", "message": "Tokenization error"})),
+(status = 400, description = "Batch is empty", body = CohereErrorResponse,
+example = json ! ({"id": "12345678-1234-1234-1234-123456789abc", "message": "Batch is empty"})),
+(status = 413, description = "Batch size error", body = CohereErrorResponse,
+example = json ! ({"id": "12345678-1234-1234-1234-123456789abc", "message": "Batch size error"})),
+)
+)]
+#[instrument(
+    skip_all,
+    fields(total_time, tokenization_time, queue_time, inference_time,)
+)]
+async fn cohere_rerank(
+    infer: Extension<Infer>,
+    info: Extension<Info>,
+    Extension(context): Extension<Option<opentelemetry::Context>>,
+    payload: Result<Json<CohereRerankRequest>, JsonRejection>,
+) -> Result<(HeaderMap, Json<CohereRerankResponse>), (StatusCode, Json<CohereErrorResponse>)> {
+    let span = tracing::Span::current();
+    if let Some(context) = context {
+        span.set_parent(context);
+    }
+
+    // NOTE: Required to capture the JSON parsing errors, so that those follow the specification
+    // for the Cohere Rerank API, otherwise those are returned as strings
+    let req = match payload {
+        Ok(req) => req,
+        Err(rejection) => {
+            let message = format!("Invalid JSON format: {}", rejection.body_text());
+            tracing::error!(message);
+
+            let response = CohereErrorResponse {
+                id: Some(uuid::Uuid::new_v4().to_string()),
+                message: Some(message),
+            };
+            return Err((StatusCode::BAD_REQUEST, Json(response)));
+        }
+    };
+
+    let start_time = Instant::now();
+
+    if req.documents.is_empty() {
+        let message = "`documents` cannot be empty".to_string();
+        tracing::error!("{message}");
+        let err = ErrorResponse {
+            error: message,
+            error_type: ErrorType::Empty,
+        };
+        let counter = metrics::counter!("te_request_failure", "err" => "validation");
+        counter.increment(1);
+        Err(err)?;
+    }
+
+    match &info.model_type {
+        ModelType::Reranker(_) => Ok(()),
+        ModelType::Classifier(_) | ModelType::Embedding(_) => {
+            let counter = metrics::counter!("te_request_failure", "err" => "model_type");
+            counter.increment(1);
+            let message = "model is not a re-ranker model".to_string();
+            Err(TextEmbeddingsError::Backend(BackendError::Inference(
+                message,
+            )))
+        }
+    }
+    .map_err(|err| {
+        tracing::error!("{err}");
+        ErrorResponse::from(err)
+    })?;
+
+    let rerank_inner = move |query: String,
+                             document: String,
+                             max_tokens_per_doc: Option<usize>,
+                             infer: Infer| async move {
+        let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+
+        // TODO: This is most likely not ideal given that we're tokenizing each document, then
+        // truncating it if applicable and decoding the input IDs back into a string; so as to then
+        // call predict with each query and truncated document (if applicable) combination, which
+        // might not be ideal, but seems the most straightforward approach. In any case, this
+        // should be revisited.
+        let document = if let Some(max_tokens) = max_tokens_per_doc {
+            let (_, encoding) = infer
+                .tokenize(document.clone(), false, None)
+                .await
+                .map_err(ErrorResponse::from)?;
+
+            let token_ids = encoding.get_ids();
+            if token_ids.len() > max_tokens {
+                infer
+                    .decode(token_ids[..max_tokens].to_vec(), false)
+                    .await
+                    .map_err(ErrorResponse::from)?
+            } else {
+                document
+            }
+        } else {
+            document
+        };
+
+        let response = infer
+            .predict(
+                (query, document),
+                // Cohere Rerank API expects the `max_tokens_per_doc` parameter that always
+                // truncates to 4096 by default, despite the model's max length
+                true,
+                TruncationDirection::Right.into(),
+                false,
+                permit,
+            )
+            .await
+            .map_err(ErrorResponse::from)?;
+
+        let score = response.results[0];
+
+        Ok::<(usize, Duration, Duration, Duration, f32), ErrorResponse>((
+            response.metadata.prompt_tokens,
+            response.metadata.tokenization,
+            response.metadata.queue,
+            response.metadata.inference,
+            score,
+        ))
+    };
+
+    let (response, metadata) = {
+        let counter = metrics::counter!("te_request_count", "method" => "batch");
+        counter.increment(1);
+
+        let batch_size = req.documents.len();
+        if batch_size > info.max_client_batch_size {
+            let message = format!(
+                "batch size {batch_size} > maximum allowed batch size {}",
+                info.max_client_batch_size
+            );
+            tracing::error!("{message}");
+            let err = ErrorResponse {
+                error: message,
+                error_type: ErrorType::Validation,
+            };
+            let counter = metrics::counter!("te_request_failure", "err" => "batch_size");
+            counter.increment(1);
+            Err(err)?;
+        }
+
+        let mut futures = Vec::with_capacity(batch_size);
+        let query_chars = req.query.chars().count();
+        let mut compute_chars = query_chars * batch_size;
+
+        for document in &req.documents {
+            compute_chars += document.chars().count();
+            let local_infer = infer.clone();
+            futures.push(rerank_inner(
+                req.query.clone(),
+                document.clone(),
+                req.max_tokens_per_doc,
+                local_infer.0,
+            ))
+        }
+        let results = join_all(futures)
+            .await
+            .into_iter()
+            .collect::<Result<Vec<(usize, Duration, Duration, Duration, f32)>, ErrorResponse>>()?;
+
+        let mut ranks = Vec::with_capacity(batch_size);
+        let mut total_tokenization_time = 0;
+        let mut total_queue_time = 0;
+        let mut total_inference_time = 0;
+        let mut total_compute_tokens = 0;
+
+        for (index, r) in results.into_iter().enumerate() {
+            total_compute_tokens += r.0;
+            total_tokenization_time += r.1.as_nanos() as u64;
+            total_queue_time += r.2.as_nanos() as u64;
+            total_inference_time += r.3.as_nanos() as u64;
+
+            let score = r.4;
+            // Check that s is not NaN or the partial_cmp below will panic
+            if score.is_nan() {
+                Err(ErrorResponse {
+                    error: "score is NaN".to_string(),
+                    error_type: ErrorType::Backend,
+                })?;
+            }
+
+            ranks.push(CohereResult {
+                index,
+                relevance_score: score as f64,
+            });
+        }
+
+        ranks.sort_by(|x, y| x.relevance_score.partial_cmp(&y.relevance_score).unwrap());
+        ranks.reverse();
+        ranks.truncate(req.top_n.map_or(ranks.len(), |x| x.min(ranks.len())));
+
+        let batch_size = batch_size as u64;
+
+        let counter = metrics::counter!("te_request_success", "method" => "batch");
+        counter.increment(1);
+
+        (
+            ranks,
+            ResponseMetadata::new(
+                compute_chars,
+                total_compute_tokens,
+                start_time,
+                Duration::from_nanos(total_tokenization_time / batch_size),
+                Duration::from_nanos(total_queue_time / batch_size),
+                Duration::from_nanos(total_inference_time / batch_size),
+            ),
+        )
+    };
+
+    metadata.record_span(&span);
+    metadata.record_metrics();
+
+    let response = CohereRerankResponse {
+        id: Some(Uuid::new_v4().to_string()),
+        results: response,
+        meta: Some(CohereMeta {
+            api_version: Some(CohereApiVersion {
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                is_deprecated: None,
+                is_experimental: None,
+            }),
+            billed_units: None,
+            tokens: Some(CohereMetaTokens {
+                input_tokens: Some(metadata.compute_tokens),
+                output_tokens: Some(metadata.compute_tokens),
+            }),
+            cached_tokens: None,
+            warnings: None,
+        }),
+    };
+
+    tracing::info!("Success");
+
+    Ok((HeaderMap::from(metadata), Json(response)))
 }
 
 /// Get Sentence Similarity. Returns a 424 status code if the model is not an embedding model.
@@ -1769,9 +2239,17 @@ pub async fn run(
         .route("/similarity", post(similarity))
         .route("/tokenize", post(tokenize))
         .route("/decode", post(decode))
-        // OpenAI compat route
+        // OpenAI Embeddings API compatible routes
+        // Reference: https://platform.openai.com/docs/api-reference/embeddings
         .route("/embeddings", post(openai_embed))
         .route("/v1/embeddings", post(openai_embed))
+        // JinaAI Reranker API compatible route
+        // Reference: https://jina.ai/reranker/#apiform
+        // Swagger Docs: https://api.jina.ai/docs#/rerank/rank_v1_rerank_post
+        .route("/v1/rerank", post(jinaai_rerank))
+        // // Cohere Rerank API compatible route
+        // // Reference: https://docs.cohere.com/reference/rerank
+        .route("/v2/rerank", post(cohere_rerank))
         // Vertex compat route
         .route("/vertex", post(vertex_compatibility));
 
@@ -1919,6 +2397,36 @@ impl From<ErrorResponse> for (StatusCode, Json<ErrorResponse>) {
 }
 
 impl From<ErrorResponse> for (StatusCode, Json<OpenAICompatErrorResponse>) {
+    fn from(err: ErrorResponse) -> Self {
+        (StatusCode::from(&err.error_type), Json(err.into()))
+    }
+}
+
+impl From<ErrorResponse> for CohereErrorResponse {
+    fn from(value: ErrorResponse) -> Self {
+        CohereErrorResponse {
+            id: Some(uuid::Uuid::new_v4().to_string()),
+            message: Some(value.error),
+        }
+    }
+}
+
+impl From<ErrorResponse> for (StatusCode, Json<CohereErrorResponse>) {
+    fn from(err: ErrorResponse) -> Self {
+        (StatusCode::from(&err.error_type), Json(err.into()))
+    }
+}
+
+impl From<ErrorResponse> for JinaAIErrorResponse {
+    fn from(value: ErrorResponse) -> Self {
+        JinaAIErrorResponse {
+            detail: Some(format!("[RID: {}] {}", uuid::Uuid::new_v4(), value.error)),
+            errors: None,
+        }
+    }
+}
+
+impl From<ErrorResponse> for (StatusCode, Json<JinaAIErrorResponse>) {
     fn from(err: ErrorResponse) -> Self {
         (StatusCode::from(&err.error_type), Json(err.into()))
     }
