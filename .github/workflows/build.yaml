@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - 'main'
+      - "main"
     tags:
-      - 'v*'
+      - "v*"
   pull_request:
     paths:
       - ".github/workflows/build.yaml"
@@ -20,7 +20,7 @@ on:
       - "Dockerfile"
       - "Dockerfile-neuron"
     branches:
-      - 'main'
+      - "main"
 
 jobs:
   matrix:
@@ -127,7 +127,7 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name != 'pull_request' }}
-          platforms: 'linux/amd64'
+          platforms: "linux/amd64"
           build-args: |
             SCCACHE_GHA_ENABLED=${{ matrix.sccache }}
             CUDA_COMPUTE_CAP=${{ matrix.cudaComputeCap }}
@@ -169,7 +169,7 @@ jobs:
           target: grpc
           file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name != 'pull_request' }}
-          platforms: 'linux/amd64'
+          platforms: "linux/amd64"
           build-args: |
             SCCACHE_GHA_ENABLED=${{ matrix.sccache }}
             CUDA_COMPUTE_CAP=${{ matrix.cudaComputeCap }}

@@ -45,6 +45,10 @@ elif [ ${compute_cap} -ge 80 -a ${compute_cap} -lt 90 ]; then
     exec text-embeddings-router-80 --port 8080 --json-output
 elif [ ${compute_cap} -eq 90 ]; then
     exec text-embeddings-router-90 --port 8080 --json-output
+elif [ ${compute_cap} -eq 100 ]; then
+    exec text-embeddings-router-100 --port 8080 --json-output
+elif [ ${compute_cap} -eq 120 ]; then
+    exec text-embeddings-router-120 --port 8080 --json-output
 else
     echo "CUDA compute cap ${compute_cap} is not supported"
     exit 1

@@ -11,6 +11,7 @@ struct MistralAttention {
     o_proj: Linear,
 
     window_size_left: Option<usize>,
+    use_bidirectional_attention: bool,
 
     num_attention_heads: usize,
     num_key_value_heads: usize,
@@ -24,6 +25,7 @@ struct MistralAttention {
 impl MistralAttention {
     pub fn load(vb: VarBuilder, config: &MistralConfig) -> Result<Self> {
         let window_size_left = config.sliding_window;
+        let use_bidirectional_attention = config.use_bidirectional_attention.unwrap_or(false);
         let num_attention_heads = config.num_attention_heads;
         let attention_head_size = config.hidden_size / config.num_attention_heads;
         let num_key_value_heads = config.num_key_value_heads;
@@ -54,6 +56,7 @@ impl MistralAttention {
             qkv_linear,
             o_proj,
             window_size_left,
+            use_bidirectional_attention,
             num_attention_heads,
             num_key_value_heads,
             attention_head_size,
@@ -103,7 +106,7 @@ impl MistralAttention {
             max_s,
             max_s,
             self.softmax_scale,
-            true,
+            !self.use_bidirectional_attention,
             self.window_size_left,
             None,
         )?;
@@ -269,7 +272,7 @@ impl FlashMistralModel {
             layers[0].attention.attention_head_size,
             config.rope_theta,
             vb.device(),
-            None,
+            config.rope_scaling.as_ref(),
         )?;
         let (cos_cache, sin_cache) = get_cos_sin(
             config.max_position_embeddings,
