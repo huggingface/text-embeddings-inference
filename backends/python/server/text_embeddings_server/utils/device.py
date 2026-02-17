@@ -45,7 +45,7 @@ def is_hpu() -> bool:
     is_hpu_available = True
     try:
         subprocess.run(["hl-smi"], capture_output=True, check=True)
-    except:
+    except Exception:
         is_hpu_available = False
     return is_hpu_available
 
