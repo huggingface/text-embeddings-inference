@@ -132,7 +132,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     ca-certificates \
     libssl-dev \
     curl \
-    cuda-compat-12-9 \
+    cuda-compat-13-1 \
     && rm -rf /var/lib/apt/lists/*
 
 FROM base AS grpc
