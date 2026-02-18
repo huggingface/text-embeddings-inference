@@ -25,8 +25,8 @@ use crate::models::{
     BertConfig, BertModel, DebertaV2Config, DebertaV2Model, Dense, DenseConfig, DenseLayer,
     DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, Gemma3Config, Gemma3Model,
     JinaBertModel, JinaCodeBertModel, LlamaConfig, MPNetConfig, MPNetModel, MistralConfig, Model,
-    ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config, Qwen3Config,
-    Qwen3Model,
+    ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Pplx1Config, Pplx1Model,
+    Qwen2Config, Qwen3Config, Qwen3Model,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -135,16 +135,17 @@ enum Config {
     Gte(GTEConfig),
     #[serde(rename = "mpnet")]
     MPNet(MPNetConfig),
-    #[allow(dead_code)]
+    #[allow(dead_code)] // NOTE: As it's only used when `cuda` feature is enabled
     Mistral(MistralConfig),
     #[serde(rename(deserialize = "modernbert"))]
     ModernBert(ModernBertConfig),
     #[serde(rename(deserialize = "nomic_bert"))]
     NomicBert(NomicConfig),
-    #[allow(dead_code)]
+    #[allow(dead_code)] // NOTE: As it's only used when `cuda` feature is enabled
     Qwen2(Qwen2Config),
-    #[allow(dead_code)]
     Qwen3(Qwen3Config),
+    #[serde(rename(deserialize = "bidirectional_pplx_qwen3"))]
+    Pplx1(Pplx1Config),
     Roberta(BertConfig),
     XlmRoberta(BertConfig),
     #[allow(dead_code)]
@@ -319,6 +320,7 @@ impl CandleBackend {
                 ))
             }
             (Config::Gemma3(config), Device::Cpu | Device::Metal(_)) => {
+                // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on Metal
                 if dtype != DType::F32 {
                     Err(BackendError::Start(
                         "Gemma3 is only supported in fp32 precision".to_string(),
@@ -361,6 +363,17 @@ impl CandleBackend {
             (Config::Qwen3(config), Device::Cpu | Device::Metal(_)) => {
                 tracing::info!("Starting Qwen3 model on {:?}", device);
                 Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
+            }
+            (Config::Pplx1(config), Device::Cpu | Device::Metal(_)) => {
+                // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on Metal
+                if dtype != DType::F32 {
+                    Err(BackendError::Start(
+                        "Pplx1 is only supported in fp32 precision".to_string(),
+                    ))
+                } else {
+                    tracing::info!("Starting Pplx1 model on {:?}", device);
+                    Ok(Box::new(Pplx1Model::load(vb, &config, model_type).s()?))
+                }
             }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
@@ -440,6 +453,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Gemma3(config), Device::Cuda(_)) => {
+                // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on CUDA
                 if dtype != DType::F32 {
                     Err(BackendError::Start(
                         "Gemma3 is only supported in fp32 precision".to_string(),
@@ -517,6 +531,18 @@ impl CandleBackend {
                 } else {
                     tracing::info!("Starting Qwen3 model on {:?}", device);
                     Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
+                }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::Pplx1(config), Device::Cuda(_)) => {
+                // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on CUDA
+                if dtype != DType::F32 {
+                    Err(BackendError::Start(
+                        "Pplx1 is only supported in fp32 precision".to_string(),
+                    ))
+                } else {
+                    tracing::info!("Starting Pplx1 model on {:?}", device);
+                    Ok(Box::new(Pplx1Model::load(vb, &config, model_type).s()?))
                 }
             }
             #[cfg(feature = "cuda")]

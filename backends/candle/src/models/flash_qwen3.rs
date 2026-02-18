@@ -160,6 +160,7 @@ impl Qwen3Attention {
             max_s,
             max_s,
             self.softmax_scale,
+            // NOTE: When `use_bidirectional_attention=true` then that implies that `causal=false`
             !self.use_bidirectional_attention,
             None,
             None,

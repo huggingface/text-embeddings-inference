@@ -392,6 +392,7 @@ pub struct Qwen3Model {
     pool: Pool,
     num_attention_heads: usize,
     pad_token_id: u32,
+
     use_bidirectional_attention: bool,
 
     dtype: DType,
@@ -448,8 +449,6 @@ impl Qwen3Model {
             None
         };
 
-        let use_bidirectional_attention = config.use_bidirectional_attention.unwrap_or(false);
-
         let rotary_dim = config
             .head_dim
             .unwrap_or(config.hidden_size / config.num_attention_heads);
@@ -469,7 +468,7 @@ impl Qwen3Model {
             pool,
             pad_token_id: config.eos_token_id as u32,
             num_attention_heads: config.num_attention_heads,
-            use_bidirectional_attention,
+            use_bidirectional_attention: config.use_bidirectional_attention.unwrap_or(false),
             dtype: vb.dtype(),
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
