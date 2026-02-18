@@ -736,14 +736,14 @@ impl Backend for CandleBackend {
         let batch_size = batch.len();
         let cumulative_seq_lengths = batch.cumulative_seq_lengths.clone();
 
-        let results = self.model.predict_tokens(batch).e()?;
-
-        // add assertion for not is_padded!
         if self.is_padded() {
             return Err(BackendError::Inference(
                 "predict_tokens does not support padded inputs".to_string(),
             ));
         }
+
+        let results = self.model.predict_tokens(batch).e()?;
+
 
         let results = results.to_dtype(DType::F32).e()?.to_vec2().e()?;
 
