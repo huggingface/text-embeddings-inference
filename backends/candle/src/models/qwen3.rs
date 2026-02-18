@@ -1,10 +1,13 @@
 use crate::layers::{
     apply_rotary, get_cos_sin, get_cublas_lt_wrapper, get_inv_freqs, HiddenAct, Linear, RMSNorm,
+    RopeParameters,
 };
 use crate::models::Model;
+
 use candle::{DType, Device, IndexOp, Result, Tensor, D};
 use candle_nn::{Embedding, Module, VarBuilder};
 use serde::Deserialize;
+
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -20,7 +23,8 @@ pub struct Qwen3Config {
     pub hidden_act: HiddenAct,
     pub max_position_embeddings: usize,
     pub rms_norm_eps: f32,
-    pub rope_theta: f32,
+    pub rope_theta: Option<f32>,
+    pub rope_parameters: Option<RopeParameters>,
     pub sliding_window: Option<usize>,
     pub use_sliding_window: bool,
     pub eos_token_id: usize,
@@ -454,7 +458,13 @@ impl Qwen3Model {
             .head_dim
             .unwrap_or(config.hidden_size / config.num_attention_heads);
 
-        let inv_freqs = get_inv_freqs(rotary_dim, config.rope_theta, vb.device(), None)?;
+        // NOTE: https://github.com/huggingface/transformers/pull/39847
+        let rope_theta = config.rope_theta.unwrap_or(match &config.rope_parameters {
+            Some(rope_parameters) => rope_parameters.rope_theta,
+            None => candle::bail!("Neither `rope_theta` nor `rope_parameters.rope_theta` is defined in the `config.json`")
+        });
+
+        let inv_freqs = get_inv_freqs(rotary_dim, rope_theta, vb.device(), None)?;
 
         let rotary_cache =
             get_cos_sin(config.max_position_embeddings, &inv_freqs, vb.dtype(), true)?;

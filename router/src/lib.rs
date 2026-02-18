@@ -181,7 +181,7 @@ pub async fn run(
         || &config.model_type == "camembert"
         || &config.model_type == "roberta"
     {
-        config.pad_token_id + 1
+        config.pad_token_id.unwrap_or(0) + 1
     } else {
         0
     };
@@ -459,7 +459,7 @@ pub struct ModelConfig {
     #[serde(alias = "n_positions")]
     pub max_position_embeddings: usize,
     #[serde(default)]
-    pub pad_token_id: usize,
+    pub pad_token_id: Option<usize>,
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
     pub auto_map: Option<HashMap<String, String>>,
