@@ -5,7 +5,7 @@ use serde::Deserialize;
 use std::fmt;
 use thiserror::Error;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Batch {
     pub input_ids: Vec<u32>,
     pub token_type_ids: Vec<u32>,
@@ -18,6 +18,8 @@ pub struct Batch {
     pub compact_position_ids: Option<Vec<u32>>,
     pub scatter_unfold: Option<Vec<u32>>,
     pub fold_gather: Option<Vec<u32>>,
+    pub tokens: Vec<String>,
+    pub offsets: Vec<(usize, usize)>,
 }
 
 impl Batch {
@@ -37,6 +39,7 @@ pub enum Embedding {
 
 pub type Embeddings = IntMap<usize, Embedding>;
 pub type Predictions = IntMap<usize, Vec<f32>>;
+pub type TokenPredictions = IntMap<usize, Vec<Vec<f32>>>;
 
 pub trait Backend {
     fn health(&self) -> Result<(), BackendError>;
@@ -53,6 +56,8 @@ pub trait Backend {
     fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError>;
 
     fn predict(&self, batch: Batch) -> Result<Predictions, BackendError>;
+
+    fn predict_tokens(&self, batch: Batch) -> Result<TokenPredictions, BackendError>;
 }
 
 #[derive(Debug, PartialEq, Clone)]

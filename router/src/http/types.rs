@@ -7,6 +7,12 @@ use text_embeddings_core::tokenization::EncodingInput;
 use utoipa::openapi::{RefOr, Schema};
 use utoipa::ToSchema;
 
+fn default_ignore_labels() -> Vec<String> {
+    vec!["O".to_string()]
+}
+
+use crate::http::ner::AggregationStrategy;
+
 #[derive(Debug)]
 pub(crate) enum Sequence {
     Single(String),
@@ -222,6 +228,24 @@ pub(crate) struct PredictRequest {
     #[serde(default)]
     #[schema(default = "false", example = "false")]
     pub raw_scores: bool,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct PredictTokensRequest {
+    pub inputs: Vec<String>,
+    #[schema(default = "false", example = "false", nullable = true)]
+    pub truncate: Option<bool>,
+    #[serde(default)]
+    #[schema(default = "right", example = "right")]
+    pub truncation_direction: TruncationDirection,
+    #[serde(default)]
+    #[schema(default = "false", example = "false")]
+    pub raw_scores: bool,
+    #[serde(default)]
+    #[schema(default = "none", example = "none")]
+    pub aggregation_strategy: AggregationStrategy,
+    #[serde(default = "default_ignore_labels")]
+    pub ignore_labels: Vec<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -602,4 +626,24 @@ pub(crate) enum VertexPrediction {
 #[derive(Serialize, ToSchema)]
 pub(crate) struct VertexResponse {
     pub predictions: Vec<VertexPrediction>,
+}
+
+#[derive(Serialize, ToSchema, Clone)]
+pub(crate) struct TokenPrediction {
+    #[schema(example = "Hello")]
+    pub token: String,
+    #[schema(example = 0)]
+    pub token_id: u32,
+    #[schema(example = 0)]
+    pub start: Option<usize>,
+    #[schema(example = 5)]
+    pub end: Option<usize>,
+    #[schema(example = json!({"O": 9.41, "B-MISC": -1.15, "I-MISC": -0.85}))]
+    pub results: std::collections::HashMap<String, f32>,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(untagged)]
+pub(crate) enum TokenPredictResponse {
+    Batch(Vec<Vec<TokenPrediction>>),
 }

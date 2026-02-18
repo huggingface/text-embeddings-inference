@@ -296,6 +296,7 @@ impl Infer {
 
         if normalize {
             // Normalize embedding
+            // TODO: Should this be normalized with a background thread etc. instead of doing it synchronously here?
             let scale = (1.0
                 / response
                     .results
@@ -377,6 +378,7 @@ impl Infer {
                 queue_time: Instant::now(),
                 prompt_tokens: encoding.input_ids.len(),
                 pooling,
+                token_classification: false,
             },
             encoding,
         });
@@ -451,6 +453,7 @@ impl Infer {
                 queue_time: Instant::now(),
                 prompt_tokens: encoding.input_ids.len(),
                 pooling: true,
+                token_classification: false,
             },
             encoding,
         });
@@ -522,6 +525,129 @@ impl Infer {
         Ok(response)
     }
 
+    #[instrument(skip(self, inputs, _permit))]
+    pub async fn predict_tokens<I: Into<EncodingInput> + std::fmt::Debug>(
+        &self,
+        inputs: I,
+        truncate: bool,
+        truncation_direction: TruncationDirection,
+        raw_scores: bool,
+        _permit: OwnedSemaphorePermit,
+        batch_counter: Option<Arc<AtomicUsize>>,
+    ) -> Result<
+        (
+            Vec<(String, u32, Vec<f32>, Option<usize>, Option<usize>)>,
+            usize,
+            Duration,
+            Duration,
+            Duration,
+        ),
+        TextEmbeddingsError,
+    > {
+        if !self.is_classifier() {
+            let counter = metrics::counter!("te_request_failure", "err" => "model_type");
+            counter.increment(1);
+            let message = "Model is not a classifier model".to_string();
+            return Err(TextEmbeddingsError::Backend(BackendError::Inference(
+                message,
+            )));
+        }
+
+        let start_time = Instant::now();
+        let counter = metrics::counter!("te_predict_count");
+        counter.increment(1);
+
+        let encoding = self
+            .tokenization
+            .encode(inputs.into(), truncate, truncation_direction, None)
+            .await
+            .map_err(|err| {
+                let counter = metrics::counter!("te_request_failure", "err" => "tokenization");
+                counter.increment(1);
+                tracing::error!("{err}");
+                err
+            })?;
+
+        let (response_tx, response_rx) = oneshot::channel();
+
+        self.queue.append(Entry {
+            metadata: Metadata {
+                response_tx,
+                tokenization: start_time.elapsed(),
+                queue_time: Instant::now(),
+                prompt_tokens: encoding.input_ids.len(),
+                pooling: false,
+                token_classification: true,
+            },
+            encoding,
+        });
+
+        match batch_counter {
+            None => self.notify_batching_task.notify_one(),
+            Some(counter) => {
+                if counter.fetch_sub(1, Ordering::SeqCst) == 1 {
+                    self.notify_batching_task.notify_one();
+                }
+            }
+        }
+
+        let response = response_rx
+            .await
+            .expect(
+                "Infer batching task dropped the sender without sending a response. This is a bug.",
+            )
+            .map_err(|err| {
+                let counter = metrics::counter!("te_request_failure", "err" => "inference");
+                counter.increment(1);
+                tracing::error!("{err}");
+                err
+            })?;
+
+        let InferResult::TokenClassification(mut response) = response else {
+            panic!("unexpected enum variant")
+        };
+
+        if !raw_scores {
+            for (_, _, scores, _, _) in response.results.iter_mut() {
+                if scores.len() > 1 {
+                    let max = scores.iter().copied().reduce(f32::max).unwrap_or(f32::NEG_INFINITY);
+
+                    let mut den = 0.0;
+                    for v in scores.iter_mut() {
+                        *v = (*v - max).exp();
+                        den += *v;
+                    }
+                    for v in scores.iter_mut() {
+                        *v /= den;
+                    }
+                } else {
+                    scores[0] = 1.0 / (1.0 + (-scores[0]).exp());
+                }
+            }
+        }
+
+        let total_time = start_time.elapsed();
+
+        let counter = metrics::counter!("te_predict_success");
+        counter.increment(1);
+        let histogram = metrics::histogram!("te_predict_duration");
+        histogram.record(total_time.as_secs_f64());
+        let histogram = metrics::histogram!("te_predict_tokenization_duration");
+        histogram.record(response.metadata.tokenization.as_secs_f64());
+        let histogram = metrics::histogram!("te_predict_queue_duration");
+        histogram.record(response.metadata.queue.as_secs_f64());
+        let histogram = metrics::histogram!("te_predict_inference_duration");
+        histogram.record(response.metadata.inference.as_secs_f64());
+
+        Ok((
+            response.results,
+            response.metadata.prompt_tokens,
+            response.metadata.tokenization,
+            response.metadata.queue,
+            response.metadata.inference,
+        ))
+    }
+
     #[instrument(skip(self))]
     pub fn is_classifier(&self) -> bool {
         matches!(self.backend.model_type, ModelType::Classifier)
@@ -573,40 +699,102 @@ async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextB
     while let Some(batch) = embed_receiver.recv().await {
         match &backend.model_type {
             ModelType::Classifier => {
-                let results = backend.predict(batch.1).await;
+                let token_classification = batch.0.iter().any(|m| m.token_classification);
 
-                // Handle sending responses in a blocking task to avoid starving the backend
-                tokio::task::spawn_blocking(move || match results {
-                    Ok((mut predictions, inference_duration)) => {
-                        batch.0.into_iter().enumerate().for_each(|(i, m)| {
-                            let infer_metadata = InferMetadata {
-                                prompt_tokens: m.prompt_tokens,
-                                tokenization: m.tokenization,
-                                queue: m.queue_time.elapsed() - inference_duration,
-                                inference: inference_duration,
-                            };
+                if token_classification {
+                    let encoding = batch.1.clone();
+                    let results = backend.predict_tokens(batch.1).await;
 
-                            let _ = m.response_tx.send(Ok(InferResult::Classification(
-                                ClassificationInferResponse {
-                                    results: predictions.remove(&i).expect(
-                                        "prediction not found in results. This is a backend bug.",
-                                    ),
-                                    metadata: infer_metadata,
-                                },
-                            )));
-                        });
-                    }
-                    Err(err) => {
-                        batch.0.into_iter().for_each(|m| {
-                            let _ = m.response_tx.send(Err(err.clone()));
-                        });
-                    }
-                });
+                    tokio::task::spawn_blocking(move || match results {
+                        Ok((mut predictions, inference_duration)) => {
+                            batch.0.into_iter().enumerate().for_each(|(i, m)| {
+                                let infer_metadata = InferMetadata {
+                                    prompt_tokens: m.prompt_tokens,
+                                    tokenization: m.tokenization,
+                                    queue: m.queue_time.elapsed() - inference_duration,
+                                    inference: inference_duration,
+                                };
+
+                                let token_predictions = predictions.remove(&i).expect(
+                                    "prediction not found in results. This is a backend bug.",
+                                );
+
+                                let start_idx = encoding.cumulative_seq_lengths[i] as usize;
+                                let _end_idx = encoding.cumulative_seq_lengths[i + 1] as usize;
+
+                                let token_predictions: Vec<(
+                                    String,
+                                    u32,
+                                    Vec<f32>,
+                                    Option<usize>,
+                                    Option<usize>,
+                                )> = token_predictions
+                                    .into_iter()
+                                    .enumerate()
+                                    .map(|(token_idx, scores)| {
+                                        let global_token_idx = start_idx + token_idx;
+                                        let token_id = encoding.input_ids[global_token_idx];
+                                        let token = encoding
+                                            .tokens
+                                            .get(global_token_idx)
+                                            .cloned()
+                                            .unwrap_or_else(|| format!("<token_{}>", token_id));
+                                        let start =
+                                            encoding.offsets.get(global_token_idx).map(|o| o.0);
+                                        let end =
+                                            encoding.offsets.get(global_token_idx).map(|o| o.1);
+                                        (token, token_id, scores, start, end)
+                                    })
+                                    .collect();
+
+                                let _ = m.response_tx.send(Ok(InferResult::TokenClassification(
+                                    TokenClassificationInferResponse {
+                                        results: token_predictions,
+                                        metadata: infer_metadata,
+                                    },
+                                )));
+                            });
+                        }
+                        Err(err) => {
+                            batch.0.into_iter().for_each(|m| {
+                                let _ = m.response_tx.send(Err(err.clone()));
+                            });
+                        }
+                    });
+                } else {
+                    let results = backend.predict(batch.1).await;
+
+                    tokio::task::spawn_blocking(move || match results {
+                        Ok((mut predictions, inference_duration)) => {
+                            batch.0.into_iter().enumerate().for_each(|(i, m)| {
+                                let infer_metadata = InferMetadata {
+                                    prompt_tokens: m.prompt_tokens,
+                                    tokenization: m.tokenization,
+                                    queue: m.queue_time.elapsed() - inference_duration,
+                                    inference: inference_duration,
+                                };
+
+                                let _ = m.response_tx.send(Ok(InferResult::Classification(
+                                    ClassificationInferResponse {
+                                        results: predictions.remove(&i).expect(
+                                            "prediction not found in results. This is a backend bug.",
+                                        ),
+                                        metadata: infer_metadata,
+                                    },
+                                )));
+                            });
+                        }
+                        Err(err) => {
+                            batch.0.into_iter().for_each(|m| {
+                                let _ = m.response_tx.send(Err(err.clone()));
+                            });
+                        }
+                    });
+                }
             }
             ModelType::Embedding(_) => {
                 let results = backend.embed(batch.1).await;
 
-                // Handle sending responses in a blocking task to avoid starving the backend
                 tokio::task::spawn_blocking(move || match results {
                     Ok((mut embeddings, inference_duration)) => {
                         batch.0.into_iter().enumerate().for_each(|(i, m)| {
@@ -660,6 +848,7 @@ pub struct InferMetadata {
 #[derive(Debug)]
 pub(crate) enum InferResult {
     Classification(ClassificationInferResponse),
+    TokenClassification(TokenClassificationInferResponse),
     PooledEmbedding(PooledEmbeddingsInferResponse),
     AllEmbedding(AllEmbeddingsInferResponse),
 }
@@ -667,6 +856,12 @@ pub(crate) enum InferResult {
 #[derive(Debug)]
 pub struct ClassificationInferResponse {
     pub results: Vec<f32>,
+    pub metadata: InferMetadata,
+}
+
+#[derive(Debug)]
+pub struct TokenClassificationInferResponse {
+    pub results: Vec<(String, u32, Vec<f32>, Option<usize>, Option<usize>)>,
     pub metadata: InferMetadata,
 }
 

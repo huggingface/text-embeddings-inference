@@ -354,5 +354,8 @@ pub fn batch(encodings: Vec<Encoding>, pooled_indices: Vec<u32>, raw_indices: Ve
         compact_position_ids: None,
         scatter_unfold: None,
         fold_gather: None,
+        // missing dummy values for tokens and offsets since they are not used in the tests
+        tokens: Vec::new(),
+        offsets: Vec::new(),
     }
 }

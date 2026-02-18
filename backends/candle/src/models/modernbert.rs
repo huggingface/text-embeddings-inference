@@ -396,6 +396,8 @@ impl ModernBertEncoder {
 
 pub trait ClassificationHead {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
+
+    fn forward_tokens(&self, hidden_states: &Tensor) -> Result<Tensor>;
 }
 
 pub struct ModernBertClassificationHead {
@@ -452,6 +454,13 @@ impl ClassificationHead for ModernBertClassificationHead {
 
         let hidden_states = hidden_states.squeeze(1)?;
 
+        Ok(hidden_states)
+    }
+
+    fn forward_tokens(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let hidden_states = self.classifier.forward(hidden_states)?;
         Ok(hidden_states)
     }
 }

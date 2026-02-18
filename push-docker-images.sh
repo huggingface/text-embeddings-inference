@@ -7,7 +7,7 @@
 set -euo pipefail
 
 # Configuration
-VERSION="1.8.6"
+VERSION="1.8.6.ner"
 REGISTRIES=(
     # "registry.internal.huggingface.tech/api-inference/text-embeddings-inference"
     # "ghcr.io/huggingface/text-embeddings-inference"
@@ -16,12 +16,12 @@ REGISTRIES=(
 
 # Matrix configurations: prefix:compute_cap:dockerfile:grpc:sccache:extra_args
 declare -A IMAGES=(
-    ["turing-"]="75:Dockerfile-cuda:true:true:DEFAULT_USE_FLASH_ATTENTION=False"
-    ["ampere-"]="80:Dockerfile-cuda:true:true:"
-    ["86-"]="86:Dockerfile-cuda:true:true:"
-    ["89-"]="89:Dockerfile-cuda:true:true:"
-    ["hopper-"]="90:Dockerfile-cuda:true:true:"
-    ["blackwell-"]="100:Dockerfile-cuda:true:true:"
+    ["turing-"]="75:Dockerfile-cuda:false:true:DEFAULT_USE_FLASH_ATTENTION=False"
+    ["ampere-"]="80:Dockerfile-cuda:false:true:"
+    ["86-"]="86:Dockerfile-cuda:false:true:"
+    ["89-"]="89:Dockerfile-cuda:false:true:"
+    ["hopper-"]="90:Dockerfile-cuda:false:true:"
+    ["blackwell-"]="100:Dockerfile-cuda:false:true:"
 )
 
 # Colors for output
@@ -103,7 +103,7 @@ build_and_push_variant() {
     local tags=()
     for registry in "${REGISTRIES[@]}"; do
         tags+=("-t" "${registry}:${prefix}${VERSION}")
-        tags+=("-t" "${registry}:${prefix}latest")
+        # tags+=("-t" "${registry}:${prefix}latest")
     done
     
     # Build standard image
@@ -157,7 +157,7 @@ build_all_variants() {
         pids+=($!)
         
         # Limit parallel builds to avoid overwhelming the system
-        if [[ ${#pids[@]} -ge 5 ]]; then
+        if [[ ${#pids[@]} -ge 8 ]]; then
             for pid in "${pids[@]}"; do
                 wait "$pid"
             done

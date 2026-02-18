@@ -546,4 +546,16 @@ impl Model for FlashBertModel {
             }
         }
     }
+
+    fn predict_tokens(&self, batch: Batch) -> Result<Tensor> {
+        match &self.classifier {
+            None => candle::bail!("`predict_tokens` is not implemented for this model"),
+            Some(classifier) => {
+                let (_pooled_embeddings, raw_embeddings) = self.forward(batch)?;
+                let raw_embeddings =
+                    raw_embeddings.expect("raw_embeddings is empty. This is a bug.");
+                classifier.forward_tokens(&raw_embeddings)
+            }
+        }
+    }
 }

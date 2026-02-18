@@ -1,2 +1,3 @@
+pub mod ner;
 pub mod server;
-mod types;
+pub mod types;

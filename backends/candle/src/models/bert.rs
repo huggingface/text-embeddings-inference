@@ -363,6 +363,8 @@ impl BertEncoder {
 
 pub trait ClassificationHead {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
+
+    fn forward_tokens(&self, hidden_states: &Tensor) -> Result<Tensor>;
 }
 
 pub struct BertClassificationHead {
@@ -416,6 +418,13 @@ impl ClassificationHead for BertClassificationHead {
         let hidden_states = hidden_states.squeeze(1)?;
         Ok(hidden_states)
     }
+
+    fn forward_tokens(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let hidden_states = self.output.forward(hidden_states)?;
+        Ok(hidden_states)
+    }
 }
 
 pub struct RobertaClassificationHead {
@@ -460,6 +469,15 @@ impl ClassificationHead for RobertaClassificationHead {
         let hidden_states = hidden_states.tanh()?;
         let hidden_states = self.output.forward(&hidden_states)?;
         let hidden_states = hidden_states.squeeze(1)?;
+        Ok(hidden_states)
+    }
+
+    fn forward_tokens(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let hidden_states = self.intermediate.forward(hidden_states)?;
+        let hidden_states = hidden_states.tanh()?;
+        let hidden_states = self.output.forward(&hidden_states)?;
         Ok(hidden_states)
     }
 }
@@ -949,6 +967,18 @@ impl Model for BertModel {
                 let pooled_embeddings =
                     pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
                 classifier.forward(&pooled_embeddings)
+            }
+        }
+    }
+
+    fn predict_tokens(&self, batch: Batch) -> Result<Tensor> {
+        match &self.classifier {
+            None => candle::bail!("`predict_tokens` is not implemented for this model"),
+            Some(classifier) => {
+                let (_pooled_embeddings, raw_embeddings) = self.forward(batch)?;
+                let raw_embeddings =
+                    raw_embeddings.expect("raw_embeddings is empty. This is a bug.");
+                classifier.forward_tokens(&raw_embeddings)
             }
         }
     }

@@ -337,6 +337,8 @@ impl JinaBertEncoder {
 
 pub trait ClassificationHead {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
+
+    fn forward_tokens(&self, hidden_states: &Tensor) -> Result<Tensor>;
 }
 
 pub struct JinaBertClassificationHead {
@@ -388,6 +390,13 @@ impl ClassificationHead for JinaBertClassificationHead {
 
         let hidden_states = self.output.forward(&hidden_states)?;
         let hidden_states = hidden_states.squeeze(1)?;
+        Ok(hidden_states)
+    }
+
+    fn forward_tokens(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let hidden_states = self.output.forward(hidden_states)?;
         Ok(hidden_states)
     }
 }

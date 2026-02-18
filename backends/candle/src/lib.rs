@@ -14,7 +14,7 @@ use serde::{de::Deserializer, Deserialize};
 use std::collections::HashMap;
 use std::path::Path;
 use text_embeddings_backend_core::{
-    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Predictions,
+    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Predictions, TokenPredictions,
 };
 
 #[cfg(feature = "cuda")]
@@ -727,6 +727,36 @@ impl Backend for CandleBackend {
             HashMap::with_capacity_and_hasher(batch_size, BuildNoHashHasher::default());
         for (i, r) in results.into_iter().enumerate() {
             predictions.insert(i, r);
+        }
+
+        Ok(predictions)
+    }
+
+    fn predict_tokens(&self, batch: Batch) -> Result<TokenPredictions, BackendError> {
+        let batch_size = batch.len();
+        let cumulative_seq_lengths = batch.cumulative_seq_lengths.clone();
+
+        if self.is_padded() {
+            return Err(BackendError::Inference(
+                "predict_tokens does not support padded inputs".to_string(),
+            ));
+        }
+
+        let results = self.model.predict_tokens(batch).e()?;
+
+
+        let results = results.to_dtype(DType::F32).e()?.to_vec2().e()?;
+
+        let mut predictions =
+            HashMap::with_capacity_and_hasher(batch_size, BuildNoHashHasher::default());
+
+        // Split the 2D results back into batches using cumulative_seq_lengths
+        for i in 0..batch_size {
+            let start = cumulative_seq_lengths[i] as usize;
+            let end = cumulative_seq_lengths[i + 1] as usize;
+
+            let token_predictions: Vec<Vec<f32>> = results[start..end].to_vec();
+            predictions.insert(i, token_predictions);
         }
 
         Ok(predictions)

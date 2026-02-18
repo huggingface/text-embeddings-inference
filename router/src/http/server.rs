@@ -1,13 +1,14 @@
+use crate::http::ner::apply_aggregation;
 /// HTTP Server logic
 use crate::http::types::{
     DecodeRequest, DecodeResponse, EmbedAllRequest, EmbedAllResponse, EmbedRequest, EmbedResponse,
     EmbedSparseRequest, EmbedSparseResponse, Embedding, EncodingFormat, Input, InputIds, InputType,
     OpenAICompatEmbedding, OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse,
-    OpenAICompatUsage, PredictInput, PredictRequest, PredictResponse, Prediction, Rank,
-    RerankRequest, RerankResponse, Sequence, SimilarityInput, SimilarityParameters,
-    SimilarityRequest, SimilarityResponse, SimpleToken, SparseValue, TokenizeInput,
-    TokenizeRequest, TokenizeResponse, TruncationDirection, VertexPrediction, VertexRequest,
-    VertexResponse,
+    OpenAICompatUsage, PredictInput, PredictRequest, PredictResponse, PredictTokensRequest,
+    Prediction, Rank, RerankRequest, RerankResponse, Sequence, SimilarityInput,
+    SimilarityParameters, SimilarityRequest, SimilarityResponse, SimpleToken, SparseValue,
+    TokenPredictResponse, TokenizeInput, TokenizeRequest, TokenizeResponse, TruncationDirection,
+    VertexPrediction, VertexRequest, VertexResponse,
 };
 use crate::{
     logging, shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
@@ -277,6 +278,189 @@ async fn predict(
                 ),
             )
         }
+    };
+
+    metadata.record_span(&span);
+    metadata.record_metrics();
+
+    let headers = HeaderMap::from(metadata);
+
+    tracing::info!("Success");
+
+    Ok((headers, Json(response)))
+}
+
+/// Get Token Predictions. Returns a 424 status code if the model is not a Sequence Classification model
+#[utoipa::path(
+    post,
+    tag = "Text Embeddings Inference",
+    path = "/predict_tokens",
+    request_body = PredictTokensRequest,
+    responses(
+        (status = 200, description = "Token Predictions", body = TokenPredictResponse),
+        (status = 424, description = "Prediction Error", body = ErrorResponse,
+        example = json ! ({"error": "Inference failed", "error_type": "backend"})),
+        (status = 429, description = "Model is overloaded", body = ErrorResponse,
+        example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
+        (status = 422, description = "Tokenization error", body = ErrorResponse,
+        example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
+        (status = 400, description = "Batch is empty", body = ErrorResponse,
+        example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
+        (status = 413, description = "Batch size error", body = ErrorResponse,
+        example = json ! ({"error": "Batch size error", "error_type": "validation"})),
+    )
+)]
+#[instrument(
+    skip_all,
+    fields(total_time, tokenization_time, queue_time, inference_time,)
+)]
+async fn predict_tokens(
+    infer: Extension<Infer>,
+    info: Extension<Info>,
+    Extension(context): Extension<Option<opentelemetry::Context>>,
+    Json(req): Json<PredictTokensRequest>,
+) -> Result<(HeaderMap, Json<TokenPredictResponse>), (StatusCode, Json<ErrorResponse>)> {
+    let span = tracing::Span::current();
+    if let Some(context) = context {
+        span.set_parent(context);
+    }
+
+    let start_time = Instant::now();
+
+    let truncate = req.truncate.unwrap_or(info.auto_truncate);
+
+    let (response, metadata) = {
+        let counter = metrics::counter!("te_request_count", "method" => "batch");
+        counter.increment(1);
+
+        let batch_size = req.inputs.len();
+        if batch_size > info.max_client_batch_size {
+            let message = format!(
+                "batch size {batch_size} > maximum allowed batch size {}",
+                info.max_client_batch_size
+            );
+            tracing::error!("{message}");
+            let err = ErrorResponse {
+                error: message,
+                error_type: ErrorType::Validation,
+            };
+            let counter = metrics::counter!("te_request_failure", "err" => "batch_size");
+            counter.increment(1);
+            Err(err)?;
+        }
+
+        let batch_counter = if batch_size == 1 {
+            None
+        } else {
+            Some(Arc::new(AtomicUsize::new(batch_size)))
+        };
+        let mut futures = Vec::with_capacity(batch_size);
+        let mut compute_chars = 0;
+
+        for input in &req.inputs {
+            compute_chars += input.len();
+            let local_infer = infer.clone();
+            let local_batch_counter = batch_counter.clone();
+            futures.push(async move {
+                let permit = local_infer.acquire_permit().await;
+                local_infer
+                    .predict_tokens(
+                        input.clone(),
+                        truncate,
+                        req.truncation_direction.into(),
+                        req.raw_scores,
+                        permit,
+                        local_batch_counter,
+                    )
+                    .await
+            });
+        }
+        let results = join_all(futures)
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, TextEmbeddingsError>>()
+            .map_err(ErrorResponse::from)?;
+
+        let id2label = match &info.model_type {
+            ModelType::Classifier(classifier) => &classifier.id2label,
+            ModelType::Reranker(classifier) => &classifier.id2label,
+            _ => panic!(),
+        };
+
+        let mut predictions = Vec::with_capacity(batch_size);
+        let mut total_tokenization_time = 0;
+        let mut total_queue_time = 0;
+        let mut total_inference_time = 0;
+        let mut total_compute_tokens = 0;
+
+        for (token_predictions, prompt_tokens, tokenization, queue, inference) in results {
+            total_compute_tokens += prompt_tokens;
+            total_tokenization_time += tokenization.as_nanos() as u64;
+            total_queue_time += queue.as_nanos() as u64;
+            total_inference_time += inference.as_nanos() as u64;
+
+            let mut token_predictions_result = Vec::with_capacity(token_predictions.len());
+            for (token, token_id, scores, start, end) in token_predictions {
+                // Check for NaN scores
+                if scores.iter().any(|s| s.is_nan()) {
+                    return Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "score is NaN".to_string(),
+                            error_type: ErrorType::Backend,
+                        }),
+                    ));
+                }
+
+                // Create results dictionary with labels and scores
+                let mut results = std::collections::HashMap::new();
+                for (i, s) in scores.into_iter().enumerate() {
+                    let label = id2label.get(&i.to_string()).expect("id2label missing label for score index. This is a bug.").clone();
+
+                    results.insert(label, s);
+                }
+
+                token_predictions_result.push(crate::http::types::TokenPrediction {
+                    token,
+                    token_id,
+                    start,
+                    end,
+                    results,
+                });
+            }
+            predictions.push(token_predictions_result);
+        }
+        let batch_size = batch_size as u64;
+
+        // Apply aggregation strategy
+        let predictions = predictions
+            .into_iter()
+            .zip(&req.inputs)
+            .map(|(batch_predictions, sentence)| {
+                apply_aggregation(
+                    sentence,
+                    batch_predictions,
+                    &req.aggregation_strategy,
+                    id2label,
+                    &req.ignore_labels,
+                )
+            })
+            .collect();
+
+        let counter = metrics::counter!("te_request_success", "method" => "batch");
+        counter.increment(1);
+
+        (
+            TokenPredictResponse::Batch(predictions),
+            ResponseMetadata::new(
+                compute_chars,
+                total_compute_tokens,
+                start_time,
+                Duration::from_nanos(total_tokenization_time / batch_size),
+                Duration::from_nanos(total_queue_time / batch_size),
+                Duration::from_nanos(total_inference_time / batch_size),
+            ),
+        )
     };
 
     metadata.record_span(&span);
@@ -1791,6 +1975,7 @@ pub async fn run(
         .route("/embed_all", post(embed_all))
         .route("/embed_sparse", post(embed_sparse))
         .route("/predict", post(predict))
+        .route("/predict_tokens", post(predict_tokens))
         .route("/rerank", post(rerank))
         .route("/similarity", post(similarity))
         .route("/tokenize", post(tokenize))

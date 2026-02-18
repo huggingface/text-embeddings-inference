@@ -408,6 +408,8 @@ fn encode_input(
         token_type_ids: encoding.get_type_ids().to_vec(),
         position_ids: (position_offset as u32..(seq_len + position_offset) as u32)
             .collect::<Vec<_>>(),
+        tokens: encoding.get_tokens().to_vec(),
+        offsets: encoding.get_offsets().to_vec(),
     })
 }
 
@@ -416,6 +418,8 @@ pub struct ValidEncoding {
     pub input_ids: Vec<u32>,
     pub token_type_ids: Vec<u32>,
     pub position_ids: Vec<u32>,
+    pub tokens: Vec<String>,
+    pub offsets: Vec<(usize, usize)>,
 }
 
 #[derive(Debug)]

@@ -8,7 +8,8 @@ use text_embeddings_backend_core::Batch;
 
 /// Helper struct to manage compact/unfold tensor operations for RadixMLP.
 
-/// if is not compact, all are operations are a no-op.
+///
+///
 #[allow(dead_code)]
 pub struct CompactUnfoldTensors {
     pub scatter_unfold: Option<Tensor>,
