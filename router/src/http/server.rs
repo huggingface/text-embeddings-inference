@@ -415,7 +415,8 @@ async fn predict_tokens(
                 // Create results dictionary with labels and scores
                 let mut results = std::collections::HashMap::new();
                 for (i, s) in scores.into_iter().enumerate() {
-                    let label = id2label.get(&i.to_string()).unwrap().clone();
+                    let label = id2label.get(&i.to_string()).expect("id2label missing label for score index. This is a bug.").clone();
+
                     results.insert(label, s);
                 }
 
