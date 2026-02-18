@@ -610,10 +610,7 @@ impl Infer {
         if !raw_scores {
             for (_, _, scores, _, _) in response.results.iter_mut() {
                 if scores.len() > 1 {
-                    let max = *scores
-                        .iter()
-                        .max_by(|x, y| x.partial_cmp(y).unwrap())
-                        .unwrap();
+                    let max = scores.iter().copied().reduce(f32::max).unwrap_or(f32::NEG_INFINITY);
 
                     let mut den = 0.0;
                     for v in scores.iter_mut() {
