@@ -1,19 +1,14 @@
 use crate::layers::{
     apply_rotary, get_cos_sin, get_cublas_lt_wrapper, get_inv_freqs, HiddenAct, Linear, RMSNorm,
+    RopeParameters,
 };
 use crate::models::Model;
 
 use candle::{DType, Device, IndexOp, Result, Tensor, D};
 use candle_nn::{Embedding, Module, VarBuilder};
 use serde::Deserialize;
-use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct RopeParameters {
-    pub rope_theta: f32,
-    #[allow(unused)]
-    rope_type: String,
-}
+use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Qwen3Config {

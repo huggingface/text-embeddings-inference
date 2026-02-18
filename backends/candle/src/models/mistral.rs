@@ -1,12 +1,6 @@
-use crate::layers::{HiddenAct, RopeScaling};
-use serde::Deserialize;
+use crate::layers::{HiddenAct, RopeParameters, RopeScaling};
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct RopeParameters {
-    pub rope_theta: f32,
-    #[allow(unused)]
-    rope_type: String,
-}
+use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct MistralConfig {
