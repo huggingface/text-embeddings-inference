@@ -538,6 +538,7 @@ impl CandleBackend {
                         rms_norm_eps: config.rms_norm_eps,
                         model_type: config.model_type.clone(),
                         rope_theta: config.rope_theta,
+                        rope_parameters: config.rope_parameters,
                         sliding_window: config.sliding_window,
                         rope_scaling: config.rope_scaling,
                         use_bidirectional_attention: config.use_bidirectional_attention,

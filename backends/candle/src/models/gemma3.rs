@@ -9,6 +9,13 @@ use serde::Deserialize;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RopeParameters {
+    pub rope_theta: f32,
+    #[allow(unused)]
+    rope_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Gemma3Config {
     pub attention_bias: bool,
     pub pad_token_id: u32,
@@ -23,9 +30,10 @@ pub struct Gemma3Config {
     pub query_pre_attn_scalar: usize,
     pub rms_norm_eps: f32,
     pub rope_local_base_freq: f32,
-    pub rope_theta: f32,
+    pub rope_theta: Option<f32>,
+    pub rope_parameters: Option<RopeParameters>,
     pub sliding_window: Option<usize>,
-    #[serde(rename(deserialize = "_sliding_window_pattern"))]
+    #[serde(rename = "_sliding_window_pattern")]
     pub sliding_window_pattern: usize,
     pub vocab_size: usize,
 }
@@ -653,7 +661,13 @@ impl Gemma3Model {
             .head_dim
             .unwrap_or(config.hidden_size / config.num_attention_heads);
 
-        let inv_freqs = get_inv_freqs(rotary_dim, config.rope_theta, vb.device(), None)?;
+        // NOTE: https://github.com/huggingface/transformers/pull/39847
+        let rope_theta = config.rope_theta.unwrap_or(match &config.rope_parameters {
+            Some(rope_parameters) => rope_parameters.rope_theta,
+            None => candle::bail!("Neither `rope_theta` nor `rope_parameters.rope_theta` is defined in the `config.json`")
+        });
+
+        let inv_freqs = get_inv_freqs(rotary_dim, rope_theta, vb.device(), None)?;
         let rotary_cache =
             get_cos_sin(config.max_position_embeddings, &inv_freqs, vb.dtype(), true)?;
 

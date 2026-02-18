@@ -2,6 +2,13 @@ use crate::layers::{HiddenAct, RopeScaling};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RopeParameters {
+    pub rope_theta: f32,
+    #[allow(unused)]
+    rope_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct MistralConfig {
     pub vocab_size: usize,
     pub hidden_size: usize,
@@ -14,7 +21,8 @@ pub struct MistralConfig {
     pub initializer_range: f64,
     pub rms_norm_eps: f32,
     pub model_type: Option<String>,
-    pub rope_theta: f32,
+    pub rope_theta: Option<f32>,
+    pub rope_parameters: Option<RopeParameters>,
     pub sliding_window: Option<usize>,
     pub rope_scaling: Option<RopeScaling>,
     #[serde(default)]

@@ -108,7 +108,6 @@ pub async fn run(
     // Load config
     let config_path = model_root.join("config.json");
     let config = fs::read_to_string(config_path).context("`config.json` not found")?;
-    tracing::info!("config contains {:?}", config);
     let config: ModelConfig =
         serde_json::from_str(&config).context("Failed to parse `config.json`")?;
 

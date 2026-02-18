@@ -7,6 +7,13 @@ fn default_is_causal() -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RopeParameters {
+    pub rope_theta: f32,
+    #[allow(unused)]
+    rope_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Qwen2Config {
     pub vocab_size: usize,
     pub hidden_size: usize,
@@ -17,7 +24,8 @@ pub struct Qwen2Config {
     pub hidden_act: HiddenAct,
     pub max_position_embeddings: usize,
     pub rms_norm_eps: f32,
-    pub rope_theta: f32,
+    pub rope_theta: Option<f32>,
+    pub rope_parameters: Option<RopeParameters>,
     pub sliding_window: Option<usize>,
     pub use_sliding_window: bool,
     #[serde(default = "default_is_causal")]

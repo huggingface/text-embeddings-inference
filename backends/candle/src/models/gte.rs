@@ -3,11 +3,19 @@ use crate::layers::{
     RopeScaling,
 };
 use crate::models::{Model, PositionEmbeddingType};
+
 use candle::{DType, Device, IndexOp, Result, Tensor, D};
 use candle_nn::{Embedding, Module, VarBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RopeParameters {
+    pub rope_theta: f32,
+    #[allow(unused)]
+    rope_type: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct GTEConfig {
@@ -22,7 +30,8 @@ pub struct GTEConfig {
     pub layer_norm_type: String,
     pub layer_norm_eps: f32,
     pub position_embedding_type: PositionEmbeddingType,
-    pub rope_theta: f32,
+    pub rope_theta: Option<f32>,
+    pub rope_parameters: Option<RopeParameters>,
     pub rope_scaling: Option<RopeScaling>,
     #[serde(default)]
     pub logn_attention_scale: bool,
@@ -412,10 +421,16 @@ impl GTEModel {
             Self::inner_load(vb.pp("new"), config)
                 .or_else(|_| Self::inner_load(vb.clone(), config))?;
 
+        // NOTE: https://github.com/huggingface/transformers/pull/39847
+        let rope_theta = config.rope_theta.unwrap_or(match &config.rope_parameters {
+            Some(rope_parameters) => rope_parameters.rope_theta,
+            None => candle::bail!("Neither `rope_theta` nor `rope_parameters.rope_theta` is defined in the `config.json`")
+        });
+
         let rotary_dim = encoder.layers[0].attention.attention_head_size;
         let inv_freqs = get_inv_freqs(
             rotary_dim,
-            config.rope_theta,
+            rope_theta,
             vb.device(),
             config.rope_scaling.as_ref(),
         )?;
