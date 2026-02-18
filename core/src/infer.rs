@@ -612,7 +612,7 @@ impl Infer {
                 if scores.len() > 1 {
                     let max = *scores
                         .iter()
-                        .max_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap())
+                        .max_by(|x, y| x.partial_cmp(y).unwrap())
                         .unwrap();
 
                     let mut den = 0.0;
