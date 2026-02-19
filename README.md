@@ -604,7 +604,7 @@ supported via Docker. As such inference will be CPU bound and most likely pretty
 M1/M2 ARM CPU.
 
 ```
-docker build . -f Dockerfile --platform=linux/arm64
+docker build . -f Dockerfile-arm64 --platform=linux/arm64
 ```
 
 ## Examples
