@@ -117,16 +117,27 @@ pub async fn run(
     // Info model type
     let model_type = match &backend_model_type {
         text_embeddings_backend::ModelType::Classifier => {
-            let id2label = config
-                .id2label
-                .context("`config.json` does not contain `id2label`")?;
-            let n_classes = id2label.len();
-            let classifier_model = ClassifierModel {
-                id2label,
-                label2id: config
-                    .label2id
-                    .context("`config.json` does not contain `label2id`")?,
+            let id2label = if config.id2label.is_some() {
+                config
+                    .id2label
+                    .context("`config.json` does not contain `id2label`")?
+            } else {
+                tracing::warn!("Model is detected as a classifier but `config.json` does not contain `id2label`. Defaulting to an binary label mapping, which may cause issues when using the model for inference.");
+                HashMap::from([("0".to_string(), "LABEL_0".to_string())])
             };
+
+            let label2id = if config.label2id.is_some() {
+                config
+                    .label2id
+                    .context("`config.json` does not contain `label2id`")?
+            } else {
+                tracing::warn!("Model is detected as a classifier but `config.json` does not contain `label2id`. Defaulting to an binary label mapping, which may cause issues when using the model for inference.");
+                HashMap::from([("LABEL_0".to_string(), 0)])
+            };
+
+            let n_classes = id2label.len();
+            let classifier_model = ClassifierModel { id2label, label2id };
+
             if n_classes > 1 {
                 ModelType::Classifier(classifier_model)
             } else {
@@ -146,6 +157,7 @@ pub async fn run(
         "tokenizer.json not found. text-embeddings-inference only supports fast tokenizers",
     );
     tokenizer.with_padding(None);
+
     // Old Qwen2  repos updates the post processor manually instead of into the tokenizer.json.
     // Newer ones (https://huggingface.co/jinaai/jina-code-embeddings-0.5b/tree/main) have it in the tokenizer.json. This is to support both cases.
     // https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct/blob/main/tokenization_qwen.py#L246
@@ -399,10 +411,16 @@ fn get_backend_model_type(
         // Edge case affecting `Alibaba-NLP/gte-multilingual-base` and possibly other fine-tunes of
         // the same base model. More context at https://huggingface.co/Alibaba-NLP/gte-multilingual-base/discussions/7
         if arch == "NewForTokenClassification"
-            && (config.id2label.is_none() | config.label2id.is_none())
+            && (config.id2label.is_none() || config.label2id.is_none())
         {
             tracing::warn!("Provided `--model-id` is likely an AlibabaNLP GTE model, but the `config.json` contains the architecture `NewForTokenClassification` but it doesn't contain the `id2label` and `label2id` mapping, so `NewForTokenClassification` architecture will be ignored.");
             continue;
+        }
+
+        // Some causal LM models can also be used as classifiers if the `id2label` and `label2id` mapping are not provided in the `config.json`, as shown with Qwen3ForCausalLM.
+        if arch.ends_with("CausalLM") && (config.id2label.is_none() || config.label2id.is_none()) {
+            tracing::warn!("Provided `--model-id` is likely an CausalLM, but the `config.json` contains the architecture `xxxCasualLM` but it doesn't contain the `id2label` and `label2id` mapping, so `{arch}` architecture will be presumed to be a classifier.");
+            return Ok(text_embeddings_backend::ModelType::Classifier);
         }
 
         if Some(text_embeddings_backend::Pool::Splade) == pooling && arch.ends_with("MaskedLM") {
