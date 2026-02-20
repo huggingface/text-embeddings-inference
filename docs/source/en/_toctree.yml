@@ -19,6 +19,8 @@
     title: Build custom container for TEI
   - local: intel_container
     title: Using TEI container with Intel Hardware
+  - local: aws_neuron
+    title: Using TEI with AWS Trainium and Inferentia
   - local: examples
     title: Example uses
   title: Tutorials

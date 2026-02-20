@@ -105,5 +105,13 @@
     "extraBuildArgs": "PLATFORM=hpu",
     "grpc": true,
     "dockerfile": "Dockerfile-intel"
+  },
+  {
+    "name": "neuron",
+    "imageNamePrefix": "neuron-",
+    "runOn": "always",
+    "sccache": true,
+    "grpc": true,
+    "dockerfile": "Dockerfile-neuron"
   }
 ]

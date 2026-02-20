@@ -1,9 +1,9 @@
-name: Run integration tests
+name: Run Neuron integration tests
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 0 * * *" # Run the workflow nightly to check Gaudi integration is working
+    - cron: '0 0 * * *'  # Run the workflow nightly to check Neuron integration is working
 
 jobs:
   tests:
@@ -11,21 +11,23 @@ jobs:
       group: ${{ github.workflow }}-${{ github.job }}-${{ github.head_ref || github.run_id }}
       cancel-in-progress: true
     runs-on:
-      group: itac-bm-emr-gaudi3-dell-1gaudi
+      group: aws-inf2-8xlarge
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Build Docker image for HPU
+      - name: Build Docker image for Neuron
         run: |
-          platform="hpu"
-          docker build . -f Dockerfile-intel --build-arg PLATFORM=$platform -t tei_hpu
+          docker build . -f Dockerfile-neuron -t tei-neuron
 
       - name: Run integration tests
         working-directory: integration_tests
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          DOCKER_IMAGE: tei-neuron
         run: |
           uv sync --locked --all-extras --dev
-          uv run pytest --durations=0 -sv .
+          uv run pytest --durations=0 -sv neuron/
