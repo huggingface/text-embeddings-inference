@@ -245,7 +245,25 @@ pub async fn run(
                 .context("Failed to parse `config_sentence_transformers.json`")?,
         );
     }
-    let prompts = new_st_config.and_then(|c| c.prompts);
+
+    let mut prompts = new_st_config.and_then(|c| c.prompts);
+    // NOTE: `qwen3_reranker` has its own instruction, but not in the configuration.
+    // So we add it as a prompt manually for now.
+    if config.architectures[0] == "Qwen3ForCausalLM" && prompts.is_none() {
+        let prompts_map = prompts.get_or_insert_with(HashMap::new);
+
+        let entries = [
+            ("query", "<Instruct>: Given a web search query, retrieve relevant passages that answer the query\n<Query>: "),
+            ("document", "\n<Document>: "),
+            ("prefix", "<|im_start|>system\nJudge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\".<|im_end|>\n<|im_start|>user\n"),
+            ("suffix", "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+        ];
+
+        for (key, value) in entries {
+            prompts_map.insert(key.to_string(), value.to_string());
+        }
+    }
+
     let default_prompt = if let Some(default_prompt_name) = default_prompt_name.as_ref() {
         match &prompts {
             None => {

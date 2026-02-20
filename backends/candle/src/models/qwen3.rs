@@ -3,7 +3,6 @@ use crate::layers::{
 };
 use crate::models::Model;
 use candle::{DType, Device, IndexOp, Result, Tensor, D};
-use candle_nn::ops::sigmoid;
 use candle_nn::{Embedding, Module, VarBuilder};
 use serde::Deserialize;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
@@ -428,9 +427,8 @@ impl ClassificationHead for Qwen3ClassificationHead {
         let false_vector = logits.i((.., self.no_token_id))?;
 
         let diff = true_vector.sub(&false_vector)?;
-        let scores = sigmoid(&diff)?;
 
-        scores.unsqueeze(1)
+        diff.unsqueeze(1)
     }
 }
 
