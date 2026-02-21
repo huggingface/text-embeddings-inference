@@ -29,6 +29,11 @@ service Rerank {
     rpc RerankStream (stream RerankStreamRequest) returns (RerankResponse);
 }
 
+service Similarity {
+    rpc Similarity (SimilarityRequest) returns (SimilarityResponse);
+    rpc SimilarityStream (stream SimilarityStreamRequest) returns (SimilarityResponse);
+}
+
 service Tokenize {
     rpc Tokenize (EncodeRequest) returns (EncodeResponse);
     rpc TokenizeStream (stream EncodeRequest) returns (stream EncodeResponse);
@@ -173,6 +178,27 @@ message Rank {
 
 message RerankResponse {
     repeated Rank ranks = 1;
+    Metadata metadata = 2;
+}
+
+message SimilarityRequest {
+    string source_sentence = 1;
+    repeated string sentences = 2;
+    bool truncate = 3;
+    TruncationDirection truncation_direction = 4;
+    optional string prompt_name = 5;
+}
+
+message SimilarityStreamRequest {
+    string source_sentence = 1;
+    string sentence = 2;
+    bool truncate = 3;
+    TruncationDirection truncation_direction = 4;
+    optional string prompt_name = 5;
+}
+
+message SimilarityResponse {
+    repeated float distances = 1;
     Metadata metadata = 2;
 }
 
