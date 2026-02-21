@@ -22,6 +22,7 @@ mod mpnet;
 mod nomic;
 mod qwen2;
 mod qwen3;
+mod static_embedding;
 
 #[cfg(feature = "cuda")]
 mod flash_bert;
@@ -68,6 +69,7 @@ pub use mpnet::{MPNetConfig, MPNetModel};
 pub use nomic::{NomicBertModel, NomicConfig};
 pub use qwen2::Qwen2Config;
 pub use qwen3::{Qwen3Config, Qwen3Model};
+pub use static_embedding::{StaticEmbeddingConfig, StaticEmbeddingModel};
 
 #[cfg(feature = "cuda")]
 pub use flash_bert::FlashBertModel;
