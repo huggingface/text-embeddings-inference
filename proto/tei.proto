@@ -82,7 +82,7 @@ enum TruncationDirection {
 message EmbedRequest {
     string inputs = 1;
     bool truncate = 2;
-    bool normalize = 3;
+    optional bool normalize = 3;
     TruncationDirection truncation_direction = 4;
     optional string prompt_name = 5;
     optional uint32 dimensions = 6;

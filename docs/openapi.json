@@ -10,7 +10,7 @@
       "name": "Apache 2.0",
       "url": "https://www.apache.org/licenses/LICENSE-2.0"
     },
-    "version": "1.8.3"
+    "version": "1.9.1"
   },
   "paths": {
     "/decode": {
@@ -1215,6 +1215,7 @@
         "required": [
           "model_id",
           "model_dtype",
+          "served_model_name",
           "model_type",
           "max_concurrent_requests",
           "max_input_length",
@@ -1277,6 +1278,10 @@
           },
           "model_type": {
             "$ref": "#/components/schemas/ModelType"
+          },
+          "served_model_name": {
+            "type": "string",
+            "example": "thenlper/gte-base"
           },
           "sha": {
             "type": "string",

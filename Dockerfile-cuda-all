@@ -1,10 +1,10 @@
-FROM nvidia/cuda:12.2.0-devel-ubuntu22.04 AS base-builder
+FROM nvidia/cuda:12.9.1-devel-ubuntu24.04 AS base-builder
 
 ENV SCCACHE=0.10.0
 ENV RUSTC_WRAPPER=/usr/local/bin/sccache
 ENV PATH="/root/.cargo/bin:${PATH}"
-# aligned with `cargo-chef` version in `lukemathwalker/cargo-chef:latest-rust-1.85-bookworm`
-ENV CARGO_CHEF=0.1.71
+# aligned with `cargo-chef` version in `lukemathwalker/cargo-chef:latest-rust-1.92-bookworm`
+ENV CARGO_CHEF=0.1.73
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     curl \
@@ -64,6 +64,14 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     CUDA_COMPUTE_CAP=90 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s;
 
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    CUDA_COMPUTE_CAP=100 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s;
+
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    CUDA_COMPUTE_CAP=120 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s;
+
 COPY backends backends
 COPY core core
 COPY router router
@@ -88,23 +96,39 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
 
 RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-90
 
-FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04 AS base
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    CUDA_COMPUTE_CAP=100 cargo build --release --bin text-embeddings-router -F candle-cuda && sccache -s;
+
+RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-100
+
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    CUDA_COMPUTE_CAP=120 cargo build --release --bin text-embeddings-router -F candle-cuda && sccache -s;
+
+RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-120
+
+FROM nvidia/cuda:12.9.1-runtime-ubuntu24.04 AS base
 
 ARG DEFAULT_USE_FLASH_ATTENTION=True
 
 ENV HUGGINGFACE_HUB_CACHE=/data \
     PORT=80 \
-    USE_FLASH_ATTENTION=$DEFAULT_USE_FLASH_ATTENTION
+    USE_FLASH_ATTENTION=$DEFAULT_USE_FLASH_ATTENTION \
+    LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl-dev \
     curl \
+    cuda-compat-12-9 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/src/target/release/text-embeddings-router-75 /usr/local/bin/text-embeddings-router-75
 COPY --from=builder /usr/src/target/release/text-embeddings-router-80 /usr/local/bin/text-embeddings-router-80
 COPY --from=builder /usr/src/target/release/text-embeddings-router-90 /usr/local/bin/text-embeddings-router-90
+COPY --from=builder /usr/src/target/release/text-embeddings-router-100 /usr/local/bin/text-embeddings-router-100
+COPY --from=builder /usr/src/target/release/text-embeddings-router-120 /usr/local/bin/text-embeddings-router-120
 
 COPY --chmod=775 cuda-all-entrypoint.sh entrypoint.sh
 

@@ -2,7 +2,7 @@ use crate::layers::{HiddenAct, RopeScaling};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct MistralConfig {
+pub struct LlamaConfig {
     pub vocab_size: usize,
     pub hidden_size: usize,
     pub intermediate_size: usize,
@@ -19,4 +19,14 @@ pub struct MistralConfig {
     pub rope_scaling: Option<RopeScaling>,
     #[serde(default)]
     pub use_bidirectional_attention: Option<bool>,
+    pub head_dim: Option<usize>,
+    pub attention_bias: Option<bool>,
+    pub attention_dropout: Option<f32>,
+    pub bos_token_id: Option<usize>,
+    pub eos_token_id: Option<usize>,
+    pub pad_token_id: Option<usize>,
+    #[serde(default)]
+    pub mlp_bias: bool,
+    pub pretraining_tp: Option<usize>,
+    pub tie_word_embeddings: Option<bool>,
 }

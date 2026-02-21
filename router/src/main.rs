@@ -1,8 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
 use opentelemetry::global;
-use text_embeddings_backend::DType;
 use veil::Redact;
+
+use text_embeddings_backend::DType;
 
 #[cfg(not(target_os = "linux"))]
 #[global_allocator]
@@ -14,7 +15,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 struct Args {
     /// The Hugging Face model ID, can be any model listed on <https://huggingface.co/models> with
     /// the `text-embeddings-inference` tag (meaning it's compatible with Text Embeddings
-    /// Inference)
+    /// Inference).
     ///
     /// Alternatively, the specified ID can also be a path to a local directory containing the
     /// necessary model files saved by the `save_pretrained(...)` methods of either Transformers or
@@ -37,6 +38,11 @@ struct Args {
     /// The dtype to be forced upon the model.
     #[clap(long, env, value_enum)]
     dtype: Option<DType>,
+
+    /// The name of the model that is being served. If not specified, defaults to `--model-id`. It
+    /// is only used for the OpenAI-compatible endpoints via HTTP.
+    #[clap(long, env)]
+    served_model_name: Option<String>,
 
     /// Optionally control the pooling method for embedding models.
     ///
@@ -75,10 +81,13 @@ struct Args {
     #[clap(default_value = "32", long, env)]
     max_client_batch_size: usize,
 
-    /// Automatically truncate inputs that are longer than the maximum supported size
+    /// Control automatic truncation of inputs that exceed the model's maximum supported size.
+    /// Defaults to `true` (truncation enabled). Set to `false` to disable truncation; when
+    /// disabled and the model's maximum input length exceeds `--max-batch-tokens`, the server
+    /// will refuse to start with an error instead of silently truncating sequences.
     ///
     /// Unused for gRPC servers
-    #[clap(long, env)]
+    #[clap(long, env, default_value = "true")]
     auto_truncate: bool,
 
     /// The name of the prompt that should be used by default for encoding. If not set, no prompt
@@ -127,7 +136,9 @@ struct Args {
     #[redact(partial)]
     hf_api_token: Option<String>,
 
-    /// Your Hugging Face Hub token
+    /// Your Hugging Face Hub token. If neither `--hf-token` nor `HF_TOKEN` is set, the token
+    /// will be read from the `$HF_HOME/token` path, if it exists. This ensures access to private
+    /// or gated models, and allows for a more permissive rate limiting.
     #[clap(long, env, conflicts_with = "hf_api_token")]
     #[redact(partial)]
     hf_token: Option<String>,
@@ -166,7 +177,7 @@ struct Args {
     #[clap(long, env)]
     json_output: bool,
 
-    // Whether or not to include the log trace through spans
+    /// Whether or not to include the log trace through spans
     #[clap(long, env)]
     disable_spans: bool,
 
@@ -225,11 +236,16 @@ async fn main() -> Result<()> {
     }
     let token = args.hf_token.or(args.hf_api_token);
 
+    let served_model_name = args
+        .served_model_name
+        .unwrap_or_else(|| args.model_id.clone());
+
     text_embeddings_router::run(
         args.model_id,
         args.revision,
         args.tokenization_workers,
         args.dtype,
+        served_model_name,
         args.pooling,
         args.max_concurrent_requests,
         args.max_batch_tokens,

@@ -5,11 +5,15 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize, PartialEq, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum HiddenAct {
-    #[serde(alias = "gelu_pytorch_tanh")]
+    // NOTE: `GeluErf` is excluded due to incompatibility with cuBLASLt, as only GeLU + tanh
+    // approximation is implemented due to efficiency, so GeLU is standardized to tanh approx. with
+    // slight numerical deviation from GeLU erf (neglible on inference quality)
+    #[serde(alias = "gelu_new", alias = "gelu_pytorch_tanh")]
     Gelu,
     Relu,
     Silu,
     Swiglu,
+    Tanh,
 }
 
 impl HiddenAct {
@@ -19,6 +23,7 @@ impl HiddenAct {
             Self::Relu => x.relu(),
             Self::Silu => x.silu(),
             Self::Swiglu => candle_nn::ops::swiglu(x),
+            Self::Tanh => x.tanh(),
         }
     }
 }
@@ -88,6 +93,7 @@ impl Linear {
                     HiddenAct::Relu => x.relu(),
                     HiddenAct::Silu => x.silu(),
                     HiddenAct::Swiglu => candle_nn::ops::swiglu(&x),
+                    HiddenAct::Tanh => x.tanh(),
                 }
             } else {
                 Ok(x)

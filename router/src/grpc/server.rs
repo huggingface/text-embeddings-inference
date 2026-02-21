@@ -92,7 +92,8 @@ impl TextEmbeddingsService {
                 request.truncate,
                 truncation_direction,
                 request.prompt_name,
-                request.normalize,
+                // In proto3, the default is false; default to true if normalize is not specified
+                request.normalize.unwrap_or(true),
                 request.dimensions.map(|v| v as usize),
                 permit,
             )

@@ -46,6 +46,7 @@ pub async fn run(
     revision: Option<String>,
     tokenization_workers: Option<usize>,
     dtype: Option<DType>,
+    served_model_name: String,
     pooling: Option<text_embeddings_backend::Pool>,
     max_concurrent_requests: usize,
     max_batch_tokens: usize,
@@ -72,12 +73,16 @@ pub async fn run(
         // Using a local model
         (model_id_path.to_path_buf(), None)
     } else {
-        let mut builder = ApiBuilder::from_env()
-            .with_progress(false)
-            .with_token(hf_token);
+        let mut builder = ApiBuilder::from_env().with_progress(false);
 
         if let Some(cache_dir) = huggingface_hub_cache {
             builder = builder.with_cache_dir(cache_dir.into());
+        }
+
+        // NOTE: Only set the `token` if it's not None, otherwise leave it as default so that the
+        // token from the cache location is pulled instead, if exists
+        if hf_token.is_some() {
+            builder = builder.with_token(hf_token);
         }
 
         if let Ok(origin) = std::env::var("HF_HUB_USER_AGENT_ORIGIN") {
@@ -200,26 +205,19 @@ pub async fn run(
         }
     };
 
-    // Raise an error when max_input_length is bigger than max_batch tokens to prevent an infinite loop in the queue
     let max_input_length = if base_input_length > max_batch_tokens {
         if !auto_truncate {
             anyhow::bail!(
-                "`--max-batch-tokens` cannot be lower than the model `max_input_length` ({} < {}) when `--auto-truncate` is disabled, add the `--auto-truncate` flag to truncate the input sequences to match the `--max-batch-tokens`.",
-                base_input_length,
-                max_batch_tokens
+                "The maximum input length is `{base_input_length}` which exceeds `--max-batch-tokens={max_batch_tokens}`. Either increase `--max-batch-tokens` to at least `{base_input_length}`, or set `--auto-truncate true` so that regardless the maximum input length, those are truncated to `{max_batch_tokens}` tokens."
             );
         }
         tracing::warn!(
-            "The input sequences will be truncated to {} tokens even if the model `max_input_length` is greater than the provided `--max-batch-tokens` ({} > {}), as `--auto-truncate` is enabled.",
-            max_batch_tokens,
-            base_input_length,
-            max_batch_tokens
+            "The maximum input length is `{base_input_length}` which exceeds `--max-batch-tokens={max_batch_tokens}`. Input sequences will be truncated to `{max_batch_tokens}` tokens, as `--auto-truncate` is either not provided (defaults to true) or provided as true. To avoid truncation, increase `--max-batch-tokens` to at least `{base_input_length}` and set `--auto-truncate false`."
         );
         max_batch_tokens
     } else {
         base_input_length
     };
-
     tracing::info!("Maximum number of tokens per request: {max_input_length}");
 
     // fall-back to num_cpus - 1 to leave some CPU for the backend, and at most 64 workers.
@@ -290,7 +288,12 @@ pub async fn run(
 
     tracing::info!("Warming up model");
     backend
-        .warmup(max_input_length, max_batch_tokens, max_batch_requests)
+        .warmup(
+            max_input_length,
+            max_batch_tokens,
+            max_batch_requests,
+            backend.padded_model,
+        )
         .await
         .context("Model backend is not healthy")?;
 
@@ -318,6 +321,7 @@ pub async fn run(
         model_id,
         model_sha: revision,
         model_dtype: dtype.to_string(),
+        served_model_name,
         model_type,
         max_concurrent_requests,
         max_input_length,
@@ -534,6 +538,8 @@ pub struct Info {
     pub model_sha: Option<String>,
     #[cfg_attr(feature = "http", schema(example = "float16"))]
     pub model_dtype: String,
+    #[cfg_attr(feature = "http", schema(example = "thenlper/gte-base"))]
+    pub served_model_name: String,
     pub model_type: ModelType,
     /// Router Parameters
     #[cfg_attr(feature = "http", schema(example = "128"))]

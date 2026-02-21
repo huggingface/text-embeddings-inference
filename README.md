@@ -89,6 +89,7 @@ Below are some examples of the currently supported models:
 | N/A       | 475M-A305M             | NomicBERT      | [nomic-ai/nomic-embed-text-v2-moe](https://hf.co/nomic-ai/nomic-embed-text-v2-moe)               |
 | N/A       | 434M                   | Alibaba GTE    | [Alibaba-NLP/gte-large-en-v1.5](https://hf.co/Alibaba-NLP/gte-large-en-v1.5)                     |
 | N/A       | 396M                   | ModernBERT     | [answerdotai/ModernBERT-large](https://hf.co/answerdotai/ModernBERT-large)                       |
+| N/A       | 340M                   | Qwen3          | [voyageai/voyage-4-nano](https://hf.co/voyageai/voyage-4-nano)                                   |
 | N/A       | 137M                   | JinaBERT       | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)             |
 | N/A       | 137M                   | JinaBERT       | [jinaai/jina-embeddings-v2-base-code](https://hf.co/jinaai/jina-embeddings-v2-base-code)         |
 
@@ -115,7 +116,7 @@ Below are some examples of the currently supported models:
 model=Qwen/Qwen3-Embedding-0.6B
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 --model-id $model
 ```
 
 And then you can make requests like
@@ -137,14 +138,15 @@ To see all options to serve your models:
 $ text-embeddings-router --help
 Text Embedding Webserver
 
-Usage: text-embeddings-router [OPTIONS]
+Usage: text-embeddings-router [OPTIONS] --model-id <MODEL_ID>
 
 Options:
       --model-id <MODEL_ID>
-          The name of the model to load. Can be a MODEL_ID as listed on <https://hf.co/models> like `BAAI/bge-large-en-v1.5`. Or it can be a local directory containing the necessary files as saved by `save_pretrained(...)` methods of transformers
+          The Hugging Face model ID, can be any model listed on <https://huggingface.co/models> with the `text-embeddings-inference` tag (meaning it's compatible with Text Embeddings Inference).
+
+          Alternatively, the specified ID can also be a path to a local directory containing the necessary model files saved by the `save_pretrained(...)` methods of either Transformers or Sentence Transformers.
 
           [env: MODEL_ID=]
-          [default: BAAI/bge-large-en-v1.5]
 
       --revision <REVISION>
           The actual revision of the model if you're referring to a model on the hub. You can use a specific commit id or a branch like `refs/pr/2`
@@ -161,6 +163,11 @@ Options:
 
           [env: DTYPE=]
           [possible values: float16, float32]
+
+      --served-model-name <SERVED_MODEL_NAME>
+          The name of the model that is being served. If not specified, defaults to `--model-id`. It is only used for the OpenAI-compatible endpoints via HTTP
+
+          [env: SERVED_MODEL_NAME=]
 
       --pooling <POOLING>
           Optionally control the pooling method for embedding models.
@@ -207,7 +214,7 @@ Options:
           [default: 32]
 
       --auto-truncate
-          Automatically truncate inputs that are longer than the maximum supported size
+          Control automatic truncation of inputs that exceed the model's maximum supported size. Defaults to `true` (truncation enabled). Set to `false` to disable truncation; when disabled and the model's maximum input length exceeds `--max-batch-tokens`, the server will refuse to start with an error instead of silently truncating sequences.
 
           Unused for gRPC servers
 
@@ -238,13 +245,12 @@ Options:
 
           Some embedding models require an extra `Dense` module which contains a single Linear layer and an activation function. By default, those `Dense` modules are stored under the `2_Dense` directory, but there might be cases where different `Dense` modules are provided, to convert the pooled embeddings into different dimensions, available as `2_Dense_<dims>` e.g. https://huggingface.co/NovaSearch/stella_en_400M_v5.
 
-          Note that this argument is optional, only required to be set if the path to the `Dense` module is other than `2_Dense`. And it also applies when leveraging the `candle` backend.
+          Note that this argument is optional, only required to be set if there is no `modules.json` file or when you want to override a single Dense module path, only when running with the `candle` backend.
 
           [env: DENSE_PATH=]
-          [default: 2_Dense]
 
       --hf-token <HF_TOKEN>
-          Your Hugging Face Hub token
+          Your Hugging Face Hub token. If neither `--hf-token` nor `HF_TOKEN` is set, the token will be read from the `$HF_HOME/token` path, if it exists. This ensures access to private or gated models, and allows for a more permissive rate limiting
 
           [env: HF_TOKEN=]
 
@@ -292,6 +298,8 @@ Options:
           [env: JSON_OUTPUT=]
 
       --disable-spans
+          Whether or not to include the log trace through spans
+
           [env: DISABLE_SPANS=]
 
       --otlp-endpoint <OTLP_ENDPOINT>
@@ -327,15 +335,17 @@ Options:
 
 Text Embeddings Inference ships with multiple Docker images that you can use to target a specific backend:
 
-| Architecture                        | Image                                                                   |
-|-------------------------------------|-------------------------------------------------------------------------|
-| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-1.8                   |
-| Volta                               | NOT SUPPORTED                                                           |
-| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-1.8 (experimental) |
-| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:1.8                       |
-| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-1.8                    |
-| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-1.8                    |
-| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-1.8 (experimental) |
+| Architecture                           | Image                                                                   |
+|----------------------------------------|-------------------------------------------------------------------------|
+| CPU                                    | ghcr.io/huggingface/text-embeddings-inference:cpu-1.9                   |
+| Volta                                  | NOT SUPPORTED                                                           |
+| Turing (T4, RTX 2000 series, ...)      | ghcr.io/huggingface/text-embeddings-inference:turing-1.9 (experimental) |
+| Ampere 8.0 (A100, A30)                 | ghcr.io/huggingface/text-embeddings-inference:1.9                       |
+| Ampere 8.6 (A10, A40, ...)             | ghcr.io/huggingface/text-embeddings-inference:86-1.9                    |
+| Ada Lovelace (RTX 4000 series, ...)    | ghcr.io/huggingface/text-embeddings-inference:89-1.9                    |
+| Hopper (H100)                          | ghcr.io/huggingface/text-embeddings-inference:hopper-1.9                |
+| Blackwell 10.0 (B200, GB200, ...)      | ghcr.io/huggingface/text-embeddings-inference:100-1.9 (experimental)    |
+| Blackwell 12.0 (GeForce RTX 50X0, ...) | ghcr.io/huggingface/text-embeddings-inference:120-1.9 (experimental)    |
 
 **Warning**: Flash Attention is turned off by default for the Turing image as it suffers from precision issues.
 You can turn Flash Attention v1 ON by using the `USE_FLASH_ATTENTION=True` environment variable.
@@ -364,7 +374,7 @@ model=<your private model>
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 token=<your CLI READ token>
 
-docker run --gpus all -e HF_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id $model
+docker run --gpus all -e HF_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 --model-id $model
 ```
 
 ### Air gapped deployment
@@ -387,7 +397,7 @@ git clone https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
 volume=$PWD
 
 # Mount the models directory inside the container with a volume and set the model ID
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id /data/Qwen3-Embedding-0.6B
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 --model-id /data/Qwen3-Embedding-0.6B
 ```
 
 ### Using Re-rankers models
@@ -404,7 +414,7 @@ downstream performance.
 model=BAAI/bge-reranker-large
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 --model-id $model
 ```
 
 And then you can rank the similarity between a query and a list of texts with:
@@ -424,7 +434,7 @@ You can also use classic Sequence Classification models like `SamLowe/roberta-ba
 model=SamLowe/roberta-base-go_emotions
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 --model-id $model
 ```
 
 Once you have deployed the model you can use the `predict` endpoint to get the emotions most associated with an input:
@@ -444,7 +454,7 @@ You can choose to activate SPLADE pooling for Bert and Distilbert MaskedLM archi
 model=naver/efficient-splade-VI-BT-large-query
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id $model --pooling splade
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 --model-id $model --pooling splade
 ```
 
 Once you have deployed the model you can use the `/embed_sparse` endpoint to get the sparse embedding:
@@ -473,7 +483,7 @@ You can use the gRPC API by adding the `-grpc` tag to any TEI Docker image. For 
 model=Qwen/Qwen3-Embedding-0.6B
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.8-grpc --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:cuda-1.9-grpc --model-id $model
 ```
 
 ```shell
@@ -521,27 +531,24 @@ sudo apt-get install libssl-dev gcc -y
 
 GPUs with CUDA compute capabilities < 7.5 are not supported (V100, Titan V, GTX 1000 series, ...).
 
-Make sure you have CUDA and the nvidia drivers installed. NVIDIA drivers on your device need to be compatible with CUDA
-version 12.2 or higher.
-You also need to add the nvidia binaries to your path:
+Make sure you have CUDA and the NVIDIA drivers installed. NVIDIA drivers on your device need to be compatible with CUDA
+version 12.2 or higher. You also need to add the NVIDIA binaries to your path:
 
 ```shell
 export PATH=$PATH:/usr/local/cuda/bin
 ```
 
-Then run:
+Then run the following (might take a while as it needs to compile the CUDA kernels):
 
 ```shell
-# This can take a while as we need to compile a lot of CUDA kernels
-
 # On Turing GPUs (T4, RTX 2000 series ... )
 cargo install --path router -F candle-cuda-turing
 
-# On Ampere and Hopper
+# On Ampere, Ada Lovelace, Hopper and Blackwell
 cargo install --path router -F candle-cuda
 ```
 
-You can now launch Text Embeddings Inference on GPU with:
+You can now launch Text Embeddings Inference on GPU as follows:
 
 ```shell
 model=Qwen/Qwen3-Embedding-0.6B
@@ -549,18 +556,16 @@ model=Qwen/Qwen3-Embedding-0.6B
 text-embeddings-router --model-id $model --port 8080
 ```
 
-## Docker build
+## Docker
 
-You can build the CPU container with:
+You can build the CPU container with Docker as:
 
 ```shell
-docker build .
+docker build -f Dockerfile .
 ```
 
 To build the CUDA containers, you need to know the compute cap of the GPU you will be using
-at runtime.
-
-Then you can build the container with:
+at runtime, to build the image accordingly:
 
 ```shell
 # Get submodule dependencies
@@ -569,17 +574,23 @@ git submodule update --init
 # Example for Turing (T4, RTX 2000 series, ...)
 runtime_compute_cap=75
 
-# Example for A100
+# Example for Ampere (A100, ...)
 runtime_compute_cap=80
 
-# Example for A10
+# Example for Ampere (A10, ...)
 runtime_compute_cap=86
 
 # Example for Ada Lovelace (RTX 4000 series, ...)
 runtime_compute_cap=89
 
-# Example for H100
+# Example for Hopper (H100, ...)
 runtime_compute_cap=90
+
+# Example for Blackwell (B200, GB200, ...)
+runtime_compute_cap=100
+
+# Example for Blackwell (GeForce RTX 50X0, RTX PRO 6000, ...)
+runtime_compute_cap=120
 
 docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
 ```
