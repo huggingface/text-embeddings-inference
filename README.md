@@ -40,6 +40,7 @@ length of 512 tokens:
     - [Distributed Tracing](#distributed-tracing)
     - [gRPC](#grpc)
 - [Local Install](#local-install)
+    - [Apple Silicon (Homebrew)](#apple-silicon-homebrew)
 - [Docker Build](#docker-build)
     - [Apple M1/M2 Arm](#apple-m1m2-arm64-architectures)
 - [Examples](#examples)
@@ -491,6 +492,22 @@ grpcurl -d '{"inputs": "What is Deep Learning"}' -plaintext 0.0.0.0:8080 tei.v1.
 ```
 
 ## Local install
+
+### Apple Silicon (Homebrew)
+
+On Apple Silicon (M1/M2/M3/M4), you can install a prebuilt binary via Homebrew:
+
+```shell
+brew install text-embeddings-inference
+```
+
+Then launch Text Embeddings Inference with Metal acceleration:
+
+```shell
+model=Qwen/Qwen3-Embedding-0.6B
+
+text-embeddings-router --model-id $model --port 8080
+```
 
 ### CPU
 
