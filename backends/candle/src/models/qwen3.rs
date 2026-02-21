@@ -386,9 +386,7 @@ pub trait ClassificationHead {
 }
 
 pub struct Qwen3ClassificationHead {
-    lm_head: Linear,
-    yes_token_id: usize,
-    no_token_id: usize,
+    diff_weight: Tensor,
 
     span: tracing::Span,
 }
@@ -398,20 +396,23 @@ impl Qwen3ClassificationHead {
         let yes_token_id: usize = 9693;
         let no_token_id: usize = 2152;
 
-        let lm_head_weight = if vb.contains_tensor("lm_head.weight") {
-            vb.pp("lm_head")
-                .get((config.vocab_size, config.hidden_size), "weight")?
+        let prefix = if vb.contains_tensor("lm_head.weight") {
+            "lm_head"
         } else {
             // Tied embeddings - reuse embed_tokens weight
-            vb.pp("embed_tokens")
-                .get((config.vocab_size, config.hidden_size), "weight")?
+            "embed_tokens"
         };
-        let lm_head = Linear::new(lm_head_weight, None, None);
+
+        let lm_head_weight = vb
+            .pp(prefix)
+            .get((config.vocab_size, config.hidden_size), "weight")?;
+
+        let yes_weight = lm_head_weight.i((yes_token_id, ..))?;
+        let no_weight = lm_head_weight.i((no_token_id, ..))?;
+        let diff_weight = yes_weight.sub(&no_weight)?.unsqueeze(1)?;
 
         Ok(Self {
-            lm_head,
-            yes_token_id,
-            no_token_id,
+            diff_weight,
             span: tracing::span!(tracing::Level::TRACE, "classifier"),
         })
     }
@@ -421,14 +422,7 @@ impl ClassificationHead for Qwen3ClassificationHead {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let logits = self.lm_head.forward(hidden_states)?;
-
-        let true_vector = logits.i((.., self.yes_token_id))?;
-        let false_vector = logits.i((.., self.no_token_id))?;
-
-        let diff = true_vector.sub(&false_vector)?;
-
-        diff.unsqueeze(1)
+        hidden_states.matmul(&self.diff_weight)
     }
 }
 
