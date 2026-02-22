@@ -325,18 +325,42 @@ fn tokenize_input(
             (Some(s), encoding)
         }
         EncodingInput::Dual(s1, s2) => {
-            if pre_prompt.is_some() {
-                return Err(TextEmbeddingsError::Validation(
-                    "`prompt_name` cannot be set with dual inputs".to_string(),
-                ));
-            }
+            if let Some(prompts) = prompts {
+                // TODO(kozistr): We could refactor this with a proper template engine if we want to support more complex prompt structures in the future.
+                // For now we just support concatenating the two inputs with optional prompts in between and at the beginning/end.
+                if !(prompts.contains_key("query")
+                    || prompts.contains_key("document")
+                    || prompts.contains_key("prefix")
+                    || prompts.contains_key("suffix"))
+                {
+                    return Err(TextEmbeddingsError::Validation(
+                        "`prompt_name` cannot be set with dual inputs".to_string(),
+                    ));
+                }
 
-            (
-                None,
-                tokenizer
-                    .with_truncation(truncate_params)?
-                    .encode::<(String, String)>((s1, s2), add_special_tokens)?,
-            )
+                let prefix_prompt = prompts.get("prefix").cloned().unwrap_or_default();
+                let suffix_prompt = prompts.get("suffix").cloned().unwrap_or_default();
+                let query_prompt = prompts.get("query").cloned().unwrap_or_default();
+                let document_prompt = prompts.get("document").cloned().unwrap_or_default();
+                let s = format!(
+                    "{}{}{}{}{}{}",
+                    prefix_prompt, query_prompt, s1, document_prompt, s2, suffix_prompt
+                );
+
+                (
+                    None,
+                    tokenizer
+                        .with_truncation(truncate_params)?
+                        .encode::<&str>(&s, add_special_tokens)?,
+                )
+            } else {
+                (
+                    None,
+                    tokenizer
+                        .with_truncation(truncate_params)?
+                        .encode::<(String, String)>((s1, s2), add_special_tokens)?,
+                )
+            }
         }
         // input is encoded -> convert to tokenizers Encoding
         EncodingInput::Ids(ids) => {

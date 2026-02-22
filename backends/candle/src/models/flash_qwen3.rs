@@ -1,6 +1,6 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{get_cos_sin, get_inv_freqs, index_select, HiddenAct, Linear, RMSNorm};
-use crate::models::{Model, Qwen3Config};
+use crate::models::{ClassificationHead, Model, Qwen3ClassificationHead, Qwen3Config};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
 use candle_rotary::apply_rotary_inplace;
@@ -291,6 +291,7 @@ pub struct FlashQwen3Model {
     cos_cache: Tensor,
     sin_cache: Tensor,
     pool: Pool,
+    classifier: Option<Box<dyn ClassificationHead + Send>>,
     pub device: Device,
 
     span: tracing::Span,
@@ -307,33 +308,38 @@ impl FlashQwen3Model {
             candle::bail!("FlashQwen3 requires DType::F16")
         }
 
-        let pool = match model_type {
-            ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for Qwen3")
-            }
-            ModelType::Embedding(pool) => pool,
-        };
-
         // The Qwen3-Reranker models contain the `model` key
         // https://huggingface.co/collections/Qwen/qwen3-reranker-6841b22d0192d7ade9cdefea
         let model_prefix = if vb.contains_tensor("model.embed_tokens.weight") {
-            "model."
+            "model"
         } else {
             ""
         };
 
+        let (pool, classifier) = match model_type {
+            ModelType::Classifier => {
+                // TODO(kozistr): need to adapt the pooling strategy based on the actual model variant
+                let pool = Pool::LastToken;
+
+                let classifier: Box<dyn ClassificationHead + Send> =
+                    Box::new(Qwen3ClassificationHead::load(vb.pp(model_prefix), config)?);
+                (pool, Some(classifier))
+            }
+            ModelType::Embedding(pool) => (pool, None),
+        };
+
         let embeddings = Embedding::new(
-            vb.pp(format!("{model_prefix}embed_tokens"))
+            vb.pp(format!("{model_prefix}.embed_tokens"))
                 .get((config.vocab_size, config.hidden_size), "weight")?,
             config.hidden_size,
         );
 
         let layers = (0..config.num_hidden_layers)
-            .map(|index| Qwen3Layer::load(vb.pp(format!("{model_prefix}layers.{index}")), config))
+            .map(|index| Qwen3Layer::load(vb.pp(format!("{model_prefix}.layers.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
 
         let norm = RMSNorm::load(
-            vb.pp(format!("{model_prefix}norm")),
+            vb.pp(format!("{model_prefix}.norm")),
             config.hidden_size,
             config.rms_norm_eps,
         )?;
@@ -374,6 +380,7 @@ impl FlashQwen3Model {
             cos_cache,
             sin_cache,
             pool,
+            classifier,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
@@ -541,5 +548,17 @@ impl Model for FlashQwen3Model {
 
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
+    }
+
+    fn predict(&self, batch: Batch) -> Result<Tensor> {
+        match &self.classifier {
+            None => candle::bail!("`predict` is not implemented for this model"),
+            Some(classifier) => {
+                let (pooled_embeddings, _raw_embeddings) = self.forward(batch)?;
+                let pooled_embeddings =
+                    pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
+                classifier.forward(&pooled_embeddings)
+            }
+        }
     }
 }
