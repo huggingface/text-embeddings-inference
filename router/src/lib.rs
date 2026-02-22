@@ -117,28 +117,29 @@ pub async fn run(
     // Info model type
     let model_type = match &backend_model_type {
         text_embeddings_backend::ModelType::Classifier => {
-            let id2label = if config.id2label.is_some() {
-                config
-                    .id2label
-                    .context("`config.json` does not contain `id2label`")?
-            } else {
-                tracing::warn!("Model is detected as a classifier but `config.json` does not contain `id2label`. Defaulting to an binary label mapping, which may cause issues when using the model for inference.");
-                HashMap::from([("0".to_string(), "LABEL_0".to_string())])
-            };
+            let id2label = config.id2label
+                .clone()
+                .unwrap_or_else(|| {
+                    tracing::warn!("Model detected as classifier but missing `id2label` in config.json. Using binary default (may affect inference).");
+                    HashMap::from_iter([
+                        ("0".to_string(), "LABEL_0".to_string()),
+                    ])
+                });
 
-            let label2id = if config.label2id.is_some() {
-                config
-                    .label2id
-                    .context("`config.json` does not contain `label2id`")?
-            } else {
-                tracing::warn!("Model is detected as a classifier but `config.json` does not contain `label2id`. Defaulting to an binary label mapping, which may cause issues when using the model for inference.");
-                HashMap::from([("LABEL_0".to_string(), 0)])
-            };
+            let label2id = config.label2id
+                .clone()
+                .unwrap_or_else(|| {
+                    tracing::warn!("Model detected as classifier but missing `label2id` in config.json. Using binary default (may affect inference).");
+                    HashMap::from_iter([
+                        ("LABEL_0".to_string(), 0),
+                    ])
+                });
 
-            let n_classes = id2label.len();
             let classifier_model = ClassifierModel { id2label, label2id };
 
-            if n_classes > 1 {
+            let num_classes = classifier_model.id2label.len();
+
+            if num_classes > 1 {
                 ModelType::Classifier(classifier_model)
             } else {
                 ModelType::Reranker(classifier_model)
