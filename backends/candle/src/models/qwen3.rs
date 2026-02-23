@@ -459,10 +459,13 @@ impl Qwen3Model {
             .unwrap_or(config.hidden_size / config.num_attention_heads);
 
         // NOTE: https://github.com/huggingface/transformers/pull/39847
-        let rope_theta = config.rope_theta.unwrap_or(match &config.rope_parameters {
-            Some(rope_parameters) => rope_parameters.rope_theta,
-            None => candle::bail!("Neither `rope_theta` nor `rope_parameters.rope_theta` are defined in the `config.json`")
-        });
+        let rope_theta = match config.rope_theta {
+            Some(rope_theta) => rope_theta,
+            None => match &config.rope_parameters {
+                Some(rope_parameters) => rope_parameters.rope_theta,
+                None => candle::bail!("Neither `rope_theta` nor `rope_parameters.rope_theta` are defined in the `config.json`"),
+            },
+        };
 
         let inv_freqs = get_inv_freqs(rotary_dim, rope_theta, vb.device(), None)?;
 
