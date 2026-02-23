@@ -87,7 +87,7 @@ struct Args {
     /// will refuse to start with an error instead of silently truncating sequences.
     ///
     /// Unused for gRPC servers
-    #[clap(long, env, default_value = "true")]
+    #[clap(long, env, default_value = "true", num_args = 0..=1, default_missing_value = "true")]
     auto_truncate: bool,
 
     /// The name of the prompt that should be used by default for encoding. If not set, no prompt
