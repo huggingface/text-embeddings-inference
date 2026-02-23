@@ -174,7 +174,6 @@ RUN pip install --no-cache-dir -U \
     peft==${PEFT_VERSION} \
  && rm -rf ~/.cache/pip/*
 
-
 FROM neuron AS grpc
 
 COPY --from=grpc-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
@@ -182,7 +181,7 @@ COPY --from=grpc-builder /usr/src/target/release/text-embeddings-router /usr/loc
 ENTRYPOINT ["text-embeddings-router"]
 CMD ["--json-output"]
 
-FROM neuron
+FROM neuron AS http
 
 COPY --from=http-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
 
