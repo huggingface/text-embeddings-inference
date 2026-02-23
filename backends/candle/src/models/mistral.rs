@@ -1,4 +1,5 @@
-use crate::layers::{HiddenAct, RopeScaling};
+use crate::layers::{HiddenAct, RopeParameters, RopeScaling};
+
 use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -14,7 +15,8 @@ pub struct MistralConfig {
     pub initializer_range: f64,
     pub rms_norm_eps: f32,
     pub model_type: Option<String>,
-    pub rope_theta: f32,
+    pub rope_theta: Option<f32>,
+    pub rope_parameters: Option<RopeParameters>,
     pub sliding_window: Option<usize>,
     pub rope_scaling: Option<RopeScaling>,
     #[serde(default)]

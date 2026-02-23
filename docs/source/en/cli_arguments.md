@@ -98,7 +98,7 @@ Options:
           [default: 32]
 
       --auto-truncate
-          Automatically truncate inputs that are longer than the maximum supported size
+          Control automatic truncation of inputs that exceed the model's maximum supported size. Defaults to `true` (truncation enabled). Set to `false` to disable truncation; when disabled and the model's maximum input length exceeds `--max-batch-tokens`, the server will refuse to start with an error instead of silently truncating sequences.
 
           Unused for gRPC servers
 
@@ -134,7 +134,7 @@ Options:
           [env: DENSE_PATH=]
 
       --hf-token <HF_TOKEN>
-          Your Hugging Face Hub token. If neither `--hf-token` nor `HF_TOKEN` is set, the token will be read from the `$HF_HOME/token` path, if it exists. This ensures access to private or gated models, and allows for a more permissive rate limiting
+          Your Hugging Face Hub token. If neither `--hf-token` nor `HF_TOKEN` are set, the token will be read from the `$HF_HOME/token` path, if it exists. This ensures access to private or gated models, and allows for a more permissive rate limiting
 
           [env: HF_TOKEN=]
 

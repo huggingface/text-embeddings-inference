@@ -33,10 +33,10 @@ the examples of runtime compute capabilities for various GPU types:
 - Ada Lovelace (RTX 4000 series, ...) - `runtime_compute_cap=89`
 - Hopper (H100) - `runtime_compute_cap=90`
 - Blackwell 10.0 (B200, GB200, ...) - `runtime_compute_cap=100`
-- Blackwell (GeForce RTX 50X0, ...) - `runtime_compute_cap=120`
+- Blackwell 12.0 (GeForce RTX 50X0, ...) - `runtime_compute_cap=120`
 
 Once you have determined the compute capability is determined, set it as the `runtime_compute_cap` variable and build
-the container using `Dockerfile-cuda` if the runtime compute cap is lower than 100 as shown in the example below:
+the container using `Dockerfile-cuda`:
 
 ```shell
 # Get submodule dependencies
@@ -45,16 +45,4 @@ git submodule update --init
 runtime_compute_cap=80
 
 docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
-```
-
-Otherwise, if the `runtime_compute_cap` is greater or equal than 100, use `Dockerfile-cuda-blackwell`
-as shown in the example below:
-
-```shell
-# Get submodule dependencies
-git submodule update --init
-
-runtime_compute_cap=120
-
-docker build . -f Dockerfile-cuda-blackwell --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
 ```

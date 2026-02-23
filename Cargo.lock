@@ -326,7 +326,7 @@ dependencies = [
 
 [[package]]
 name = "backend-grpc-client"
-version = "1.8.3"
+version = "1.9.1"
 dependencies = [
  "grpc-metadata",
  "prost 0.11.9",
@@ -4489,7 +4489,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend"
-version = "1.8.3"
+version = "1.9.1"
 dependencies = [
  "clap",
  "hf-hub",
@@ -4506,7 +4506,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend-candle"
-version = "1.8.3"
+version = "1.9.1"
 dependencies = [
  "accelerate-src",
  "anyhow",
@@ -4537,7 +4537,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend-core"
-version = "1.8.3"
+version = "1.9.1"
 dependencies = [
  "clap",
  "nohash-hasher",
@@ -4547,7 +4547,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend-ort"
-version = "1.8.3"
+version = "1.9.1"
 dependencies = [
  "anyhow",
  "ndarray",
@@ -4564,7 +4564,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-backend-python"
-version = "1.8.3"
+version = "1.9.1"
 dependencies = [
  "backend-grpc-client",
  "nohash-hasher",
@@ -4578,7 +4578,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-core"
-version = "1.8.3"
+version = "1.9.1"
 dependencies = [
  "async-channel",
  "hf-hub",
@@ -4593,7 +4593,7 @@ dependencies = [
 
 [[package]]
 name = "text-embeddings-router"
-version = "1.8.3"
+version = "1.9.1"
 dependencies = [
  "anyhow",
  "async-stream",

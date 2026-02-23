@@ -3,7 +3,7 @@ name: Run integration tests
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'  # Run the workflow nightly to check Gaudi integration is working
+    - cron: "0 0 * * *" # Run the workflow nightly to check Gaudi integration is working
 
 jobs:
   tests:
