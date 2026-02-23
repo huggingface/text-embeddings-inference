@@ -34,6 +34,27 @@ pub(crate) fn flash_attn_varlen(
     window_size_left: Option<usize>,
     window_size_right: Option<usize>,
 ) -> Result<Tensor, candle::Error> {
+    let device = q.device();
+
+    // Use CPU fallback only when on CPU device
+    if matches!(device, candle::Device::Cpu) {
+        return crate::flash_attn_cpu::flash_attn_varlen_cpu(
+            q,
+            k,
+            v,
+            alibi_slopes,
+            seqlens_q,
+            seqlens_k,
+            max_seqlen_q,
+            max_seqlen_k,
+            softmax_scale.into(),
+            causal,
+            window_size_left,
+            window_size_right,
+        );
+    }
+
+    // Try to use flash attention on GPU
     let runtime_compute_cap = get_runtime_compute_cap();
 
     if runtime_compute_cap == 75 {
