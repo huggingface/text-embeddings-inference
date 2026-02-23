@@ -47,4 +47,3 @@ docker build . -f Dockerfile-neuron -t tei-neuron
 cd integration_tests/neuron
 uv run pytest --durations=0 -sv .
 ```
-

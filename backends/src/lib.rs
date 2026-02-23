@@ -28,7 +28,7 @@ use text_embeddings_backend_candle::CandleBackend;
 #[cfg(feature = "ort")]
 use text_embeddings_backend_ort::OrtBackend;
 
-#[cfg(feature = "python")]
+#[cfg(any(feature = "python", feature = "python-neuron"))]
 use text_embeddings_backend_python::PythonBackend;
 
 fn powers_of_two(max_value: usize) -> Vec<usize> {
@@ -63,13 +63,6 @@ fn is_hpu() -> bool {
         .args(["-Q", "name", "-f", "csv"])
         .output()
     {
-        Ok(output) => output.status.success(),
-        Err(_) => false,
-    }
-}
-
-fn is_neuron() -> bool {
-    match Command::new("neuron-ls").output() {
         Ok(output) => output.status.success(),
         Err(_) => false,
     }
@@ -423,9 +416,10 @@ async fn init_backend(
     }
 
     if let Some(api_repo) = api_repo.as_ref() {
-        if cfg!(feature = "python") || cfg!(feature = "candle") {
-            let start = std::time::Instant::now();
-            if is_neuron() {
+        let start = std::time::Instant::now();
+        if cfg!(feature = "python-neuron") {
+            #[cfg(feature = "python-neuron")]
+            {
                 tracing::info!("Downloading `model.neuron`");
                 let model_files = download_neuron(api_repo)
                     .await
@@ -436,7 +430,7 @@ async fn init_backend(
                         "Neuron model files not found in the repository. \
                         The Python backend will attempt to compile the model on-the-fly using optimum-neuron. \
                         This may take several minutes. For faster startup, consider pre-compiling your model: \
-                        https://huggingface.co/docs/optimum-neuron/en/model_doc/sentence_transformers/overview "
+                        https://huggingface.co/docs/optimum-neuron/en/model_doc/sentence_transformers/overview"
                     );
                     // Fall back to downloading regular model files for on-the-fly compilation
                     if download_safetensors(api_repo.clone()).await.is_err() {
@@ -452,21 +446,21 @@ async fn init_backend(
                 }
 
                 tracing::info!("Neuron model downloaded in {:?}", start.elapsed());
-            } else {
-                if download_safetensors(api_repo.clone()).await.is_err() {
-                    tracing::warn!(
-                        "safetensors weights not found. Using `pytorch_model.bin` instead. \
-                        Model loading will be significantly slower."
-                    );
-                    tracing::info!("Downloading `pytorch_model.bin`");
-                    api_repo
-                        .get("pytorch_model.bin")
-                        .await
-                        .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
-                }
-
-                tracing::info!("Model weights downloaded in {:?}", start.elapsed());
             }
+        } else if cfg!(feature = "python") || cfg!(feature = "candle") {
+            if download_safetensors(api_repo.clone()).await.is_err() {
+                tracing::warn!(
+                    "safetensors weights not found. Using `pytorch_model.bin` instead. \
+                    Model loading will be significantly slower."
+                );
+                tracing::info!("Downloading `pytorch_model.bin`");
+                api_repo
+                    .get("pytorch_model.bin")
+                    .await
+                    .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
+            }
+
+            tracing::info!("Model weights downloaded in {:?}", start.elapsed());
         }
     }
 
@@ -533,8 +527,8 @@ async fn init_backend(
         }
     }
 
-    if cfg!(feature = "python") {
-        #[cfg(feature = "python")]
+    if cfg!(feature = "python") || cfg!(feature = "python-neuron") {
+        #[cfg(any(feature = "python", feature = "python-neuron"))]
         {
             let backend = std::thread::spawn(move || {
                 PythonBackend::new(
@@ -775,6 +769,7 @@ async fn download_onnx(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
     }
 }
 
+#[cfg(feature = "python-neuron")]
 async fn download_neuron(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     let mut model_files: Vec<PathBuf> = Vec::new();
 

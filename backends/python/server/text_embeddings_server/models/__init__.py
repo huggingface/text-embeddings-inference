@@ -11,16 +11,13 @@ from text_embeddings_server.models.model import Model
 from text_embeddings_server.models.masked_model import MaskedLanguageModel
 from text_embeddings_server.models.default_model import DefaultModel
 from text_embeddings_server.models.classification_model import ClassificationModel
+from text_embeddings_server.models.habana import wrap_model_if_hpu
 
 from text_embeddings_server.utils.device import get_device, use_ipex, is_neuron
 
 __all__ = ["Model"]
 
 TRUST_REMOTE_CODE = os.getenv("TRUST_REMOTE_CODE", "false").lower() in ["true", "1"]
-DISABLE_TENSOR_CACHE = os.getenv("DISABLE_TENSOR_CACHE", "false").lower() in [
-    "true",
-    "1",
-]
 
 # Flash Attention models - only available when flash_attn is installed
 FLASH_ATTENTION = True
@@ -44,32 +41,15 @@ if FLASH_ATTENTION:
     __all__.append(FlashBert)
 
 # Neuron models - only import when on Neuron device to avoid unnecessary dependencies
-NeuronSentenceTransformersModel = None
-NeuronClassificationModel = None
-NeuronMaskedLMModel = None
 create_neuron_model = None
 
 if is_neuron():
     try:
-        from text_embeddings_server.models.neuron_models import (
-            NeuronSentenceTransformersModel,
-            NeuronClassificationModel,
-            NeuronMaskedLMModel,
+        from text_embeddings_server.models.neuron import (
             create_neuron_model,
         )
     except ImportError as e:
         logger.warning(f"Could not import Neuron models: {e}")
-
-
-def wrap_model_if_hpu(model_handle, device):
-    """Wrap the model in HPU graph if the device is HPU."""
-    if device.type == "hpu":
-        from habana_frameworks.torch.hpu import wrap_in_hpu_graph
-
-        model_handle.model = wrap_in_hpu_graph(
-            model_handle.model, disable_tensor_cache=DISABLE_TENSOR_CACHE
-        )
-    return model_handle
 
 
 def create_model(model_class, model_path, device, datatype, pool="cls"):
