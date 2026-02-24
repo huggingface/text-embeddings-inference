@@ -268,9 +268,18 @@ impl FlashMistralModel {
 
         let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
 
+        // NOTE: https://github.com/huggingface/transformers/pull/39847
+        let rope_theta = match config.rope_theta {
+            Some(rope_theta) => rope_theta,
+            None => match &config.rope_parameters {
+                Some(rope_parameters) => rope_parameters.rope_theta,
+                None => candle::bail!("Neither `rope_theta` nor `rope_parameters.rope_theta` are defined in the `config.json`"),
+            },
+        };
+
         let inv_freqs = get_inv_freqs(
             layers[0].attention.attention_head_size,
-            config.rope_theta,
+            rope_theta,
             vb.device(),
             config.rope_scaling.as_ref(),
         )?;

@@ -2,6 +2,13 @@ use candle::{DType, Device, Result, Tensor, D};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RopeParameters {
+    pub rope_theta: f32,
+    #[allow(unused)]
+    rope_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum RopeScaling {
     Llama3 {
