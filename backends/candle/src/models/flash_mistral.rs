@@ -24,8 +24,6 @@ struct MistralAttention {
 
 impl MistralAttention {
     pub fn load(vb: VarBuilder, config: &MistralConfig) -> Result<Self> {
-        let window_size_left = config.sliding_window;
-        let use_bidirectional_attention = config.use_bidirectional_attention.unwrap_or(false);
         let num_attention_heads = config.num_attention_heads;
         let attention_head_size = config.hidden_size / config.num_attention_heads;
         let num_key_value_heads = config.num_key_value_heads;
@@ -55,8 +53,8 @@ impl MistralAttention {
         Ok(Self {
             qkv_linear,
             o_proj,
-            window_size_left,
-            use_bidirectional_attention,
+            window_size_left: config.sliding_window,
+            use_bidirectional_attention: config.use_bidirectional_attention.unwrap_or(false),
             num_attention_heads,
             num_key_value_heads,
             attention_head_size,

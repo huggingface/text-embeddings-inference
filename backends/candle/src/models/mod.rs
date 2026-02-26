@@ -20,6 +20,7 @@ mod mistral;
 mod modernbert;
 mod mpnet;
 mod nomic;
+mod pplx1;
 mod qwen2;
 mod qwen3;
 
@@ -66,6 +67,7 @@ pub use mistral::MistralConfig;
 pub use modernbert::{ModernBertConfig, ModernBertModel};
 pub use mpnet::{MPNetConfig, MPNetModel};
 pub use nomic::{NomicBertModel, NomicConfig};
+pub use pplx1::{Pplx1Config, Pplx1Model};
 pub use qwen2::Qwen2Config;
 pub use qwen3::{Qwen3Config, Qwen3Model};
 
