@@ -744,7 +744,6 @@ impl Backend for CandleBackend {
 
         let results = self.model.predict_tokens(batch).e()?;
 
-
         let results = results.to_dtype(DType::F32).e()?.to_vec2().e()?;
 
         let mut predictions =

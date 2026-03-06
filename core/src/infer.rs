@@ -486,10 +486,11 @@ impl Infer {
         if !raw_scores {
             // Softmax
             if response.results.len() > 1 {
-                let max = *response
+                let max = response
                     .results
                     .iter()
-                    .max_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap())
+                    .copied()
+                    .max_by(|a, b| a.total_cmp(b))
                     .unwrap();
 
                 let mut den = 0.0;
@@ -610,7 +611,11 @@ impl Infer {
         if !raw_scores {
             for (_, _, scores, _, _) in response.results.iter_mut() {
                 if scores.len() > 1 {
-                    let max = scores.iter().copied().reduce(f32::max).unwrap_or(f32::NEG_INFINITY);
+                    let max = scores
+                        .iter()
+                        .copied()
+                        .max_by(|a, b| a.total_cmp(b))
+                        .unwrap();
 
                     let mut den = 0.0;
                     for v in scores.iter_mut() {

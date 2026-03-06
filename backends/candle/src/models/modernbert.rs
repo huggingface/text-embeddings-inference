@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::layers::{
     apply_rotary, get_cos_sin, get_cublas_lt_wrapper, get_inv_freqs, HiddenAct, LayerNormNoBias,
     Linear,
@@ -46,6 +48,7 @@ pub struct ModernBertConfig {
     pub sparse_pred_ignore_index: Option<i64>,
     pub reference_compile: Option<bool>,
     pub num_labels: Option<usize>,
+    pub id2label: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug)]
@@ -409,6 +412,11 @@ pub struct ModernBertClassificationHead {
 
 impl ModernBertClassificationHead {
     pub(crate) fn load(vb: VarBuilder, config: &ModernBertConfig) -> Result<Self> {
+        let n_classes = match &config.id2label {
+            Some(id2label) => id2label.len(),
+            None => config.num_labels.unwrap_or(1),
+        };
+
         let dense_weight = vb
             .pp("head.dense")
             .get((config.hidden_size, config.hidden_size), "weight")?;
@@ -424,13 +432,10 @@ impl ModernBertClassificationHead {
             config.norm_eps as f32,
         )?;
 
-        let classifier_weight = vb.pp("classifier").get(
-            (config.num_labels.unwrap_or(1), config.hidden_size),
-            "weight",
-        )?;
-        let classifier_bias = vb
+        let classifier_weight = vb
             .pp("classifier")
-            .get(config.num_labels.unwrap_or(1), "bias")?;
+            .get((n_classes, config.hidden_size), "weight")?;
+        let classifier_bias = vb.pp("classifier").get(n_classes, "bias")?;
         let classifier = Linear::new(classifier_weight, Some(classifier_bias), None);
 
         Ok(Self {
