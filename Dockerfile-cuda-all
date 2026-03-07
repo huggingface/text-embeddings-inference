@@ -16,6 +16,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sccache-v$SCCACHE-x86_64-unknown-linux-musl.tar.gz | tar -xzv --strip-components=1 -C /usr/local/bin sccache-v$SCCACHE-x86_64-unknown-linux-musl/sccache && \
     chmod +x /usr/local/bin/sccache
 
+COPY rust-toolchain.toml rust-toolchain.toml
 RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
 RUN cargo install cargo-chef --version $CARGO_CHEF --locked
 
