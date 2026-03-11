@@ -19,6 +19,7 @@ fn test_flash_gte() -> Result<()> {
         "float16".to_string(),
         ModelType::Embedding(Pool::Cls),
         None,
+        0,
     )?;
 
     let input_batch = batch(
@@ -69,6 +70,7 @@ fn test_flash_gte_classification() -> Result<()> {
         "float16".to_string(),
         ModelType::Classifier,
         None,
+        0,
     )?;
 
     let input_single = batch(
