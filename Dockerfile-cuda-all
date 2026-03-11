@@ -27,8 +27,8 @@ WORKDIR /usr/src
 COPY backends backends
 COPY core core
 COPY router router
-COPY Cargo.toml ./
-COPY Cargo.lock ./
+COPY Cargo.toml Cargo.toml
+COPY Cargo.lock Cargo.lock
 
 RUN cargo chef prepare --recipe-path recipe.json
 
@@ -48,11 +48,12 @@ ARG CARGO_BUILD_INCREMENTAL
 WORKDIR /usr/src
 
 COPY --from=planner /usr/src/recipe.json recipe.json
+
 COPY backends backends
 COPY core core
 COPY router router
-COPY Cargo.toml ./
-COPY Cargo.lock ./
+COPY Cargo.toml Cargo.toml
+COPY Cargo.lock Cargo.lock
 
 FROM builder-base AS builder-75
 
