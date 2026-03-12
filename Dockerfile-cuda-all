@@ -51,11 +51,9 @@ COPY --from=planner /usr/src/recipe.json recipe.json
 
 FROM builder-base AS builder-75
 
-RUN nvprune --generate-code code=sm_75 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a
-
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=75 cargo chef cook --release --features candle-cuda-turing --features static-linking --no-default-features --recipe-path recipe.json && sccache -s
+    CUDA_COMPUTE_CAP=75 cargo chef cook --release --features candle-cuda-turing --features dynamic-linking --no-default-features --recipe-path recipe.json && sccache -s
 
 COPY backends backends
 COPY core core
@@ -65,17 +63,15 @@ COPY Cargo.lock Cargo.lock
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=75 cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F static-linking -F http --no-default-features && \
+    CUDA_COMPUTE_CAP=75 cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F dynamic-linking -F http --no-default-features && \
     mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-75 && \
     sccache -s
 
 FROM builder-base AS builder-80
 
-RUN nvprune --generate-code code=sm_80 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a
-
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=80 cargo chef cook --release --features candle-cuda --features static-linking --no-default-features --recipe-path recipe.json && sccache -s
+    CUDA_COMPUTE_CAP=80 cargo chef cook --release --features candle-cuda --features dynamic-linking --no-default-features --recipe-path recipe.json && sccache -s
 
 COPY backends backends
 COPY core core
@@ -85,17 +81,33 @@ COPY Cargo.lock Cargo.lock
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=80 cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F http --no-default-features && \
+    CUDA_COMPUTE_CAP=80 cargo build --release --bin text-embeddings-router -F candle-cuda -F dynamic-linking -F http --no-default-features && \
     mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-80 && \
+    sccache -s
+
+FROM builder-base AS builder-89
+
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    CUDA_COMPUTE_CAP=89 cargo chef cook --release --features candle-cuda --features dynamic-linking --no-default-features --recipe-path recipe.json && sccache -s
+
+COPY backends backends
+COPY core core
+COPY router router
+COPY Cargo.toml Cargo.toml
+COPY Cargo.lock Cargo.lock
+
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    CUDA_COMPUTE_CAP=89 cargo build --release --bin text-embeddings-router -F candle-cuda -F dynamic-linking -F http --no-default-features && \
+    mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-89 && \
     sccache -s
 
 FROM builder-base AS builder-90
 
-RUN nvprune --generate-code code=sm_90 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a
-
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=90 cargo chef cook --release --features candle-cuda --features static-linking --no-default-features --recipe-path recipe.json && sccache -s
+    CUDA_COMPUTE_CAP=90 cargo chef cook --release --features candle-cuda --features dynamic-linking --no-default-features --recipe-path recipe.json && sccache -s
 
 COPY backends backends
 COPY core core
@@ -105,17 +117,15 @@ COPY Cargo.lock Cargo.lock
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F http --no-default-features && \
+    CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda -F dynamic-linking -F http --no-default-features && \
     mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-90 && \
     sccache -s
 
 FROM builder-base AS builder-100
 
-RUN nvprune --generate-code code=sm_100 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a
-
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=100 cargo chef cook --release --features candle-cuda --features static-linking --no-default-features --recipe-path recipe.json && sccache -s
+    CUDA_COMPUTE_CAP=100 cargo chef cook --release --features candle-cuda --features dynamic-linking --no-default-features --recipe-path recipe.json && sccache -s
 
 COPY backends backends
 COPY core core
@@ -125,17 +135,15 @@ COPY Cargo.lock Cargo.lock
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=100 cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F http --no-default-features && \
+    CUDA_COMPUTE_CAP=100 cargo build --release --bin text-embeddings-router -F candle-cuda -F dynamic-linking -F http --no-default-features && \
     mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-100 && \
     sccache -s
 
 FROM builder-base AS builder-120
 
-RUN nvprune --generate-code code=sm_120 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a
-
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=120 cargo chef cook --release --features candle-cuda --features static-linking --no-default-features --recipe-path recipe.json && sccache -s
+    CUDA_COMPUTE_CAP=120 cargo chef cook --release --features candle-cuda --features dynamic-linking --no-default-features --recipe-path recipe.json && sccache -s
 
 COPY backends backends
 COPY core core
@@ -145,7 +153,7 @@ COPY Cargo.lock Cargo.lock
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=120 cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F http --no-default-features && \
+    CUDA_COMPUTE_CAP=120 cargo build --release --bin text-embeddings-router -F candle-cuda -F dynamic-linking -F http --no-default-features && \
     mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-120 && \
     sccache -s
 
@@ -163,10 +171,12 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     libssl-dev \
     curl \
     cuda-compat-12-9 \
+    libcublas-12-9 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder-75 /usr/src/target/release/text-embeddings-router-75 /usr/local/bin/text-embeddings-router-75
 COPY --from=builder-80 /usr/src/target/release/text-embeddings-router-80 /usr/local/bin/text-embeddings-router-80
+COPY --from=builder-89 /usr/src/target/release/text-embeddings-router-89 /usr/local/bin/text-embeddings-router-89
 COPY --from=builder-90 /usr/src/target/release/text-embeddings-router-90 /usr/local/bin/text-embeddings-router-90
 COPY --from=builder-100 /usr/src/target/release/text-embeddings-router-100 /usr/local/bin/text-embeddings-router-100
 COPY --from=builder-120 /usr/src/target/release/text-embeddings-router-120 /usr/local/bin/text-embeddings-router-120
