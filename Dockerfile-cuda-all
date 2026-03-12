@@ -1,7 +1,5 @@
 FROM nvidia/cuda:12.9.1-devel-ubuntu24.04 AS base-builder
 
-ENV SCCACHE=0.10.0
-ENV RUSTC_WRAPPER=/usr/local/bin/sccache
 ENV PATH="/root/.cargo/bin:${PATH}"
 # aligned with `cargo-chef` version in `lukemathwalker/cargo-chef:latest-rust-1.92-bookworm`
 ENV CARGO_CHEF=0.1.73
@@ -11,10 +9,6 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     libssl-dev \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
-
-# Donwload and configure sccache
-RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sccache-v$SCCACHE-x86_64-unknown-linux-musl.tar.gz | tar -xzv --strip-components=1 -C /usr/local/bin sccache-v$SCCACHE-x86_64-unknown-linux-musl/sccache && \
-    chmod +x /usr/local/bin/sccache
 
 COPY rust-toolchain.toml rust-toolchain.toml
 RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
@@ -37,9 +31,6 @@ FROM base-builder AS builder-base
 ARG GIT_SHA
 ARG DOCKER_LABEL
 
-# sccache specific variables
-ARG SCCACHE_GHA_ENABLED
-
 # Limit parallelism
 ARG RAYON_NUM_THREADS=4
 ARG CARGO_BUILD_JOBS
@@ -51,9 +42,7 @@ COPY --from=planner /usr/src/recipe.json recipe.json
 
 FROM builder-base AS builder-75
 
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=75 cargo chef cook --release --features candle-cuda-turing --features dynamic-linking --no-default-features --recipe-path recipe.json && sccache -s
+RUN CUDA_COMPUTE_CAP=75 cargo chef cook --release --features candle-cuda-turing --features dynamic-linking --no-default-features --recipe-path recipe.json
 
 COPY backends backends
 COPY core core
@@ -61,17 +50,12 @@ COPY router router
 COPY Cargo.toml Cargo.toml
 COPY Cargo.lock Cargo.lock
 
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=75 cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F dynamic-linking -F http --no-default-features && \
-    mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-75 && \
-    sccache -s
+RUN CUDA_COMPUTE_CAP=75 cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F dynamic-linking -F http --no-default-features && \
+    mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-75
 
 FROM builder-base AS builder-80
 
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=80 cargo chef cook --release --features candle-cuda --features dynamic-linking --no-default-features --recipe-path recipe.json && sccache -s
+RUN CUDA_COMPUTE_CAP=80 cargo chef cook --release --features candle-cuda --features dynamic-linking --no-default-features --recipe-path recipe.json
 
 COPY backends backends
 COPY core core
@@ -79,17 +63,12 @@ COPY router router
 COPY Cargo.toml Cargo.toml
 COPY Cargo.lock Cargo.lock
 
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=80 cargo build --release --bin text-embeddings-router -F candle-cuda -F dynamic-linking -F http --no-default-features && \
-    mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-80 && \
-    sccache -s
+RUN CUDA_COMPUTE_CAP=80 cargo build --release --bin text-embeddings-router -F candle-cuda -F dynamic-linking -F http --no-default-features && \
+    mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-80
 
 FROM builder-base AS builder-89
 
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=89 cargo chef cook --release --features candle-cuda --features dynamic-linking --no-default-features --recipe-path recipe.json && sccache -s
+RUN CUDA_COMPUTE_CAP=89 cargo chef cook --release --features candle-cuda --features dynamic-linking --no-default-features --recipe-path recipe.json
 
 COPY backends backends
 COPY core core
@@ -97,17 +76,12 @@ COPY router router
 COPY Cargo.toml Cargo.toml
 COPY Cargo.lock Cargo.lock
 
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=89 cargo build --release --bin text-embeddings-router -F candle-cuda -F dynamic-linking -F http --no-default-features && \
-    mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-89 && \
-    sccache -s
+RUN CUDA_COMPUTE_CAP=89 cargo build --release --bin text-embeddings-router -F candle-cuda -F dynamic-linking -F http --no-default-features && \
+    mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-89
 
 FROM builder-base AS builder-90
 
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=90 cargo chef cook --release --features candle-cuda --features dynamic-linking --no-default-features --recipe-path recipe.json && sccache -s
+RUN CUDA_COMPUTE_CAP=90 cargo chef cook --release --features candle-cuda --features dynamic-linking --no-default-features --recipe-path recipe.json
 
 COPY backends backends
 COPY core core
@@ -115,17 +89,12 @@ COPY router router
 COPY Cargo.toml Cargo.toml
 COPY Cargo.lock Cargo.lock
 
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda -F dynamic-linking -F http --no-default-features && \
-    mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-90 && \
-    sccache -s
+RUN CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda -F dynamic-linking -F http --no-default-features && \
+    mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-90
 
 FROM builder-base AS builder-100
 
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=100 cargo chef cook --release --features candle-cuda --features dynamic-linking --no-default-features --recipe-path recipe.json && sccache -s
+RUN CUDA_COMPUTE_CAP=100 cargo chef cook --release --features candle-cuda --features dynamic-linking --no-default-features --recipe-path recipe.json
 
 COPY backends backends
 COPY core core
@@ -133,17 +102,12 @@ COPY router router
 COPY Cargo.toml Cargo.toml
 COPY Cargo.lock Cargo.lock
 
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=100 cargo build --release --bin text-embeddings-router -F candle-cuda -F dynamic-linking -F http --no-default-features && \
-    mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-100 && \
-    sccache -s
+RUN CUDA_COMPUTE_CAP=100 cargo build --release --bin text-embeddings-router -F candle-cuda -F dynamic-linking -F http --no-default-features && \
+    mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-100
 
 FROM builder-base AS builder-120
 
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=120 cargo chef cook --release --features candle-cuda --features dynamic-linking --no-default-features --recipe-path recipe.json && sccache -s
+RUN CUDA_COMPUTE_CAP=120 cargo chef cook --release --features candle-cuda --features dynamic-linking --no-default-features --recipe-path recipe.json
 
 COPY backends backends
 COPY core core
@@ -151,11 +115,8 @@ COPY router router
 COPY Cargo.toml Cargo.toml
 COPY Cargo.lock Cargo.lock
 
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=120 cargo build --release --bin text-embeddings-router -F candle-cuda -F dynamic-linking -F http --no-default-features && \
-    mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-120 && \
-    sccache -s
+RUN CUDA_COMPUTE_CAP=120 cargo build --release --bin text-embeddings-router -F candle-cuda -F dynamic-linking -F http --no-default-features && \
+    mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-120
 
 FROM nvidia/cuda:12.9.1-runtime-ubuntu24.04 AS base
 
