@@ -42,25 +42,27 @@ serde_json = "1.0"
 thiserror = "1.0"
 rand = "0.9"
 serial_test = "2.0.0"
-cudarc = { version = "0.13", features =["cuda-12020"], default-features = false }
+cudarc = { version = "0.19", features = ["cuda-version-from-build-system"], default-features = false }
 intel-mkl-src = { version = "0.8", default-features = false }
-candle = { version = "0.8", package = "candle-core" }
-candle-nn = { version = "0.8" }
-candle-transformers = { version = "0.8" }
-candle-flash-attn = { version = "0.8" }
+candle = { version = "0.9.2", package = "candle-core" }
+candle-nn = { version = "0.9.2" }
+candle-transformers = { version = "0.9.2" }
+candle-flash-attn = { version = "0.9.2" }
 candle-cublaslt = { version = "0.0.1" }
 candle-layer-norm = { version = "0.0.1" }
-candle-index-select-cu =  { version = "0.0.1", features = ["cuda-11"], default-features = false }
 candle-rotary = { version = "0.0.1" }
 candle-flash-attn-v1 = { version = "0.0.1" }
 half = { version = "2.3.1", features = ["num-traits"] }
 
 [patch.crates-io]
-cudarc = { git = "https://github.com/Narsil/cudarc" , rev = "8b4f18b4bcd5e4b1a9daf40abc3a2e27f83f06e9"}
-candle = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-core" }
-candle-nn = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-nn" }
-candle-transformers = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-transformers" }
-candle-flash-attn = { git = "https://github.com/huggingface/candle", rev = "6381023982251959a2c9bab7378b3013304e192b", package = "candle-flash-attn" }
+candle = { git = "https://github.com/huggingface/candle", branch = "no-default-linking", package = "candle-core" }
+candle-nn = { git = "https://github.com/huggingface/candle", branch = "no-default-linking", package = "candle-nn" }
+candle-transformers = { git = "https://github.com/huggingface/candle", branch = "no-default-linking", package = "candle-transformers" }
+candle-flash-attn = { git = "https://github.com/huggingface/candle", branch = "no-default-linking", package = "candle-flash-attn" }
+candle-cublaslt = { git = "https://github.com/huggingface/candle-extensions", branch = "allow-static-linking" }
+candle-layer-norm = { git = "https://github.com/huggingface/candle-extensions", branch = "allow-static-linking" }
+candle-rotary = { git = "https://github.com/huggingface/candle-extensions", branch = "allow-static-linking" }
+candle-flash-attn-v1 = { git = "https://github.com/huggingface/candle-extensions", branch = "allow-static-linking" }
 
 [profile.release]
 debug = 0

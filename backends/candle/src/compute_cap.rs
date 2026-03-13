@@ -3,7 +3,6 @@ use candle::cuda_backend::cudarc::driver;
 use candle::cuda_backend::cudarc::driver::sys::CUdevice_attribute::{
     CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR,
 };
-use candle::cuda_backend::cudarc::driver::CudaDevice;
 
 pub fn get_compile_compute_cap() -> Result<usize, anyhow::Error> {
     env!("CUDA_COMPUTE_CAP")
@@ -13,11 +12,11 @@ pub fn get_compile_compute_cap() -> Result<usize, anyhow::Error> {
 
 pub fn get_runtime_compute_cap() -> Result<usize, anyhow::Error> {
     driver::result::init().context("CUDA is not available")?;
-    let device = CudaDevice::new(0).context("CUDA is not available")?;
-    let major = device
+    let context = driver::CudaContext::new(0).context("CUDA is not available")?;
+    let major = context
         .attribute(CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR)
         .context("Could not retrieve device compute capability major")?;
-    let minor = device
+    let minor = context
         .attribute(CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR)
         .context("Could not retrieve device compute capability minor")?;
     Ok((major * 10 + minor) as usize)
