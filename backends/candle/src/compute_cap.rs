@@ -31,7 +31,8 @@ fn compute_cap_matching(runtime_compute_cap: usize, compile_compute_cap: usize) 
         (89, 89) => true,
         (90, 90) => true,
         (100, 100) => true,
-        (120, 120) => true,
+        (120..=121, 120) => true,
+        (121, 121) => true,
         (_, _) => false,
     }
 }
@@ -57,6 +58,8 @@ mod tests {
         assert!(compute_cap_matching(89, 89));
         assert!(compute_cap_matching(90, 90));
         assert!(compute_cap_matching(120, 120));
+        assert!(compute_cap_matching(121, 121));
+        assert!(compute_cap_matching(121, 120));
 
         assert!(compute_cap_matching(86, 80));
         assert!(compute_cap_matching(89, 80));
@@ -96,5 +99,12 @@ mod tests {
         assert!(!compute_cap_matching(120, 89));
         assert!(!compute_cap_matching(120, 90));
         assert!(!compute_cap_matching(120, 100));
+
+        assert!(!compute_cap_matching(121, 75));
+        assert!(!compute_cap_matching(121, 80));
+        assert!(!compute_cap_matching(121, 86));
+        assert!(!compute_cap_matching(121, 89));
+        assert!(!compute_cap_matching(121, 90));
+        assert!(!compute_cap_matching(121, 100));
     }
 }
