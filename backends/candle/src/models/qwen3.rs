@@ -27,6 +27,7 @@ pub struct Qwen3Config {
     pub rope_parameters: Option<RopeParameters>,
     pub sliding_window: Option<usize>,
     pub use_sliding_window: bool,
+    pub tie_word_embeddings: bool,
     pub eos_token_id: usize,
     // TODO(alvarobartt): Migrate to `is_causal` instead
     // https://github.com/huggingface/transformers/pull/43705
@@ -400,11 +401,10 @@ impl Qwen3ClassificationHead {
         let yes_token_id: usize = 9693;
         let no_token_id: usize = 2152;
 
-        let prefix = if vb.contains_tensor("lm_head.weight") {
-            "lm_head"
-        } else {
-            // Tied embeddings - reuse embed_tokens weight
+        let prefix = if config.tie_word_embeddings {
             "embed_tokens"
+        } else {
+            "lm_head"
         };
 
         let lm_head_weight = vb
