@@ -401,15 +401,7 @@ impl Qwen3ClassificationHead {
         let yes_token_id: usize = 9693;
         let no_token_id: usize = 2152;
 
-        let prefix = if config.tie_word_embeddings {
-            "embed_tokens"
-        } else {
-            "lm_head"
-        };
-
-        let lm_head_weight = vb
-            .pp(prefix)
-            .get((config.vocab_size, config.hidden_size), "weight")?;
+        let lm_head_weight = vb.get((config.vocab_size, config.hidden_size), "weight")?;
 
         let yes_weight = lm_head_weight.i((yes_token_id, ..))?;
         let no_weight = lm_head_weight.i((no_token_id, ..))?;
@@ -466,8 +458,15 @@ impl Qwen3Model {
                 // TODO(kozistr): need to adapt the pooling strategy based on the actual model variant
                 let pool = Pool::LastToken;
 
-                let classifier: Box<dyn ClassificationHead + Send> =
-                    Box::new(Qwen3ClassificationHead::load(vb.pp(model_prefix), config)?);
+                let classifier_weight_name = if config.tie_word_embeddings {
+                    "model.embed_tokens"
+                } else {
+                    "lm_head"
+                };
+
+                let classifier: Box<dyn ClassificationHead + Send> = Box::new(
+                    Qwen3ClassificationHead::load(vb.pp(classifier_weight_name), config)?,
+                );
                 (pool, Some(classifier))
             }
             ModelType::Embedding(pool) => (pool, None),
