@@ -323,8 +323,15 @@ impl FlashQwen3Model {
                 // TODO(kozistr): need to adapt the pooling strategy based on the actual model variant
                 let pool = Pool::LastToken;
 
-                let classifier: Box<dyn ClassificationHead + Send> =
-                    Box::new(Qwen3ClassificationHead::load(vb.pp(model_prefix), config)?);
+                let classifier_weight_name = if config.tie_word_embeddings {
+                    "model.embed_tokens"
+                } else {
+                    "lm_head"
+                };
+
+                let classifier: Box<dyn ClassificationHead + Send> = Box::new(
+                    Qwen3ClassificationHead::load(vb.pp(classifier_weight_name), config)?,
+                );
                 (pool, Some(classifier))
             }
             ModelType::Embedding(pool) => (pool, None),
