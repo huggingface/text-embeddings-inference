@@ -32,7 +32,7 @@ use crate::models::{
 use crate::models::{
     FlashBertModel, FlashDistilBertModel, FlashGTEModel, FlashJinaBertModel,
     FlashJinaCodeBertModel, FlashMistralModel, FlashModernBertModel, FlashNomicBertModel,
-    FlashQwen2Model, FlashQwen3Model,
+    FlashPplx1Model, FlashQwen2Model, FlashQwen3Model,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -366,9 +366,9 @@ impl CandleBackend {
             }
             (Config::Pplx1(config), Device::Cpu | Device::Metal(_)) => {
                 // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on Metal
-                if dtype != DType::F32 {
+                if dtype != DType::BF16 {
                     Err(BackendError::Start(
-                        "Pplx1 is only supported in fp32 precision".to_string(),
+                        "Pplx1 does not support in bf16 precision".to_string(),
                     ))
                 } else {
                     tracing::info!("Starting Pplx1 model on {:?}", device);
@@ -536,12 +536,13 @@ impl CandleBackend {
             #[cfg(feature = "cuda")]
             (Config::Pplx1(config), Device::Cuda(_)) => {
                 // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on CUDA
-                if dtype != DType::F32 {
-                    Err(BackendError::Start(
-                        "Pplx1 is only supported in fp32 precision".to_string(),
+                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2]) {
+                    tracing::info!("Starting FlashPplx1 model on {:?}", device);
+                    Ok(Box::new(
+                        FlashPplx1Model::load(vb, &config, model_type).s()?,
                     ))
                 } else {
-                    tracing::info!("Starting Pplx1 model on {:?}", device);
+                    tracing::info!("Starting Pplx model on {:?}", device);
                     Ok(Box::new(Pplx1Model::load(vb, &config, model_type).s()?))
                 }
             }
