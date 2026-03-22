@@ -366,7 +366,7 @@ impl CandleBackend {
             }
             (Config::Pplx1(config), Device::Cpu | Device::Metal(_)) => {
                 // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on Metal
-                if dtype != DType::BF16 {
+                if dtype == DType::BF16 {
                     Err(BackendError::Start(
                         "Pplx1 does not support in bf16 precision".to_string(),
                     ))
