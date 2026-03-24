@@ -1,6 +1,7 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{get_cos_sin, get_inv_freqs, index_select, HiddenAct, Linear, RMSNorm};
-use crate::models::{ClassificationHead, Model, Qwen3ClassificationHead, Qwen3Config};
+use crate::models::{Model, Qwen3Config};
+use crate::models::qwen3::{ClassificationHead, Qwen3ClassificationHead};
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
 use candle_rotary::apply_rotary_inplace;
