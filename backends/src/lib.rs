@@ -593,10 +593,17 @@ enum BackendCommand {
 async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
     // Single file
     tracing::info!("Downloading `model.safetensors`");
-    match api.get("model.safetensors").await {
-        Ok(p) => return Ok(vec![p]),
-        Err(err) => tracing::warn!("Could not download `model.safetensors`: {}", err),
-    };
+    if let Ok(path) = api.get("model.safetensors").await {
+        return Ok(vec![path]);
+    }
+
+    tracing::warn!("Could not download `model.safetensors`");
+    tracing::info!("Downloading `0_StaticEmbedding/model.safetensors`");
+    if let Ok(path) = api.get("0_StaticEmbedding/model.safetensors").await {
+        return Ok(vec![path]);
+    }
+
+    tracing::warn!("Could not download `model.safetensors`");
 
     // Sharded weights
     // Download and parse index file
@@ -747,6 +754,8 @@ enum ModuleType {
     Pooling,
     #[serde(rename = "sentence_transformers.models.Transformer")]
     Transformer,
+    #[serde(rename = "sentence_transformers.models.StaticEmbedding")]
+    StaticEmbedding,
 }
 
 #[cfg(feature = "candle")]
