@@ -290,14 +290,14 @@ pub fn load_tokenizer(model_root: &Path) -> Result<Tokenizer> {
             m.set_prepend_scheme(PrependScheme::First);
             tokenizer.with_pre_tokenizer(Some(PreTokenizerWrapper::Metaspace(m)));
         } else if let PreTokenizerWrapper::Sequence(s) = pre_tokenizer {
-            let pre_tokenizers = s.get_pre_tokenizers();
+            let pre_tokenizers: Vec<_> = s.clone().into_iter().collect();
             // Check if we have a Metaspace pre tokenizer in the sequence
             let has_metaspace = pre_tokenizers
                 .iter()
                 .any(|t| matches!(t, PreTokenizerWrapper::Metaspace(_)));
 
             if has_metaspace {
-                let mut new_pre_tokenizers = Vec::with_capacity(s.get_pre_tokenizers().len());
+                let mut new_pre_tokenizers = Vec::with_capacity(pre_tokenizers.len());
 
                 for pre_tokenizer in pre_tokenizers {
                     if let PreTokenizerWrapper::WhitespaceSplit(_) = pre_tokenizer {
