@@ -12,8 +12,14 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# Donwload and configure sccache
-RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sccache-v$SCCACHE-x86_64-unknown-linux-musl.tar.gz | tar -xzv --strip-components=1 -C /usr/local/bin sccache-v$SCCACHE-x86_64-unknown-linux-musl/sccache && \
+# Download and configure sccache (multi-arch)
+ARG TARGETARCH
+RUN case "${TARGETARCH}" in \
+    "amd64") SCCACHE_ARCH=x86_64-unknown-linux-musl ;; \
+    "arm64") SCCACHE_ARCH=aarch64-unknown-linux-musl ;; \
+    *) echo "Unsupported arch: ${TARGETARCH}"; exit 1 ;; \
+    esac && \
+    curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sccache-v$SCCACHE-${SCCACHE_ARCH}.tar.gz | tar -xzv --strip-components=1 -C /usr/local/bin sccache-v$SCCACHE-${SCCACHE_ARCH}/sccache && \
     chmod +x /usr/local/bin/sccache
 
 COPY rust-toolchain.toml rust-toolchain.toml
@@ -65,6 +71,9 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     elif [ ${CUDA_COMPUTE_CAP} -eq 120 ]; \
     then  \
     nvprune --generate-code code=sm_120 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
+    elif [ ${CUDA_COMPUTE_CAP} -eq 121 ]; \
+    then  \
+    nvprune --generate-code code=sm_120 --generate-code code=sm_121 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
     else  \
     echo "cuda compute cap ${CUDA_COMPUTE_CAP} is not supported"; exit 1; \
     fi;
@@ -103,7 +112,13 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
-RUN PROTOC_ZIP=protoc-21.12-linux-x86_64.zip && \
+ARG TARGETARCH
+RUN case "${TARGETARCH}" in \
+    "amd64") PROTOC_ARCH=x86_64 ;; \
+    "arm64") PROTOC_ARCH=aarch_64 ;; \
+    *) echo "Unsupported arch: ${TARGETARCH}"; exit 1 ;; \
+    esac && \
+    PROTOC_ZIP=protoc-21.12-linux-${PROTOC_ARCH}.zip && \
     curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v21.12/$PROTOC_ZIP && \
     unzip -o $PROTOC_ZIP -d /usr/local bin/protoc && \
     unzip -o $PROTOC_ZIP -d /usr/local 'include/*' && \

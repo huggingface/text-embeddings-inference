@@ -42,7 +42,7 @@ length of 512 tokens:
 - [Local Install](#local-install)
     - [Apple Silicon (Homebrew)](#apple-silicon-homebrew)
 - [Docker Build](#docker-build)
-    - [Apple M1/M2 Arm](#apple-m1m2-arm64-architectures)
+    - [ARM64 / aarch64](#arm64--aarch64)
 - [Examples](#examples)
 
 Text Embeddings Inference (TEI) is a toolkit for deploying and serving open source text embeddings and sequence
@@ -336,17 +336,19 @@ Options:
 
 Text Embeddings Inference ships with multiple Docker images that you can use to target a specific backend:
 
-| Architecture                           | Image                                                                   |
-|----------------------------------------|-------------------------------------------------------------------------|
-| CPU                                    | ghcr.io/huggingface/text-embeddings-inference:cpu-1.9                   |
-| Volta                                  | NOT SUPPORTED                                                           |
-| Turing (T4, RTX 2000 series, ...)      | ghcr.io/huggingface/text-embeddings-inference:turing-1.9 (experimental) |
-| Ampere 8.0 (A100, A30)                 | ghcr.io/huggingface/text-embeddings-inference:1.9                       |
-| Ampere 8.6 (A10, A40, ...)             | ghcr.io/huggingface/text-embeddings-inference:86-1.9                    |
-| Ada Lovelace (RTX 4000 series, ...)    | ghcr.io/huggingface/text-embeddings-inference:89-1.9                    |
-| Hopper (H100)                          | ghcr.io/huggingface/text-embeddings-inference:hopper-1.9                |
-| Blackwell 10.0 (B200, GB200, ...)      | ghcr.io/huggingface/text-embeddings-inference:100-1.9 (experimental)    |
-| Blackwell 12.0 (GeForce RTX 50X0, ...) | ghcr.io/huggingface/text-embeddings-inference:120-1.9 (experimental)    |
+| Architecture                           | Platform | Image                                                                   |
+|----------------------------------------|----------|-------------------------------------------------------------------------|
+| CPU                                    | x86_64   | ghcr.io/huggingface/text-embeddings-inference:cpu-1.9                   |
+| CPU                                    | aarch64  | ghcr.io/huggingface/text-embeddings-inference:cpu-arm64-1.9             |
+| Volta                                  | x86_64   | NOT SUPPORTED                                                           |
+| Turing (T4, RTX 2000 series, ...)      | x86_64   | ghcr.io/huggingface/text-embeddings-inference:turing-1.9 (experimental) |
+| Ampere 8.0 (A100, A30)                 | x86_64   | ghcr.io/huggingface/text-embeddings-inference:1.9                       |
+| Ampere 8.6 (A10, A40, ...)             | x86_64   | ghcr.io/huggingface/text-embeddings-inference:86-1.9                    |
+| Ada Lovelace (RTX 4000 series, ...)    | x86_64   | ghcr.io/huggingface/text-embeddings-inference:89-1.9                    |
+| Hopper (H100)                          | x86_64   | ghcr.io/huggingface/text-embeddings-inference:hopper-1.9                |
+| Blackwell 10.0 (B200, GB200, ...)      | x86_64   | ghcr.io/huggingface/text-embeddings-inference:100-1.9 (experimental)    |
+| Blackwell 12.0 (GeForce RTX 50X0, ...) | x86_64   | ghcr.io/huggingface/text-embeddings-inference:120-1.9 (experimental)    |
+| Blackwell 12.1 (DGX Spark GB10, ...)   | multi    | ghcr.io/huggingface/text-embeddings-inference:121-1.9 (experimental)    |
 
 **Warning**: Flash Attention is turned off by default for the Turing image as it suffers from precision issues.
 You can turn Flash Attention v1 ON by using the `USE_FLASH_ATTENTION=True` environment variable.
@@ -609,19 +611,38 @@ runtime_compute_cap=100
 # Example for Blackwell (GeForce RTX 50X0, RTX PRO 6000, ...)
 runtime_compute_cap=120
 
+# Example for Blackwell GB10 (DGX Spark)
+runtime_compute_cap=121
+
 docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
 ```
 
-### Apple M1/M2 arm64 architectures
+### ARM64 / aarch64
 
-#### DISCLAIMER
+#### CPU-only (Apple Silicon, Ampere, Graviton)
 
-As explained here [MPS-Ready, ARM64 Docker Image](https://github.com/pytorch/pytorch/issues/81224), Metal / MPS is not
-supported via Docker. As such inference will be CPU bound and most likely pretty slow when using this docker image on an
-M1/M2 ARM CPU.
+For ARM64 hosts without NVIDIA GPUs, use the CPU Dockerfile. Inference runs on CPU cores
+only (no Metal/MPS support via Docker).
 
-```
+```shell
 docker build . -f Dockerfile-arm64 --platform=linux/arm64
+```
+
+#### CUDA on ARM64 (DGX Spark, Jetson)
+
+For ARM64 hosts with NVIDIA GPUs, build `Dockerfile-cuda` with the appropriate compute
+capability and `--platform linux/arm64`:
+
+```shell
+# DGX Spark (GB10, sm_121)
+docker build . -f Dockerfile-cuda \
+  --build-arg CUDA_COMPUTE_CAP=121 \
+  --platform linux/arm64
+
+# Future ARM64 + Blackwell devices (sm_120)
+docker build . -f Dockerfile-cuda \
+  --build-arg CUDA_COMPUTE_CAP=120 \
+  --platform linux/arm64
 ```
 
 ## Examples
