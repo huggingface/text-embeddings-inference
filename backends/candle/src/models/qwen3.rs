@@ -1,13 +1,14 @@
+use crate::layers::{
+    apply_rotary, get_cos_sin, get_cublas_lt_wrapper, get_inv_freqs, HiddenAct, Linear, RMSNorm,
+    RopeParameters,
+};
+use crate::models::Model;
+
 use candle::{DType, Device, IndexOp, Result, Tensor, D};
 use candle_nn::{Embedding, Module, VarBuilder};
 use serde::Deserialize;
 
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
-
-use crate::layers::{
-    apply_rotary, get_cos_sin, get_cublas_lt_wrapper, get_inv_freqs, HiddenAct, Linear, RMSNorm,
-};
-use crate::models::Model;
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Qwen3Config {
@@ -22,10 +23,17 @@ pub struct Qwen3Config {
     pub hidden_act: HiddenAct,
     pub max_position_embeddings: usize,
     pub rms_norm_eps: f32,
-    pub rope_theta: f32,
+    pub rope_theta: Option<f32>,
+    pub rope_parameters: Option<RopeParameters>,
     pub sliding_window: Option<usize>,
     pub use_sliding_window: bool,
     pub eos_token_id: usize,
+    // TODO(alvarobartt): Migrate to `is_causal` instead
+    // https://github.com/huggingface/transformers/pull/43705
+    #[serde(default)]
+    pub use_bidirectional_attention: Option<bool>,
+    #[serde(default)]
+    pub num_labels: Option<usize>,
 }
 
 struct Qwen3Attention {
@@ -381,11 +389,15 @@ pub struct Qwen3Model {
     embeddings: Embedding,
     layers: Vec<Qwen3Layer>,
     norm: RMSNorm,
+    // TODO(alvarobartt): Eventually extend Qwen3 for Voyage instead of adding `projection` here
+    projection: Option<Linear>,
     rotary_cache: (Tensor, Tensor),
     rotary_dim: usize,
     pool: Pool,
     num_attention_heads: usize,
     pad_token_id: u32,
+
+    use_bidirectional_attention: bool,
 
     dtype: DType,
     device: Device,
@@ -404,29 +416,57 @@ impl Qwen3Model {
 
         // The Qwen3-Reranker models contain the `model` key
         // https://huggingface.co/collections/Qwen/qwen3-reranker-6841b22d0192d7ade9cdefea
-        let vb = if vb.contains_tensor("model.embed_tokens.weight") {
-            vb.pp("model")
+        let model_prefix = if vb.contains_tensor("model.embed_tokens.weight") {
+            "model."
         } else {
-            vb
+            ""
         };
 
         let embeddings = Embedding::new(
-            vb.pp("embed_tokens")
+            vb.pp(format!("{model_prefix}embed_tokens"))
                 .get((config.vocab_size, config.hidden_size), "weight")?,
             config.hidden_size,
         );
 
         let layers = (0..config.num_hidden_layers)
-            .map(|index| Qwen3Layer::load(vb.pp(format!("layers.{index}")), config))
+            .map(|index| Qwen3Layer::load(vb.pp(format!("{model_prefix}layers.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
 
-        let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
+        let norm = RMSNorm::load(
+            vb.pp(format!("{model_prefix}norm")),
+            config.hidden_size,
+            config.rms_norm_eps,
+        )?;
+
+        let projection = if let Some(num_labels) = config.num_labels {
+            if vb.contains_tensor("linear.weight") {
+                let projection_weight =
+                    vb.get((num_labels, config.hidden_size), "linear.weight")?;
+                Some(Linear::new(projection_weight, None, None))
+            } else {
+                tracing::warn!(
+                    "num_labels is set but linear.weight not found, skipping projection layer"
+                );
+                None
+            }
+        } else {
+            None
+        };
 
         let rotary_dim = config
             .head_dim
             .unwrap_or(config.hidden_size / config.num_attention_heads);
 
-        let inv_freqs = get_inv_freqs(rotary_dim, config.rope_theta, vb.device(), None)?;
+        // NOTE: https://github.com/huggingface/transformers/pull/39847
+        let rope_theta = match config.rope_theta {
+            Some(rope_theta) => rope_theta,
+            None => match &config.rope_parameters {
+                Some(rope_parameters) => rope_parameters.rope_theta,
+                None => candle::bail!("Neither `rope_theta` nor `rope_parameters.rope_theta` are defined in the `config.json`"),
+            },
+        };
+
+        let inv_freqs = get_inv_freqs(rotary_dim, rope_theta, vb.device(), None)?;
 
         let rotary_cache =
             get_cos_sin(config.max_position_embeddings, &inv_freqs, vb.dtype(), true)?;
@@ -435,11 +475,13 @@ impl Qwen3Model {
             embeddings,
             layers,
             norm,
+            projection,
             rotary_cache,
             rotary_dim,
             pool,
             pad_token_id: config.eos_token_id as u32,
             num_attention_heads: config.num_attention_heads,
+            use_bidirectional_attention: config.use_bidirectional_attention.unwrap_or(false),
             dtype: vb.dtype(),
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
@@ -561,7 +603,9 @@ impl Qwen3Model {
             (input_ids, position_ids, input_lengths, Some(attention_bias))
         };
 
-        let attention_bias = if let Some(attn_bias) = attention_bias {
+        let attention_bias = if self.use_bidirectional_attention {
+            attention_bias
+        } else if let Some(attn_bias) = attention_bias {
             Some(self.get_causal_attention_bias(attn_bias)?)
         } else {
             None
@@ -586,6 +630,12 @@ impl Qwen3Model {
         }
 
         let (outputs, _) = self.norm.forward(&hidden_states, None)?;
+
+        let outputs = if let Some(ref projection) = self.projection {
+            projection.forward(&outputs)?
+        } else {
+            outputs
+        };
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();

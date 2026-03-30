@@ -1,4 +1,4 @@
-use crate::layers::HiddenAct;
+use crate::layers::{HiddenAct, RopeParameters};
 use serde::Deserialize;
 
 fn default_is_causal() -> bool {
@@ -17,7 +17,8 @@ pub struct Qwen2Config {
     pub hidden_act: HiddenAct,
     pub max_position_embeddings: usize,
     pub rms_norm_eps: f32,
-    pub rope_theta: f32,
+    pub rope_theta: Option<f32>,
+    pub rope_parameters: Option<RopeParameters>,
     pub sliding_window: Option<usize>,
     pub use_sliding_window: bool,
     #[serde(default = "default_is_causal")]
