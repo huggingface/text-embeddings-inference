@@ -1,7 +1,6 @@
 FROM nvidia/cuda:12.9.1-devel-ubuntu24.04 AS base-builder
 
 ENV SCCACHE=0.10.0
-ENV RUSTC_WRAPPER=/usr/local/bin/sccache
 ENV PATH="/root/.cargo/bin:${PATH}"
 # aligned with `cargo-chef` version in `lukemathwalker/cargo-chef:latest-rust-1.92-bookworm`
 ENV CARGO_CHEF=0.1.73
@@ -40,6 +39,8 @@ RUN cargo chef prepare  --recipe-path recipe.json
 
 FROM base-builder AS builder
 
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
 ARG CUDA_COMPUTE_CAP=80
 ARG GIT_SHA
 ARG DOCKER_LABEL
@@ -82,12 +83,18 @@ COPY --from=planner /usr/src/recipe.json recipe.json
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    USE_SCCACHE=false; \
+    if [ "${SCCACHE_GHA_ENABLED}" = "true" ] && { [ "${TARGETPLATFORM}" != "linux/arm64" ] || [ "${BUILDPLATFORM}" = "${TARGETPLATFORM}" ]; }; then \
+    export RUSTC_WRAPPER=/usr/local/bin/sccache; \
+    USE_SCCACHE=true; \
+    fi; \
     if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
     then \
-    cargo chef cook --release --features candle-cuda-turing --features static-linking --no-default-features --recipe-path recipe.json && sccache -s; \
+    cargo chef cook --release --features candle-cuda-turing --features static-linking --no-default-features --recipe-path recipe.json; \
     else \
-    cargo chef cook --release --features candle-cuda --features static-linking --no-default-features --recipe-path recipe.json && sccache -s; \
-    fi;
+    cargo chef cook --release --features candle-cuda --features static-linking --no-default-features --recipe-path recipe.json; \
+    fi && \
+    if [ "${USE_SCCACHE}" = "true" ]; then sccache -s; fi;
 
 COPY backends backends
 COPY core core
@@ -97,16 +104,28 @@ COPY Cargo.lock ./
 
 FROM builder AS http-builder
 
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    USE_SCCACHE=false; \
+    if [ "${SCCACHE_GHA_ENABLED}" = "true" ] && { [ "${TARGETPLATFORM}" != "linux/arm64" ] || [ "${BUILDPLATFORM}" = "${TARGETPLATFORM}" ]; }; then \
+    export RUSTC_WRAPPER=/usr/local/bin/sccache; \
+    USE_SCCACHE=true; \
+    fi; \
     if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
     then \
-    cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F static-linking -F http --no-default-features && sccache -s; \
+    cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F static-linking -F http --no-default-features; \
     else \
-    cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F http --no-default-features && sccache -s; \
-    fi;
+    cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F http --no-default-features; \
+    fi && \
+    if [ "${USE_SCCACHE}" = "true" ]; then sccache -s; fi;
 
 FROM builder AS grpc-builder
+
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     unzip \
@@ -128,12 +147,18 @@ COPY proto proto
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    USE_SCCACHE=false; \
+    if [ "${SCCACHE_GHA_ENABLED}" = "true" ] && { [ "${TARGETPLATFORM}" != "linux/arm64" ] || [ "${BUILDPLATFORM}" = "${TARGETPLATFORM}" ]; }; then \
+    export RUSTC_WRAPPER=/usr/local/bin/sccache; \
+    USE_SCCACHE=true; \
+    fi; \
     if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
     then \
-    cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F static-linking -F grpc --no-default-features && sccache -s; \
+    cargo build --release --bin text-embeddings-router -F candle-cuda-turing -F static-linking -F grpc --no-default-features; \
     else \
-    cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F grpc --no-default-features && sccache -s; \
-    fi;
+    cargo build --release --bin text-embeddings-router -F candle-cuda -F static-linking -F grpc --no-default-features; \
+    fi && \
+    if [ "${USE_SCCACHE}" = "true" ]; then sccache -s; fi;
 
 FROM nvidia/cuda:12.9.1-runtime-ubuntu24.04 AS base
 
