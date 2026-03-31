@@ -263,12 +263,13 @@ impl Gemma3Attention {
             _ => -65504.0, // f16 minimum value
         };
 
-        // TODO(kozistr): Move to a shared attention utils module in layers
         let mask: Vec<u8> = (0..seq_len)
             .flat_map(|i| {
                 (0..seq_len).map(move |j| {
                     let value = if use_bidirectional_attention {
                         if let Some(window_size) = sliding_window {
+                            // Bi-directional sliding window mask, meaning a token can attend to any
+                            // other token if their absolute distance is within half the sliding window size
                             let half_window = window_size / 2;
                             i.abs_diff(j) <= half_window
                         } else {
