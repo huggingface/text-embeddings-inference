@@ -31,13 +31,11 @@ jobs:
         uses: actions/checkout@v6
 
       - id: set-matrix
-        env:
-          GITHUB_REF: ${{ github.ref }}
         run: |
-          branchName=$(echo $GITHUB_REF | sed 's,refs/heads/,,g')
+          branchName="${GITHUB_REF#refs/heads/}"
           matrix=$(jq --arg branchName "$branchName" 'map(. | select((.runOn==$branchName) or (.runOn=="always")) )' .github/workflows/matrix.json)
           echo "{\"include\":$(echo $matrix)}"
-          echo ::set-output name=matrix::{\"include\":$(echo $matrix)}\"
+          echo "matrix={\"include\":$(echo $matrix)}" >> $GITHUB_OUTPUT
 
   build-and-push-image:
     needs: matrix
