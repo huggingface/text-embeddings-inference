@@ -14,7 +14,7 @@ from text_embeddings_server.models.classification_model import ClassificationMod
 from text_embeddings_server.models.jinaBert_model import FlashJinaBert
 from text_embeddings_server.models.flash_mistral import FlashMistral
 from text_embeddings_server.models.flash_qwen3 import FlashQwen3
-from text_embeddings_server.utils.device import get_device, use_ipex
+from text_embeddings_server.utils.device import get_device, is_rocm, use_ipex
 
 __all__ = ["Model"]
 

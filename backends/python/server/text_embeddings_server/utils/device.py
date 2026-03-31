@@ -50,6 +50,11 @@ def is_hpu() -> bool:
     return is_hpu_available
 
 
+def is_rocm() -> bool:
+    """Return True when running on an AMD ROCm GPU (torch built with HIP)."""
+    return torch.cuda.is_available() and torch.version.hip is not None
+
+
 def use_ipex() -> bool:
     value = os.environ.get("USE_IPEX", "True").lower()
     return value in ["true", "1"] and _is_ipex_available()
@@ -57,8 +62,11 @@ def use_ipex() -> bool:
 
 def get_device():
     device = torch.device("cpu")
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and not is_rocm():
         device = torch.device("cuda")
+    elif is_rocm():
+        device = torch.device("cuda")
+        logger.info(f"ROCm / HIP version: {torch.version.hip}")
     elif is_hpu():
         import habana_frameworks.torch.core as htcore
 
