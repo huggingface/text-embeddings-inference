@@ -42,7 +42,6 @@ length of 512 tokens:
 - [Local Install](#local-install)
     - [Apple Silicon (Homebrew)](#apple-silicon-homebrew)
 - [Docker Build](#docker-build)
-    - [Apple M1/M2 Arm](#apple-m1m2-arm64-architectures)
     - [ARM64 / aarch64](#arm64--aarch64)
 - [AMD Instinct GPUs (ROCm)](#amd-instinct-gpus-rocm-experimental)
 - [Examples](#examples)
