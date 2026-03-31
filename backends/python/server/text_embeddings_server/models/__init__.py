@@ -116,13 +116,13 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
         else:
             return create_model(DefaultModel, model_path, device, datatype, pool)
 
-    if config.model_type == "mistral" and device.type == "hpu":
+    if config.model_type == "mistral" and (device.type == "hpu" or is_rocm()):
         try:
             return create_model(FlashMistral, model_path, device, datatype, pool)
         except FileNotFoundError:
             return create_model(DefaultModel, model_path, device, datatype, pool)
 
-    if config.model_type == "qwen3" and device.type == "hpu":
+    if config.model_type == "qwen3" and (device.type == "hpu" or is_rocm()):
         try:
             return create_model(FlashQwen3, model_path, device, datatype, pool)
         except FileNotFoundError:
