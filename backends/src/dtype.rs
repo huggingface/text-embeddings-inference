@@ -9,12 +9,18 @@ pub enum DType {
     // Float16 is not available on accelerate
     #[cfg(any(
         feature = "python",
+        feature = "python-neuron",
         all(feature = "candle", not(feature = "accelerate"))
     ))]
     Float16,
-    #[cfg(any(feature = "python", feature = "candle", feature = "ort"))]
+    #[cfg(any(
+        feature = "python",
+        feature = "python-neuron",
+        feature = "candle",
+        feature = "ort"
+    ))]
     Float32,
-    #[cfg(feature = "python")]
+    #[cfg(any(feature = "python", feature = "python-neuron"))]
     Bfloat16,
 }
 
@@ -24,12 +30,18 @@ impl fmt::Display for DType {
             // Float16 is not available on accelerate
             #[cfg(any(
                 feature = "python",
+                feature = "python-neuron",
                 all(feature = "candle", not(feature = "accelerate"))
             ))]
             DType::Float16 => write!(f, "float16"),
-            #[cfg(any(feature = "python", feature = "candle", feature = "ort"))]
+            #[cfg(any(
+                feature = "python",
+                feature = "python-neuron",
+                feature = "candle",
+                feature = "ort"
+            ))]
             DType::Float32 => write!(f, "float32"),
-            #[cfg(feature = "python")]
+            #[cfg(any(feature = "python", feature = "python-neuron"))]
             DType::Bfloat16 => write!(f, "bfloat16"),
         }
     }
@@ -46,12 +58,13 @@ impl Default for DType {
             feature = "accelerate",
             feature = "mkl",
             feature = "ort",
-            feature = "python"
+            feature = "python",
+            feature = "python-neuron"
         )))]
         {
             DType::Float16
         }
-        #[cfg(feature = "python")]
+        #[cfg(any(feature = "python", feature = "python-neuron"))]
         {
             DType::Bfloat16
         }
