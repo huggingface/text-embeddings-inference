@@ -62,11 +62,10 @@ def use_ipex() -> bool:
 
 def get_device():
     device = torch.device("cpu")
-    if torch.cuda.is_available() and not is_rocm():
+    if torch.cuda.is_available():
         device = torch.device("cuda")
-    elif is_rocm():
-        device = torch.device("cuda")
-        logger.info(f"ROCm / HIP version: {torch.version.hip}")
+        if is_rocm():
+            logger.info(f"ROCm / HIP version: {torch.version.hip}")
     elif is_hpu():
         import habana_frameworks.torch.core as htcore
 

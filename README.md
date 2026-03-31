@@ -43,6 +43,7 @@ length of 512 tokens:
     - [Apple Silicon (Homebrew)](#apple-silicon-homebrew)
 - [Docker Build](#docker-build)
     - [Apple M1/M2 Arm](#apple-m1m2-arm64-architectures)
+- [AMD Instinct GPUs (ROCm)](#amd-instinct-gpus-rocm-experimental)
 - [Examples](#examples)
 
 Text Embeddings Inference (TEI) is a toolkit for deploying and serving open source text embeddings and sequence
@@ -623,6 +624,12 @@ M1/M2 ARM CPU.
 ```
 docker build . -f Dockerfile-arm64 --platform=linux/arm64
 ```
+
+## AMD Instinct GPUs (ROCm) — experimental
+
+TEI has experimental support for AMD Instinct GPUs (MI200, MI300 series) via ROCm. You can use the `rocm/pytorch:latest` Docker image or a bare-metal ROCm installation. TEI will auto-detect the GPU at startup.
+
+For full setup instructions, see the **[AMD Instinct GPU guide](https://huggingface.github.io/text-embeddings-inference/amd_gpu)**.
 
 ## Examples
 
