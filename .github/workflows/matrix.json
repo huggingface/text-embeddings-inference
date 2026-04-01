@@ -64,6 +64,16 @@
     "dockerfile": "Dockerfile-cuda"
   },
   {
+    "name": "blackwell-121",
+    "imageNamePrefix": "121-",
+    "runOn": "always",
+    "sccache": true,
+    "cudaComputeCap": 121,
+    "platforms": "linux/arm64",
+    "grpc": true,
+    "dockerfile": "Dockerfile-cuda"
+  },
+  {
     "name": "all",
     "imageNamePrefix": "cuda-",
     "runOn": "always",
@@ -78,6 +88,15 @@
     "sccache": true,
     "grpc": true,
     "dockerfile": "Dockerfile"
+  },
+  {
+    "name": "cpu-arm64",
+    "imageNamePrefix": "cpu-arm64-",
+    "runOn": "always",
+    "sccache": true,
+    "platforms": "linux/arm64",
+    "grpc": true,
+    "dockerfile": "Dockerfile-arm64"
   },
   {
     "name": "cpu-ipex",
