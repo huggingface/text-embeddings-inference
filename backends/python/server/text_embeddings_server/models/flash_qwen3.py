@@ -13,6 +13,7 @@ from text_embeddings_server.models import Model
 from text_embeddings_server.models.pooling import DefaultPooling
 from text_embeddings_server.models.types import FlashBatch, Embedding, PaddedBatch
 from text_embeddings_server.utils.flash_attn import attention
+from text_embeddings_server.utils.device import is_rocm
 
 tracer = trace.get_tracer(__name__)
 
@@ -403,13 +404,15 @@ class FlashQwen3(Model):
         self.pooling = DefaultPooling(self.hidden_size, pooling_mode=pool)
         self.device = device
         self.dtype = dtype
+        self._is_rocm = is_rocm()
 
         super(FlashQwen3, self).__init__(model=model, dtype=dtype, device=device)
 
     @property
     def batch_type(self) -> Union[FlashBatch, PaddedBatch]:
-        # for hpu devices, we use PaddedBatch as we do not have real varlen fwd yet
-        return FlashBatch if self.device.type != "hpu" else PaddedBatch
+        if self.device.type == "hpu" or self._is_rocm:
+            return PaddedBatch
+        return FlashBatch
 
     @tracer.start_as_current_span("embed")
     def embed(self, batch: Union[FlashBatch, PaddedBatch]) -> List[Embedding]:
