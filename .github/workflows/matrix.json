@@ -69,7 +69,7 @@
     "runOn": "always",
     "sccache": true,
     "cudaComputeCap": 121,
-    "platforms": "linux/arm64",
+    "platform": "linux/arm64",
     "grpc": true,
     "dockerfile": "Dockerfile-cuda"
   },
@@ -94,7 +94,7 @@
     "imageNamePrefix": "cpu-arm64-",
     "runOn": "always",
     "sccache": true,
-    "platforms": "linux/arm64",
+    "platform": "linux/arm64",
     "grpc": true,
     "dockerfile": "Dockerfile-arm64"
   },

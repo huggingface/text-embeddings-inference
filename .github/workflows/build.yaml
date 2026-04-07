@@ -47,7 +47,7 @@ jobs:
       group: ${{ github.workflow }}-${{ github.job }}-${{matrix.name}}-${{ github.head_ref || github.run_id }}
       cancel-in-progress: true
     runs-on:
-      group: aws-highmemory-32-plus-priv
+      group: ${{ matrix.platform == 'linux/arm64' && 'aws-r8g-8xl-plus-nix' || 'aws-highmemory-32-plus-priv' }}
     permissions:
       contents: write
       packages: write
@@ -126,7 +126,7 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name != 'pull_request' }}
-          platforms: ${{ matrix.platforms || 'linux/amd64' }}
+          platforms: ${{ matrix.platform || 'linux/amd64' }}
           build-args: |
             SCCACHE_GHA_ENABLED=${{ matrix.sccache }}
             CUDA_COMPUTE_CAP=${{ matrix.cudaComputeCap }}
@@ -168,7 +168,7 @@ jobs:
           target: grpc
           file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name != 'pull_request' }}
-          platforms: ${{ matrix.platforms || 'linux/amd64' }}
+          platforms: ${{ matrix.platform || 'linux/amd64' }}
           build-args: |
             SCCACHE_GHA_ENABLED=${{ matrix.sccache }}
             CUDA_COMPUTE_CAP=${{ matrix.cudaComputeCap }}
