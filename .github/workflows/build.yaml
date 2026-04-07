@@ -28,7 +28,7 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - id: set-matrix
         env:
@@ -47,7 +47,7 @@ jobs:
       group: ${{ github.workflow }}-${{ github.job }}-${{matrix.name}}-${{ github.head_ref || github.run_id }}
       cancel-in-progress: true
     runs-on:
-      group: aws-highmemory-32-plus-priv
+      group: ${{ matrix.platform == 'linux/arm64' && 'aws-r8g-8xl-plus-nix' || 'aws-highmemory-32-plus-priv' }}
     permissions:
       contents: write
       packages: write
@@ -57,29 +57,29 @@ jobs:
       security-events: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           submodules: true
 
       - name: Initialize Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
         with:
           install: true
           buildkitd-config: /tmp/buildkitd.toml
 
       - name: Configure sccache
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8
         with:
           script: |
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
       - name: Inject slug/short variables
-        uses: rlespinasse/github-slug-action@v4
+        uses: rlespinasse/github-slug-action@797d68864753cbceedc271349d402da4590e6302  # v4
 
       - name: Login to internal Container Registry
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
         with:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
@@ -87,7 +87,7 @@ jobs:
 
       - name: Login to GitHub Container Registry
         if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -95,7 +95,7 @@ jobs:
 
       - name: configure aws credentials
         id: aws-creds
-        uses: aws-actions/configure-aws-credentials@v5.1.1
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708  # v5.1.1
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_GITHUB_BUILDX_CACHE }}
           role-duration-seconds: 7200
@@ -104,7 +104,7 @@ jobs:
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051  # v5
         with:
           images: |
             registry.internal.huggingface.tech/api-inference/text-embeddings-inference
@@ -119,14 +119,14 @@ jobs:
 
       - name: Build and push Docker image
         id: build-and-push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
         env:
           DOCKER_BUILD_SUMMARY: false
         with:
           context: .
           file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name != 'pull_request' }}
-          platforms: ${{ matrix.platforms || 'linux/amd64' }}
+          platforms: ${{ matrix.platform || 'linux/amd64' }}
           build-args: |
             SCCACHE_GHA_ENABLED=${{ matrix.sccache }}
             CUDA_COMPUTE_CAP=${{ matrix.cudaComputeCap }}
@@ -144,7 +144,7 @@ jobs:
       - name: Extract metadata (tags, labels) for Docker
         id: meta-grpc
         if: ${{ matrix.grpc }}
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051  # v5
         with:
           images: |
             registry.internal.huggingface.tech/api-inference/text-embeddings-inference
@@ -160,7 +160,7 @@ jobs:
       - name: Build and push Docker image
         id: build-and-push-grpc
         if: ${{ matrix.grpc }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
         env:
           DOCKER_BUILD_SUMMARY: false
         with:
@@ -168,7 +168,7 @@ jobs:
           target: grpc
           file: ${{ matrix.dockerfile }}
           push: ${{ github.event_name != 'pull_request' }}
-          platforms: ${{ matrix.platforms || 'linux/amd64' }}
+          platforms: ${{ matrix.platform || 'linux/amd64' }}
           build-args: |
             SCCACHE_GHA_ENABLED=${{ matrix.sccache }}
             CUDA_COMPUTE_CAP=${{ matrix.cudaComputeCap }}
