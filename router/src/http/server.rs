@@ -105,6 +105,8 @@ async fn predict(
     infer: Extension<Infer>,
     info: Extension<Info>,
     Extension(context): Extension<Option<opentelemetry::Context>>,
+    Extension(rate_limited_logger): Extension<Option<crate::RateLimitedLogger>>,
+    Extension(aggregate_logger): Extension<Option<crate::AggregateLogger>>,
     Json(req): Json<PredictRequest>,
 ) -> Result<(HeaderMap, Json<PredictResponse>), (StatusCode, Json<ErrorResponse>)> {
     let span = tracing::Span::current();
@@ -274,7 +276,17 @@ async fn predict(
 
     let headers = HeaderMap::from(metadata);
 
-    tracing::info!("Success");
+    // Use rate-limited logger if available, otherwise use regular logging
+    if let Some(logger) = rate_limited_logger {
+        logger.try_log_success();
+    } else {
+        tracing::info!("Success");
+    }
+    
+    // Record success in aggregate logger if available
+    if let Some(agg_logger) = aggregate_logger {
+        agg_logger.record_success(metadata.compute_chars as u64, metadata.compute_tokens as u64);
+    }
 
     Ok((headers, Json(response)))
 }
@@ -308,6 +320,8 @@ async fn rerank(
     infer: Extension<Infer>,
     info: Extension<Info>,
     Extension(context): Extension<Option<opentelemetry::Context>>,
+    Extension(rate_limited_logger): Extension<Option<crate::RateLimitedLogger>>,
+    Extension(aggregate_logger): Extension<Option<crate::AggregateLogger>>,
     Json(req): Json<RerankRequest>,
 ) -> Result<(HeaderMap, Json<RerankResponse>), (StatusCode, Json<ErrorResponse>)> {
     let span = tracing::Span::current();
@@ -468,7 +482,17 @@ async fn rerank(
 
     let headers = HeaderMap::from(metadata);
 
-    tracing::info!("Success");
+    // Use rate-limited logger if available, otherwise use regular logging
+    if let Some(logger) = rate_limited_logger {
+        logger.try_log_success();
+    } else {
+        tracing::info!("Success");
+    }
+    
+    // Record success in aggregate logger if available
+    if let Some(agg_logger) = aggregate_logger {
+        agg_logger.record_success(compute_chars as u64, total_compute_tokens as u64);
+    }
 
     Ok((headers, Json(response)))
 }
@@ -587,6 +611,8 @@ async fn embed(
     infer: Extension<Infer>,
     info: Extension<Info>,
     Extension(context): Extension<Option<opentelemetry::Context>>,
+    Extension(rate_limited_logger): Extension<Option<crate::RateLimitedLogger>>,
+    Extension(aggregate_logger): Extension<Option<crate::AggregateLogger>>,
     Json(req): Json<EmbedRequest>,
 ) -> Result<(HeaderMap, Json<EmbedResponse>), (StatusCode, Json<ErrorResponse>)> {
     let span = tracing::Span::current();
@@ -734,7 +760,17 @@ async fn embed(
 
     let headers = HeaderMap::from(metadata);
 
-    tracing::info!("Success");
+    // Use rate-limited logger if available, otherwise use regular logging
+    if let Some(logger) = rate_limited_logger {
+        logger.try_log_success();
+    } else {
+        tracing::info!("Success");
+    }
+    
+    // Record success in aggregate logger if available
+    if let Some(agg_logger) = aggregate_logger {
+        agg_logger.record_success(metadata.compute_chars as u64, metadata.compute_tokens as u64);
+    }
 
     Ok((headers, Json(response)))
 }
@@ -767,6 +803,8 @@ async fn embed_sparse(
     infer: Extension<Infer>,
     info: Extension<Info>,
     Extension(context): Extension<Option<opentelemetry::Context>>,
+    Extension(rate_limited_logger): Extension<Option<crate::RateLimitedLogger>>,
+    Extension(aggregate_logger): Extension<Option<crate::AggregateLogger>>,
     Json(req): Json<EmbedSparseRequest>,
 ) -> Result<(HeaderMap, Json<EmbedSparseResponse>), (StatusCode, Json<ErrorResponse>)> {
     let span = tracing::Span::current();
@@ -920,7 +958,17 @@ async fn embed_sparse(
 
     let headers = HeaderMap::from(metadata);
 
-    tracing::info!("Success");
+    // Use rate-limited logger if available, otherwise use regular logging
+    if let Some(logger) = rate_limited_logger {
+        logger.try_log_success();
+    } else {
+        tracing::info!("Success");
+    }
+    
+    // Record success in aggregate logger if available
+    if let Some(agg_logger) = aggregate_logger {
+        agg_logger.record_success(metadata.compute_chars as u64, metadata.compute_tokens as u64);
+    }
 
     Ok((headers, Json(response)))
 }
@@ -954,6 +1002,8 @@ async fn embed_all(
     infer: Extension<Infer>,
     info: Extension<Info>,
     Extension(context): Extension<Option<opentelemetry::Context>>,
+    Extension(rate_limited_logger): Extension<Option<crate::RateLimitedLogger>>,
+    Extension(aggregate_logger): Extension<Option<crate::AggregateLogger>>,
     Json(req): Json<EmbedAllRequest>,
 ) -> Result<(HeaderMap, Json<EmbedAllResponse>), (StatusCode, Json<ErrorResponse>)> {
     let span = tracing::Span::current();
@@ -1097,7 +1147,17 @@ async fn embed_all(
 
     let headers = HeaderMap::from(metadata);
 
-    tracing::info!("Success");
+    // Use rate-limited logger if available, otherwise use regular logging
+    if let Some(logger) = rate_limited_logger {
+        logger.try_log_success();
+    } else {
+        tracing::info!("Success");
+    }
+    
+    // Record success in aggregate logger if available
+    if let Some(agg_logger) = aggregate_logger {
+        agg_logger.record_success(compute_chars as u64, total_compute_tokens as u64);
+    }
 
     Ok((headers, Json(response)))
 }
@@ -1130,6 +1190,8 @@ async fn openai_embed(
     infer: Extension<Infer>,
     info: Extension<Info>,
     Extension(context): Extension<Option<opentelemetry::Context>>,
+    Extension(rate_limited_logger): Extension<Option<crate::RateLimitedLogger>>,
+    Extension(aggregate_logger): Extension<Option<crate::AggregateLogger>>,
     Json(req): Json<OpenAICompatRequest>,
 ) -> Result<(HeaderMap, Json<OpenAICompatResponse>), (StatusCode, Json<OpenAICompatErrorResponse>)>
 {
@@ -1315,7 +1377,17 @@ async fn openai_embed(
     let compute_tokens = metadata.compute_tokens;
     let headers = HeaderMap::from(metadata);
 
-    tracing::info!("Success");
+    // Use rate-limited logger if available, otherwise use regular logging
+    if let Some(logger) = rate_limited_logger {
+        logger.try_log_success();
+    } else {
+        tracing::info!("Success");
+    }
+    
+    // Record success in aggregate logger if available
+    if let Some(agg_logger) = aggregate_logger {
+        agg_logger.record_success(metadata.compute_chars as u64, metadata.compute_tokens as u64);
+    }
 
     let response = OpenAICompatResponse {
         object: "list",
@@ -1632,6 +1704,9 @@ pub async fn run(
     payload_limit: usize,
     api_key: Option<String>,
     cors_allow_origin: Option<Vec<String>>,
+    rate_limited_logger: Option<crate::RateLimitedLogger>,
+    aggregate_logger: Option<crate::AggregateLogger>,
+    log_aggregate_interval: u64,
 ) -> Result<(), anyhow::Error> {
     // OpenAPI documentation
     #[derive(OpenApi)]
@@ -1865,12 +1940,22 @@ pub async fn run(
         .layer(Extension(infer))
         .layer(Extension(info))
         .layer(Extension(prom_handle.clone()))
+        .layer(Extension(rate_limited_logger))
+        .layer(Extension(aggregate_logger))
         .layer(OtelAxumLayer::default())
         .layer(axum::middleware::from_fn(
             logging::http::trace_context_middleware,
         ))
         .layer(DefaultBodyLimit::max(payload_limit))
         .layer(cors_layer);
+
+    // Spawn aggregate logger task
+    if let (Some(agg_logger), interval) = (aggregate_logger.clone(), log_aggregate_interval) {
+        if interval > 0 {
+            crate::spawn_aggregate_logger_task(agg_logger, interval);
+            tracing::info!("Aggregate logger task spawned with interval: {} seconds", interval);
+        }
+    }
 
     // Run server
     let listener = tokio::net::TcpListener::bind(&addr)
