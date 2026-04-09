@@ -18,6 +18,13 @@ rendered properly in your Markdown viewer.
 
 You can install `text-embeddings-inference` locally to run it on your own machine. Here are the step-by-step instructions for installation:
 
+## Step 0: Clone the repository
+We need the source code of the `text-embeddings-inference` repo to install it later. Clone it with:
+
+```shell
+git clone git@github.com:huggingface/text-embeddings-inference.git
+```
+
 ## Step 1: Install Rust
 
 [Install Rust](https://rustup.rs/) on your machine by run the following in your terminal, then following the instructions:
@@ -28,6 +35,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ## Step 2: Install necessary packages
 
+The following assumes you are in the repository folder you cloned in step 0.
 Depending on your machine's architecture, run one of the following commands:
 
 ### For x86 Machines
