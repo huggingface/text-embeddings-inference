@@ -124,5 +124,14 @@
     "extraBuildArgs": "PLATFORM=hpu",
     "grpc": true,
     "dockerfile": "Dockerfile-intel"
+  },
+  {
+    "name": "rocm-mi300",
+    "imageNamePrefix": "rocm-",
+    "runOn": "always",
+    "sccache": true,
+    "extraBuildArgs": "GPU_ARCHS=gfx942",
+    "grpc": true,
+    "dockerfile": "Dockerfile-amd"
   }
 ]
