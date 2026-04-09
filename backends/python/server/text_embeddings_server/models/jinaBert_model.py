@@ -12,8 +12,17 @@ from text_embeddings_server.models.pooling import DefaultPooling
 
 from text_embeddings_server.models import Model
 from text_embeddings_server.models.types import PaddedBatch, Embedding, Score
+from text_embeddings_server.utils.device import is_rocm
 
 tracer = trace.get_tracer(__name__)
+
+_triton_layer_norm = None
+if is_rocm():
+    try:
+        from kernels import get_kernel as _get_kernel
+        _triton_layer_norm = _get_kernel("kernels-community/triton-layer-norm")
+    except Exception:
+        pass
 
 
 class JinaBertConfig(PretrainedConfig):
@@ -100,13 +109,19 @@ class JinaBertEmbeddings:
         if self.position_embedding_type == "absolute":
             position_embeddings = self.position_embeddings(position_ids)
             embeddings += position_embeddings
-        embeddings = F.layer_norm(
-            embeddings,
-            self.layernorm_weight.shape,
-            self.layernorm_weight,
-            self.layernorm_bias,
-            eps=self.config.layer_norm_eps,
-        )
+        if _triton_layer_norm is not None and embeddings.is_cuda:
+            embeddings = _triton_layer_norm.layer_norm_fn(
+                embeddings, self.layernorm_weight, self.layernorm_bias,
+                eps=self.config.layer_norm_eps,
+            )
+        else:
+            embeddings = F.layer_norm(
+                embeddings,
+                self.layernorm_weight.shape,
+                self.layernorm_weight,
+                self.layernorm_bias,
+                eps=self.config.layer_norm_eps,
+            )
         embeddings = self.dropout(embeddings)
         return embeddings
 
@@ -166,24 +181,35 @@ class JinaBertSelfAttention:
         bias: Optional[torch.FloatTensor] = None,
     ) -> Tuple[torch.Tensor]:
         q_hidden_states = F.linear(hidden_states, self.query_weight, self.query_bias)
-        mixed_query_layer = F.layer_norm(
-            q_hidden_states,
-            self.layer_norm_q_weight.shape,
-            self.layer_norm_q_weight,
-            self.layer_norm_q_bias,
-            eps=self.config.layer_norm_eps,
-        )
+        if _triton_layer_norm is not None and q_hidden_states.is_cuda:
+            mixed_query_layer = _triton_layer_norm.layer_norm_fn(
+                q_hidden_states, self.layer_norm_q_weight, self.layer_norm_q_bias,
+                eps=self.config.layer_norm_eps,
+            )
+        else:
+            mixed_query_layer = F.layer_norm(
+                q_hidden_states,
+                self.layer_norm_q_weight.shape,
+                self.layer_norm_q_weight,
+                self.layer_norm_q_bias,
+                eps=self.config.layer_norm_eps,
+            )
 
         k_hidden_states = F.linear(hidden_states, self.key_weight, self.key_bias)
-        key_layer = self.transpose_for_scores(
-            F.layer_norm(
+        if _triton_layer_norm is not None and k_hidden_states.is_cuda:
+            k_normed = _triton_layer_norm.layer_norm_fn(
+                k_hidden_states, self.layer_norm_k_weight, self.layer_norm_k_bias,
+                eps=self.config.layer_norm_eps,
+            )
+        else:
+            k_normed = F.layer_norm(
                 k_hidden_states,
                 self.layer_norm_k_weight.shape,
                 self.layer_norm_k_weight,
                 self.layer_norm_k_bias,
                 eps=self.config.layer_norm_eps,
             )
-        )
+        key_layer = self.transpose_for_scores(k_normed)
 
         v_hidden_states = F.linear(hidden_states, self.value_weight, self.value_bias)
         value_layer = self.transpose_for_scores(v_hidden_states)
@@ -234,13 +260,19 @@ class JinaBertSelfOutput:
     ) -> torch.Tensor:
         hidden_states = F.linear(hidden_states, self.dense_weight, self.dense_bias)
         hidden_states = self.dropout(hidden_states)
-        hidden_states = F.layer_norm(
-            hidden_states + input_tensor,
-            self.layerNorm_weight.shape,
-            self.layerNorm_weight,
-            self.layerNorm_bias,
-            eps=self.config.layer_norm_eps,
-        )
+        if _triton_layer_norm is not None and hidden_states.is_cuda:
+            hidden_states = _triton_layer_norm.layer_norm_fn(
+                hidden_states, self.layerNorm_weight, self.layerNorm_bias,
+                residual=input_tensor, eps=self.config.layer_norm_eps,
+            )
+        else:
+            hidden_states = F.layer_norm(
+                hidden_states + input_tensor,
+                self.layerNorm_weight.shape,
+                self.layerNorm_weight,
+                self.layerNorm_bias,
+                eps=self.config.layer_norm_eps,
+            )
         return hidden_states
 
 
@@ -351,21 +383,33 @@ class JinaBertLayer:
             1:
         ]  # add self attentions if we output attention weights
 
-        residual = F.layer_norm(
-            residual + attention_output,
-            self.layer_norm_1_weight.shape,
-            self.layer_norm_1_weight,
-            self.layer_norm_1_bias,
-            eps=self.config.layer_norm_eps,
-        )
+        if _triton_layer_norm is not None and attention_output.is_cuda:
+            residual = _triton_layer_norm.layer_norm_fn(
+                attention_output, self.layer_norm_1_weight, self.layer_norm_1_bias,
+                residual=residual, eps=self.config.layer_norm_eps,
+            )
+        else:
+            residual = F.layer_norm(
+                residual + attention_output,
+                self.layer_norm_1_weight.shape,
+                self.layer_norm_1_weight,
+                self.layer_norm_1_bias,
+                eps=self.config.layer_norm_eps,
+            )
         mlp_output = self.mlp.forward(residual)
-        layer_output = F.layer_norm(
-            residual + mlp_output,
-            self.layer_norm_2_weight.shape,
-            self.layer_norm_2_weight,
-            self.layer_norm_2_bias,
-            eps=self.config.layer_norm_eps,
-        )
+        if _triton_layer_norm is not None and mlp_output.is_cuda:
+            layer_output = _triton_layer_norm.layer_norm_fn(
+                mlp_output, self.layer_norm_2_weight, self.layer_norm_2_bias,
+                residual=residual, eps=self.config.layer_norm_eps,
+            )
+        else:
+            layer_output = F.layer_norm(
+                residual + mlp_output,
+                self.layer_norm_2_weight.shape,
+                self.layer_norm_2_weight,
+                self.layer_norm_2_bias,
+                eps=self.config.layer_norm_eps,
+            )
         outputs = (layer_output,) + outputs
 
         return outputs
