@@ -16,8 +16,21 @@ is_hpu = is_hpu()
 is_rocm = is_rocm()
 use_ipex = use_ipex()
 
-if use_ipex or is_hpu or is_rocm:
+if use_ipex or is_hpu:
     HAS_FLASH_ATTN_V2 = True
+elif is_rocm:
+    try:
+        from flash_attn import flash_attn_varlen_func as _fa_varlen_func
+        ROCM_HAS_FA_VARLEN = True
+        HAS_FLASH_ATTN_V2 = True
+        logger.info("ROCm: flash_attn found, using flash_attn_varlen_func")
+    except ImportError:
+        ROCM_HAS_FA_VARLEN = False
+        HAS_FLASH_ATTN_V2 = True  # still True — rocm_attn SDPA fallback handles it
+        logger.warning(
+            "ROCm: flash_attn not found, falling back to SDPA. "
+            "Install flash-attn for better performance."
+        )
 else:
     if not torch.cuda.is_available():
         raise ImportError("CUDA is not available")
@@ -142,15 +155,18 @@ def attention(
             )
 
         elif is_rocm:
-            return rocm_attn(
-                q,
-                k,
-                v,
-                out,
-                attn_mask,
-                softmax_scale,
-                is_causal,
-            )
+            if ROCM_HAS_FA_VARLEN:
+                result = _fa_varlen_func(
+                    q, k, v,
+                    cu_seqlens, cu_seqlens,
+                    max_s, max_s,
+                    causal=is_causal,
+                    softmax_scale=softmax_scale,
+                )
+                out.copy_(result)
+                return out
+            else:
+                return rocm_attn(q, k, v, out, attn_mask, softmax_scale, is_causal)
 
         elif is_hpu:
             return hpu_attn(
