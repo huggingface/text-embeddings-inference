@@ -16,19 +16,45 @@ rendered properly in your Markdown viewer.
 
 # Using TEI on AMD Instinct GPUs (ROCm)
 
-> [!WARNING]
-> AMD ROCm support is **experimental**. Only AMD Instinct GPUs (MI200, MI300 series) are tested.
-
-Text Embeddings Inference can run on AMD Instinct GPUs using [ROCm](https://rocm.docs.amd.com/). The implementation uses PyTorch's built-in `scaled_dot_product_attention` as the attention backend.
+Text Embeddings Inference supports AMD Instinct GPUs (MI200, MI300 series) using [ROCm](https://rocm.docs.amd.com/).
 
 ## Prerequisites
 
-- AMD Instinct GPU (MI200, MI300 series) with ROCm 6.x drivers on the host
-- Either a working ROCm PyTorch installation, **or** the `rocm/pytorch:latest` Docker image (recommended)
+- AMD Instinct GPU (MI200, MI300 series) with ROCm drivers on the host
+
+## Option A: Docker (recommended)
+
+The easiest way to run TEI on AMD GPUs is with the pre-built Docker image:
+
+```shell
+model=BAAI/bge-base-en-v1.5
+volume=$PWD/data  # share a volume to avoid re-downloading weights
+
+docker run \
+  --device /dev/kfd --device /dev/dri \
+  --group-add video \
+  --ipc=host \
+  -p 8080:80 \
+  -v $volume:/data \
+  --pull always \
+  ghcr.io/huggingface/text-embeddings-inference:rocm-latest \
+  --model-id $model --dtype bfloat16
+```
+
+Then test it:
+
+```shell
+curl http://localhost:8080/embed \
+    -X POST \
+    -H 'Content-Type: application/json' \
+    -d '{"inputs": "What is Deep Learning?"}'
+```
 
 ---
 
-The recommended way to get started is to use AMD's official ROCm PyTorch image, which ships with PyTorch and ROCm pre-installed. Alternatively, you can install ROCm PyTorch directly on the host with `pip install torch --index-url https://download.pytorch.org/whl/rocm6.2` and skip Step 1.
+## Option B: Manual setup from source
+
+If you prefer to build from source, use AMD's official ROCm PyTorch image as the base environment.
 
 ## Step 1: Start the container
 
