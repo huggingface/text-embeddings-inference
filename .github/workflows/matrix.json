@@ -126,7 +126,7 @@
     "dockerfile": "Dockerfile-intel"
   },
   {
-    "name": "rocm-mi300",
+    "name": "rocm-mi300-mi325",
     "imageNamePrefix": "rocm-",
     "runOn": "always",
     "sccache": true,
