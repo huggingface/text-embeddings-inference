@@ -9,10 +9,18 @@ from transformers.models.bert import BertConfig
 from opentelemetry import trace
 from text_embeddings_server.models import Model
 from text_embeddings_server.models.types import FlashBatch, Embedding, PaddedBatch
-from text_embeddings_server.utils.flash_attn import attention
+from text_embeddings_server.utils.flash_attn import attention, ROCM_HAS_FA_VARLEN
 from text_embeddings_server.utils.device import is_rocm, use_ipex
 
 tracer = trace.get_tracer(__name__)
+
+_triton_layer_norm = None
+if is_rocm():
+    try:
+        from kernels import get_kernel as _get_kernel
+        _triton_layer_norm = _get_kernel("kernels-community/triton-layer-norm")
+    except Exception:
+        pass
 
 
 def add_layer_norm(
@@ -69,15 +77,25 @@ class FastLayerNorm:
             if res is None:
                 res = hidden_states
         elif self.is_rocm:
-            normed_hidden_states = add_layer_norm(
-                residual,
-                hidden_states,
-                self.weight,
-                self.bias,
-                self.variance_epsilon,
-                residual is not None,
-            )
-            res = residual if residual is not None else hidden_states
+            if _triton_layer_norm is not None:
+                normed_hidden_states, res = _triton_layer_norm.layer_norm_fn(
+                    hidden_states,
+                    self.weight,
+                    self.bias,
+                    residual=residual,
+                    eps=self.variance_epsilon,
+                    prenorm=True,
+                )
+            else:
+                normed_hidden_states = add_layer_norm(
+                    residual,
+                    hidden_states,
+                    self.weight,
+                    self.bias,
+                    self.variance_epsilon,
+                    residual is not None,
+                )
+                res = residual if residual is not None else hidden_states
         elif self.use_ipex:
             import intel_extension_for_pytorch as ipex
 
@@ -331,8 +349,9 @@ class FlashBert(Model):
 
     @property
     def batch_type(self) -> Union[FlashBatch, PaddedBatch]:
-        # HPU and ROCm use PaddedBatch since they rely on SDPA (no varlen fwd)
-        if self.device.type == "hpu" or self._is_rocm:
+        if self.device.type == "hpu":
+            return PaddedBatch
+        if self._is_rocm and not ROCM_HAS_FA_VARLEN:
             return PaddedBatch
         return FlashBatch
 
