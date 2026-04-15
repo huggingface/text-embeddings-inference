@@ -609,6 +609,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "candle-moe"
+version = "0.0.1"
+source = "git+https://github.com/kozistr/candle-moe?rev=990ac1f42248dd441c51c9b5bcb73c5b77c03f99#990ac1f42248dd441c51c9b5bcb73c5b77c03f99"
+dependencies = [
+ "anyhow",
+ "bindgen_cuda",
+ "candle-core",
+ "cudarc",
+ "half",
+]
+
+[[package]]
 name = "candle-nn"
 version = "0.8.4"
 source = "git+https://github.com/huggingface/candle?rev=6381023982251959a2c9bab7378b3013304e192b#6381023982251959a2c9bab7378b3013304e192b"
@@ -4516,6 +4528,7 @@ dependencies = [
  "candle-flash-attn-v1",
  "candle-index-select-cu",
  "candle-layer-norm",
+ "candle-moe",
  "candle-nn",
  "candle-rotary",
  "candle-transformers",
