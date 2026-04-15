@@ -665,7 +665,7 @@ docker run \
   --model-id $model --dtype bfloat16
 ```
 
-For full setup instructions, see the **[AMD Instinct GPU guide](https://huggingface.github.io/text-embeddings-inference/amd_gpu)**.
+For full setup instructions, see the **[AMD Instinct GPU guide](https://github.com/huggingface/text-embeddings-inference/blob/main/docs/source/en/amd_gpu.md)**.
 
 ## Examples
 
