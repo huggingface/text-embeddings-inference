@@ -90,6 +90,7 @@ def get_device():
         if hasattr(torch, "xpu") and torch.xpu.is_available():
             device = torch.device("xpu")
     elif is_neuron():
-        device = torch.device("xla")
+        import torch_neuronx  # noqa: F401 — registers torch.device("neuron") as PrivateUse1
+        device = torch.device("neuron")
 
     return device
