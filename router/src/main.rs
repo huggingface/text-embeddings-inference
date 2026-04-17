@@ -181,6 +181,19 @@ struct Args {
     #[clap(long, env)]
     disable_spans: bool,
 
+    /// Maximum number of request success logs per second.
+    /// Set to 0 to disable request success logging entirely.
+    /// Set to a positive number to rate-limit request logs.
+    /// Default is 10 logs/second. Use --log-aggregate-interval to enable aggregate logging instead.
+    #[clap(long, env, default_value = "10")]
+    log_sample_rate: u64,
+
+    /// Interval in seconds for logging aggregate statistics.
+    /// Set to 0 to disable aggregate logging (default).
+    /// When set, aggregate stats will be logged at this interval instead of per-request logs.
+    #[clap(long, env, default_value = "0")]
+    log_aggregate_interval: u64,
+
     /// The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC.
     /// e.g. `http://localhost:4317`
     #[clap(long, env)]
@@ -206,12 +219,15 @@ async fn main() -> Result<()> {
     let args: Args = Args::parse();
 
     // Initialize logging and telemetry
-    let global_tracer = text_embeddings_router::init_logging(
-        args.otlp_endpoint.as_ref(),
-        args.otlp_service_name.clone(),
-        args.json_output,
-        args.disable_spans,
-    );
+    let (global_tracer, rate_limited_logger, aggregate_logger) =
+        text_embeddings_router::init_logging(
+            args.otlp_endpoint.as_ref(),
+            args.otlp_service_name.clone(),
+            args.json_output,
+            args.disable_spans,
+            args.log_sample_rate,
+            args.log_aggregate_interval,
+        );
 
     tracing::info!("{args:?}");
 
@@ -266,6 +282,9 @@ async fn main() -> Result<()> {
         args.otlp_service_name,
         args.prometheus_port,
         args.cors_allow_origin,
+        rate_limited_logger,
+        aggregate_logger,
+        args.log_aggregate_interval,
     )
     .await?;
 

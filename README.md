@@ -304,6 +304,26 @@ Options:
 
           [env: DISABLE_SPANS=]
 
+      --log-sample-rate <LOG_SAMPLE_RATE>
+          Maximum number of request success logs per second.
+
+          Set to 0 to disable request success logging entirely.
+          Set to a positive number to rate-limit request logs.
+          Default is 10 logs/second. Use --log-aggregate-interval to enable aggregate logging instead.
+
+          [env: LOG_SAMPLE_RATE=]
+          [default: 10]
+
+      --log-aggregate-interval <LOG_AGGREGATE_INTERVAL>
+          Interval in seconds for logging aggregate statistics.
+
+          Set to 0 to disable aggregate logging (default).
+          When set, aggregate stats will be logged at this interval instead of per-request logs.
+          Aggregate logs include request count, error count, characters processed, and tokens processed per interval.
+
+          [env: LOG_AGGREGATE_INTERVAL=]
+          [default: 0]
+
       --otlp-endpoint <OTLP_ENDPOINT>
           The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC. e.g. `http://localhost:4317`
 
@@ -474,6 +494,67 @@ curl 127.0.0.1:8080/embed_sparse \
 
 `text-embeddings-inference` is instrumented with distributed tracing using OpenTelemetry. You can use this feature
 by setting the address to an OTLP collector with the `--otlp-endpoint` argument.
+
+### Logging Configuration
+
+At high load, logging every request can create excessive log volume, especially when using log aggregation solutions
+like Loki. TEI provides flexible logging controls to address this.
+
+#### Rate-Limited Request logging
+
+By default, TEI logs at most 10 request successes per second. You can adjust this limit:
+
+```shell
+# Log at most 5 request successes per second
+docker run --gpus all -p 8080:80 ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 \
+    --model-id Qwen/Qwen3-Embedding-0.6B \
+    --log-sample-rate 5
+```
+
+To disable per-request success logging entirely:
+
+```shell
+# Disable individual request logging
+docker run --gpus all -p 8080:80 ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 \
+    --model-id Qwen/Qwen3-Embedding-0.6B \
+    --log-sample-rate 0
+```
+
+#### Aggregate logging
+
+Instead of logging each individual request, you can opt for periodic aggregate statistics. This is recommended for
+production high-load deployments:
+
+```shell
+# Log aggregate statistics every 60 seconds
+docker run --gpus all -p 8080:80 ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 \
+    --model-id Qwen/Qwen3-Embedding-0.6B \
+    --log-sample-rate 0 \
+    --log-aggregate-interval 60
+```
+
+This will produce logs like:
+```
+Request aggregate: 5234 requests (87.2/s), 12 errors | 10456789 chars (174280/s) | 2345678 tokens (39094/s)
+```
+
+#### Hybrid mode
+
+You can combine both approaches for balanced observability:
+
+```shell
+# Log up to 2 individual requests per second + aggregate stats every 30 seconds
+docker run --gpus all -p 8080:80 ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 \
+    --model-id Qwen/Qwen3-Embedding-0.6B \
+    --log-sample-rate 2 \
+    --log-aggregate-interval 30
+```
+
+#### Environment variables
+
+Both options can also be configured via environment variables:
+- `LOG_SAMPLE_RATE` - Maximum request logs per second (default: 10)
+- `LOG_AGGREGATE_INTERVAL` - Aggregate logging interval in seconds (default: 0 = disabled)
 
 ### gRPC
 

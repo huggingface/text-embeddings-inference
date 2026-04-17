@@ -38,6 +38,7 @@ use tokenizers::{PostProcessorWrapper, Tokenizer};
 use tracing::Span;
 
 pub use logging::init_logging;
+pub use logging::{RateLimitedLogger, AggregateLogger, spawn_aggregate_logger_task};
 
 /// Create entrypoint
 #[allow(clippy::too_many_arguments)]
@@ -67,6 +68,9 @@ pub async fn run(
     otlp_service_name: String,
     prometheus_port: u16,
     cors_allow_origin: Option<Vec<String>>,
+    rate_limited_logger: Option<RateLimitedLogger>,
+    aggregate_logger: Option<AggregateLogger>,
+    log_aggregate_interval: u64,
 ) -> Result<()> {
     let model_id_path = Path::new(&model_id);
     let (model_root, api_repo) = if model_id_path.exists() && model_id_path.is_dir() {
@@ -377,6 +381,9 @@ pub async fn run(
             payload_limit,
             api_key,
             cors_allow_origin,
+            rate_limited_logger,
+            aggregate_logger,
+            log_aggregate_interval,
         )
         .await
     }
