@@ -142,11 +142,19 @@ pub async fn run(
 
     // Load tokenizer
     let tokenizer_path = model_root.join("tokenizer.json");
-    let mut tokenizer = Tokenizer::from_file(tokenizer_path).expect(
-        "tokenizer.json not found. text-embeddings-inference only supports fast tokenizers",
-    );
+    let mut tokenizer = match Tokenizer::from_file(&tokenizer_path) {
+        Ok(t) => t,
+        Err(e) if e.to_string().contains("No such file") || e.to_string().contains("not found") => {
+            tracing::warn!("tokenizer.json not found in root. Trying 0_StaticEmbedding/.");
+
+            let fallback_path = model_root.join("0_StaticEmbedding").join("tokenizer.json");
+            Tokenizer::from_file(&fallback_path).expect("0_StaticEmbedding/tokenizer.json not found. text-embeddings-inference only supports fast tokenizers")
+        }
+        Err(_) => anyhow::bail!("text-embeddings-inference only supports fast tokenizers"),
+    };
     tokenizer.with_padding(None);
-    // Old Qwen2  repos updates the post processor manually instead of into the tokenizer.json.
+
+    // Old Qwen2 repos updates the post processor manually instead of into the tokenizer.json.
     // Newer ones (https://huggingface.co/jinaai/jina-code-embeddings-0.5b/tree/main) have it in the tokenizer.json. This is to support both cases.
     // https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct/blob/main/tokenization_qwen.py#L246
     if config.model_type == "qwen2"
@@ -439,11 +447,21 @@ fn get_backend_model_type(
                     Pool::try_from(config)?
                 }
                 Err(err) => {
-                    if !config.model_type.to_lowercase().contains("bert") {
+                    let model_type = config.model_type.to_lowercase();
+                    if !["bert", "static-embedding"]
+                        .iter()
+                        .any(|&t| model_type.contains(t))
+                    {
                         return Err(err).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.");
                     }
-                    tracing::warn!("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model but the model is a BERT variant. Defaulting to `CLS` pooling.");
-                    text_embeddings_backend::Pool::Cls
+
+                    if model_type == "static-embedding" {
+                        tracing::warn!("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model but the model is a Static Embedding variant. Defaulting to `Mean` pooling.");
+                        text_embeddings_backend::Pool::Mean
+                    } else {
+                        tracing::warn!("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model but the model is a BERT variant. Defaulting to `CLS` pooling.");
+                        text_embeddings_backend::Pool::Cls
+                    }
                 }
             }
         }
