@@ -48,10 +48,10 @@ candle = { version = "0.9.2", package = "candle-core" }
 candle-nn = { version = "0.9.2" }
 candle-transformers = { version = "0.9.2" }
 candle-flash-attn = { version = "0.9.2" }
-candle-cublaslt = { version = "0.0.1" }
-candle-layer-norm = { version = "0.0.1" }
-candle-rotary = { version = "0.0.1" }
-candle-flash-attn-v1 = { version = "0.0.1" }
+candle-cublaslt = { version = "0.0.1", default-features = false }
+candle-layer-norm = { version = "0.0.1", default-features = false }
+candle-rotary = { version = "0.0.1", default-features = false }
+candle-flash-attn-v1 = { version = "0.0.1", default-features = false }
 
 [patch.crates-io]
 candle = { git = "https://github.com/huggingface/candle", branch = "no-default-linking", package = "candle-core" }
