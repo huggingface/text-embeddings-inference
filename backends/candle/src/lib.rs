@@ -18,11 +18,6 @@ use text_embeddings_backend_core::{
 };
 
 #[cfg(feature = "cuda")]
-use crate::flash_attn::supports_flash_attn_v1;
-#[cfg(feature = "cuda")]
-use crate::flash_attn::supports_flash_attn_v2;
-
-#[cfg(feature = "cuda")]
 use crate::compute_cap::{
     compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
 };
