@@ -17,8 +17,7 @@ use tonic::codegen::http::HeaderMap;
 mod shutdown;
 
 use anyhow::{anyhow, Context, Result};
-use hf_hub::api::tokio::ApiBuilder;
-use hf_hub::{Repo, RepoType};
+use hf_hub::HFClient;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -26,7 +25,7 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use text_embeddings_backend::{DType, Pool};
+use text_embeddings_backend::{DType, ModelRepo, Pool};
 use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
@@ -73,35 +72,33 @@ pub async fn run(
         // Using a local model
         (model_id_path.to_path_buf(), None)
     } else {
-        let mut builder = ApiBuilder::from_env().with_progress(false);
+        let mut builder = HFClient::builder();
 
         if let Some(cache_dir) = huggingface_hub_cache {
-            builder = builder.with_cache_dir(cache_dir.into());
+            builder = builder.cache_dir(cache_dir);
         }
 
         // NOTE: Only set the `token` if it's not None, otherwise leave it as default so that the
         // token from the cache location is pulled instead, if exists
-        if hf_token.is_some() {
-            builder = builder.with_token(hf_token);
+        if let Some(token) = hf_token {
+            builder = builder.token(token);
         }
 
-        if let Ok(origin) = std::env::var("HF_HUB_USER_AGENT_ORIGIN") {
-            builder = builder.with_user_agent("origin", origin.as_str());
-        }
+        // The HF_HUB_USER_AGENT_ORIGIN env var is read inside `build()` and appended to the
+        // default `User-Agent`, so no explicit setter is required here.
 
-        let api = builder.build().unwrap();
-        let api_repo = api.repo(Repo::with_revision(
-            model_id.clone(),
-            RepoType::Model,
-            revision.clone().unwrap_or("main".to_string()),
-        ));
+        let client = builder.build().context("Could not build HF Hub client")?;
+        let (owner, name) = model_id
+            .split_once('/')
+            .ok_or_else(|| anyhow!("model_id must be in `owner/name` form, got `{model_id}`"))?;
+        let model_repo = ModelRepo::new(client.model(owner, name), revision.clone());
 
         // Download model from the Hub
         (
-            download_artifacts(&api_repo, pooling.is_none())
+            download_artifacts(&model_repo, pooling.is_none())
                 .await
                 .context("Could not download model artifacts")?,
-            Some(api_repo),
+            Some(model_repo),
         )
     };
 

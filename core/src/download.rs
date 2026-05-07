@@ -1,5 +1,6 @@
-use hf_hub::api::tokio::{ApiError, ApiRepo};
+use hf_hub::HFError;
 use std::path::PathBuf;
+use text_embeddings_backend::ModelRepo;
 use tracing::instrument;
 
 // `sentence_bert_config.json` default Sentence Transformers configuration file name, and other
@@ -14,12 +15,17 @@ pub const ST_CONFIG_NAMES: [&str; 7] = [
     "sentence_xlnet_config.json",
 ];
 
-async fn download_file(api: &ApiRepo, file_path: &str) -> Result<PathBuf, ApiError> {
+async fn download_file(api: &ModelRepo, file_path: &str) -> Result<PathBuf, HFError> {
     tracing::info!("Downloading `{}`", file_path);
-    api.get(file_path).await
+    api.repo
+        .download_file()
+        .filename(file_path)
+        .maybe_revision(api.revision.clone())
+        .send()
+        .await
 }
 
-async fn download_st_config_legacy(api: &ApiRepo) -> Result<PathBuf, ApiError> {
+async fn download_st_config_legacy(api: &ModelRepo) -> Result<PathBuf, HFError> {
     // Try to download first the default path i.e., `sentence_bert_config.json`
     let err = match download_file(api, ST_CONFIG_NAMES[0]).await {
         Ok(st_config_path) => return Ok(st_config_path),
@@ -37,7 +43,7 @@ async fn download_st_config_legacy(api: &ApiRepo) -> Result<PathBuf, ApiError> {
 }
 
 #[instrument(skip_all)]
-pub async fn download_artifacts(api: &ApiRepo, pool_config: bool) -> Result<PathBuf, ApiError> {
+pub async fn download_artifacts(api: &ModelRepo, pool_config: bool) -> Result<PathBuf, HFError> {
     let start = std::time::Instant::now();
     tracing::info!("Starting download");
 
