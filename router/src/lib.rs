@@ -25,7 +25,7 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use text_embeddings_backend::{DType, ModelRepo, Pool};
+use text_embeddings_backend::{DType, Pool};
 use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
@@ -91,14 +91,14 @@ pub async fn run(
         let (owner, name) = model_id
             .split_once('/')
             .ok_or_else(|| anyhow!("model_id must be in `owner/name` form, got `{model_id}`"))?;
-        let model_repo = ModelRepo::new(client.model(owner, name), revision.clone());
+        let repo = client.model(owner, name);
 
         // Download model from the Hub
         (
-            download_artifacts(&model_repo, pooling.is_none())
+            download_artifacts(&repo, revision.as_deref(), pooling.is_none())
                 .await
                 .context("Could not download model artifacts")?,
-            Some(model_repo),
+            Some(repo),
         )
     };
 
@@ -269,6 +269,7 @@ pub async fn run(
     let backend = text_embeddings_backend::Backend::new(
         model_root,
         api_repo,
+        revision.clone(),
         dtype.clone(),
         backend_model_type,
         dense_path,
