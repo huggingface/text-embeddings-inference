@@ -600,8 +600,8 @@ impl CandleBackend {
         let mut dense_layers = Vec::new();
         let mut prediction_head = None;
         if use_post_pooling_prediction {
-            // Modular Sentence Transformers reranker head: the post-pooling modules
-            // produce the score and are kept separate from the embedding Dense path.
+            // Modular Sentence Transformers reranker head: the post-pooling
+            // `Dense`/`LayerNorm` modules that produce the rerank score.
             let module_paths = dense_paths
                 .filter(|paths| !paths.is_empty())
                 .ok_or_else(|| {
