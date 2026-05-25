@@ -125,19 +125,7 @@ pub async fn run(
         (
             text_embeddings_backend::ModelType::Embedding(_),
             text_embeddings_backend::BackendOutput::Predict,
-        ) => {
-            let classifier_model = ClassifierModel {
-                id2label: config
-                    .id2label
-                    .clone()
-                    .context("`config.json` does not contain `id2label`")?,
-                label2id: config
-                    .label2id
-                    .clone()
-                    .context("`config.json` does not contain `label2id`")?,
-            };
-            ModelType::Reranker(classifier_model)
-        }
+        ) => reranker_model_type(&config),
         (
             text_embeddings_backend::ModelType::Embedding(pool),
             text_embeddings_backend::BackendOutput::Embed,
@@ -498,9 +486,10 @@ fn detect_modular_reranker(model_root: &Path) -> Result<Option<Pool>> {
         return Ok(None);
     }
 
-    let Some(pooling_module) = modules.iter().find(|module| module.is_pooling()) else {
+    let Some(pooling_index) = modules.iter().position(|module| module.is_pooling()) else {
         return Ok(None);
     };
+    let pooling_module = &modules[pooling_index];
 
     let Some(final_module) = modules.last().filter(|module| module.is_dense()) else {
         return Ok(None);
@@ -526,6 +515,16 @@ fn detect_modular_reranker(model_root: &Path) -> Result<Option<Pool>> {
         || dense_config.module_output_name.as_deref() != Some("scores")
     {
         return Ok(None);
+    }
+
+    for module in &modules[pooling_index + 1..] {
+        if !module.is_supported_prediction_layer() {
+            return Err(anyhow!(
+                "Unsupported module in modular reranker head: `{}` at `{}`",
+                module.module_type,
+                module.path
+            ));
+        }
     }
 
     let pooling_config_path = model_root.join(&pooling_module.path).join("config.json");
@@ -555,14 +554,20 @@ async fn download_modular_reranker_detection_files(api: &ApiRepo) {
     let Some(pooling_module) = modules.iter().find(|module| module.is_pooling()) else {
         return;
     };
-    let _ = api
-        .get(&format!("{}/config.json", pooling_module.path))
-        .await;
+    let pooling_config = format!("{}/config.json", pooling_module.path);
+    if let Err(err) = api.get(&pooling_config).await {
+        tracing::warn!(
+            "Could not download `{pooling_config}` for modular reranker detection: {err}"
+        );
+    }
 
     let Some(final_module) = modules.last().filter(|module| module.is_dense()) else {
         return;
     };
-    let _ = api.get(&format!("{}/config.json", final_module.path)).await;
+    let dense_config = format!("{}/config.json", final_module.path);
+    if let Err(err) = api.get(&dense_config).await {
+        tracing::warn!("Could not download `{dense_config}` for modular reranker detection: {err}");
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -595,6 +600,18 @@ impl ModuleConfig {
             "sentence_transformers.models.Dense" | "sentence_transformers.base.modules.dense.Dense"
         )
     }
+
+    fn is_layer_norm(&self) -> bool {
+        matches!(
+            self.module_type.as_str(),
+            "sentence_transformers.models.LayerNorm"
+                | "sentence_transformers.sentence_transformer.modules.layer_norm.LayerNorm"
+        )
+    }
+
+    fn is_supported_prediction_layer(&self) -> bool {
+        self.is_dense() || self.is_layer_norm()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -621,6 +638,21 @@ fn classifier_model_type(config: &ModelConfig) -> Result<ModelType> {
     } else {
         Ok(ModelType::Reranker(classifier_model))
     }
+}
+
+fn reranker_model_type(config: &ModelConfig) -> ModelType {
+    ModelType::Reranker(ClassifierModel {
+        id2label: config.id2label.clone().unwrap_or_else(default_id2label),
+        label2id: config.label2id.clone().unwrap_or_else(default_label2id),
+    })
+}
+
+fn default_id2label() -> HashMap<String, String> {
+    HashMap::from([("0".to_string(), "LABEL_0".to_string())])
+}
+
+fn default_label2id() -> HashMap<String, usize> {
+    HashMap::from([("LABEL_0".to_string(), 0)])
 }
 
 #[derive(Debug, Deserialize)]
@@ -679,6 +711,13 @@ mod tests {
 
     fn test_model_config() -> ModelConfig {
         test_model_config_with_architecture("ModernBertModel", "modernbert")
+    }
+
+    fn test_model_config_without_labels() -> ModelConfig {
+        let mut config = test_model_config();
+        config.id2label = None;
+        config.label2id = None;
+        config
     }
 
     fn test_model_config_with_architecture(architecture: &str, model_type: &str) -> ModelConfig {
@@ -841,6 +880,50 @@ mod tests {
                 BackendOutput::Embed
             )
         );
+    }
+
+    #[test]
+    fn rejects_modular_reranker_with_unsupported_head_module() {
+        let model_root = temp_model_dir("unsupported-reranker");
+        write_pooling_config(&model_root);
+        write_file(
+            model_root.join("modules.json"),
+            r#"[
+                {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.models.Transformer"},
+                {"idx": 1, "name": "1", "path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+                {"idx": 2, "name": "2", "path": "2_Dense", "type": "sentence_transformers.models.Dense"},
+                {"idx": 3, "name": "3", "path": "3_Normalize", "type": "sentence_transformers.models.Normalize"},
+                {"idx": 4, "name": "4", "path": "4_Dense", "type": "sentence_transformers.models.Dense"}
+            ]"#,
+        );
+        write_file(
+            model_root.join("4_Dense/config.json"),
+            r#"{
+                "in_features": 768,
+                "out_features": 1,
+                "bias": true,
+                "activation_function": "torch.nn.modules.linear.Identity",
+                "module_input_name": "sentence_embedding",
+                "module_output_name": "scores"
+            }"#,
+        );
+
+        let err = get_backend_model_type(&test_model_config(), &model_root, None).unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("Unsupported module in modular reranker head"));
+    }
+
+    #[test]
+    fn modular_reranker_uses_default_label_map_when_config_omits_labels() {
+        let model_type = reranker_model_type(&test_model_config_without_labels());
+
+        let ModelType::Reranker(classifier) = model_type else {
+            panic!("expected reranker model type");
+        };
+        assert_eq!(classifier.id2label.get("0").unwrap(), "LABEL_0");
+        assert_eq!(classifier.label2id.get("LABEL_0").copied(), Some(0));
     }
 }
 

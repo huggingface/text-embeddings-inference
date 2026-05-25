@@ -652,12 +652,24 @@ impl CandleBackend {
 
                         tracing::info!("Loaded post-pooling layer from path: {module_path}");
                     } else {
-                        tracing::warn!(
-                            "Post-pooling layer files not found for path: {module_path}"
-                        );
+                        if use_post_pooling_prediction {
+                            return Err(BackendError::Start(format!(
+                                "Post-pooling layer files not found for path: {module_path}"
+                            )));
+                        } else {
+                            tracing::warn!(
+                                "Post-pooling layer files not found for path: {module_path}"
+                            );
+                        }
                     }
                 }
             }
+        }
+
+        if use_post_pooling_prediction && post_pooling_layers.is_empty() {
+            return Err(BackendError::Start(
+                "Post-pooling prediction requires at least one layer".to_string(),
+            ));
         }
 
         Ok(Self {
@@ -670,34 +682,6 @@ impl CandleBackend {
 
     fn predict_from_pooled_embeddings(&self, batch: Batch) -> Result<Tensor, BackendError> {
         let batch_size = batch.len();
-        if batch_size <= 1 {
-            return self.predict_single_with_post_pooling_layers(batch);
-        }
-
-        let mut results = Vec::with_capacity(batch_size);
-        for i in 0..batch_size {
-            let start = batch.cumulative_seq_lengths[i] as usize;
-            let end = batch.cumulative_seq_lengths[i + 1] as usize;
-            let len = (end - start) as u32;
-            let single = Batch {
-                input_ids: batch.input_ids[start..end].to_vec(),
-                token_type_ids: batch.token_type_ids[start..end].to_vec(),
-                position_ids: batch.position_ids[start..end].to_vec(),
-                cumulative_seq_lengths: vec![0, len],
-                max_length: len,
-                pooled_indices: vec![0],
-                raw_indices: vec![],
-            };
-            results.push(self.predict_single_with_post_pooling_layers(single)?);
-        }
-
-        Tensor::cat(&results, 0).e()
-    }
-
-    fn predict_single_with_post_pooling_layers(
-        &self,
-        batch: Batch,
-    ) -> Result<Tensor, BackendError> {
         let (Some(mut pooled_embeddings), _) = self.model.embed(batch).e()? else {
             return Err(BackendError::Inference(
                 "prediction head did not receive pooled embeddings".to_string(),
@@ -706,6 +690,16 @@ impl CandleBackend {
         for layer in &self.post_pooling_layers {
             pooled_embeddings = layer.forward(&pooled_embeddings).e()?;
         }
+
+        match pooled_embeddings.dims() {
+            [rows, cols] if *rows == batch_size && *cols == 1 => {}
+            shape => {
+                return Err(BackendError::Inference(format!(
+                    "prediction head returned shape {shape:?}; expected [{batch_size}, 1]"
+                )));
+            }
+        }
+
         Ok(pooled_embeddings)
     }
 }

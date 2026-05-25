@@ -491,42 +491,56 @@ async fn init_backend(
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     let mut backend_start_failed = false;
     let api_repo = api_repo.map(Arc::new);
+    let post_pooling_prediction = uses_post_pooling_prediction(&model_type, output);
+
+    #[cfg(not(feature = "candle"))]
+    if post_pooling_prediction {
+        return Err(BackendError::Start(
+            "Post-pooling prediction heads are only supported by the Candle backend".to_string(),
+        ));
+    }
 
     #[cfg(feature = "ort")]
     {
-        if let Some(api_repo) = api_repo.as_ref() {
-            let start = std::time::Instant::now();
-            let model_files = download_onnx(api_repo.clone())
-                .await
-                .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
-            match model_files.is_empty() {
-                true => {
-                    tracing::error!("Model ONNX files not found in the repository. You can easily create ONNX files using the following scripts: https://gist.github.com/tomaarsen/4b00b0e3be8884efa64cfab9230b161f, or use this Space: https://huggingface.co/spaces/sentence-transformers/backend-export")
-                }
-                false => {
-                    tracing::info!("Model ONNX weights downloaded in {:?}", start.elapsed())
+        if post_pooling_prediction {
+            tracing::info!(
+                "Skipping ORT backend because post-pooling prediction heads require Candle"
+            );
+        } else {
+            if let Some(api_repo) = api_repo.as_ref() {
+                let start = std::time::Instant::now();
+                let model_files = download_onnx(api_repo.clone())
+                    .await
+                    .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
+                match model_files.is_empty() {
+                    true => {
+                        tracing::error!("Model ONNX files not found in the repository. You can easily create ONNX files using the following scripts: https://gist.github.com/tomaarsen/4b00b0e3be8884efa64cfab9230b161f, or use this Space: https://huggingface.co/spaces/sentence-transformers/backend-export")
+                    }
+                    false => {
+                        tracing::info!("Model ONNX weights downloaded in {:?}", start.elapsed())
+                    }
                 }
             }
-        }
 
-        // NOTE: for ONNX we need to retrieve the `tokenizer_config.json` to identify which
-        // `padding_side` needs to be applied for the input processing and the pooling
-        if let Some(api_repo) = api_repo.as_ref() {
-            tracing::info!("Downloading `tokenizer_config.json`");
-            match api_repo.get("tokenizer_config.json").await {
-                Ok(_) => (),
+            // NOTE: for ONNX we need to retrieve the `tokenizer_config.json` to identify which
+            // `padding_side` needs to be applied for the input processing and the pooling
+            if let Some(api_repo) = api_repo.as_ref() {
+                tracing::info!("Downloading `tokenizer_config.json`");
+                match api_repo.get("tokenizer_config.json").await {
+                    Ok(_) => (),
+                    Err(err) => {
+                        tracing::warn!("Could not download `tokenizer_config.json`: {}", err)
+                    }
+                }
+            }
+
+            let backend = OrtBackend::new(&model_path, dtype.to_string(), model_type.clone());
+            match backend {
+                Ok(b) => return Ok(Box::new(b)),
                 Err(err) => {
-                    tracing::warn!("Could not download `tokenizer_config.json`: {}", err)
+                    tracing::error!("Could not start ORT backend: {err}");
+                    backend_start_failed = true;
                 }
-            }
-        }
-
-        let backend = OrtBackend::new(&model_path, dtype.to_string(), model_type.clone());
-        match backend {
-            Ok(b) => return Ok(Box::new(b)),
-            Err(err) => {
-                tracing::error!("Could not start ORT backend: {err}");
-                backend_start_failed = true;
             }
         }
     }
@@ -552,8 +566,7 @@ async fn init_backend(
         {
             let dense_paths = if let Some(api_repo) = api_repo.as_ref() {
                 let start = std::time::Instant::now();
-                let prediction_head = uses_post_pooling_prediction(&model_type, output);
-                let dense_paths = if prediction_head {
+                let dense_paths = if post_pooling_prediction {
                     download_module_layers(api_repo)
                         .await
                         .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?
@@ -562,7 +575,7 @@ async fn init_backend(
                         .await
                         .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?
                 };
-                if prediction_head {
+                if post_pooling_prediction {
                     tracing::info!(
                         "Additional module layers downloaded in {:?}",
                         start.elapsed()
@@ -577,8 +590,7 @@ async fn init_backend(
                 // For local models, try to parse modules.json and handle dense_path logic
                 let modules_json_path = model_path.join("modules.json");
                 if modules_json_path.exists() {
-                    let prediction_head = uses_post_pooling_prediction(&model_type, output);
-                    let module_paths = if prediction_head {
+                    let module_paths = if post_pooling_prediction {
                         parse_module_layer_paths_from_modules(&modules_json_path).await
                     } else {
                         parse_dense_paths_from_modules(&modules_json_path).await
@@ -614,8 +626,7 @@ async fn init_backend(
                 }
             };
 
-            let prediction_head = uses_post_pooling_prediction(&model_type, output);
-            let backend = if prediction_head {
+            let backend = if post_pooling_prediction {
                 CandleBackend::new_with_post_pooling_prediction(
                     &model_path,
                     dtype.to_string(),
@@ -643,24 +654,30 @@ async fn init_backend(
     if cfg!(feature = "python") {
         #[cfg(feature = "python")]
         {
-            let backend = std::thread::spawn(move || {
-                PythonBackend::new(
-                    model_path.to_str().unwrap().to_string(),
-                    dtype.to_string(),
-                    model_type,
-                    uds_path,
-                    otlp_endpoint,
-                    otlp_service_name,
-                )
-            })
-            .join()
-            .expect("Python Backend management thread failed");
+            if post_pooling_prediction {
+                tracing::info!(
+                    "Skipping Python backend because post-pooling prediction heads require Candle"
+                );
+            } else {
+                let backend = std::thread::spawn(move || {
+                    PythonBackend::new(
+                        model_path.to_str().unwrap().to_string(),
+                        dtype.to_string(),
+                        model_type,
+                        uds_path,
+                        otlp_endpoint,
+                        otlp_service_name,
+                    )
+                })
+                .join()
+                .expect("Python Backend management thread failed");
 
-            match backend {
-                Ok(b) => return Ok(Box::new(b)),
-                Err(err) => {
-                    tracing::error!("Could not start Python backend: {err}");
-                    backend_start_failed = true;
+                match backend {
+                    Ok(b) => return Ok(Box::new(b)),
+                    Err(err) => {
+                        tracing::error!("Could not start Python backend: {err}");
+                        backend_start_failed = true;
+                    }
                 }
             }
         }
@@ -954,16 +971,50 @@ async fn parse_module_layer_paths_from_modules(
     let modules: Vec<ModuleConfig> = serde_json::from_str(&content)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
 
-    Ok(modules
-        .into_iter()
-        .filter(|module| {
-            matches!(
-                module.module_type,
-                ModuleType::Dense | ModuleType::LayerNorm
+    let pooling_index = modules
+        .iter()
+        .position(|module| module.module_type == ModuleType::Pooling)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Missing Pooling module for post-pooling prediction head",
             )
-        })
-        .map(|module| module.path)
-        .collect::<Vec<String>>())
+        })?;
+
+    let head_modules = &modules[pooling_index + 1..];
+    if head_modules.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Missing post-pooling prediction head modules",
+        ));
+    }
+    if head_modules
+        .last()
+        .is_none_or(|module| module.module_type != ModuleType::Dense)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Post-pooling prediction head must end with a Dense module",
+        ));
+    }
+
+    let mut paths = Vec::with_capacity(head_modules.len());
+    for module in head_modules {
+        match &module.module_type {
+            ModuleType::Dense | ModuleType::LayerNorm => paths.push(module.path.clone()),
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Unsupported module in post-pooling prediction head: {:?} at `{}`",
+                        module.module_type, module.path
+                    ),
+                ));
+            }
+        }
+    }
+
+    Ok(paths)
 }
 
 #[cfg(feature = "candle")]
@@ -1138,14 +1189,33 @@ mod tests {
                 {"idx": 1, "name": "1", "path": "1_Pooling", "type": "sentence_transformers.sentence_transformer.modules.pooling.Pooling"},
                 {"idx": 2, "name": "2", "path": "2_Dense", "type": "sentence_transformers.base.modules.dense.Dense"},
                 {"idx": 3, "name": "3", "path": "3_LayerNorm", "type": "sentence_transformers.sentence_transformer.modules.layer_norm.LayerNorm"},
-                {"idx": 4, "name": "4", "path": "4_Normalize", "type": "sentence_transformers.sentence_transformer.modules.normalize.Normalize"},
-                {"idx": 5, "name": "5", "path": "5_Dense", "type": "sentence_transformers.base.modules.dense.Dense"}
+                {"idx": 4, "name": "4", "path": "4_Dense", "type": "sentence_transformers.base.modules.dense.Dense"}
             ]"#,
         );
 
         let paths = block_on(parse_module_layer_paths_from_modules(&modules_path)).unwrap();
 
-        assert_eq!(paths, vec!["2_Dense", "3_LayerNorm", "5_Dense"]);
+        assert_eq!(paths, vec!["2_Dense", "3_LayerNorm", "4_Dense"]);
+    }
+
+    #[test]
+    fn rejects_unsupported_modular_reranker_modules() {
+        let modules_path = temp_modules_file(
+            "unsupported-reranker",
+            r#"[
+                {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.base.modules.transformer.Transformer"},
+                {"idx": 1, "name": "1", "path": "1_Pooling", "type": "sentence_transformers.sentence_transformer.modules.pooling.Pooling"},
+                {"idx": 2, "name": "2", "path": "2_Dense", "type": "sentence_transformers.base.modules.dense.Dense"},
+                {"idx": 3, "name": "3", "path": "3_Normalize", "type": "sentence_transformers.sentence_transformer.modules.normalize.Normalize"},
+                {"idx": 4, "name": "4", "path": "4_Dense", "type": "sentence_transformers.base.modules.dense.Dense"}
+            ]"#,
+        );
+
+        let err = block_on(parse_module_layer_paths_from_modules(&modules_path)).unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("Unsupported module in post-pooling prediction head"));
     }
 
     #[test]
