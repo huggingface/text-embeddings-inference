@@ -427,7 +427,7 @@ impl JinaBertModel {
                     Box::new(JinaBertClassificationHead::load(vb.clone(), config)?);
                 (pool, Some(classifier))
             }
-            ModelType::Embedding(pool) => {
+            ModelType::Embedding(pool) | ModelType::StReranker(pool) => {
                 if pool == Pool::Splade {
                     candle::bail!("`splade` is not supported for Jina")
                 }

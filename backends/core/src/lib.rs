@@ -50,6 +50,7 @@ pub trait Backend {
 #[derive(Debug, PartialEq, Clone)]
 pub enum ModelType {
     Classifier,
+    StReranker(Pool),
     Embedding(Pool),
 }
 

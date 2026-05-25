@@ -444,7 +444,7 @@ impl MPNetModel {
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for MPNet")
             }
-            ModelType::Embedding(pool) => {
+            ModelType::Embedding(pool) | ModelType::StReranker(pool) => {
                 if pool == Pool::Splade {
                     candle::bail!("`splade` is not supported for MPNet")
                 }

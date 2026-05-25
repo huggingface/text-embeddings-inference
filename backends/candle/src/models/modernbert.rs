@@ -23,16 +23,17 @@ pub struct ModernBertConfig {
     pub norm_eps: f64,
     pub norm_bias: bool,
     pub pad_token_id: usize,
-    pub eos_token_id: usize,
-    pub bos_token_id: usize,
+    pub eos_token_id: Option<usize>,
+    pub bos_token_id: Option<usize>,
     pub cls_token_id: usize,
     pub sep_token_id: usize,
-    pub global_rope_theta: f64,
+    pub global_rope_theta: Option<f64>,
     pub attention_bias: bool,
     pub attention_dropout: f64,
     pub global_attn_every_n_layers: usize,
     pub local_attention: usize,
-    pub local_rope_theta: f64,
+    pub local_rope_theta: Option<f64>,
+    pub rope_parameters: Option<ModernBertRopeParameters>,
     pub embedding_dropout: Option<f64>,
     pub mlp_bias: Option<bool>,
     pub mlp_dropout: Option<f64>,
@@ -46,6 +47,49 @@ pub struct ModernBertConfig {
     pub sparse_pred_ignore_index: Option<i64>,
     pub reference_compile: Option<bool>,
     pub num_labels: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ModernBertRopeParameters {
+    full_attention: Option<ModernBertRopeParametersEntry>,
+    sliding_attention: Option<ModernBertRopeParametersEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ModernBertRopeParametersEntry {
+    rope_theta: Option<f64>,
+}
+
+impl ModernBertConfig {
+    pub fn global_rope_theta(&self) -> Result<f64> {
+        if let Some(theta) = self.global_rope_theta {
+            return Ok(theta);
+        }
+        if let Some(theta) = self
+            .rope_parameters
+            .as_ref()
+            .and_then(|params| params.full_attention.as_ref())
+            .and_then(|params| params.rope_theta)
+        {
+            return Ok(theta);
+        }
+        candle::bail!("`global_rope_theta` or `rope_parameters.full_attention.rope_theta` must be defined in `config.json`")
+    }
+
+    pub fn local_rope_theta(&self) -> Result<f64> {
+        if let Some(theta) = self.local_rope_theta {
+            return Ok(theta);
+        }
+        if let Some(theta) = self
+            .rope_parameters
+            .as_ref()
+            .and_then(|params| params.sliding_attention.as_ref())
+            .and_then(|params| params.rope_theta)
+        {
+            return Ok(theta);
+        }
+        candle::bail!("`local_rope_theta` or `rope_parameters.sliding_attention.rope_theta` must be defined in `config.json`")
+    }
 }
 
 #[derive(Debug)]
@@ -487,7 +531,7 @@ impl ModernBertModel {
 
                 (pool, Some(classifier))
             }
-            ModelType::Embedding(pool) => {
+            ModelType::Embedding(pool) | ModelType::StReranker(pool) => {
                 if pool == Pool::Splade {
                     candle::bail!("`splade` is not supported for ModernBert")
                 }
@@ -521,13 +565,13 @@ impl ModernBertModel {
 
         let global_inv_freqs = get_inv_freqs(
             attention_head_size,
-            config.global_rope_theta as f32,
+            config.global_rope_theta()? as f32,
             vb.device(),
             None,
         )?;
         let local_inv_freqs = get_inv_freqs(
             attention_head_size,
-            config.local_rope_theta as f32,
+            config.local_rope_theta()? as f32,
             vb.device(),
             None,
         )?;

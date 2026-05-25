@@ -7,7 +7,7 @@ mod layers;
 mod models;
 
 use anyhow::Context;
-use candle::{DType, Device};
+use candle::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use nohash_hasher::BuildNoHashHasher;
 use serde::{de::Deserializer, Deserialize};
@@ -22,11 +22,11 @@ use crate::compute_cap::{
     compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
 };
 use crate::models::{
-    BertConfig, BertModel, DebertaV2Config, DebertaV2Model, Dense, DenseConfig, DenseLayer,
-    DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, Gemma3Config, Gemma3Model,
-    JinaBertModel, JinaCodeBertModel, LlamaConfig, MPNetConfig, MPNetModel, MistralConfig, Model,
+    BertConfig, BertModel, DebertaV2Config, DebertaV2Model, Dense, DistilBertConfig,
+    DistilBertModel, GTEConfig, GTEModel, Gemma3Config, Gemma3Model, JinaBertModel,
+    JinaCodeBertModel, LlamaConfig, MPNetConfig, MPNetModel, MistralConfig, Model,
     ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Pplx1Config, Pplx1Model,
-    Qwen2Config, Qwen3Config, Qwen3Model,
+    Qwen2Config, Qwen3Config, Qwen3Model, StLayerNorm, StModule, StModuleConfig,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -156,7 +156,8 @@ enum Config {
 pub struct CandleBackend {
     device: Device,
     model: Box<dyn Model + Send>,
-    dense_layers: Vec<Box<dyn DenseLayer + Send>>,
+    st_modules: Vec<Box<dyn StModule + Send>>,
+    predict_uses_st_modules: bool,
 }
 
 impl CandleBackend {
@@ -166,6 +167,11 @@ impl CandleBackend {
         model_type: ModelType,
         dense_paths: Option<Vec<String>>,
     ) -> Result<Self, BackendError> {
+        let (predict_uses_st_modules, model_type) = match model_type {
+            ModelType::StReranker(pool) => (true, ModelType::Embedding(pool)),
+            model_type => (false, model_type),
+        };
+
         // Default files
         let default_safetensors = model_path.join("model.safetensors");
         let default_pytorch = model_path.join("pytorch_model.bin");
@@ -576,53 +582,68 @@ impl CandleBackend {
             },
         };
 
-        let mut dense_layers = Vec::new();
+        let mut st_modules = Vec::new();
         if let Some(dense_paths) = dense_paths {
             if !dense_paths.is_empty() {
-                tracing::info!("Loading Dense module/s from path/s: {dense_paths:?}");
+                tracing::info!(
+                    "Loading Sentence Transformers module/s from path/s: {dense_paths:?}"
+                );
 
-                for dense_path in dense_paths.iter() {
-                    let dense_safetensors =
-                        model_path.join(format!("{dense_path}/model.safetensors"));
-                    let dense_pytorch = model_path.join(format!("{dense_path}/pytorch_model.bin"));
+                for module_path in dense_paths.iter() {
+                    let module_safetensors =
+                        model_path.join(format!("{module_path}/model.safetensors"));
+                    let module_pytorch =
+                        model_path.join(format!("{module_path}/pytorch_model.bin"));
 
-                    if dense_safetensors.exists() || dense_pytorch.exists() {
-                        let dense_config_path =
-                            model_path.join(format!("{dense_path}/config.json"));
+                    if module_safetensors.exists() || module_pytorch.exists() {
+                        let module_config_path =
+                            model_path.join(format!("{module_path}/config.json"));
 
-                        let dense_config_str = std::fs::read_to_string(&dense_config_path)
+                        let module_config_str = std::fs::read_to_string(&module_config_path)
                             .map_err(|err| {
                                 BackendError::Start(format!(
-                                    "Unable to read `{dense_path}/config.json` file: {err:?}",
+                                    "Unable to read `{module_path}/config.json` file: {err:?}",
                                 ))
                             })?;
-                        let dense_config: DenseConfig = serde_json::from_str(&dense_config_str)
-                            .map_err(|err| {
+                        let module_config: StModuleConfig =
+                            serde_json::from_str(&module_config_str).map_err(|err| {
                                 BackendError::Start(format!(
-                                    "Unable to parse `{dense_path}/config.json`: {err:?}",
+                                    "Unable to parse `{module_path}/config.json`: {err:?}",
                                 ))
                             })?;
 
-                        let dense_vb = if dense_safetensors.exists() {
+                        let module_vb = if module_safetensors.exists() {
                             unsafe {
                                 VarBuilder::from_mmaped_safetensors(
-                                    &[dense_safetensors],
+                                    &[module_safetensors],
                                     dtype,
                                     &device,
                                 )
                             }
                             .s()?
                         } else {
-                            VarBuilder::from_pth(&dense_pytorch, dtype, &device).s()?
+                            VarBuilder::from_pth(&module_pytorch, dtype, &device).s()?
                         };
 
-                        let dense_layer = Box::new(Dense::load(dense_vb, &dense_config).s()?)
-                            as Box<dyn DenseLayer + Send>;
-                        dense_layers.push(dense_layer);
+                        let st_module = match module_config {
+                            StModuleConfig::Dense(config) => {
+                                Box::new(Dense::load(module_vb, &config).s()?)
+                                    as Box<dyn StModule + Send>
+                            }
+                            StModuleConfig::LayerNorm(config) => {
+                                Box::new(StLayerNorm::load(module_vb, &config).s()?)
+                                    as Box<dyn StModule + Send>
+                            }
+                        };
+                        st_modules.push(st_module);
 
-                        tracing::info!("Loaded Dense module from path: {dense_path}");
+                        tracing::info!(
+                            "Loaded Sentence Transformers module from path: {module_path}"
+                        );
                     } else {
-                        tracing::warn!("Dense module files not found for path: {dense_path}",);
+                        tracing::warn!(
+                            "Sentence Transformers module files not found for path: {module_path}"
+                        );
                     }
                 }
             }
@@ -631,8 +652,47 @@ impl CandleBackend {
         Ok(Self {
             device,
             model: model?,
-            dense_layers,
+            st_modules,
+            predict_uses_st_modules,
         })
+    }
+
+    fn predict_st_reranker(&self, batch: Batch) -> Result<Tensor, BackendError> {
+        let batch_size = batch.len();
+        if batch_size <= 1 {
+            return self.predict_st_reranker_batch(batch);
+        }
+
+        let mut results = Vec::with_capacity(batch_size);
+        for i in 0..batch_size {
+            let start = batch.cumulative_seq_lengths[i] as usize;
+            let end = batch.cumulative_seq_lengths[i + 1] as usize;
+            let len = (end - start) as u32;
+            let single = Batch {
+                input_ids: batch.input_ids[start..end].to_vec(),
+                token_type_ids: batch.token_type_ids[start..end].to_vec(),
+                position_ids: batch.position_ids[start..end].to_vec(),
+                cumulative_seq_lengths: vec![0, len],
+                max_length: len,
+                pooled_indices: vec![0],
+                raw_indices: vec![],
+            };
+            results.push(self.predict_st_reranker_batch(single)?);
+        }
+
+        Tensor::cat(&results, 0).e()
+    }
+
+    fn predict_st_reranker_batch(&self, batch: Batch) -> Result<Tensor, BackendError> {
+        let (Some(mut pooled_embeddings), _) = self.model.embed(batch).e()? else {
+            return Err(BackendError::Inference(
+                "ST reranker model did not return pooled embeddings".to_string(),
+            ));
+        };
+        for module in &self.st_modules {
+            pooled_embeddings = module.forward(&pooled_embeddings).e()?;
+        }
+        Ok(pooled_embeddings)
     }
 }
 
@@ -668,12 +728,12 @@ impl Backend for CandleBackend {
         // Run forward
         let (pooled_embeddings, raw_embeddings) = self.model.embed(batch).e()?;
 
-        // Apply Dense layers sequentially if available
+        // Apply Sentence Transformers modules sequentially if available.
         let pooled_embeddings = match pooled_embeddings {
             None => None,
             Some(mut pooled_embeddings) => {
-                for dense in &self.dense_layers {
-                    pooled_embeddings = dense.forward(&pooled_embeddings).e()?;
+                for module in &self.st_modules {
+                    pooled_embeddings = module.forward(&pooled_embeddings).e()?;
                 }
                 Some(pooled_embeddings)
             }
@@ -711,7 +771,11 @@ impl Backend for CandleBackend {
     fn predict(&self, batch: Batch) -> Result<Predictions, BackendError> {
         let batch_size = batch.len();
 
-        let results = self.model.predict(batch).e()?;
+        let results = if self.predict_uses_st_modules {
+            self.predict_st_reranker(batch)?
+        } else {
+            self.model.predict(batch).e()?
+        };
 
         let results = results.to_dtype(DType::F32).e()?.to_vec2().e()?;
 

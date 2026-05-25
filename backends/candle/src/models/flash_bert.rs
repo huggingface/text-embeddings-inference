@@ -251,7 +251,7 @@ impl FlashBertModel {
                     Box::new(BertClassificationHead::load(vb.clone(), config)?);
                 (pool, Some(classifier), None)
             }
-            ModelType::Embedding(pool) => {
+            ModelType::Embedding(pool) | ModelType::StReranker(pool) => {
                 let splade = if pool == Pool::Splade {
                     Some(BertSpladeHead::load(vb.clone(), config)?)
                 } else {
@@ -318,7 +318,7 @@ impl FlashBertModel {
                 );
                 (pool, Some(classifier), None)
             }
-            ModelType::Embedding(pool) => {
+            ModelType::Embedding(pool) | ModelType::StReranker(pool) => {
                 let splade = if pool == Pool::Splade {
                     Some(BertSpladeHead::load_roberta(vb.clone(), config)?)
                 } else {

@@ -56,7 +56,7 @@ mod flash_qwen3;
 
 pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
 pub use debertav2::{DebertaV2Config, DebertaV2Model};
-pub use dense::{Dense, DenseConfig, DenseLayer};
+pub use dense::{Dense, StLayerNorm, StModule, StModuleConfig};
 pub use distilbert::{DistilBertConfig, DistilBertModel};
 pub use gemma3::{Gemma3Config, Gemma3Model};
 pub use gte::{GTEConfig, GTEModel};

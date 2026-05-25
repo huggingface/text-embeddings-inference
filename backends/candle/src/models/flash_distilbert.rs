@@ -199,7 +199,7 @@ impl FlashDistilBertModel {
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for DistilBert")
             }
-            ModelType::Embedding(pool) => pool,
+            ModelType::Embedding(pool) | ModelType::StReranker(pool) => pool,
         };
 
         let (embeddings, encoder) = match (

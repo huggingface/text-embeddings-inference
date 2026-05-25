@@ -589,7 +589,7 @@ impl BertModel {
                     Box::new(BertClassificationHead::load(vb.clone(), config)?);
                 (pool, Some(classifier), None)
             }
-            ModelType::Embedding(pool) => {
+            ModelType::Embedding(pool) | ModelType::StReranker(pool) => {
                 let splade = if pool == Pool::Splade {
                     Some(BertSpladeHead::load(vb.clone(), config)?)
                 } else {
@@ -649,7 +649,7 @@ impl BertModel {
                 );
                 (pool, Some(classifier), None)
             }
-            ModelType::Embedding(pool) => {
+            ModelType::Embedding(pool) | ModelType::StReranker(pool) => {
                 if pool == Pool::LastToken {
                     candle::bail!("`last_token` is not supported for Bert");
                 }

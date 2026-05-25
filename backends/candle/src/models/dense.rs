@@ -1,4 +1,4 @@
-use crate::layers::Linear;
+use crate::layers::{LayerNorm, Linear};
 use candle::{Result, Tensor};
 use candle_nn::VarBuilder;
 use serde::Deserialize;
@@ -12,6 +12,8 @@ pub enum DenseActivation {
     #[serde(rename = "torch.nn.modules.linear.Identity")]
     /// e.g. https://huggingface.co/NovaSearch/stella_en_400M_v5/blob/main/2_Dense/config.json
     Identity,
+    #[serde(rename = "torch.nn.modules.activation.GELU")]
+    Gelu,
 }
 
 impl DenseActivation {
@@ -19,8 +21,16 @@ impl DenseActivation {
         match self {
             Self::Tanh => x.tanh(),
             Self::Identity => Ok(x.clone()),
+            Self::Gelu => x.gelu(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum StModuleConfig {
+    Dense(DenseConfig),
+    LayerNorm(LayerNormConfig),
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -29,9 +39,18 @@ pub struct DenseConfig {
     out_features: usize,
     bias: bool,
     activation_function: Option<DenseActivation>,
+    #[allow(dead_code)]
+    module_input_name: Option<String>,
+    #[allow(dead_code)]
+    module_output_name: Option<String>,
 }
 
-pub trait DenseLayer {
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct LayerNormConfig {
+    dimension: usize,
+}
+
+pub trait StModule {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
 }
 
@@ -65,11 +84,31 @@ impl Dense {
     }
 }
 
-impl DenseLayer for Dense {
+impl StModule for Dense {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
         let hidden_states = self.linear.forward(hidden_states)?;
         self.activation.forward(&hidden_states)
+    }
+}
+
+#[derive(Debug)]
+pub struct StLayerNorm {
+    layer_norm: LayerNorm,
+}
+
+impl StLayerNorm {
+    pub fn load(vb: VarBuilder, config: &LayerNormConfig) -> Result<Self> {
+        Ok(Self {
+            layer_norm: LayerNorm::load(vb.clone(), config.dimension, 1e-5)
+                .or_else(|_| LayerNorm::load(vb.pp("norm"), config.dimension, 1e-5))?,
+        })
+    }
+}
+
+impl StModule for StLayerNorm {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        self.layer_norm.forward(hidden_states, None)
     }
 }

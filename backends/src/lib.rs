@@ -181,7 +181,7 @@ impl Backend {
         for shape in shapes.iter() {
             let batch = self.create_warmup_batch(*shape, max_token as u32, seq_bucket_size as u32);
             match &self.model_type {
-                ModelType::Classifier => self.predict(batch).await.map(|_| ()),
+                ModelType::Classifier | ModelType::StReranker(_) => self.predict(batch).await.map(|_| ()),
                 ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
             }?;
             tracing::info!("finish warmup for batch: {}, length: {}", shape.0, shape.1);
@@ -241,7 +241,7 @@ impl Backend {
         for shape in shapes.iter() {
             let batch = self.create_warmup_batch(*shape, max_token as u32, seq_bucket_size as u32);
             match &self.model_type {
-                ModelType::Classifier => self.predict(batch).await.map(|_| ()),
+                ModelType::Classifier | ModelType::StReranker(_) => self.predict(batch).await.map(|_| ()),
                 ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
             }?;
             tracing::info!(
@@ -370,7 +370,7 @@ impl Backend {
         };
 
         match &self.model_type {
-            ModelType::Classifier => self.predict(batch).await.map(|_| ()),
+            ModelType::Classifier | ModelType::StReranker(_) => self.predict(batch).await.map(|_| ()),
             ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
         }
     }
@@ -403,7 +403,7 @@ impl Backend {
                 raw_indices: vec![],
             };
             match &self.model_type {
-                ModelType::Classifier => self.predict(batch).await.map(|_| ()),
+                ModelType::Classifier | ModelType::StReranker(_) => self.predict(batch).await.map(|_| ()),
                 ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
             }
         }
@@ -513,10 +513,21 @@ async fn init_backend(
         {
             let dense_paths = if let Some(api_repo) = api_repo.as_ref() {
                 let start = std::time::Instant::now();
-                let dense_paths = download_dense_modules(api_repo, dense_path)
-                    .await
-                    .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
-                tracing::info!("Dense modules downloaded in {:?}", start.elapsed());
+                let st_reranker = matches!(model_type, ModelType::StReranker(_));
+                let dense_paths = if st_reranker {
+                    download_st_modules(api_repo)
+                        .await
+                        .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?
+                } else {
+                    download_dense_modules(api_repo, dense_path)
+                        .await
+                        .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?
+                };
+                if st_reranker {
+                    tracing::info!("Sentence Transformers modules downloaded in {:?}", start.elapsed());
+                } else {
+                    tracing::info!("Dense modules downloaded in {:?}", start.elapsed());
+                }
                 Some(dense_paths)
             } else {
                 // TODO(alvarobartt): eventually detach the Sentence Transformers module handling
@@ -524,7 +535,12 @@ async fn init_backend(
                 // For local models, try to parse modules.json and handle dense_path logic
                 let modules_json_path = model_path.join("modules.json");
                 if modules_json_path.exists() {
-                    match parse_dense_paths_from_modules(&modules_json_path).await {
+                    let module_paths = if matches!(model_type, ModelType::StReranker(_)) {
+                        parse_st_module_paths_from_modules(&modules_json_path).await
+                    } else {
+                        parse_dense_paths_from_modules(&modules_json_path).await
+                    };
+                    match module_paths {
                         Ok(module_paths) => match module_paths.len() {
                             0 => Some(vec![]),
                             1 => {
@@ -817,13 +833,18 @@ async fn download_onnx(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 enum ModuleType {
     #[serde(rename = "sentence_transformers.models.Dense")]
+    #[serde(alias = "sentence_transformers.base.modules.dense.Dense")]
     Dense,
     #[serde(rename = "sentence_transformers.models.Normalize")]
     Normalize,
     #[serde(rename = "sentence_transformers.models.Pooling")]
+    #[serde(alias = "sentence_transformers.sentence_transformer.modules.pooling.Pooling")]
     Pooling,
     #[serde(rename = "sentence_transformers.models.Transformer")]
+    #[serde(alias = "sentence_transformers.base.modules.transformer.Transformer")]
     Transformer,
+    #[serde(rename = "sentence_transformers.sentence_transformer.modules.layer_norm.LayerNorm")]
+    LayerNorm,
 }
 
 #[cfg(feature = "candle")]
@@ -855,6 +876,26 @@ async fn parse_dense_paths_from_modules(
     Ok(modules
         .into_iter()
         .filter(|module| module.module_type == ModuleType::Dense)
+        .map(|module| module.path)
+        .collect::<Vec<String>>())
+}
+
+#[cfg(feature = "candle")]
+async fn parse_st_module_paths_from_modules(
+    modules_path: &PathBuf,
+) -> Result<Vec<String>, std::io::Error> {
+    let content = std::fs::read_to_string(modules_path)?;
+    let modules: Vec<ModuleConfig> = serde_json::from_str(&content)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+
+    Ok(modules
+        .into_iter()
+        .filter(|module| {
+            matches!(
+                module.module_type,
+                ModuleType::Dense | ModuleType::LayerNorm
+            )
+        })
         .map(|module| module.path)
         .collect::<Vec<String>>())
 }
@@ -937,9 +978,39 @@ pub async fn download_dense_modules(
 }
 
 #[cfg(feature = "candle")]
+#[instrument(skip_all)]
+pub async fn download_st_modules(api: &ApiRepo) -> Result<Vec<String>, ApiError> {
+    match download_file(api, "modules.json").await {
+        Ok(modules_path) => match parse_st_module_paths_from_modules(&modules_path).await {
+            Ok(module_paths) => {
+                for module_path in &module_paths {
+                    download_st_module(api, module_path).await.map_err(|err| {
+                        tracing::error!("Failed to download `{module_path}` files: {err}");
+                        err
+                    })?;
+                }
+                Ok(module_paths)
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "`modules.json` could be downloaded but parsing the modules failed: {err}; so no Sentence Transformers modules will be downloaded."
+                );
+                Ok(vec![])
+            }
+        },
+        Err(_) => Ok(vec![]),
+    }
+}
+
+#[cfg(feature = "candle")]
 async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBuf, ApiError> {
+    download_st_module(api, dense_path).await
+}
+
+#[cfg(feature = "candle")]
+async fn download_st_module(api: &ApiRepo, module_path: &str) -> Result<PathBuf, ApiError> {
     // Download `config.json` for the Dense module
-    let config_file = format!("{}/config.json", dense_path);
+    let config_file = format!("{}/config.json", module_path);
     let config_path = match download_file(api, &config_file).await {
         Ok(path) => path,
         Err(err) => {
@@ -949,11 +1020,11 @@ async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBu
     };
 
     // Try to download the `model.safetensors` first
-    let safetensors_file = format!("{}/model.safetensors", dense_path);
+    let safetensors_file = format!("{}/model.safetensors", module_path);
     if let Err(err) = download_file(api, &safetensors_file).await {
         tracing::warn!("Failed to download `{safetensors_file}` file: {err}");
         // Fallback to former `pytorch_model.bin`
-        let pytorch_file = format!("{}/pytorch_model.bin", dense_path);
+        let pytorch_file = format!("{}/pytorch_model.bin", module_path);
         if let Err(err) = download_file(api, &pytorch_file).await {
             tracing::warn!("Failed to download `{pytorch_file}` file: {err}");
             return Err(err);
