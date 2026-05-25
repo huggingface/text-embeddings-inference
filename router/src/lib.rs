@@ -671,9 +671,13 @@ mod tests {
     use std::path::PathBuf;
 
     fn test_model_config() -> ModelConfig {
+        test_model_config_with_architecture("ModernBertModel", "modernbert")
+    }
+
+    fn test_model_config_with_architecture(architecture: &str, model_type: &str) -> ModelConfig {
         ModelConfig {
-            architectures: vec!["ModernBertModel".to_string()],
-            model_type: "modernbert".to_string(),
+            architectures: vec![architecture.to_string()],
+            model_type: model_type.to_string(),
             max_position_embeddings: 8192,
             pad_token_id: Some(50283),
             id2label: Some(HashMap::from([("0".to_string(), "LABEL_0".to_string())])),
@@ -750,6 +754,41 @@ mod tests {
         );
 
         let model_type = get_backend_model_type(&test_model_config(), &model_root, None).unwrap();
+
+        assert_eq!(
+            model_type,
+            text_embeddings_backend::ModelType::StReranker(Pool::Cls)
+        );
+    }
+
+    #[test]
+    fn detects_legacy_sentence_transformers_reranker_for_other_backbone() {
+        let model_root = temp_model_dir("legacy-reranker");
+        write_pooling_config(&model_root);
+        write_file(
+            model_root.join("modules.json"),
+            r#"[
+                {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.models.Transformer"},
+                {"idx": 1, "name": "1", "path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+                {"idx": 2, "name": "2", "path": "2_Dense", "type": "sentence_transformers.models.Dense"},
+                {"idx": 3, "name": "3", "path": "3_LayerNorm", "type": "sentence_transformers.models.LayerNorm"},
+                {"idx": 4, "name": "4", "path": "4_Dense", "type": "sentence_transformers.models.Dense"}
+            ]"#,
+        );
+        write_file(
+            model_root.join("4_Dense/config.json"),
+            r#"{
+                "in_features": 768,
+                "out_features": 1,
+                "bias": true,
+                "activation_function": "torch.nn.modules.linear.Identity",
+                "module_input_name": "sentence_embedding",
+                "module_output_name": "scores"
+            }"#,
+        );
+
+        let config = test_model_config_with_architecture("BertModel", "bert");
+        let model_type = get_backend_model_type(&config, &model_root, None).unwrap();
 
         assert_eq!(
             model_type,

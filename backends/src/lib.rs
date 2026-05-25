@@ -836,6 +836,7 @@ enum ModuleType {
     #[serde(alias = "sentence_transformers.base.modules.dense.Dense")]
     Dense,
     #[serde(rename = "sentence_transformers.models.Normalize")]
+    #[serde(alias = "sentence_transformers.sentence_transformer.modules.normalize.Normalize")]
     Normalize,
     #[serde(rename = "sentence_transformers.models.Pooling")]
     #[serde(alias = "sentence_transformers.sentence_transformer.modules.pooling.Pooling")]
@@ -844,6 +845,7 @@ enum ModuleType {
     #[serde(alias = "sentence_transformers.base.modules.transformer.Transformer")]
     Transformer,
     #[serde(rename = "sentence_transformers.sentence_transformer.modules.layer_norm.LayerNorm")]
+    #[serde(alias = "sentence_transformers.models.LayerNorm")]
     LayerNorm,
 }
 
@@ -1032,4 +1034,69 @@ async fn download_st_module(api: &ApiRepo, module_path: &str) -> Result<PathBuf,
     }
 
     Ok(config_path.parent().unwrap().to_path_buf())
+}
+
+#[cfg(all(test, feature = "candle"))]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn temp_modules_file(name: &str, contents: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "tei-backend-{name}-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(contents.as_bytes()).unwrap();
+        path
+    }
+
+    fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    #[test]
+    fn parses_modular_sentence_transformers_reranker_modules() {
+        let modules_path = temp_modules_file(
+            "modular-reranker",
+            r#"[
+                {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.base.modules.transformer.Transformer"},
+                {"idx": 1, "name": "1", "path": "1_Pooling", "type": "sentence_transformers.sentence_transformer.modules.pooling.Pooling"},
+                {"idx": 2, "name": "2", "path": "2_Dense", "type": "sentence_transformers.base.modules.dense.Dense"},
+                {"idx": 3, "name": "3", "path": "3_LayerNorm", "type": "sentence_transformers.sentence_transformer.modules.layer_norm.LayerNorm"},
+                {"idx": 4, "name": "4", "path": "4_Normalize", "type": "sentence_transformers.sentence_transformer.modules.normalize.Normalize"},
+                {"idx": 5, "name": "5", "path": "5_Dense", "type": "sentence_transformers.base.modules.dense.Dense"}
+            ]"#,
+        );
+
+        let paths = block_on(parse_st_module_paths_from_modules(&modules_path)).unwrap();
+
+        assert_eq!(paths, vec!["2_Dense", "3_LayerNorm", "5_Dense"]);
+    }
+
+    #[test]
+    fn parses_legacy_sentence_transformers_reranker_modules() {
+        let modules_path = temp_modules_file(
+            "legacy-reranker",
+            r#"[
+                {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.models.Transformer"},
+                {"idx": 1, "name": "1", "path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+                {"idx": 2, "name": "2", "path": "2_Dense", "type": "sentence_transformers.models.Dense"},
+                {"idx": 3, "name": "3", "path": "3_LayerNorm", "type": "sentence_transformers.models.LayerNorm"},
+                {"idx": 4, "name": "4", "path": "4_Dense", "type": "sentence_transformers.models.Dense"}
+            ]"#,
+        );
+
+        let paths = block_on(parse_st_module_paths_from_modules(&modules_path)).unwrap();
+
+        assert_eq!(paths, vec!["2_Dense", "3_LayerNorm", "4_Dense"]);
+    }
 }
