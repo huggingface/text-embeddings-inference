@@ -600,7 +600,13 @@ impl CandleBackend {
         let mut post_pooling_layers = Vec::new();
         if let Some(dense_paths) = dense_paths {
             if !dense_paths.is_empty() {
-                tracing::info!("Loading post-pooling layer/s from path/s: {dense_paths:?}");
+                if use_post_pooling_prediction {
+                    tracing::info!(
+                        "Loading post-pooling prediction module/s from path/s: {dense_paths:?}"
+                    );
+                } else {
+                    tracing::info!("Loading Dense module/s from path/s: {dense_paths:?}");
+                }
 
                 for module_path in dense_paths.iter() {
                     let module_safetensors =
@@ -650,16 +656,20 @@ impl CandleBackend {
                         };
                         post_pooling_layers.push(layer);
 
-                        tracing::info!("Loaded post-pooling layer from path: {module_path}");
+                        if use_post_pooling_prediction {
+                            tracing::info!(
+                                "Loaded post-pooling prediction module from path: {module_path}"
+                            );
+                        } else {
+                            tracing::info!("Loaded Dense module from path: {module_path}");
+                        }
                     } else {
                         if use_post_pooling_prediction {
                             return Err(BackendError::Start(format!(
-                                "Post-pooling layer files not found for path: {module_path}"
+                                "Post-pooling prediction module files not found for path: {module_path}"
                             )));
                         } else {
-                            tracing::warn!(
-                                "Post-pooling layer files not found for path: {module_path}"
-                            );
+                            tracing::warn!("Dense module files not found for path: {module_path}");
                         }
                     }
                 }
@@ -668,7 +678,7 @@ impl CandleBackend {
 
         if use_post_pooling_prediction && post_pooling_layers.is_empty() {
             return Err(BackendError::Start(
-                "Post-pooling prediction requires at least one layer".to_string(),
+                "Post-pooling prediction requires at least one module".to_string(),
             ));
         }
 

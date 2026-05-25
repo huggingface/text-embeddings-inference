@@ -567,7 +567,7 @@ async fn init_backend(
             let dense_paths = if let Some(api_repo) = api_repo.as_ref() {
                 let start = std::time::Instant::now();
                 let dense_paths = if post_pooling_prediction {
-                    download_module_layers(api_repo)
+                    download_prediction_head_modules(api_repo)
                         .await
                         .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?
                 } else {
@@ -577,7 +577,7 @@ async fn init_backend(
                 };
                 if post_pooling_prediction {
                     tracing::info!(
-                        "Additional module layers downloaded in {:?}",
+                        "Prediction head modules downloaded in {:?}",
                         start.elapsed()
                     );
                 } else {
@@ -591,7 +591,7 @@ async fn init_backend(
                 let modules_json_path = model_path.join("modules.json");
                 if modules_json_path.exists() {
                     let module_paths = if post_pooling_prediction {
-                        parse_module_layer_paths_from_modules(&modules_json_path).await
+                        parse_prediction_head_paths_from_modules(&modules_json_path).await
                     } else {
                         parse_dense_paths_from_modules(&modules_json_path).await
                     };
@@ -964,7 +964,7 @@ async fn parse_dense_paths_from_modules(
 }
 
 #[cfg(feature = "candle")]
-async fn parse_module_layer_paths_from_modules(
+async fn parse_prediction_head_paths_from_modules(
     modules_path: &PathBuf,
 ) -> Result<Vec<String>, std::io::Error> {
     let content = std::fs::read_to_string(modules_path)?;
@@ -1096,12 +1096,12 @@ pub async fn download_dense_modules(
 
 #[cfg(feature = "candle")]
 #[instrument(skip_all)]
-pub async fn download_module_layers(api: &ApiRepo) -> Result<Vec<String>, ApiError> {
+pub async fn download_prediction_head_modules(api: &ApiRepo) -> Result<Vec<String>, ApiError> {
     match download_file(api, "modules.json").await {
-        Ok(modules_path) => match parse_module_layer_paths_from_modules(&modules_path).await {
+        Ok(modules_path) => match parse_prediction_head_paths_from_modules(&modules_path).await {
             Ok(module_paths) => {
                 for module_path in &module_paths {
-                    download_module_layer(api, module_path)
+                    download_module_files(api, module_path)
                         .await
                         .map_err(|err| {
                             tracing::error!("Failed to download `{module_path}` files: {err}");
@@ -1112,7 +1112,7 @@ pub async fn download_module_layers(api: &ApiRepo) -> Result<Vec<String>, ApiErr
             }
             Err(err) => {
                 tracing::warn!(
-                    "`modules.json` could be downloaded but parsing the modules failed: {err}; so no additional module layers will be downloaded."
+                    "`modules.json` could be downloaded but parsing the modules failed: {err}; so no prediction head modules will be downloaded."
                 );
                 Ok(vec![])
             }
@@ -1123,12 +1123,12 @@ pub async fn download_module_layers(api: &ApiRepo) -> Result<Vec<String>, ApiErr
 
 #[cfg(feature = "candle")]
 async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBuf, ApiError> {
-    download_module_layer(api, dense_path).await
+    download_module_files(api, dense_path).await
 }
 
 #[cfg(feature = "candle")]
-async fn download_module_layer(api: &ApiRepo, module_path: &str) -> Result<PathBuf, ApiError> {
-    // Download `config.json` for the module
+async fn download_module_files(api: &ApiRepo, module_path: &str) -> Result<PathBuf, ApiError> {
+    // Download `config.json` for the module.
     let config_file = format!("{}/config.json", module_path);
     let config_path = match download_file(api, &config_file).await {
         Ok(path) => path,
@@ -1193,7 +1193,7 @@ mod tests {
             ]"#,
         );
 
-        let paths = block_on(parse_module_layer_paths_from_modules(&modules_path)).unwrap();
+        let paths = block_on(parse_prediction_head_paths_from_modules(&modules_path)).unwrap();
 
         assert_eq!(paths, vec!["2_Dense", "3_LayerNorm", "4_Dense"]);
     }
@@ -1211,7 +1211,7 @@ mod tests {
             ]"#,
         );
 
-        let err = block_on(parse_module_layer_paths_from_modules(&modules_path)).unwrap_err();
+        let err = block_on(parse_prediction_head_paths_from_modules(&modules_path)).unwrap_err();
 
         assert!(err
             .to_string()
@@ -1231,7 +1231,7 @@ mod tests {
             ]"#,
         );
 
-        let paths = block_on(parse_module_layer_paths_from_modules(&modules_path)).unwrap();
+        let paths = block_on(parse_prediction_head_paths_from_modules(&modules_path)).unwrap();
 
         assert_eq!(paths, vec!["2_Dense", "3_LayerNorm", "4_Dense"]);
     }
