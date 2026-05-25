@@ -599,128 +599,117 @@ impl CandleBackend {
 
         let mut dense_layers = Vec::new();
         let mut prediction_head = None;
-        if let Some(dense_paths) = dense_paths {
-            if !dense_paths.is_empty() {
-                if use_post_pooling_prediction {
-                    tracing::info!(
-                        "Loading post-pooling prediction module/s from path/s: {dense_paths:?}"
-                    );
+        if use_post_pooling_prediction {
+            // Modular Sentence Transformers reranker head: the post-pooling modules
+            // produce the score and are kept separate from the embedding Dense path.
+            let module_paths = dense_paths.filter(|paths| !paths.is_empty()).ok_or_else(|| {
+                BackendError::Start(
+                    "Post-pooling prediction requires at least one module".to_string(),
+                )
+            })?;
 
-                    let mut modules = Vec::new();
-                    for module_path in dense_paths.iter() {
-                        let module_safetensors =
-                            model_path.join(format!("{module_path}/model.safetensors"));
-                        let module_pytorch =
-                            model_path.join(format!("{module_path}/pytorch_model.bin"));
+            tracing::info!("Loading post-pooling prediction module/s from path/s: {module_paths:?}");
 
-                        if module_safetensors.exists() || module_pytorch.exists() {
-                            let module_config_path =
-                                model_path.join(format!("{module_path}/config.json"));
+            let mut modules = Vec::new();
+            for module_path in module_paths.iter() {
+                let module_safetensors =
+                    model_path.join(format!("{module_path}/model.safetensors"));
+                let module_pytorch = model_path.join(format!("{module_path}/pytorch_model.bin"));
 
-                            let module_config_str = std::fs::read_to_string(&module_config_path)
-                                .map_err(|err| {
-                                    BackendError::Start(format!(
-                                        "Unable to read `{module_path}/config.json` file: {err:?}",
-                                    ))
-                                })?;
-                            let module_config: PredictionHeadModuleConfig =
-                                serde_json::from_str(&module_config_str).map_err(|err| {
-                                    BackendError::Start(format!(
-                                        "Unable to parse `{module_path}/config.json`: {err:?}",
-                                    ))
-                                })?;
+                if !(module_safetensors.exists() || module_pytorch.exists()) {
+                    return Err(BackendError::Start(format!(
+                        "Post-pooling prediction module files not found for path: {module_path}"
+                    )));
+                }
 
-                            let module_vb = if module_safetensors.exists() {
-                                unsafe {
-                                    VarBuilder::from_mmaped_safetensors(
-                                        &[module_safetensors],
-                                        dtype,
-                                        &device,
-                                    )
-                                }
-                                .s()?
-                            } else {
-                                VarBuilder::from_pth(&module_pytorch, dtype, &device).s()?
-                            };
+                let module_config_path = model_path.join(format!("{module_path}/config.json"));
+                let module_config_str =
+                    std::fs::read_to_string(&module_config_path).map_err(|err| {
+                        BackendError::Start(format!(
+                            "Unable to read `{module_path}/config.json` file: {err:?}",
+                        ))
+                    })?;
+                let module_config: PredictionHeadModuleConfig =
+                    serde_json::from_str(&module_config_str).map_err(|err| {
+                        BackendError::Start(format!(
+                            "Unable to parse `{module_path}/config.json`: {err:?}",
+                        ))
+                    })?;
 
-                            let module = match module_config {
-                                PredictionHeadModuleConfig::Dense(config) => {
-                                    Box::new(Dense::load(module_vb, &config).s()?)
-                                        as Box<dyn PredictionHeadModule + Send>
-                                }
-                                PredictionHeadModuleConfig::LayerNorm(config) => {
-                                    Box::new(PredictionHeadLayerNorm::load(module_vb, &config).s()?)
-                                        as Box<dyn PredictionHeadModule + Send>
-                                }
-                            };
-                            modules.push(module);
-
-                            tracing::info!(
-                                "Loaded post-pooling prediction module from path: {module_path}"
-                            );
-                        } else {
-                            return Err(BackendError::Start(format!(
-                                "Post-pooling prediction module files not found for path: {module_path}"
-                            )));
-                        }
+                let module_vb = if module_safetensors.exists() {
+                    unsafe {
+                        VarBuilder::from_mmaped_safetensors(&[module_safetensors], dtype, &device)
                     }
-                    prediction_head = Some(modules);
+                    .s()?
                 } else {
-                    tracing::info!("Loading Dense module/s from path/s: {dense_paths:?}");
+                    VarBuilder::from_pth(&module_pytorch, dtype, &device).s()?
+                };
 
-                    for dense_path in dense_paths.iter() {
-                        let dense_safetensors =
-                            model_path.join(format!("{dense_path}/model.safetensors"));
-                        let dense_pytorch =
-                            model_path.join(format!("{dense_path}/pytorch_model.bin"));
+                let module = match module_config {
+                    PredictionHeadModuleConfig::Dense(config) => {
+                        Box::new(Dense::load(module_vb, &config).s()?)
+                            as Box<dyn PredictionHeadModule + Send>
+                    }
+                    PredictionHeadModuleConfig::LayerNorm(config) => {
+                        Box::new(PredictionHeadLayerNorm::load(module_vb, &config).s()?)
+                            as Box<dyn PredictionHeadModule + Send>
+                    }
+                };
+                modules.push(module);
 
-                        if dense_safetensors.exists() || dense_pytorch.exists() {
-                            let dense_config_path =
-                                model_path.join(format!("{dense_path}/config.json"));
+                tracing::info!("Loaded post-pooling prediction module from path: {module_path}");
+            }
 
-                            let dense_config_str = std::fs::read_to_string(&dense_config_path)
-                                .map_err(|err| {
-                                    BackendError::Start(format!(
-                                        "Unable to read `{dense_path}/config.json` file: {err:?}",
-                                    ))
-                                })?;
-                            let dense_config: DenseConfig = serde_json::from_str(&dense_config_str)
-                                .map_err(|err| {
-                                    BackendError::Start(format!(
-                                        "Unable to parse `{dense_path}/config.json`: {err:?}",
-                                    ))
-                                })?;
+            prediction_head = Some(modules);
+        } else if let Some(dense_paths) = dense_paths {
+            if !dense_paths.is_empty() {
+                tracing::info!("Loading Dense module/s from path/s: {dense_paths:?}");
 
-                            let dense_vb = if dense_safetensors.exists() {
-                                unsafe {
-                                    VarBuilder::from_mmaped_safetensors(
-                                        &[dense_safetensors],
-                                        dtype,
-                                        &device,
-                                    )
-                                }
-                                .s()?
-                            } else {
-                                VarBuilder::from_pth(&dense_pytorch, dtype, &device).s()?
-                            };
+                for dense_path in dense_paths.iter() {
+                    let dense_safetensors =
+                        model_path.join(format!("{dense_path}/model.safetensors"));
+                    let dense_pytorch = model_path.join(format!("{dense_path}/pytorch_model.bin"));
 
-                            let dense_layer = Box::new(Dense::load(dense_vb, &dense_config).s()?)
-                                as Box<dyn DenseLayer + Send>;
-                            dense_layers.push(dense_layer);
+                    if dense_safetensors.exists() || dense_pytorch.exists() {
+                        let dense_config_path =
+                            model_path.join(format!("{dense_path}/config.json"));
 
-                            tracing::info!("Loaded Dense module from path: {dense_path}");
+                        let dense_config_str = std::fs::read_to_string(&dense_config_path)
+                            .map_err(|err| {
+                                BackendError::Start(format!(
+                                    "Unable to read `{dense_path}/config.json` file: {err:?}",
+                                ))
+                            })?;
+                        let dense_config: DenseConfig = serde_json::from_str(&dense_config_str)
+                            .map_err(|err| {
+                                BackendError::Start(format!(
+                                    "Unable to parse `{dense_path}/config.json`: {err:?}",
+                                ))
+                            })?;
+
+                        let dense_vb = if dense_safetensors.exists() {
+                            unsafe {
+                                VarBuilder::from_mmaped_safetensors(
+                                    &[dense_safetensors],
+                                    dtype,
+                                    &device,
+                                )
+                            }
+                            .s()?
                         } else {
-                            tracing::warn!("Dense module files not found for path: {dense_path}");
-                        }
+                            VarBuilder::from_pth(&dense_pytorch, dtype, &device).s()?
+                        };
+
+                        let dense_layer = Box::new(Dense::load(dense_vb, &dense_config).s()?)
+                            as Box<dyn DenseLayer + Send>;
+                        dense_layers.push(dense_layer);
+
+                        tracing::info!("Loaded Dense module from path: {dense_path}");
+                    } else {
+                        tracing::warn!("Dense module files not found for path: {dense_path}",);
                     }
                 }
             }
-        }
-
-        if use_post_pooling_prediction && prediction_head.as_ref().is_none_or(Vec::is_empty) {
-            return Err(BackendError::Start(
-                "Post-pooling prediction requires at least one module".to_string(),
-            ));
         }
 
         Ok(Self {
