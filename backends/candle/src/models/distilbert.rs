@@ -455,7 +455,7 @@ impl DistilBertModel {
                     Box::new(DistilBertClassificationHead::load(vb.clone(), config)?);
                 (pool, Some(classifier))
             }
-            ModelType::Embedding(pool) | ModelType::StReranker(pool) => {
+            ModelType::Embedding(pool) => {
                 if pool == Pool::LastToken {
                     candle::bail!("`last_token` is not supported for DistilBert");
                 }

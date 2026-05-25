@@ -86,7 +86,6 @@ impl OrtBackend {
 
         let pool = match model_type {
             ModelType::Classifier => Pool::Cls,
-            ModelType::StReranker(pool) => pool,
             ModelType::Embedding(pool) => match pool {
                 Pool::Splade => {
                     return Err(BackendError::Start(format!(

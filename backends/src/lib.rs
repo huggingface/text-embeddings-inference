@@ -13,7 +13,7 @@ use tracing::{instrument, Span};
 
 use text_embeddings_backend_core::{Backend as CoreBackend, Predictions};
 pub use text_embeddings_backend_core::{
-    BackendError, Batch, Embedding, Embeddings, ModelType, Pool,
+    BackendError, BackendOutput, Batch, Embedding, Embeddings, ModelType, Pool,
 };
 
 mod dtype;
@@ -85,6 +85,7 @@ pub struct Backend {
     pub padded_model: bool,
     pub max_batch_size: Option<usize>,
     pub model_type: ModelType,
+    pub output: BackendOutput,
 }
 
 impl Backend {
@@ -99,6 +100,33 @@ impl Backend {
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
     ) -> Result<Self, BackendError> {
+        let output = default_output(&model_type);
+        Self::new_with_output(
+            model_path,
+            api_repo,
+            dtype,
+            model_type,
+            output,
+            dense_path,
+            uds_path,
+            otlp_endpoint,
+            otlp_service_name,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn new_with_output(
+        model_path: PathBuf,
+        api_repo: Option<ApiRepo>,
+        dtype: DType,
+        model_type: ModelType,
+        output: BackendOutput,
+        dense_path: Option<String>,
+        uds_path: String,
+        otlp_endpoint: Option<String>,
+        otlp_service_name: String,
+    ) -> Result<Self, BackendError> {
         let (backend_sender, backend_receiver) = mpsc::channel(8);
 
         let backend = init_backend(
@@ -106,6 +134,7 @@ impl Backend {
             api_repo,
             dtype,
             model_type.clone(),
+            output,
             dense_path,
             uds_path,
             otlp_endpoint,
@@ -126,7 +155,12 @@ impl Backend {
             padded_model,
             max_batch_size,
             model_type,
+            output,
         })
+    }
+
+    fn predicts(&self) -> bool {
+        self.output == BackendOutput::Predict
     }
 
     #[instrument(skip(self))]
@@ -180,9 +214,10 @@ impl Backend {
         }
         for shape in shapes.iter() {
             let batch = self.create_warmup_batch(*shape, max_token as u32, seq_bucket_size as u32);
-            match &self.model_type {
-                ModelType::Classifier | ModelType::StReranker(_) => self.predict(batch).await.map(|_| ()),
-                ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+            if self.predicts() {
+                self.predict(batch).await.map(|_| ())
+            } else {
+                self.embed(batch).await.map(|_| ())
             }?;
             tracing::info!("finish warmup for batch: {}, length: {}", shape.0, shape.1);
         }
@@ -240,9 +275,10 @@ impl Backend {
         }
         for shape in shapes.iter() {
             let batch = self.create_warmup_batch(*shape, max_token as u32, seq_bucket_size as u32);
-            match &self.model_type {
-                ModelType::Classifier | ModelType::StReranker(_) => self.predict(batch).await.map(|_| ()),
-                ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+            if self.predicts() {
+                self.predict(batch).await.map(|_| ())
+            } else {
+                self.embed(batch).await.map(|_| ())
             }?;
             tracing::info!(
                 "finish rocm warmup for batch: {}, length: {}",
@@ -369,9 +405,10 @@ impl Backend {
             raw_indices: vec![],
         };
 
-        match &self.model_type {
-            ModelType::Classifier | ModelType::StReranker(_) => self.predict(batch).await.map(|_| ()),
-            ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+        if self.predicts() {
+            self.predict(batch).await.map(|_| ())
+        } else {
+            self.embed(batch).await.map(|_| ())
         }
     }
 
@@ -402,9 +439,10 @@ impl Backend {
                 pooled_indices: vec![0],
                 raw_indices: vec![],
             };
-            match &self.model_type {
-                ModelType::Classifier | ModelType::StReranker(_) => self.predict(batch).await.map(|_| ()),
-                ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+            if self.predicts() {
+                self.predict(batch).await.map(|_| ())
+            } else {
+                self.embed(batch).await.map(|_| ())
             }
         }
     }
@@ -445,6 +483,7 @@ async fn init_backend(
     api_repo: Option<ApiRepo>,
     dtype: DType,
     model_type: ModelType,
+    output: BackendOutput,
     dense_path: Option<String>,
     uds_path: String,
     otlp_endpoint: Option<String>,
@@ -513,9 +552,9 @@ async fn init_backend(
         {
             let dense_paths = if let Some(api_repo) = api_repo.as_ref() {
                 let start = std::time::Instant::now();
-                let st_reranker = matches!(model_type, ModelType::StReranker(_));
-                let dense_paths = if st_reranker {
-                    download_st_modules(api_repo)
+                let prediction_head = uses_post_pooling_prediction(&model_type, output);
+                let dense_paths = if prediction_head {
+                    download_module_layers(api_repo)
                         .await
                         .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?
                 } else {
@@ -523,20 +562,24 @@ async fn init_backend(
                         .await
                         .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?
                 };
-                if st_reranker {
-                    tracing::info!("Sentence Transformers modules downloaded in {:?}", start.elapsed());
+                if prediction_head {
+                    tracing::info!(
+                        "Additional module layers downloaded in {:?}",
+                        start.elapsed()
+                    );
                 } else {
                     tracing::info!("Dense modules downloaded in {:?}", start.elapsed());
                 }
                 Some(dense_paths)
             } else {
-                // TODO(alvarobartt): eventually detach the Sentence Transformers module handling
-                // to prevent from duplicated code here and there
+                // TODO(alvarobartt): eventually detach the module handling to prevent duplicated
+                // code here and there.
                 // For local models, try to parse modules.json and handle dense_path logic
                 let modules_json_path = model_path.join("modules.json");
                 if modules_json_path.exists() {
-                    let module_paths = if matches!(model_type, ModelType::StReranker(_)) {
-                        parse_st_module_paths_from_modules(&modules_json_path).await
+                    let prediction_head = uses_post_pooling_prediction(&model_type, output);
+                    let module_paths = if prediction_head {
+                        parse_module_layer_paths_from_modules(&modules_json_path).await
                     } else {
                         parse_dense_paths_from_modules(&modules_json_path).await
                     };
@@ -571,12 +614,22 @@ async fn init_backend(
                 }
             };
 
-            let backend = CandleBackend::new(
-                &model_path,
-                dtype.to_string(),
-                model_type.clone(),
-                dense_paths,
-            );
+            let prediction_head = uses_post_pooling_prediction(&model_type, output);
+            let backend = if prediction_head {
+                CandleBackend::new_with_post_pooling_prediction(
+                    &model_path,
+                    dtype.to_string(),
+                    model_type.clone(),
+                    dense_paths,
+                )
+            } else {
+                CandleBackend::new(
+                    &model_path,
+                    dtype.to_string(),
+                    model_type.clone(),
+                    dense_paths,
+                )
+            };
             match backend {
                 Ok(b) => return Ok(Box::new(b)),
                 Err(err) => {
@@ -619,6 +672,17 @@ async fn init_backend(
         ))
     } else {
         Err(BackendError::NoBackend)
+    }
+}
+
+fn uses_post_pooling_prediction(model_type: &ModelType, output: BackendOutput) -> bool {
+    output == BackendOutput::Predict && matches!(model_type, ModelType::Embedding(_))
+}
+
+fn default_output(model_type: &ModelType) -> BackendOutput {
+    match model_type {
+        ModelType::Classifier => BackendOutput::Predict,
+        ModelType::Embedding(_) => BackendOutput::Embed,
     }
 }
 
@@ -883,7 +947,7 @@ async fn parse_dense_paths_from_modules(
 }
 
 #[cfg(feature = "candle")]
-async fn parse_st_module_paths_from_modules(
+async fn parse_module_layer_paths_from_modules(
     modules_path: &PathBuf,
 ) -> Result<Vec<String>, std::io::Error> {
     let content = std::fs::read_to_string(modules_path)?;
@@ -981,21 +1045,23 @@ pub async fn download_dense_modules(
 
 #[cfg(feature = "candle")]
 #[instrument(skip_all)]
-pub async fn download_st_modules(api: &ApiRepo) -> Result<Vec<String>, ApiError> {
+pub async fn download_module_layers(api: &ApiRepo) -> Result<Vec<String>, ApiError> {
     match download_file(api, "modules.json").await {
-        Ok(modules_path) => match parse_st_module_paths_from_modules(&modules_path).await {
+        Ok(modules_path) => match parse_module_layer_paths_from_modules(&modules_path).await {
             Ok(module_paths) => {
                 for module_path in &module_paths {
-                    download_st_module(api, module_path).await.map_err(|err| {
-                        tracing::error!("Failed to download `{module_path}` files: {err}");
-                        err
-                    })?;
+                    download_module_layer(api, module_path)
+                        .await
+                        .map_err(|err| {
+                            tracing::error!("Failed to download `{module_path}` files: {err}");
+                            err
+                        })?;
                 }
                 Ok(module_paths)
             }
             Err(err) => {
                 tracing::warn!(
-                    "`modules.json` could be downloaded but parsing the modules failed: {err}; so no Sentence Transformers modules will be downloaded."
+                    "`modules.json` could be downloaded but parsing the modules failed: {err}; so no additional module layers will be downloaded."
                 );
                 Ok(vec![])
             }
@@ -1006,12 +1072,12 @@ pub async fn download_st_modules(api: &ApiRepo) -> Result<Vec<String>, ApiError>
 
 #[cfg(feature = "candle")]
 async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBuf, ApiError> {
-    download_st_module(api, dense_path).await
+    download_module_layer(api, dense_path).await
 }
 
 #[cfg(feature = "candle")]
-async fn download_st_module(api: &ApiRepo, module_path: &str) -> Result<PathBuf, ApiError> {
-    // Download `config.json` for the Dense module
+async fn download_module_layer(api: &ApiRepo, module_path: &str) -> Result<PathBuf, ApiError> {
+    // Download `config.json` for the module
     let config_file = format!("{}/config.json", module_path);
     let config_path = match download_file(api, &config_file).await {
         Ok(path) => path,
@@ -1077,7 +1143,7 @@ mod tests {
             ]"#,
         );
 
-        let paths = block_on(parse_st_module_paths_from_modules(&modules_path)).unwrap();
+        let paths = block_on(parse_module_layer_paths_from_modules(&modules_path)).unwrap();
 
         assert_eq!(paths, vec!["2_Dense", "3_LayerNorm", "5_Dense"]);
     }
@@ -1095,7 +1161,7 @@ mod tests {
             ]"#,
         );
 
-        let paths = block_on(parse_st_module_paths_from_modules(&modules_path)).unwrap();
+        let paths = block_on(parse_module_layer_paths_from_modules(&modules_path)).unwrap();
 
         assert_eq!(paths, vec!["2_Dense", "3_LayerNorm", "4_Dense"]);
     }

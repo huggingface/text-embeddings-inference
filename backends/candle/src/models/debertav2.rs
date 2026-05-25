@@ -1094,7 +1094,7 @@ impl DebertaV2Model {
                 let classifier = DebertaV2SeqClassificationHead::load(vb.clone(), config)?;
                 (Some(classifier), None)
             }
-            ModelType::Embedding(pool) | ModelType::StReranker(pool) => (None, Some(pool)),
+            ModelType::Embedding(pool) => (None, Some(pool)),
         };
 
         let embeddings = match DebertaV2Embeddings::load(vb.pp("embeddings"), config) {

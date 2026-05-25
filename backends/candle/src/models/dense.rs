@@ -28,7 +28,7 @@ impl DenseActivation {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(untagged)]
-pub enum StModuleConfig {
+pub enum PostPoolingLayerConfig {
     Dense(DenseConfig),
     LayerNorm(LayerNormConfig),
 }
@@ -50,7 +50,7 @@ pub struct LayerNormConfig {
     dimension: usize,
 }
 
-pub trait StModule {
+pub trait PostPoolingLayer {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
 }
 
@@ -84,7 +84,7 @@ impl Dense {
     }
 }
 
-impl StModule for Dense {
+impl PostPoolingLayer for Dense {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
@@ -94,11 +94,11 @@ impl StModule for Dense {
 }
 
 #[derive(Debug)]
-pub struct StLayerNorm {
+pub struct PostPoolingLayerNorm {
     layer_norm: LayerNorm,
 }
 
-impl StLayerNorm {
+impl PostPoolingLayerNorm {
     pub fn load(vb: VarBuilder, config: &LayerNormConfig) -> Result<Self> {
         Ok(Self {
             layer_norm: LayerNorm::load(vb.clone(), config.dimension, 1e-5)
@@ -107,7 +107,7 @@ impl StLayerNorm {
     }
 }
 
-impl StModule for StLayerNorm {
+impl PostPoolingLayer for PostPoolingLayerNorm {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         self.layer_norm.forward(hidden_states, None)
     }

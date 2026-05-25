@@ -26,7 +26,6 @@ impl PythonBackend {
     ) -> Result<Self, BackendError> {
         let pool = match model_type {
             ModelType::Classifier => Pool::Cls,
-            ModelType::StReranker(pool) => pool,
             ModelType::Embedding(pool) => pool,
         };
 

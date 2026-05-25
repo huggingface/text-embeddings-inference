@@ -26,7 +26,7 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use text_embeddings_backend::{DType, Pool};
+use text_embeddings_backend::{BackendOutput, DType, ModelType as BackendModelType, Pool};
 use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
@@ -106,7 +106,7 @@ pub async fn run(
     };
 
     if let Some(api_repo) = api_repo.as_ref() {
-        download_st_reranker_detection_files(api_repo).await;
+        download_modular_reranker_detection_files(api_repo).await;
     }
 
     // Load config
@@ -116,12 +116,16 @@ pub async fn run(
         serde_json::from_str(&config).context("Failed to parse `config.json`")?;
 
     // Set model type from config
-    let backend_model_type = get_backend_model_type(&config, &model_root, pooling)?;
+    let (backend_model_type, backend_output) =
+        get_backend_model_type(&config, &model_root, pooling)?;
 
     // Info model type
-    let model_type = match &backend_model_type {
-        text_embeddings_backend::ModelType::Classifier => classifier_model_type(&config)?,
-        text_embeddings_backend::ModelType::StReranker(_) => {
+    let model_type = match (&backend_model_type, backend_output) {
+        (text_embeddings_backend::ModelType::Classifier, _) => classifier_model_type(&config)?,
+        (
+            text_embeddings_backend::ModelType::Embedding(_),
+            text_embeddings_backend::BackendOutput::Predict,
+        ) => {
             let classifier_model = ClassifierModel {
                 id2label: config
                     .id2label
@@ -134,11 +138,12 @@ pub async fn run(
             };
             ModelType::Reranker(classifier_model)
         }
-        text_embeddings_backend::ModelType::Embedding(pool) => {
-            ModelType::Embedding(EmbeddingModel {
-                pooling: pool.to_string(),
-            })
-        }
+        (
+            text_embeddings_backend::ModelType::Embedding(pool),
+            text_embeddings_backend::BackendOutput::Embed,
+        ) => ModelType::Embedding(EmbeddingModel {
+            pooling: pool.to_string(),
+        }),
     };
 
     // Load tokenizer
@@ -278,11 +283,12 @@ pub async fn run(
 
     // Create backend
     tracing::info!("Starting model backend");
-    let backend = text_embeddings_backend::Backend::new(
+    let backend = text_embeddings_backend::Backend::new_with_output(
         model_root,
         api_repo,
         dtype.clone(),
         backend_model_type,
+        backend_output,
         dense_path,
         uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_string()),
         otlp_endpoint.clone(),
@@ -403,7 +409,7 @@ fn get_backend_model_type(
     config: &ModelConfig,
     model_root: &Path,
     pooling: Option<text_embeddings_backend::Pool>,
-) -> Result<text_embeddings_backend::ModelType> {
+) -> Result<(BackendModelType, BackendOutput)> {
     for arch in &config.architectures {
         // Edge case affecting `Alibaba-NLP/gte-multilingual-base` and possibly other fine-tunes of
         // the same base model. More context at https://huggingface.co/Alibaba-NLP/gte-multilingual-base/discussions/7
@@ -415,8 +421,9 @@ fn get_backend_model_type(
         }
 
         if Some(text_embeddings_backend::Pool::Splade) == pooling && arch.ends_with("MaskedLM") {
-            return Ok(text_embeddings_backend::ModelType::Embedding(
-                text_embeddings_backend::Pool::Splade,
+            return Ok((
+                BackendModelType::Embedding(text_embeddings_backend::Pool::Splade),
+                BackendOutput::Embed,
             ));
         } else if arch.ends_with("Classification") {
             if pooling.is_some() {
@@ -424,7 +431,7 @@ fn get_backend_model_type(
                     "`--pooling` arg is set but model is a classifier. Ignoring `--pooling` arg."
                 );
             }
-            return Ok(text_embeddings_backend::ModelType::Classifier);
+            return Ok((BackendModelType::Classifier, BackendOutput::Predict));
         }
     }
 
@@ -434,13 +441,13 @@ fn get_backend_model_type(
         ));
     }
 
-    if let Some(pool) = detect_st_modular_reranker(model_root)? {
+    if let Some(pool) = detect_modular_reranker(model_root)? {
         if pooling.is_some() {
             tracing::warn!(
-                "`--pooling` arg is set but model is a Sentence Transformers reranker. Using the pooling module config instead."
+                "`--pooling` arg is set but model is a modular reranker. Using the pooling module config instead."
             );
         }
-        return Ok(text_embeddings_backend::ModelType::StReranker(pool));
+        return Ok((BackendModelType::Embedding(pool), BackendOutput::Predict));
     }
 
     // Set pooling
@@ -467,19 +474,19 @@ fn get_backend_model_type(
         }
     };
 
-    Ok(text_embeddings_backend::ModelType::Embedding(pool))
+    Ok((BackendModelType::Embedding(pool), BackendOutput::Embed))
 }
 
-fn detect_st_modular_reranker(model_root: &Path) -> Result<Option<Pool>> {
+fn detect_modular_reranker(model_root: &Path) -> Result<Option<Pool>> {
     let modules_path = model_root.join("modules.json");
     let modules = match fs::read_to_string(&modules_path) {
         Ok(content) => content,
         Err(_) => return Ok(None),
     };
-    let modules: Vec<StModuleConfig> = match serde_json::from_str(&modules) {
+    let modules: Vec<ModuleConfig> = match serde_json::from_str(&modules) {
         Ok(modules) => modules,
         Err(err) => {
-            tracing::warn!("Failed to parse `modules.json` for ST reranker detection: {err}");
+            tracing::warn!("Failed to parse `modules.json` for modular reranker detection: {err}");
             return Ok(None);
         }
     };
@@ -504,11 +511,11 @@ fn detect_st_modular_reranker(model_root: &Path) -> Result<Option<Pool>> {
         Ok(content) => content,
         Err(_) => return Ok(None),
     };
-    let dense_config: StDenseDetectionConfig = match serde_json::from_str(&dense_config) {
+    let dense_config: DenseDetectionConfig = match serde_json::from_str(&dense_config) {
         Ok(config) => config,
         Err(err) => {
             tracing::warn!(
-                "Failed to parse `{}` for ST reranker detection: {err}",
+                "Failed to parse `{}` for modular reranker detection: {err}",
                 dense_config_path.display()
             );
             return Ok(None);
@@ -524,24 +531,24 @@ fn detect_st_modular_reranker(model_root: &Path) -> Result<Option<Pool>> {
     let pooling_config_path = model_root.join(&pooling_module.path).join("config.json");
     let pooling_config = fs::read_to_string(&pooling_config_path).with_context(|| {
         format!(
-            "Failed to read ST reranker pooling config `{}`",
+            "Failed to read modular reranker pooling config `{}`",
             pooling_config_path.display()
         )
     })?;
     let pooling_config: PoolConfig = serde_json::from_str(&pooling_config)
-        .context("Failed to parse ST reranker pooling config")?;
+        .context("Failed to parse modular reranker pooling config")?;
 
     Ok(Some(Pool::try_from(pooling_config)?))
 }
 
-async fn download_st_reranker_detection_files(api: &ApiRepo) {
+async fn download_modular_reranker_detection_files(api: &ApiRepo) {
     let Ok(modules_path) = api.get("modules.json").await else {
         return;
     };
     let Ok(modules) = fs::read_to_string(modules_path) else {
         return;
     };
-    let Ok(modules) = serde_json::from_str::<Vec<StModuleConfig>>(&modules) else {
+    let Ok(modules) = serde_json::from_str::<Vec<ModuleConfig>>(&modules) else {
         return;
     };
 
@@ -559,13 +566,13 @@ async fn download_st_reranker_detection_files(api: &ApiRepo) {
 }
 
 #[derive(Debug, Deserialize)]
-struct StModuleConfig {
+struct ModuleConfig {
     path: String,
     #[serde(rename = "type")]
     module_type: String,
 }
 
-impl StModuleConfig {
+impl ModuleConfig {
     fn is_transformer(&self) -> bool {
         matches!(
             self.module_type.as_str(),
@@ -591,7 +598,7 @@ impl StModuleConfig {
 }
 
 #[derive(Debug, Deserialize)]
-struct StDenseDetectionConfig {
+struct DenseDetectionConfig {
     out_features: usize,
     module_output_name: Option<String>,
 }
@@ -757,7 +764,10 @@ mod tests {
 
         assert_eq!(
             model_type,
-            text_embeddings_backend::ModelType::StReranker(Pool::Cls)
+            (
+                text_embeddings_backend::ModelType::Embedding(Pool::Cls),
+                BackendOutput::Predict
+            )
         );
     }
 
@@ -792,7 +802,10 @@ mod tests {
 
         assert_eq!(
             model_type,
-            text_embeddings_backend::ModelType::StReranker(Pool::Cls)
+            (
+                text_embeddings_backend::ModelType::Embedding(Pool::Cls),
+                BackendOutput::Predict
+            )
         );
     }
 
@@ -823,7 +836,10 @@ mod tests {
 
         assert_eq!(
             model_type,
-            text_embeddings_backend::ModelType::Embedding(Pool::Cls)
+            (
+                text_embeddings_backend::ModelType::Embedding(Pool::Cls),
+                BackendOutput::Embed
+            )
         );
     }
 }

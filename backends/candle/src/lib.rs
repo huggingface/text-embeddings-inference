@@ -25,8 +25,9 @@ use crate::models::{
     BertConfig, BertModel, DebertaV2Config, DebertaV2Model, Dense, DistilBertConfig,
     DistilBertModel, GTEConfig, GTEModel, Gemma3Config, Gemma3Model, JinaBertModel,
     JinaCodeBertModel, LlamaConfig, MPNetConfig, MPNetModel, MistralConfig, Model,
-    ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Pplx1Config, Pplx1Model,
-    Qwen2Config, Qwen3Config, Qwen3Model, StLayerNorm, StModule, StModuleConfig,
+    ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, PostPoolingLayer,
+    PostPoolingLayerConfig, PostPoolingLayerNorm, Pplx1Config, Pplx1Model, Qwen2Config,
+    Qwen3Config, Qwen3Model,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -156,8 +157,8 @@ enum Config {
 pub struct CandleBackend {
     device: Device,
     model: Box<dyn Model + Send>,
-    st_modules: Vec<Box<dyn StModule + Send>>,
-    predict_uses_st_modules: bool,
+    post_pooling_layers: Vec<Box<dyn PostPoolingLayer + Send>>,
+    use_post_pooling_prediction: bool,
 }
 
 impl CandleBackend {
@@ -167,11 +168,25 @@ impl CandleBackend {
         model_type: ModelType,
         dense_paths: Option<Vec<String>>,
     ) -> Result<Self, BackendError> {
-        let (predict_uses_st_modules, model_type) = match model_type {
-            ModelType::StReranker(pool) => (true, ModelType::Embedding(pool)),
-            model_type => (false, model_type),
-        };
+        Self::load(model_path, dtype, model_type, dense_paths, false)
+    }
 
+    pub fn new_with_post_pooling_prediction(
+        model_path: &Path,
+        dtype: String,
+        model_type: ModelType,
+        dense_paths: Option<Vec<String>>,
+    ) -> Result<Self, BackendError> {
+        Self::load(model_path, dtype, model_type, dense_paths, true)
+    }
+
+    fn load(
+        model_path: &Path,
+        dtype: String,
+        model_type: ModelType,
+        dense_paths: Option<Vec<String>>,
+        use_post_pooling_prediction: bool,
+    ) -> Result<Self, BackendError> {
         // Default files
         let default_safetensors = model_path.join("model.safetensors");
         let default_pytorch = model_path.join("pytorch_model.bin");
@@ -582,12 +597,10 @@ impl CandleBackend {
             },
         };
 
-        let mut st_modules = Vec::new();
+        let mut post_pooling_layers = Vec::new();
         if let Some(dense_paths) = dense_paths {
             if !dense_paths.is_empty() {
-                tracing::info!(
-                    "Loading Sentence Transformers module/s from path/s: {dense_paths:?}"
-                );
+                tracing::info!("Loading post-pooling layer/s from path/s: {dense_paths:?}");
 
                 for module_path in dense_paths.iter() {
                     let module_safetensors =
@@ -605,7 +618,7 @@ impl CandleBackend {
                                     "Unable to read `{module_path}/config.json` file: {err:?}",
                                 ))
                             })?;
-                        let module_config: StModuleConfig =
+                        let module_config: PostPoolingLayerConfig =
                             serde_json::from_str(&module_config_str).map_err(|err| {
                                 BackendError::Start(format!(
                                     "Unable to parse `{module_path}/config.json`: {err:?}",
@@ -625,24 +638,22 @@ impl CandleBackend {
                             VarBuilder::from_pth(&module_pytorch, dtype, &device).s()?
                         };
 
-                        let st_module = match module_config {
-                            StModuleConfig::Dense(config) => {
+                        let layer = match module_config {
+                            PostPoolingLayerConfig::Dense(config) => {
                                 Box::new(Dense::load(module_vb, &config).s()?)
-                                    as Box<dyn StModule + Send>
+                                    as Box<dyn PostPoolingLayer + Send>
                             }
-                            StModuleConfig::LayerNorm(config) => {
-                                Box::new(StLayerNorm::load(module_vb, &config).s()?)
-                                    as Box<dyn StModule + Send>
+                            PostPoolingLayerConfig::LayerNorm(config) => {
+                                Box::new(PostPoolingLayerNorm::load(module_vb, &config).s()?)
+                                    as Box<dyn PostPoolingLayer + Send>
                             }
                         };
-                        st_modules.push(st_module);
+                        post_pooling_layers.push(layer);
 
-                        tracing::info!(
-                            "Loaded Sentence Transformers module from path: {module_path}"
-                        );
+                        tracing::info!("Loaded post-pooling layer from path: {module_path}");
                     } else {
                         tracing::warn!(
-                            "Sentence Transformers module files not found for path: {module_path}"
+                            "Post-pooling layer files not found for path: {module_path}"
                         );
                     }
                 }
@@ -652,15 +663,15 @@ impl CandleBackend {
         Ok(Self {
             device,
             model: model?,
-            st_modules,
-            predict_uses_st_modules,
+            post_pooling_layers,
+            use_post_pooling_prediction,
         })
     }
 
-    fn predict_st_reranker(&self, batch: Batch) -> Result<Tensor, BackendError> {
+    fn predict_from_pooled_embeddings(&self, batch: Batch) -> Result<Tensor, BackendError> {
         let batch_size = batch.len();
         if batch_size <= 1 {
-            return self.predict_st_reranker_batch(batch);
+            return self.predict_single_with_post_pooling_layers(batch);
         }
 
         let mut results = Vec::with_capacity(batch_size);
@@ -677,20 +688,23 @@ impl CandleBackend {
                 pooled_indices: vec![0],
                 raw_indices: vec![],
             };
-            results.push(self.predict_st_reranker_batch(single)?);
+            results.push(self.predict_single_with_post_pooling_layers(single)?);
         }
 
         Tensor::cat(&results, 0).e()
     }
 
-    fn predict_st_reranker_batch(&self, batch: Batch) -> Result<Tensor, BackendError> {
+    fn predict_single_with_post_pooling_layers(
+        &self,
+        batch: Batch,
+    ) -> Result<Tensor, BackendError> {
         let (Some(mut pooled_embeddings), _) = self.model.embed(batch).e()? else {
             return Err(BackendError::Inference(
-                "ST reranker model did not return pooled embeddings".to_string(),
+                "prediction head did not receive pooled embeddings".to_string(),
             ));
         };
-        for module in &self.st_modules {
-            pooled_embeddings = module.forward(&pooled_embeddings).e()?;
+        for layer in &self.post_pooling_layers {
+            pooled_embeddings = layer.forward(&pooled_embeddings).e()?;
         }
         Ok(pooled_embeddings)
     }
@@ -728,12 +742,12 @@ impl Backend for CandleBackend {
         // Run forward
         let (pooled_embeddings, raw_embeddings) = self.model.embed(batch).e()?;
 
-        // Apply Sentence Transformers modules sequentially if available.
+        // Apply optional post-pooling layers sequentially if available.
         let pooled_embeddings = match pooled_embeddings {
             None => None,
             Some(mut pooled_embeddings) => {
-                for module in &self.st_modules {
-                    pooled_embeddings = module.forward(&pooled_embeddings).e()?;
+                for layer in &self.post_pooling_layers {
+                    pooled_embeddings = layer.forward(&pooled_embeddings).e()?;
                 }
                 Some(pooled_embeddings)
             }
@@ -771,8 +785,8 @@ impl Backend for CandleBackend {
     fn predict(&self, batch: Batch) -> Result<Predictions, BackendError> {
         let batch_size = batch.len();
 
-        let results = if self.predict_uses_st_modules {
-            self.predict_st_reranker(batch)?
+        let results = if self.use_post_pooling_prediction {
+            self.predict_from_pooled_embeddings(batch)?
         } else {
             self.model.predict(batch).e()?
         };

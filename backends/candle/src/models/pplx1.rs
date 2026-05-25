@@ -15,7 +15,7 @@ impl Pplx1Model {
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for Pplx1")
             }
-            ModelType::Embedding(ref pool) | ModelType::StReranker(ref pool) => {
+            ModelType::Embedding(ref pool) => {
                 if pool != &Pool::Mean {
                     candle::bail!("Pplx1 only supports mean pooling, got {:?}", pool);
                 }

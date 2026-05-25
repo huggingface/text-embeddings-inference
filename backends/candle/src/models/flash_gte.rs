@@ -192,7 +192,7 @@ impl FlashGTEModel {
                 let classifier = GTEClassificationHead::load(vb.clone(), config)?;
                 (pool, Some(classifier))
             }
-            ModelType::Embedding(pool) | ModelType::StReranker(pool) => (pool, None),
+            ModelType::Embedding(pool) => (pool, None),
         };
 
         let (word_embeddings, token_type_embeddings, layers, embeddings_norm) =

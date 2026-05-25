@@ -531,7 +531,7 @@ impl ModernBertModel {
 
                 (pool, Some(classifier))
             }
-            ModelType::Embedding(pool) | ModelType::StReranker(pool) => {
+            ModelType::Embedding(pool) => {
                 if pool == Pool::Splade {
                     candle::bail!("`splade` is not supported for ModernBert")
                 }

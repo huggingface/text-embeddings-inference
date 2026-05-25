@@ -499,10 +499,7 @@ impl Infer {
 
     #[instrument(skip(self))]
     pub fn is_classifier(&self) -> bool {
-        matches!(
-            self.backend.model_type,
-            ModelType::Classifier | ModelType::StReranker(_)
-        )
+        self.backend.output == text_embeddings_backend::BackendOutput::Predict
     }
 
     #[instrument(skip(self))]
@@ -549,8 +546,8 @@ async fn batching_task(queue: Queue, notify: Arc<Notify>, embed_sender: mpsc::Se
 #[instrument(skip_all)]
 async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextBatch>) {
     while let Some(batch) = embed_receiver.recv().await {
-        match &backend.model_type {
-            ModelType::Classifier | ModelType::StReranker(_) => {
+        match backend.output {
+            text_embeddings_backend::BackendOutput::Predict => {
                 let results = backend.predict(batch.1).await;
 
                 // Handle sending responses in a blocking task to avoid starving the backend
@@ -581,7 +578,7 @@ async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextB
                     }
                 });
             }
-            ModelType::Embedding(_) => {
+            text_embeddings_backend::BackendOutput::Embed => {
                 let results = backend.embed(batch.1).await;
 
                 // Handle sending responses in a blocking task to avoid starving the backend

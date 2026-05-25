@@ -688,7 +688,7 @@ impl NomicBertModel {
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for Nomic")
             }
-            ModelType::Embedding(pool) | ModelType::StReranker(pool) => {
+            ModelType::Embedding(pool) => {
                 if pool == Pool::Splade {
                     candle::bail!("`splade` is not supported for Nomic")
                 }

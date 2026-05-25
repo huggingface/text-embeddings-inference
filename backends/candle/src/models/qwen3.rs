@@ -411,7 +411,7 @@ impl Qwen3Model {
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for Qwen3")
             }
-            ModelType::Embedding(pool) | ModelType::StReranker(pool) => pool,
+            ModelType::Embedding(pool) => pool,
         };
 
         // The Qwen3-Reranker models contain the `model` key
