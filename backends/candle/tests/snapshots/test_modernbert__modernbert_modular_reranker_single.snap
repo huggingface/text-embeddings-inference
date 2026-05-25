@@ -1,0 +1,6 @@
+---
+source: backends/candle/tests/test_modernbert.rs
+expression: predictions_single
+---
+- - 5.553596
+

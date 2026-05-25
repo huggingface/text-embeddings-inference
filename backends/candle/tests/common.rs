@@ -268,6 +268,72 @@ fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBuf, Api
     Ok(config_path.parent().unwrap().to_path_buf())
 }
 
+#[derive(Deserialize)]
+struct RawModuleConfig {
+    path: String,
+    #[serde(rename = "type")]
+    module_type: String,
+}
+
+/// Returns the ordered post-pooling module paths of a modular Sentence
+/// Transformers reranker, i.e. every module after the `Pooling` one (its scoring
+/// head). Parsed leniently so both legacy and current module type strings work.
+fn prediction_head_paths(modules_path: &Path) -> Result<Vec<String>> {
+    let content = std::fs::read_to_string(modules_path)?;
+    let modules: Vec<RawModuleConfig> = serde_json::from_str(&content)?;
+    let pooling_index = modules
+        .iter()
+        .position(|module| module.module_type.contains("Pooling"))
+        .ok_or_else(|| anyhow::anyhow!("`modules.json` has no Pooling module"))?;
+    Ok(modules[pooling_index + 1..]
+        .iter()
+        .map(|module| module.path.clone())
+        .collect())
+}
+
+/// Downloads a modular Sentence Transformers reranker (embedding backbone plus the
+/// post-pooling scoring head modules) and returns its root and the ordered head
+/// module paths to pass to [`CandleBackend::new_with_post_pooling_prediction`].
+#[allow(unused)]
+pub fn download_modular_reranker_artifacts(
+    model_id: &'static str,
+    revision: Option<&'static str>,
+) -> Result<(PathBuf, Vec<String>)> {
+    let mut builder = ApiBuilder::from_env().with_progress(false);
+
+    if let Ok(token) = std::env::var("HF_TOKEN") {
+        builder = builder.with_token(Some(token));
+    }
+
+    if let Some(cache_dir) = std::env::var_os("HUGGINGFACE_HUB_CACHE") {
+        builder = builder.with_cache_dir(cache_dir.into());
+    }
+
+    let api = builder.build().unwrap();
+    let api_repo = if let Some(revision) = revision {
+        api.repo(Repo::with_revision(
+            model_id.to_string(),
+            RepoType::Model,
+            revision.to_string(),
+        ))
+    } else {
+        api.repo(Repo::new(model_id.to_string(), RepoType::Model))
+    };
+
+    api_repo.get("config.json")?;
+    api_repo.get("tokenizer.json")?;
+    let model_files = download_safetensors(&api_repo)?;
+
+    let modules_path = api_repo.get("modules.json")?;
+    let head_paths = prediction_head_paths(&modules_path)?;
+    for path in &head_paths {
+        download_dense_module(&api_repo, path)?;
+    }
+
+    let model_root = model_files[0].parent().unwrap().to_path_buf();
+    Ok((model_root, head_paths))
+}
+
 #[allow(unused)]
 pub(crate) fn relative_matcher() -> YamlMatcher<SnapshotScores> {
     YamlMatcher::new()
