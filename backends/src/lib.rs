@@ -501,46 +501,47 @@ async fn init_backend(
     }
 
     #[cfg(feature = "ort")]
-    {
+    'ort: {
         if post_pooling_prediction {
             tracing::info!(
                 "Skipping ORT backend because post-pooling prediction heads require Candle"
             );
-        } else {
-            if let Some(api_repo) = api_repo.as_ref() {
-                let start = std::time::Instant::now();
-                let model_files = download_onnx(api_repo.clone())
-                    .await
-                    .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
-                match model_files.is_empty() {
-                    true => {
-                        tracing::error!("Model ONNX files not found in the repository. You can easily create ONNX files using the following scripts: https://gist.github.com/tomaarsen/4b00b0e3be8884efa64cfab9230b161f, or use this Space: https://huggingface.co/spaces/sentence-transformers/backend-export")
-                    }
-                    false => {
-                        tracing::info!("Model ONNX weights downloaded in {:?}", start.elapsed())
-                    }
+            break 'ort;
+        }
+
+        if let Some(api_repo) = api_repo.as_ref() {
+            let start = std::time::Instant::now();
+            let model_files = download_onnx(api_repo.clone())
+                .await
+                .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
+            match model_files.is_empty() {
+                true => {
+                    tracing::error!("Model ONNX files not found in the repository. You can easily create ONNX files using the following scripts: https://gist.github.com/tomaarsen/4b00b0e3be8884efa64cfab9230b161f, or use this Space: https://huggingface.co/spaces/sentence-transformers/backend-export")
+                }
+                false => {
+                    tracing::info!("Model ONNX weights downloaded in {:?}", start.elapsed())
                 }
             }
+        }
 
-            // NOTE: for ONNX we need to retrieve the `tokenizer_config.json` to identify which
-            // `padding_side` needs to be applied for the input processing and the pooling
-            if let Some(api_repo) = api_repo.as_ref() {
-                tracing::info!("Downloading `tokenizer_config.json`");
-                match api_repo.get("tokenizer_config.json").await {
-                    Ok(_) => (),
-                    Err(err) => {
-                        tracing::warn!("Could not download `tokenizer_config.json`: {}", err)
-                    }
-                }
-            }
-
-            let backend = OrtBackend::new(&model_path, dtype.to_string(), model_type.clone());
-            match backend {
-                Ok(b) => return Ok(Box::new(b)),
+        // NOTE: for ONNX we need to retrieve the `tokenizer_config.json` to identify which
+        // `padding_side` needs to be applied for the input processing and the pooling
+        if let Some(api_repo) = api_repo.as_ref() {
+            tracing::info!("Downloading `tokenizer_config.json`");
+            match api_repo.get("tokenizer_config.json").await {
+                Ok(_) => (),
                 Err(err) => {
-                    tracing::error!("Could not start ORT backend: {err}");
-                    backend_start_failed = true;
+                    tracing::warn!("Could not download `tokenizer_config.json`: {}", err)
                 }
+            }
+        }
+
+        let backend = OrtBackend::new(&model_path, dtype.to_string(), model_type.clone());
+        match backend {
+            Ok(b) => return Ok(Box::new(b)),
+            Err(err) => {
+                tracing::error!("Could not start ORT backend: {err}");
+                backend_start_failed = true;
             }
         }
     }
@@ -653,31 +654,32 @@ async fn init_backend(
 
     if cfg!(feature = "python") {
         #[cfg(feature = "python")]
-        {
+        'python: {
             if post_pooling_prediction {
                 tracing::info!(
                     "Skipping Python backend because post-pooling prediction heads require Candle"
                 );
-            } else {
-                let backend = std::thread::spawn(move || {
-                    PythonBackend::new(
-                        model_path.to_str().unwrap().to_string(),
-                        dtype.to_string(),
-                        model_type,
-                        uds_path,
-                        otlp_endpoint,
-                        otlp_service_name,
-                    )
-                })
-                .join()
-                .expect("Python Backend management thread failed");
+                break 'python;
+            }
 
-                match backend {
-                    Ok(b) => return Ok(Box::new(b)),
-                    Err(err) => {
-                        tracing::error!("Could not start Python backend: {err}");
-                        backend_start_failed = true;
-                    }
+            let backend = std::thread::spawn(move || {
+                PythonBackend::new(
+                    model_path.to_str().unwrap().to_string(),
+                    dtype.to_string(),
+                    model_type,
+                    uds_path,
+                    otlp_endpoint,
+                    otlp_service_name,
+                )
+            })
+            .join()
+            .expect("Python Backend management thread failed");
+
+            match backend {
+                Ok(b) => return Ok(Box::new(b)),
+                Err(err) => {
+                    tracing::error!("Could not start Python backend: {err}");
+                    backend_start_failed = true;
                 }
             }
         }
