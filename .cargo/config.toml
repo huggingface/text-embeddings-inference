@@ -1,12 +1,6 @@
 [build]
 rustflags = ["-C", "target-cpu=native"]
 
-[env]
-# CUDA 13 exposes these driver API pointer typedefs with versioned names, while
-# the CUTLASS revision bundled by candle-flash-attn still references the
-# unversioned names when CUDA minor < 5. NVCC reads this variable directly.
-NVCC_PREPEND_FLAGS = { value = "-DPFN_cuTensorMapEncodeTiled=PFN_cuTensorMapEncodeTiled_v12000 -DPFN_cuTensorMapEncodeIm2col=PFN_cuTensorMapEncodeIm2col_v12000", force = false }
-
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "target-feature=+simd128"]
 
