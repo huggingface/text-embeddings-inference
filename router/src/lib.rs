@@ -792,8 +792,8 @@ mod tests {
     }
 
     #[test]
-    fn detects_ettin_like_sentence_transformers_reranker() {
-        let model_root = temp_model_dir("ettin-reranker");
+    fn detects_modular_sentence_transformers_reranker() {
+        let model_root = temp_model_dir("modular-reranker");
         write_pooling_mode_config(&model_root);
         write_file(
             model_root.join("modules.json"),
@@ -868,7 +868,7 @@ mod tests {
 
     #[test]
     fn keeps_sentence_transformers_embedding_dense_as_embedding() {
-        let model_root = temp_model_dir("st-embedding");
+        let model_root = temp_model_dir("sentence-transformers-embedding");
         write_pooling_config(&model_root);
         write_file(
             model_root.join("modules.json"),
