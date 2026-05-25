@@ -28,7 +28,7 @@ impl DenseActivation {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(untagged)]
-pub enum PostPoolingLayerConfig {
+pub enum PredictionHeadModuleConfig {
     Dense(DenseConfig),
     LayerNorm(LayerNormConfig),
 }
@@ -50,7 +50,11 @@ pub struct LayerNormConfig {
     dimension: usize,
 }
 
-pub trait PostPoolingLayer {
+pub trait DenseLayer {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
+}
+
+pub trait PredictionHeadModule {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
 }
 
@@ -84,7 +88,7 @@ impl Dense {
     }
 }
 
-impl PostPoolingLayer for Dense {
+impl DenseLayer for Dense {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
@@ -93,12 +97,18 @@ impl PostPoolingLayer for Dense {
     }
 }
 
+impl PredictionHeadModule for Dense {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        DenseLayer::forward(self, hidden_states)
+    }
+}
+
 #[derive(Debug)]
-pub struct PostPoolingLayerNorm {
+pub struct PredictionHeadLayerNorm {
     layer_norm: LayerNorm,
 }
 
-impl PostPoolingLayerNorm {
+impl PredictionHeadLayerNorm {
     pub fn load(vb: VarBuilder, config: &LayerNormConfig) -> Result<Self> {
         Ok(Self {
             layer_norm: LayerNorm::load(vb.clone(), config.dimension, 1e-5)
@@ -107,7 +117,7 @@ impl PostPoolingLayerNorm {
     }
 }
 
-impl PostPoolingLayer for PostPoolingLayerNorm {
+impl PredictionHeadModule for PredictionHeadLayerNorm {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         self.layer_norm.forward(hidden_states, None)
     }
