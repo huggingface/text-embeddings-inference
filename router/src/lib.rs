@@ -106,7 +106,7 @@ pub async fn run(
     };
 
     if let Some(api_repo) = api_repo.as_ref() {
-        download_modular_reranker_detection_files(api_repo).await;
+        download_modular_reranker_detection_files(api_repo).await?;
     }
 
     // Load config
@@ -495,6 +495,10 @@ fn detect_modular_reranker(model_root: &Path) -> Result<Option<Pool>> {
         return Ok(None);
     };
 
+    // The final dense config is what distinguishes a reranker (out_features == 1,
+    // output "scores") from an embedding model that merely ends in a Dense module,
+    // so until it is read the model is not yet confirmed to be a reranker and a
+    // missing/unreadable config falls back to the embedding path rather than erroring.
     let dense_config_path = model_root.join(&final_module.path).join("config.json");
     let dense_config = match fs::read_to_string(&dense_config_path) {
         Ok(content) => content,
@@ -527,6 +531,9 @@ fn detect_modular_reranker(model_root: &Path) -> Result<Option<Pool>> {
         }
     }
 
+    // At this point the model is confirmed to be a modular reranker, so a missing
+    // pooling config is a broken model rather than a signal to treat it as an
+    // embedding model: fail loudly instead of falling back.
     let pooling_config_path = model_root.join(&pooling_module.path).join("config.json");
     let pooling_config = fs::read_to_string(&pooling_config_path).with_context(|| {
         format!(
@@ -540,34 +547,45 @@ fn detect_modular_reranker(model_root: &Path) -> Result<Option<Pool>> {
     Ok(Some(Pool::try_from(pooling_config)?))
 }
 
-async fn download_modular_reranker_detection_files(api: &ApiRepo) {
+/// Pre-downloads the config files [`detect_modular_reranker`] inspects locally.
+///
+/// For a transformer -> pooling -> ... -> dense pipeline the pooling and final
+/// dense configs are what decide whether the model is a reranker, so a failed
+/// download is fatal: silently skipping it would let detection fall back to a
+/// plain embedding model and disable `/rerank`.
+async fn download_modular_reranker_detection_files(api: &ApiRepo) -> Result<()> {
     let Ok(modules_path) = api.get("modules.json").await else {
-        return;
+        return Ok(());
     };
     let Ok(modules) = fs::read_to_string(modules_path) else {
-        return;
+        return Ok(());
     };
     let Ok(modules) = serde_json::from_str::<Vec<ModuleConfig>>(&modules) else {
-        return;
+        return Ok(());
     };
 
+    // Only a transformer -> pooling -> ... -> dense pipeline can be a modular
+    // reranker; anything else is left to the regular embedding detection path.
+    if modules.first().is_none_or(|module| !module.is_transformer()) {
+        return Ok(());
+    }
     let Some(pooling_module) = modules.iter().find(|module| module.is_pooling()) else {
-        return;
+        return Ok(());
     };
-    let pooling_config = format!("{}/config.json", pooling_module.path);
-    if let Err(err) = api.get(&pooling_config).await {
-        tracing::warn!(
-            "Could not download `{pooling_config}` for modular reranker detection: {err}"
-        );
-    }
-
     let Some(final_module) = modules.last().filter(|module| module.is_dense()) else {
-        return;
+        return Ok(());
     };
+
+    let pooling_config = format!("{}/config.json", pooling_module.path);
+    api.get(&pooling_config).await.map_err(|err| {
+        anyhow!("Could not download `{pooling_config}` for modular reranker detection: {err}")
+    })?;
     let dense_config = format!("{}/config.json", final_module.path);
-    if let Err(err) = api.get(&dense_config).await {
-        tracing::warn!("Could not download `{dense_config}` for modular reranker detection: {err}");
-    }
+    api.get(&dense_config).await.map_err(|err| {
+        anyhow!("Could not download `{dense_config}` for modular reranker detection: {err}")
+    })?;
+
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
