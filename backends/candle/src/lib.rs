@@ -602,13 +602,17 @@ impl CandleBackend {
         if use_post_pooling_prediction {
             // Modular Sentence Transformers reranker head: the post-pooling modules
             // produce the score and are kept separate from the embedding Dense path.
-            let module_paths = dense_paths.filter(|paths| !paths.is_empty()).ok_or_else(|| {
-                BackendError::Start(
-                    "Post-pooling prediction requires at least one module".to_string(),
-                )
-            })?;
+            let module_paths = dense_paths
+                .filter(|paths| !paths.is_empty())
+                .ok_or_else(|| {
+                    BackendError::Start(
+                        "Post-pooling prediction requires at least one module".to_string(),
+                    )
+                })?;
 
-            tracing::info!("Loading post-pooling prediction module/s from path/s: {module_paths:?}");
+            tracing::info!(
+                "Loading post-pooling prediction module/s from path/s: {module_paths:?}"
+            );
 
             let mut modules = Vec::new();
             for module_path in module_paths.iter() {

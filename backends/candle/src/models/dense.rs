@@ -39,10 +39,6 @@ pub struct DenseConfig {
     out_features: usize,
     bias: bool,
     activation_function: Option<DenseActivation>,
-    #[allow(dead_code)]
-    module_input_name: Option<String>,
-    #[allow(dead_code)]
-    module_output_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -54,6 +50,10 @@ pub trait DenseLayer {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
 }
 
+/// A module in a modular Sentence Transformers reranker scoring head (the
+/// post-pooling `Dense`/`LayerNorm` modules that turn the pooled embedding into a
+/// score). Intentionally separate from [`DenseLayer`] — the signatures match, but
+/// keeping distinct traits leaves the existing embedding Dense path untouched.
 pub trait PredictionHeadModule {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
 }
