@@ -275,9 +275,7 @@ struct RawModuleConfig {
     module_type: String,
 }
 
-/// Returns the ordered post-pooling module paths of a modular Sentence
-/// Transformers reranker, i.e. every module after the `Pooling` one (its scoring
-/// head). Parsed leniently so both legacy and current module type strings work.
+// Post-pooling scoring-head module paths: every module after the `Pooling` one.
 fn prediction_head_paths(modules_path: &Path) -> Result<Vec<String>> {
     let content = std::fs::read_to_string(modules_path)?;
     let modules: Vec<RawModuleConfig> = serde_json::from_str(&content)?;
@@ -291,9 +289,6 @@ fn prediction_head_paths(modules_path: &Path) -> Result<Vec<String>> {
         .collect())
 }
 
-/// Downloads a modular Sentence Transformers reranker (embedding backbone plus the
-/// post-pooling scoring head modules) and returns its root and the ordered head
-/// module paths to pass to [`CandleBackend::new_with_post_pooling_prediction`].
 #[allow(unused)]
 pub fn download_modular_reranker_artifacts(
     model_id: &'static str,

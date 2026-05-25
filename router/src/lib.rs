@@ -495,10 +495,8 @@ fn detect_modular_reranker(model_root: &Path) -> Result<Option<Pool>> {
         return Ok(None);
     };
 
-    // The final dense config is what distinguishes a reranker (out_features == 1,
-    // output "scores") from an embedding model that merely ends in a Dense module,
-    // so until it is read the model is not yet confirmed to be a reranker and a
-    // missing/unreadable config falls back to the embedding path rather than erroring.
+    // The final dense config discriminates reranker (out_features == 1, output
+    // "scores") from embedding, so a missing config falls back to embedding, not error.
     let dense_config_path = model_root.join(&final_module.path).join("config.json");
     let dense_config = match fs::read_to_string(&dense_config_path) {
         Ok(content) => content,
@@ -531,9 +529,8 @@ fn detect_modular_reranker(model_root: &Path) -> Result<Option<Pool>> {
         }
     }
 
-    // At this point the model is confirmed to be a modular reranker, so a missing
-    // pooling config is a broken model rather than a signal to treat it as an
-    // embedding model: fail loudly instead of falling back.
+    // Confirmed a reranker here, so a missing pooling config is a broken model:
+    // fail loudly instead of falling back to embedding.
     let pooling_config_path = model_root.join(&pooling_module.path).join("config.json");
     let pooling_config = fs::read_to_string(&pooling_config_path).with_context(|| {
         format!(
@@ -547,14 +544,9 @@ fn detect_modular_reranker(model_root: &Path) -> Result<Option<Pool>> {
     Ok(Some(Pool::try_from(pooling_config)?))
 }
 
-/// Pre-downloads the config files [`detect_modular_reranker`] inspects locally.
-///
-/// A transformer -> pooling -> ... -> dense pipeline is either a modular reranker
-/// or an embedding model whose last module is a Dense projection; the pooling and
-/// final dense configs are what tell the two apart. Downloading them is therefore
-/// required, not best-effort: skipping a reranker's configs would silently route
-/// it as an embedding model and disable `/rerank`, and the final dense config is
-/// needed to load the embedding Dense module anyway.
+// Pre-downloads the configs `detect_modular_reranker` reads locally. For a
+// transformer -> pooling -> ... -> dense pipeline the download is fatal, not
+// best-effort: a missing config would silently downgrade a reranker to embedding.
 async fn download_modular_reranker_detection_files(api: &ApiRepo) -> Result<()> {
     let Ok(modules_path) = api.get("modules.json").await else {
         return Ok(());

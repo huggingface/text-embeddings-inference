@@ -50,9 +50,7 @@ pub trait DenseLayer {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
 }
 
-/// A module in a modular Sentence Transformers reranker scoring head: the
-/// post-pooling `Dense`/`LayerNorm` modules that map the pooled embedding to a
-/// score. Distinct from [`DenseLayer`], which is the embedding Dense projection.
+/// A post-pooling scoring-head module (`Dense`/`LayerNorm`) of a modular Sentence Transformers reranker.
 pub trait PredictionHeadModule {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
 }

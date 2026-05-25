@@ -246,10 +246,8 @@ fn test_modernbert_classification_mean_pooling() -> Result<()> {
 #[test]
 #[serial_test::serial]
 fn test_modernbert_modular_reranker() -> Result<()> {
-    // Modular Sentence Transformers reranker: an embedding backbone (CLS pooling,
-    // per `1_Pooling/config.json`) followed by a post-pooling
-    // Dense -> LayerNorm -> Dense scoring head, rather than a
-    // `*ForSequenceClassification` head.
+    // Modular reranker: embedding backbone (CLS pooling per `1_Pooling/config.json`)
+    // + a post-pooling Dense -> LayerNorm -> Dense scoring head.
     let (model_root, head_paths) =
         download_modular_reranker_artifacts("cross-encoder/ettin-reranker-17m-v1", None)?;
     let tokenizer = load_tokenizer(&model_root)?;
