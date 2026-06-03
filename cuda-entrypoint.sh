@@ -10,7 +10,10 @@ fi
 # version is lower than that; whilst we shouldn't include that when CUDA is 13.0+
 # as otherwise it will fail due to it.
 if [ -d /usr/local/cuda/compat ]; then
-    DRIVER_CUDA=$(nvidia-smi 2>/dev/null | awk '/CUDA Version/ {print $3; exit}')
+    # Match both the classic `CUDA Version:` banner and the driver-6xx
+    # `CUDA UMD Version:` rename, and extract the version number itself
+    # (the old `awk '{print $3}'` returned the NVIDIA-SMI version, not CUDA).
+    DRIVER_CUDA=$(nvidia-smi 2>/dev/null | grep -oE 'CUDA( UMD)? Version:[[:space:]]*[0-9]+(\.[0-9]+)+' | grep -oE '[0-9]+(\.[0-9]+)+' | head -n1)
 
     IFS='.' read -r MAJ MIN PATCH <<EOF
 ${DRIVER_CUDA:-0.0.0}
