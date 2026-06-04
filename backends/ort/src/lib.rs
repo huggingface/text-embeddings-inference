@@ -1,12 +1,14 @@
-use ndarray::{s, Axis};
-use nohash_hasher::BuildNoHashHasher;
-use ort::session::{builder::GraphOptimizationLevel, Session, SessionInputValue};
-use serde::Deserialize;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::{Div, Mul};
 use std::path::Path;
 use std::sync::Mutex;
+
+use ndarray::{s, Axis};
+use nohash_hasher::BuildNoHashHasher;
+use ort::session::{builder::GraphOptimizationLevel, Session, SessionInputValue};
+use serde::Deserialize;
+
 use text_embeddings_backend_core::{
     Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool, Predictions,
 };
@@ -15,6 +17,11 @@ use text_embeddings_backend_core::{
 pub struct Config {
     pub pad_token_id: Option<usize>,
     pub eos_token_id: Option<usize>,
+
+    // NOTE: `bidirectional_pplx_qwen3` produces `pooler_output_int8` embeddings besides
+    // `last_hidden_state` (+ pooling), which should be used until there's native support for a
+    // quantization or precision parameter
+    pub model_type: Option<String>,
 
     // NOTE: The fields below are only required when the ONNX model expects the `past_key_values`
     // as input i.e., whenever the ONNX model has been exported with optimized MHA/MQA nodes
@@ -414,7 +421,25 @@ impl Backend for OrtBackend {
         let mut embeddings =
             HashMap::with_capacity_and_hasher(batch_size, BuildNoHashHasher::default());
 
-        if outputs.contains_key("sentence_embedding") {
+        if outputs.contains_key("pooler_output_int8")
+            && self.config.model_type.as_deref() == Some("bidirectional_pplx_qwen3")
+        {
+            let outputs = outputs
+                .get("pooler_output_int8")
+                .ok_or(BackendError::Inference(format!(
+                    "Unknown output keys: {:?}",
+                    outputs
+                )))?
+                // NOTE: The ONNX model outputs INT8 tensors in [-127,127] range,
+                // so we extract as i8 and convert to f32. Temporary Solution.
+                .try_extract_array::<i8>()
+                .e()?
+                .to_owned();
+
+            for (i, e) in outputs.rows().into_iter().enumerate() {
+                embeddings.insert(i, Embedding::Pooled(e.iter().map(|&v| v as f32).collect()));
+            }
+        } else if outputs.contains_key("sentence_embedding") {
             let outputs = outputs
                 .get("sentence_embedding")
                 .ok_or(BackendError::Inference(format!(
@@ -429,6 +454,10 @@ impl Backend for OrtBackend {
                 embeddings.insert(i, Embedding::Pooled(e.to_vec()));
             }
         } else {
+            if self.config.model_type.as_deref() == Some("bidirectional_pplx_qwen3") {
+                tracing::warn!("`model_type` in `config.json` is set to `bidirectional_pplx_qwen3` but the output key `pooler_output_int8` is missing from the ONNX export, which might lead to degraded performance given that tanh should be applied to the pooled embeddings and then scaled to INT8.");
+            }
+
             let outputs = outputs
                 .get("last_hidden_state")
                 .or(outputs.get("token_embeddings"))
@@ -657,7 +686,7 @@ impl Backend for OrtBackend {
                     cumulative_length += length;
                 }
             }
-        };
+        }
 
         Ok(embeddings)
     }

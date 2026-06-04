@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1.85-bookworm AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.92-bookworm AS chef
 WORKDIR /usr/src
 
 ENV SCCACHE=0.10.0

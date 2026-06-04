@@ -89,6 +89,7 @@ impl From<Vec<Vec<f32>>> for SnapshotEmbeddings {
     }
 }
 
+#[allow(unused)]
 pub fn sort_embeddings(embeddings: Embeddings) -> (Vec<Vec<f32>>, Vec<Vec<f32>>) {
     let mut pooled_embeddings = Vec::new();
     let mut raw_embeddings = Vec::new();
@@ -272,6 +273,7 @@ pub(crate) fn relative_matcher() -> YamlMatcher<SnapshotScores> {
     YamlMatcher::new()
 }
 
+#[allow(unused)]
 pub fn cosine_matcher() -> YamlMatcher<SnapshotEmbeddings> {
     YamlMatcher::new()
 }

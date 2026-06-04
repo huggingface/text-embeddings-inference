@@ -19,6 +19,8 @@
     title: Build custom container for TEI
   - local: intel_container
     title: Using TEI container with Intel Hardware
+  - local: amd_gpu
+    title: Using TEI on AMD Instinct GPUs (ROCm)
   - local: examples
     title: Example uses
   title: Tutorials

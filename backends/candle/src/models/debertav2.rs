@@ -15,6 +15,14 @@ enum PositionEmbeddingType {
     #[default]
     Absolute,
 }
+use candle::{Context, DType, Device, IndexOp, Module, Result, Tensor, D};
+use candle_nn::{conv1d, Conv1d, Conv1dConfig, Embedding, VarBuilder};
+use serde::{Deserialize, Deserializer};
+
+use text_embeddings_backend_core::{Batch, ModelType, Pool};
+
+use crate::layers::{HiddenAct, LayerNorm, Linear};
+use crate::models::Model;
 
 pub type Id2Label = HashMap<String, String>;
 pub type Label2Id = HashMap<String, u32>;
@@ -53,6 +61,7 @@ pub struct DebertaV2Config {
     pub pooler_hidden_size: Option<usize>,
 }
 
+// NOTE: https://huggingface.co/microsoft/deberta-v3-base/blob/main/config.json#L14
 fn deserialize_pos_att_type<'de, D>(deserializer: D) -> std::result::Result<Vec<String>, D::Error>
 where
     D: Deserializer<'de>,
@@ -109,6 +118,9 @@ pub struct DebertaV2Embeddings {
     token_type_embeddings: Option<Embedding>,
     layer_norm: LayerNorm,
     config: DebertaV2Config,
+    position_biased_input: bool,
+    type_vocab_size: usize,
+    hidden_size: usize,
     embedding_size: usize,
     embed_proj: Option<Linear>,
     span: tracing::Span,
@@ -129,6 +141,20 @@ impl DebertaV2Embeddings {
                 embedding_size,
                 vb.pp("position_embeddings"),
             )?)
+        let embedding_size = config.embedding_size.unwrap_or(config.hidden_size);
+
+        let word_embeddings = Embedding::new(
+            vb.pp("word_embeddings")
+                .get((config.vocab_size, embedding_size), "weight")?,
+            embedding_size,
+        );
+
+        let position_embeddings = if config.position_biased_input {
+            Some(Embedding::new(
+                vb.pp("position_embeddings")
+                    .get((config.max_position_embeddings, embedding_size), "weight")?,
+                embedding_size,
+            ))
         } else {
             None
         };
@@ -139,6 +165,12 @@ impl DebertaV2Embeddings {
                 config.hidden_size,
                 vb.pp("token_type_embeddings"),
             )?)
+        let token_type_embeddings = if config.type_vocab_size > 0 {
+            Some(Embedding::new(
+                vb.pp("token_type_embeddings")
+                    .get((config.type_vocab_size, config.hidden_size), "weight")?,
+                config.hidden_size,
+            ))
         } else {
             None
         };
@@ -149,6 +181,11 @@ impl DebertaV2Embeddings {
                 config.hidden_size,
                 vb.pp("embed_proj"),
             )?)
+        let embed_proj = if embedding_size != config.hidden_size {
+            let weight = vb
+                .pp("embed_proj")
+                .get((config.hidden_size, embedding_size), "weight")?;
+            Some(Linear::new(weight, None, None))
         } else {
             None
         };
@@ -157,6 +194,10 @@ impl DebertaV2Embeddings {
             config.hidden_size,
             config.layer_norm_eps,
             vb.pp("LayerNorm"),
+        let layer_norm = LayerNorm::load(
+            vb.pp("LayerNorm"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
         )?;
 
         Ok(Self {
@@ -165,6 +206,9 @@ impl DebertaV2Embeddings {
             token_type_embeddings,
             layer_norm,
             config,
+            position_biased_input: config.position_biased_input,
+            type_vocab_size: config.type_vocab_size,
+            hidden_size: config.hidden_size,
             embedding_size,
             embed_proj,
             span: tracing::span!(tracing::Level::TRACE, "embeddings"),
@@ -195,6 +239,13 @@ impl DebertaV2Embeddings {
         if self.config.type_vocab_size > 0 {
             embeddings = self.token_type_embeddings.as_ref().map_or_else(
                 || bail!("token_type_embeddings must be set when type_vocab_size > 0"),
+        if self.position_biased_input {
+            embeddings = embeddings.add(&position_embeddings)?;
+        }
+
+        if self.type_vocab_size > 0 {
+            embeddings = self.token_type_embeddings.as_ref().map_or_else(
+                || candle::bail!("token_type_embeddings must be set when type_vocab_size > 0"),
                 |token_type_embeddings| {
                     embeddings.add(&token_type_embeddings.forward(token_type_ids)?)
                 },
@@ -210,6 +261,15 @@ impl DebertaV2Embeddings {
         }
 
         embeddings = self.layer_norm.forward(&embeddings)?;
+        if self.embedding_size != self.hidden_size {
+            embeddings = if let Some(embed_proj) = &self.embed_proj {
+                embed_proj.forward(&embeddings)?
+            } else {
+                candle::bail!("embed_proj must exist if embedding_size != hidden_size");
+            }
+        }
+
+        embeddings = self.layer_norm.forward(&embeddings, None)?;
 
         if let Some(mask) = mask {
             let mut mask = mask.clone();
@@ -254,6 +314,10 @@ impl DebertaV2DisentangledSelfAttention {
         let vb = vb.clone();
 
         if config.hidden_size % config.num_attention_heads != 0 {
+        if !config
+            .hidden_size
+            .is_multiple_of(config.num_attention_heads)
+        {
             return Err(candle::Error::Msg(format!(
                 "The hidden size {} is not a multiple of the number of attention heads {}",
                 config.hidden_size, config.num_attention_heads
@@ -271,6 +335,24 @@ impl DebertaV2DisentangledSelfAttention {
         let query_proj = candle_nn::linear(config.hidden_size, all_head_size, vb.pp("query_proj"))?;
         let key_proj = candle_nn::linear(config.hidden_size, all_head_size, vb.pp("key_proj"))?;
         let value_proj = candle_nn::linear(config.hidden_size, all_head_size, vb.pp("value_proj"))?;
+        let query_proj = Linear::new(
+            vb.pp("query_proj")
+                .get((all_head_size, config.hidden_size), "weight")?,
+            Some(vb.pp("query_proj").get(all_head_size, "bias")?),
+            None,
+        );
+        let key_proj = Linear::new(
+            vb.pp("key_proj")
+                .get((all_head_size, config.hidden_size), "weight")?,
+            Some(vb.pp("key_proj").get(all_head_size, "bias")?),
+            None,
+        );
+        let value_proj = Linear::new(
+            vb.pp("value_proj")
+                .get((all_head_size, config.hidden_size), "weight")?,
+            Some(vb.pp("value_proj").get(all_head_size, "bias")?),
+            None,
+        );
 
         let share_att_key = config.share_att_key.unwrap_or(false);
         let relative_attention = config.relative_attention;
@@ -308,6 +390,20 @@ impl DebertaV2DisentangledSelfAttention {
                         all_head_size,
                         vb.pp("pos_query_proj"),
                     )?);
+                    pos_key_proj = Some(Linear::new(
+                        vb.pp("pos_key_proj")
+                            .get((all_head_size, config.hidden_size), "weight")?,
+                        Some(vb.pp("pos_key_proj").get(all_head_size, "bias")?),
+                        None,
+                    ));
+                }
+                if is_p2c_attn {
+                    pos_query_proj = Some(Linear::new(
+                        vb.pp("pos_query_proj")
+                            .get((all_head_size, config.hidden_size), "weight")?,
+                        Some(vb.pp("pos_query_proj").get(all_head_size, "bias")?),
+                        None,
+                    ));
                 }
             }
         }
@@ -438,6 +534,7 @@ impl DebertaV2DisentangledSelfAttention {
             5 => context_layer.reshape((dims[0], dims[1], dims[2], ()))?,
             _ => {
                 bail!(
+                candle::bail!(
                     "Invalid shape for DisentangledSelfAttention context layer: {:?}",
                     dims
                 )
@@ -461,6 +558,9 @@ impl DebertaV2DisentangledSelfAttention {
             }
             shape => {
                 bail!("Invalid shape for transpose_for_scores. Expected 3 dimensions, got {shape}")
+                candle::bail!(
+                    "Invalid shape for transpose_for_scores. Expected 3 dimensions, got {shape}"
+                )
             }
         }
     }
@@ -489,6 +589,9 @@ impl DebertaV2DisentangledSelfAttention {
             3 => relative_pos.unsqueeze(1)?,
             other => {
                 bail!("Relative position ids must be of dim 2 or 3 or 4. Got dim of size {other}")
+                candle::bail!(
+                    "Relative position ids must be of dim 2 or 3 or 4. Got dim of size {other}"
+                )
             }
         };
 
@@ -682,6 +785,16 @@ impl DebertaV2SelfOutput {
             config.hidden_size,
             config.layer_norm_eps,
             vb.pp("LayerNorm"),
+        let dense = Linear::new(
+            vb.pp("dense")
+                .get((config.hidden_size, config.hidden_size), "weight")?,
+            Some(vb.pp("dense").get(config.hidden_size, "bias")?),
+            None,
+        );
+        let layer_norm = LayerNorm::load(
+            vb.pp("LayerNorm"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
         )?;
         Ok(Self {
             dense,
@@ -702,6 +815,12 @@ impl DebertaV2SelfOutput {
 pub struct DebertaV2Intermediate {
     dense: Linear,
     intermediate_act: HiddenAct,
+        self.layer_norm.forward(&hidden_states, Some(input_tensor))
+    }
+}
+
+pub struct DebertaV2Intermediate {
+    dense: Linear,
     span: tracing::Span,
 }
 
@@ -716,6 +835,17 @@ impl DebertaV2Intermediate {
         Ok(Self {
             dense,
             intermediate_act,
+        let dense = Linear::new(
+            vb.pp("intermediate.dense")
+                .get((config.intermediate_size, config.hidden_size), "weight")?,
+            Some(
+                vb.pp("intermediate.dense")
+                    .get(config.intermediate_size, "bias")?,
+            ),
+            Some(config.hidden_act.clone()),
+        );
+        Ok(Self {
+            dense,
             span: tracing::span!(tracing::Level::TRACE, "intermediate"),
         })
     }
@@ -728,6 +858,10 @@ impl DebertaV2Intermediate {
 }
 
 // https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L323
+        self.dense.forward(hidden_states)
+    }
+}
+
 pub struct DebertaV2Output {
     dense: Linear,
     layer_norm: LayerNorm,
@@ -745,6 +879,16 @@ impl DebertaV2Output {
             config.hidden_size,
             config.layer_norm_eps,
             vb.pp("output.LayerNorm"),
+        let dense = Linear::new(
+            vb.pp("output.dense")
+                .get((config.hidden_size, config.intermediate_size), "weight")?,
+            Some(vb.pp("output.dense").get(config.hidden_size, "bias")?),
+            None,
+        );
+        let layer_norm = LayerNorm::load(
+            vb.pp("output.LayerNorm"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
         )?;
         Ok(Self {
             dense,
@@ -765,6 +909,11 @@ impl DebertaV2Output {
 }
 
 // https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L339
+        let hidden_states = self.dense.forward(hidden_states)?;
+        self.layer_norm.forward(&hidden_states, Some(input_tensor))
+    }
+}
+
 pub struct DebertaV2Layer {
     attention: DebertaV2Attention,
     intermediate: DebertaV2Intermediate,
@@ -819,6 +968,13 @@ pub struct ConvLayer {
     _conv: Conv1d,
     _layer_norm: LayerNorm,
     _config: DebertaV2Config,
+// TODO: In order to fully test ConvLayer a model needs to be found has a configuration where
+// `conv_kernel_size` exists and is > 0
+// https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L373
+pub struct ConvLayer {
+    conv_act: HiddenAct,
+    conv: Conv1d,
+    layer_norm: LayerNorm,
 }
 
 impl ConvLayer {
@@ -827,6 +983,15 @@ impl ConvLayer {
         let kernel_size = config.conv_kernel_size.unwrap_or(3);
         let groups = config.conv_groups.unwrap_or(1);
         let conv_act: String = config.conv_act.clone().unwrap_or("tanh".to_string());
+        let kernel_size = config.conv_kernel_size.unwrap_or(3);
+        let groups = config.conv_groups.unwrap_or(1);
+        let conv_act_str = config
+            .conv_act
+            .clone()
+            .unwrap_or_else(|| "tanh".to_string());
+        let conv_act: HiddenAct =
+            serde_json::from_value(serde_json::Value::String(conv_act_str))
+                .map_err(|e| candle::Error::Msg(format!("Invalid conv_act: {e}")))?;
 
         let conv_conf = Conv1dConfig {
             padding: (kernel_size - 1) / 2,
@@ -853,6 +1018,16 @@ impl ConvLayer {
             _conv: conv,
             _layer_norm: layer_norm,
             _config: config,
+        let layer_norm = LayerNorm::load(
+            vb.pp("LayerNorm"),
+            config.hidden_size,
+            config.layer_norm_eps as f32,
+        )?;
+
+        Ok(Self {
+            conv_act,
+            conv,
+            layer_norm,
         })
     }
 
@@ -867,6 +1042,34 @@ impl ConvLayer {
 }
 
 // https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L409
+        hidden_states: &Tensor,
+        residual_states: &Tensor,
+        input_mask: &Tensor,
+    ) -> Result<Tensor> {
+        let out = hidden_states.transpose(1, 2)?;
+
+        let out = self.conv.forward(&out)?;
+
+        let out = out.transpose(1, 2)?;
+
+        let mask = input_mask
+            .to_dtype(out.dtype())?
+            .unsqueeze(2)?
+            .broadcast_as(out.shape())?;
+        let out = out.broadcast_mul(&mask)?;
+
+        let out = self.conv_act.forward(&out)?;
+
+        let layer_norm_input = residual_states.broadcast_add(&out)?;
+
+        let output = self.layer_norm.forward(&layer_norm_input, None)?;
+
+        let output_states = output.broadcast_mul(&mask)?;
+
+        Ok(output_states)
+    }
+}
+
 pub struct DebertaV2Encoder {
     layer: Vec<DebertaV2Layer>,
     relative_attention: bool,
@@ -913,6 +1116,15 @@ impl DebertaV2Encoder {
 
         // NOTE: The Python code assumes that the config attribute "norm_rel_ebd" is an array of some kind, but most examples have it as a string.
         // So it might need to be updated at some point.
+            rel_embeddings = Some(Embedding::new(
+                vb.pp("rel_embeddings")
+                    .get((pos_ebd_size as usize, config.hidden_size), "weight")?,
+                config.hidden_size,
+            ));
+        }
+
+        // NOTE: The Python counterpart in Transformers assumes that the config attribute
+        // `norm_rel_ebd` is an array, but most examples have it as a string.
         let norm_rel_ebd = match config.norm_rel_ebd.as_ref() {
             Some(nre) => nre.trim().to_string(),
             None => "none".to_string(),
@@ -923,6 +1135,11 @@ impl DebertaV2Encoder {
                 config.hidden_size,
                 config.layer_norm_eps,
                 vb.pp("LayerNorm"),
+        let layer_norm = if norm_rel_ebd == "layer_norm" {
+            Some(LayerNorm::load(
+                vb.pp("LayerNorm"),
+                config.hidden_size,
+                config.layer_norm_eps as f32,
             )?)
         } else {
             None
@@ -1014,6 +1231,7 @@ impl DebertaV2Encoder {
             }
             3 => attention_mask = attention_mask.unsqueeze(1)?,
             len => bail!("Unsupported attentiom mask size length: {len}"),
+            len => candle::bail!("Unsupported attentiom mask size length: {len}"),
         }
 
         // Convert binary mask to additive bias: 0 for valid positions, large negative for masked
@@ -1074,6 +1292,7 @@ impl DebertaV2Encoder {
             .as_ref()
             .context("DebertaV2Encoder layer_norm is None when norm_rel_ebd contains layer_norm")?
             .forward(&rel_embeddings)?;
+            .forward(&rel_embeddings, None)?;
 
         Ok(Some(layer_normed_embeddings))
     }
@@ -1337,6 +1556,21 @@ impl DebertaV2SeqClassificationHead {
                     candle_nn::linear(output_dim, id2label_len, vb.root().pp("deberta.classifier"))?
                 }
             };
+        let output_dim = pooler.output_dim();
+
+        // Try loading classifier from "classifier" first, then "deberta.classifier"
+        let classifier_vb = vb.root().pp("classifier");
+        let classifier = match classifier_vb.get((id2label_len, output_dim), "weight") {
+            Ok(weight) => Linear::new(weight, Some(classifier_vb.get(id2label_len, "bias")?), None),
+            Err(_) => {
+                let classifier_vb = vb.root().pp("deberta.classifier");
+                Linear::new(
+                    classifier_vb.get((id2label_len, output_dim), "weight")?,
+                    Some(classifier_vb.get(id2label_len, "bias")?),
+                    None,
+                )
+            }
+        };
 
         Ok(Self {
             pooler,
@@ -1359,6 +1593,10 @@ pub struct DebertaV2ContextPooler {
 }
 
 // https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L49
+    pooler_hidden_size: usize,
+    span: tracing::Span,
+}
+
 impl DebertaV2ContextPooler {
     pub fn load(vb: VarBuilder, config: &DebertaV2Config) -> Result<Self> {
         let pooler_hidden_size = config
@@ -1374,6 +1612,26 @@ impl DebertaV2ContextPooler {
         Ok(Self {
             dense,
             config: config.clone(),
+        let pooler_hidden_act = config
+            .pooler_hidden_act
+            .clone()
+            .context("config.pooler_hidden_act is required for DebertaV2ContextPooler")?;
+
+        let dense = Linear::new(
+            vb.root()
+                .pp("pooler.dense")
+                .get((pooler_hidden_size, pooler_hidden_size), "weight")?,
+            Some(
+                vb.root()
+                    .pp("pooler.dense")
+                    .get(pooler_hidden_size, "bias")?,
+            ),
+            Some(pooler_hidden_act),
+        );
+
+        Ok(Self {
+            dense,
+            pooler_hidden_size,
             span: tracing::span!(tracing::Level::TRACE, "pooler"),
         })
     }
@@ -1398,6 +1656,14 @@ impl DebertaV2ContextPooler {
 }
 
 // https://github.com/huggingface/transformers/blob/78b2929c0554b79e0489b451ce4ece14d265ead2/src/transformers/models/deberta_v2/modeling_deberta_v2.py#L557
+        self.dense.forward(&context_token.contiguous()?)
+    }
+
+    pub fn output_dim(&self) -> usize {
+        self.pooler_hidden_size
+    }
+}
+
 pub(crate) fn build_relative_position(
     query_size: usize,
     key_size: usize,
@@ -1437,6 +1703,8 @@ pub(crate) fn make_log_bucket_position(
     let condition = lt_mid
         .to_dtype(candle::DType::F32)?
         .mul(&gt_neg_mid.to_dtype(candle::DType::F32)?)?
+        .to_dtype(DType::F32)?
+        .mul(&gt_neg_mid.to_dtype(DType::F32)?)?
         .to_dtype(DType::U8)?;
 
     let on_true = Tensor::new(&[(mid - 1) as u32], device)?
