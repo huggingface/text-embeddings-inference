@@ -14,7 +14,7 @@ from text_embeddings_server.models.classification_model import ClassificationMod
 from text_embeddings_server.models.jinaBert_model import FlashJinaBert
 from text_embeddings_server.models.flash_mistral import FlashMistral
 from text_embeddings_server.models.flash_qwen3 import FlashQwen3
-from text_embeddings_server.utils.device import get_device, use_ipex
+from text_embeddings_server.utils.device import get_device, is_rocm, use_ipex
 
 __all__ = ["Model"]
 
@@ -116,13 +116,13 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
         else:
             return create_model(DefaultModel, model_path, device, datatype, pool)
 
-    if config.model_type == "mistral" and device.type == "hpu":
+    if config.model_type == "mistral" and (device.type == "hpu" or is_rocm()):
         try:
             return create_model(FlashMistral, model_path, device, datatype, pool)
         except FileNotFoundError:
             return create_model(DefaultModel, model_path, device, datatype, pool)
 
-    if config.model_type == "qwen3" and device.type == "hpu":
+    if config.model_type == "qwen3" and (device.type == "hpu" or is_rocm()):
         try:
             return create_model(FlashQwen3, model_path, device, datatype, pool)
         except FileNotFoundError:

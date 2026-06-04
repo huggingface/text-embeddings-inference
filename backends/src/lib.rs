@@ -68,6 +68,13 @@ fn is_hpu() -> bool {
     }
 }
 
+fn is_rocm() -> bool {
+    match Command::new("rocm-smi").output() {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Backend {
     /// Channel to communicate with the background thread
@@ -135,7 +142,7 @@ impl Backend {
                 .map_or(default, |value| value.parse::<usize>().unwrap())
         };
         let seq_bucket_size: usize = read_env_var("PAD_SEQUENCE_TO_MULTIPLE_OF", 128);
-        let max_warmup_length: usize = read_env_var("MAX_WARMUP_SEQUENCE_LENGTH", 1024);
+        let max_warmup_length: usize = read_env_var("MAX_WARMUP_SEQUENCE_LENGTH", max_input_length);
         let seq_len_exp_base: usize = read_env_var("SEQ_LEN_EXPONENT_BASE", 2);
         let max_batch_size = max_bs.unwrap_or_else(|| read_env_var("MAX_WARMUP_BATCH_SIZE", 8));
 
@@ -178,6 +185,70 @@ impl Backend {
                 ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
             }?;
             tracing::info!("finish warmup for batch: {}, length: {}", shape.0, shape.1);
+        }
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    pub async fn warmup_rocm(
+        &self,
+        mut max_input_length: usize,
+        max_token: usize,
+        max_bs: Option<usize>,
+    ) -> Result<(), BackendError> {
+        let read_env_var = |key: &str, default: usize| -> usize {
+            env::var(key)
+                .ok()
+                .map_or(default, |value| value.parse::<usize>().unwrap())
+        };
+        let seq_bucket_size: usize = read_env_var("PAD_SEQUENCE_TO_MULTIPLE_OF", 128);
+        let max_warmup_length: usize = read_env_var("MAX_WARMUP_SEQUENCE_LENGTH", max_input_length);
+        let seq_len_exp_base: usize = read_env_var("SEQ_LEN_EXPONENT_BASE", 2);
+        let max_batch_size = max_bs.unwrap_or_else(|| read_env_var("MAX_WARMUP_BATCH_SIZE", 8));
+
+        let mut batch_sizes: Vec<usize> = powers_of_two(max_batch_size);
+        if let Some(&last) = batch_sizes.last() {
+            if last < max_batch_size {
+                batch_sizes.push(max_batch_size);
+            }
+        }
+        if max_warmup_length > max_input_length {
+            return Err(BackendError::Start(
+                format!("max_warmup_length ({max_warmup_length}) exceeds model's max_input_length ({max_input_length}), you can modify this value adding `-e MAX_WARMUP_SEQUENCE_LENGTH=<new_warmup_length>` to your Docker run command")
+            ));
+        }
+        if seq_bucket_size > max_warmup_length {
+            return Err(BackendError::Start(
+                format!("PAD_SEQUENCE_TO_MULTIPLE_OF ({seq_bucket_size}) exceeds model's max warmup length ({max_warmup_length}), you can modify these values adding `-e PAD_SEQUENCE_TO_MULTIPLE_OF=<new_value>` or `-e MAX_WARMUP_SEQUENCE_LENGTH=<new_value> to your Docker run command`")
+            ));
+        }
+
+        max_input_length = std::cmp::min(max_input_length, max_warmup_length);
+        let mut seq_lengths: Vec<usize> =
+            generate_bucket_sizes(seq_bucket_size, max_input_length, seq_len_exp_base);
+        if let Some(&last) = seq_lengths.last() {
+            if last < max_input_length {
+                seq_lengths.push(max_input_length);
+            }
+        }
+
+        let mut shapes: Vec<(u32, u32)> = Vec::with_capacity(batch_sizes.len() * seq_lengths.len());
+        for batch_size in &batch_sizes {
+            for seq_length in &seq_lengths {
+                shapes.push((*batch_size as u32, *seq_length as u32));
+            }
+        }
+        for shape in shapes.iter() {
+            let batch = self.create_warmup_batch(*shape, max_token as u32, seq_bucket_size as u32);
+            match &self.model_type {
+                ModelType::Classifier => self.predict(batch).await.map(|_| ()),
+                ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+            }?;
+            tracing::info!(
+                "finish rocm warmup for batch: {}, length: {}",
+                shape.0,
+                shape.1
+            );
         }
         Ok(())
     }
@@ -238,6 +309,12 @@ impl Backend {
         if is_hpu() {
             return self
                 .warmup_hpu(max_input_length, max_batch_tokens, max_batch_requests)
+                .await;
+        }
+
+        if is_rocm() {
+            return self
+                .warmup_rocm(max_input_length, max_batch_tokens, max_batch_requests)
                 .await;
         }
 

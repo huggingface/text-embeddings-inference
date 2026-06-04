@@ -1,9 +1,10 @@
 import os
 
 import torch
+import torch.nn.functional as F
 from loguru import logger
 
-from text_embeddings_server.utils.device import is_hpu, use_ipex
+from text_embeddings_server.utils.device import is_hpu, is_rocm, use_ipex
 
 if os.getenv("USE_FLASH_ATTENTION", "").lower() == "false":
     raise ImportError("`USE_FLASH_ATTENTION` is false.")
@@ -12,9 +13,10 @@ HAS_FLASH_ATTN = False
 HAS_FLASH_ATTN_V2 = False
 
 is_hpu = is_hpu()
+is_rocm = is_rocm()
 use_ipex = use_ipex()
 
-if use_ipex or is_hpu:
+if use_ipex or is_hpu or is_rocm:
     HAS_FLASH_ATTN_V2 = True
 else:
     if not torch.cuda.is_available():
@@ -56,6 +58,33 @@ else:
             ) from e
         logger.warning(f"Unable to use Flash Attention V2: {e}")
         HAS_FLASH_ATTN = True
+
+
+def rocm_attn(
+    q,
+    k,
+    v,
+    out,
+    attn_mask,
+    softmax_scale,
+    is_causal=False,
+):
+    # q/k/v arrive as [bs, seq_len, heads, head_dim] (PaddedBatch layout)
+    q = q.transpose(1, 2)
+    k = k.transpose(1, 2)
+    v = v.transpose(1, 2)
+    result = F.scaled_dot_product_attention(
+        q,
+        k,
+        v,
+        attn_mask=attn_mask,
+        dropout_p=0.0,
+        is_causal=is_causal,
+        scale=softmax_scale,
+    )
+    result = result.transpose(1, 2)
+    out.copy_(result)
+    return out
 
 
 def hpu_attn(
@@ -110,6 +139,17 @@ def attention(
                 is_causal=False,
                 return_softmax=False,
                 gen_=None,
+            )
+
+        elif is_rocm:
+            return rocm_attn(
+                q,
+                k,
+                v,
+                out,
+                attn_mask,
+                softmax_scale,
+                is_causal,
             )
 
         elif is_hpu:

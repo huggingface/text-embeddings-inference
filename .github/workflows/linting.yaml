@@ -17,13 +17,13 @@ jobs:
       SCCACHE: 0.10.0
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
       - name: Install Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1.15.2
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c  # v1.15.2
         with:
           components: rustfmt, clippy
       - name: Install Protoc
-        uses: arduino/setup-protoc@v1
+        uses: arduino/setup-protoc@149f6c87b92550901b26acd1632e11c3662e381f  # v1
       - name: Clean unused files
         run: |
           sudo rm -rf /usr/local/lib/android # will release about 10 GB if you don't need Android
@@ -33,7 +33,7 @@ jobs:
           curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sccache-v$SCCACHE-x86_64-unknown-linux-musl.tar.gz | tar -xzv --strip-components=1 -C /usr/local/bin sccache-v$SCCACHE-x86_64-unknown-linux-musl/sccache
           chmod +x /usr/local/bin/sccache
       - name: configure sccache
-        uses: actions/github-script@v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8
         with:
           script: |
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
@@ -41,7 +41,7 @@ jobs:
             core.exportVariable('SCCACHE_GHA_CACHE_TO', 'sccache-${{runner.os}}-${{github.ref_name}}');
             core.exportVariable('SCCACHE_GHA_CACHE_FROM', 'sccache-${{runner.os}}-main,sccache-${{runner.os}}-');
       - name: cargo registry cache
-        uses: actions/cache@v5
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5
         with:
           key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.toml') }}-${{ github.sha }}
           restore-keys: |
