@@ -5,6 +5,7 @@ ENV RUSTC_WRAPPER=/usr/local/bin/sccache
 ENV PATH="/root/.cargo/bin:${PATH}"
 # aligned with `cargo-chef` version in `lukemathwalker/cargo-chef:latest-rust-1.92-bookworm`
 ENV CARGO_CHEF=0.1.73
+ENV RUST_VERSION=1.85.1
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     curl \
@@ -23,7 +24,7 @@ RUN case "${TARGETARCH}" in \
     chmod +x /usr/local/bin/sccache
 
 COPY rust-toolchain.toml rust-toolchain.toml
-RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
+RUN curl https://sh.rustup.rs -sSf | bash -s -- -y --profile minimal --default-toolchain $RUST_VERSION
 RUN cargo install cargo-chef --version $CARGO_CHEF --locked
 
 FROM base-builder AS planner
@@ -68,6 +69,9 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     elif [ ${CUDA_COMPUTE_CAP} -eq 100 ]; \
     then  \
     nvprune --generate-code code=sm_100 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
+    elif [ ${CUDA_COMPUTE_CAP} -eq 103 ]; \
+    then  \
+    nvprune --generate-code code=sm_100 --generate-code code=sm_103 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
     elif [ ${CUDA_COMPUTE_CAP} -eq 120 ]; \
     then  \
     nvprune --generate-code code=sm_120 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \

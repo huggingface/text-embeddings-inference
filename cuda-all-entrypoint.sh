@@ -36,6 +36,8 @@ elif [ ${compute_cap} -eq 90 ]; then
     exec text-embeddings-router-90 "$@"
 elif [ ${compute_cap} -eq 100 ]; then
     exec text-embeddings-router-100 "$@"
+elif [ ${compute_cap} -eq 103 ]; then
+    exec text-embeddings-router-103 "$@"
 elif [ ${compute_cap} -eq 120 ]; then
     exec text-embeddings-router-120 "$@"
 else
