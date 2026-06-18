@@ -18,8 +18,13 @@ pub struct NomicConfig {
     pub mlp_fc1_bias: bool,
     pub mlp_fc2_bias: bool,
     pub rotary_scaling_factor: Option<f32>,
-    #[serde(default = "default_max_trained_positions")]
-    pub max_trained_positions: usize,
+
+    // NOTE: `max_trained_positions` is specific for NomicBERT when it required custom code, but
+    // since Transformers v5 it's no longer required, and it now defines `max_position_embeddings`
+    // in the `config.json` instead. Not included as an `alias` since both can be present at the
+    // same time, see https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/blob/e9b6763023c676ca8431644204f50c2b100d9aab/config.json#L33-L34
+    pub max_trained_positions: Option<usize>,
+    pub max_position_embeddings: Option<usize>,
 
     pub moe_every_n_layers: Option<usize>,
     pub moe_normalize_expert_weights: Option<bool>,
@@ -37,10 +42,6 @@ pub struct NomicConfig {
     pub vocab_size: usize,
     pub type_vocab_size: usize,
     pub layer_norm_epsilon: f32,
-}
-
-fn default_max_trained_positions() -> usize {
-    2048
 }
 
 impl NomicConfig {
@@ -668,7 +669,7 @@ pub struct NomicBertModel {
     dtype: DType,
 
     rotary_dim: usize,
-    max_trained_positions: u32,
+    max_position_embeddings: u32,
     rotary_cache: (Tensor, Tensor),
     scaled_rotary_cache: Option<(Tensor, Tensor)>,
 
@@ -702,6 +703,14 @@ impl NomicBertModel {
         let embeddings = NomicBertEmbeddings::load(vb.clone(), config)?;
         let encoder = NomicBertEncoder::load(vb.pp("encoder"), config)?;
 
+        let max_position_embeddings = match config.max_position_embeddings {
+            Some(max_position_embeddings) => max_position_embeddings,
+            None => match config.max_trained_positions {
+                Some(max_trained_positions) => max_trained_positions,
+                None => 2048,
+            },
+        };
+
         let rotary_dim = encoder.layers[0].attention.attention_head_size;
         let inv_freqs_tensor =
             get_inv_freqs(rotary_dim, config.rotary_emb_base, vb.device(), None)?;
@@ -709,8 +718,7 @@ impl NomicBertModel {
 
         let scaled_rotary_cache = if let Some(scaling_factor) = config.rotary_scaling_factor {
             let new_base = (config.rotary_emb_base
-                * ((scaling_factor * config.n_positions as f32
-                    / config.max_trained_positions as f32)
+                * ((scaling_factor * config.n_positions as f32 / max_position_embeddings as f32)
                     - (scaling_factor - 1.0)))
                 .powi((rotary_dim as f32 / (rotary_dim as f32 - 2.0)) as i32);
             let inv_freqs_tensor = get_inv_freqs(rotary_dim, new_base, vb.device(), None)?;
@@ -729,7 +737,7 @@ impl NomicBertModel {
             encoder,
             pool,
             rotary_dim,
-            max_trained_positions: config.max_trained_positions as u32,
+            max_position_embeddings: max_position_embeddings as u32,
             rotary_cache,
             scaled_rotary_cache,
             num_attention_heads: config.n_head,
@@ -855,7 +863,7 @@ impl NomicBertModel {
             Tensor::from_vec(input_lengths, (batch_size, 1), &self.device)?.to_dtype(self.dtype)?;
 
         let (cos, sin) = if self.scaled_rotary_cache.is_some()
-            && batch.max_length > self.max_trained_positions
+            && batch.max_length > self.max_position_embeddings
         {
             let cos = self
                 .scaled_rotary_cache

@@ -196,7 +196,7 @@ pub struct FlashNomicBertModel {
     pool: Pool,
     pub device: Device,
 
-    max_trained_positions: u32,
+    max_position_embeddings: u32,
     rotary_cache: (Tensor, Tensor),
     scaled_rotary_cache: Option<(Tensor, Tensor)>,
 
@@ -233,14 +233,21 @@ impl FlashNomicBertModel {
         let embeddings = NomicBertEmbeddings::load(vb.clone(), config)?;
         let encoder = NomicBertEncoder::load(vb.pp("encoder"), config)?;
 
+        let max_position_embeddings = match config.max_position_embeddings {
+            Some(max_position_embeddings) => max_position_embeddings,
+            None => match config.max_trained_positions {
+                Some(max_trained_positions) => max_trained_positions,
+                None => 2048,
+            },
+        };
+
         let rotary_dim = encoder.layers[0].attention.attention_head_size;
         let inv_freqs = get_inv_freqs(rotary_dim, config.rotary_emb_base, vb.device(), None)?;
         let rotary_cache = get_cos_sin(config.n_positions, &inv_freqs, vb.dtype(), false)?;
 
         let scaled_rotary_cache = if let Some(scaling_factor) = config.rotary_scaling_factor {
             let new_base = (config.rotary_emb_base
-                * ((scaling_factor * config.n_positions as f32
-                    / config.max_trained_positions as f32)
+                * ((scaling_factor * config.n_positions as f32 / max_position_embeddings as f32)
                     - (scaling_factor - 1.0)))
                 .powi((rotary_dim as f32 / (rotary_dim as f32 - 2.0)) as i32);
             let inv_freqs = get_inv_freqs(rotary_dim, new_base, vb.device(), None)?;
@@ -258,7 +265,7 @@ impl FlashNomicBertModel {
             embeddings,
             encoder,
             pool,
-            max_trained_positions: config.max_trained_positions as u32,
+            max_position_embeddings: max_position_embeddings as u32,
             rotary_cache,
             scaled_rotary_cache,
             device: vb.device().clone(),
@@ -283,7 +290,7 @@ impl FlashNomicBertModel {
         )?;
 
         let (cos, sin) = if self.scaled_rotary_cache.is_some()
-            && batch.max_length > self.max_trained_positions
+            && batch.max_length > self.max_position_embeddings
         {
             let cos = index_select(
                 &self.scaled_rotary_cache.as_ref().unwrap().0,
