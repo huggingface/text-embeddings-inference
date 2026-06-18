@@ -197,11 +197,19 @@ pub async fn run(
         }
     }
 
+    let max_position_embeddings = match config.max_position_embeddings {
+        Some(max_position_embeddings) => max_position_embeddings,
+        None => match config.max_trained_positions {
+            Some(max_trained_positions) => max_trained_positions,
+            None => anyhow::bail!("At least any of `max_position_embeddings` or `max_trained_positions` (only applies for NomicBERT), in that order of priority, should be defined in `config.json`."),
+        },
+    };
+
     let base_input_length = match st_config {
         Some(config) => config.max_seq_length,
         None => {
             tracing::warn!("Could not find a Sentence Transformers config");
-            config.max_position_embeddings - position_offset
+            max_position_embeddings - position_offset
         }
     };
 
@@ -456,8 +464,12 @@ fn get_backend_model_type(
 pub struct ModelConfig {
     pub architectures: Vec<String>,
     pub model_type: String,
-    #[serde(alias = "n_positions")]
-    pub max_position_embeddings: usize,
+    // NOTE: `max_trained_positions` is specific for NomicBERT when it required custom code, but
+    // since Transformers v5 it's no longer required, and it now defines `max_position_embeddings`
+    // in the `config.json` instead. Not included as an `alias` since both can be present at the
+    // same time, see https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/blob/e9b6763023c676ca8431644204f50c2b100d9aab/config.json#L33-L34
+    pub max_trained_positions: Option<usize>,
+    pub max_position_embeddings: Option<usize>,
     #[serde(default)]
     pub pad_token_id: Option<usize>,
     pub id2label: Option<HashMap<String, String>>,
