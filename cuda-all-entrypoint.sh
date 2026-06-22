@@ -1,5 +1,15 @@
 #!/bin/bash
 
+# GKE injects /usr/local/nvidia from the host but does not add it to PATH or
+# run ldconfig for it, unlike the nvidia-container-runtime on AWS which does both.
+if [ -d /usr/local/nvidia/bin ]; then
+    export PATH="${PATH}:/usr/local/nvidia/bin"
+fi
+if [ -d /usr/local/nvidia/lib64 ]; then
+    echo /usr/local/nvidia/lib64 > /etc/ld.so.conf.d/nvidia-host.conf
+    ldconfig
+fi
+
 if ! command -v nvidia-smi &>/dev/null; then
     echo "Error: 'nvidia-smi' command not found."
     exit 1
