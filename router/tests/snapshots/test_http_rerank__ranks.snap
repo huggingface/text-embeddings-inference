@@ -1,0 +1,8 @@
+---
+source: router/tests/test_http_rerank.rs
+expression: snapshot_ranks
+---
+- index: 0
+  text: Deep learning is a subset of machine learning that uses neural networks.
+- index: 1
+  text: A kitten plays with yarn in the garden.
