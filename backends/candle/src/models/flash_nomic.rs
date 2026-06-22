@@ -233,13 +233,9 @@ impl FlashNomicBertModel {
         let embeddings = NomicBertEmbeddings::load(vb.clone(), config)?;
         let encoder = NomicBertEncoder::load(vb.pp("encoder"), config)?;
 
-        let max_position_embeddings = match config.max_position_embeddings {
-            Some(max_position_embeddings) => max_position_embeddings,
-            None => match config.max_trained_positions {
-                Some(max_trained_positions) => max_trained_positions,
-                None => 2048,
-            },
-        };
+        let max_position_embeddings = config
+            .max_position_embeddings
+            .unwrap_or(config.max_trained_positions.unwrap_or(2048));
 
         let rotary_dim = encoder.layers[0].attention.attention_head_size;
         let inv_freqs = get_inv_freqs(rotary_dim, config.rotary_emb_base, vb.device(), None)?;
