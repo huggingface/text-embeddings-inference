@@ -64,6 +64,7 @@ pub(crate) fn flash_attn_varlen(
     } else if (80..90).contains(&runtime_compute_cap)
         || runtime_compute_cap == 90
         || runtime_compute_cap == 100
+        || runtime_compute_cap == 103
         || runtime_compute_cap == 120
         || runtime_compute_cap == 121
     {
