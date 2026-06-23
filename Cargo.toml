@@ -30,7 +30,7 @@ homepage = "https://github.com/huggingface/text-embeddings-inference"
 [workspace.dependencies]
 anyhow = "1.0.75"
 clap = { version = "4.1", features = ["derive", "env"] }
-hf-hub = { version = "0.4", features = ["tokio"], default-features = false }
+hf-hub = { version = "1.0.0-rc.1", features = ["rustls-tls"], default-features = false }
 metrics = "0.23.1"
 nohash-hasher = "0.2"
 num_cpus = "1.16.0"
