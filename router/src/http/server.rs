@@ -37,11 +37,24 @@ use text_embeddings_core::infer::{
 use text_embeddings_core::tokenization::{into_tokens, SimpleToken as CoreSimpleToken};
 use text_embeddings_core::TextEmbeddingsError;
 use tokio::sync::OwnedSemaphorePermit;
+use std::sync::OnceLock;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
+
+static OTEL_EXCLUDED_PATHS: OnceLock<Vec<String>> = OnceLock::new();
+
+fn is_path_excluded(path: &str, excluded: &[String]) -> bool {
+    excluded.iter().any(|p| p == path)
+}
+
+fn path_filter(path: &str) -> bool {
+    OTEL_EXCLUDED_PATHS
+        .get()
+        .map_or(true, |excluded| !is_path_excluded(path, excluded))
+}
 
 ///Text Embeddings Inference endpoint info
 #[utoipa::path(
@@ -1632,6 +1645,7 @@ pub async fn run(
     payload_limit: usize,
     api_key: Option<String>,
     cors_allow_origin: Option<Vec<String>>,
+    otlp_tracing_filter: Option<Vec<String>>,
 ) -> Result<(), anyhow::Error> {
     // OpenAPI documentation
     #[derive(OpenApi)]
@@ -1858,6 +1872,13 @@ pub async fn run(
         routes = routes.layer(axum::middleware::from_fn(auth));
     }
 
+    let otel_layer = if let Some(excluded_paths) = otlp_tracing_filter {
+        OTEL_EXCLUDED_PATHS.set(excluded_paths).ok();
+        OtelAxumLayer::default().filter(path_filter)
+    } else {
+        OtelAxumLayer::default()
+    };
+
     let app = Router::new()
         .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", doc))
         .merge(routes)
@@ -1865,7 +1886,7 @@ pub async fn run(
         .layer(Extension(infer))
         .layer(Extension(info))
         .layer(Extension(prom_handle.clone()))
-        .layer(OtelAxumLayer::default())
+        .layer(otel_layer)
         .layer(axum::middleware::from_fn(
             logging::http::trace_context_middleware,
         ))
@@ -1930,5 +1951,45 @@ impl From<serde_json::Error> for ErrorResponse {
             error: err.to_string(),
             error_type: ErrorType::Validation,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn paths(strs: &[&str]) -> Vec<String> {
+        strs.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn path_filter_allows_all_when_no_exclusions() {
+        let excluded: Vec<String> = vec![];
+        assert!(!is_path_excluded("/health", &excluded));
+        assert!(!is_path_excluded("/metrics", &excluded));
+        assert!(!is_path_excluded("/embed", &excluded));
+    }
+
+    #[test]
+    fn path_filter_blocks_excluded_paths() {
+        let excluded = paths(&["/health", "/metrics", "/ping"]);
+        assert!(is_path_excluded("/health", &excluded), "/health should be excluded");
+        assert!(is_path_excluded("/metrics", &excluded), "/metrics should be excluded");
+        assert!(is_path_excluded("/ping", &excluded), "/ping should be excluded");
+    }
+
+    #[test]
+    fn path_filter_allows_non_excluded_paths() {
+        let excluded = paths(&["/health", "/metrics", "/ping"]);
+        assert!(!is_path_excluded("/embed", &excluded), "/embed should not be excluded");
+        assert!(!is_path_excluded("/info", &excluded), "/info should not be excluded");
+        assert!(!is_path_excluded("/rerank", &excluded), "/rerank should not be excluded");
+    }
+
+    #[test]
+    fn path_filter_exact_match_only() {
+        let excluded = paths(&["/health"]);
+        assert!(!is_path_excluded("/healthz", &excluded), "/healthz should not be excluded");
+        assert!(!is_path_excluded("/health/check", &excluded), "/health/check should not be excluded");
     }
 }
