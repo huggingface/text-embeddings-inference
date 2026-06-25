@@ -75,6 +75,23 @@ fn is_rocm() -> bool {
     }
 }
 
+fn effective_warmup_tokens(
+    max_input_length: usize,
+    max_batch_tokens: usize,
+    padded_model: bool,
+    warmup_tokens: Option<usize>,
+) -> Result<Option<usize>, BackendError> {
+    match warmup_tokens {
+        Some(0) => Ok(None),
+        Some(tokens) if tokens > max_batch_tokens => Err(BackendError::Start(format!(
+            "warmup_tokens ({tokens}) exceeds max_batch_tokens ({max_batch_tokens}); set `--warmup-tokens` to at most `--max-batch-tokens` or increase `--max-batch-tokens`"
+        ))),
+        Some(tokens) => Ok(Some(tokens)),
+        None if padded_model => Ok(Some(max_input_length.min(max_batch_tokens))),
+        None => Ok(Some(max_batch_tokens)),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Backend {
     /// Channel to communicate with the background thread
@@ -305,36 +322,55 @@ impl Backend {
         max_batch_tokens: usize,
         max_batch_requests: Option<usize>,
         padded_model: bool,
+        warmup_tokens: Option<usize>,
     ) -> Result<(), BackendError> {
+        if warmup_tokens == Some(0) {
+            tracing::warn!("Explicit warmup skipped via --warmup-tokens=0");
+            return Ok(());
+        }
+
         if is_hpu() {
+            if warmup_tokens.is_some() {
+                tracing::warn!("--warmup-tokens is not supported on HPU backends; ignoring");
+            }
             return self
                 .warmup_hpu(max_input_length, max_batch_tokens, max_batch_requests)
                 .await;
         }
 
         if is_rocm() {
+            if warmup_tokens.is_some() {
+                tracing::warn!("--warmup-tokens is not supported on ROCM backends; ignoring");
+            }
             return self
                 .warmup_rocm(max_input_length, max_batch_tokens, max_batch_requests)
                 .await;
         }
 
-        // In padded_model (CPU), use minimal warmup size (max_input_length tokens) for fast startup
-        // Non-padded (GPU), use full max_batch_tokens to exercise production batching limits
-        let warmup_tokens = if padded_model {
-            max_input_length.min(max_batch_tokens)
-        } else {
-            max_batch_tokens
+        // In padded_model (CPU), use minimal warmup size (max_input_length tokens) for fast startup.
+        // Non-padded (GPU), use full max_batch_tokens to exercise production batching limits.
+        let effective_tokens = match effective_warmup_tokens(
+            max_input_length,
+            max_batch_tokens,
+            padded_model,
+            warmup_tokens,
+        )? {
+            Some(tokens) => tokens,
+            None => {
+                tracing::warn!("Explicit warmup skipped via --warmup-tokens=0");
+                return Ok(());
+            }
         };
 
-        let mut input_ids = Vec::with_capacity(warmup_tokens);
-        let mut token_type_ids = Vec::with_capacity(warmup_tokens);
-        let mut position_ids = Vec::with_capacity(warmup_tokens);
+        let mut input_ids = Vec::with_capacity(effective_tokens);
+        let mut token_type_ids = Vec::with_capacity(effective_tokens);
+        let mut position_ids = Vec::with_capacity(effective_tokens);
 
         let mut cumulative_seq_lengths = vec![0];
         let mut pooled_indices = Vec::new();
 
         let mut i = 0_u32;
-        let mut remaining = warmup_tokens;
+        let mut remaining = effective_tokens;
         let mut cumulative_length = 0;
         let mut max_length = 0;
 
@@ -359,6 +395,12 @@ impl Backend {
             }
         }
 
+        tracing::info!(
+            "Warmup with {} tokens across {} sequences (requested {})",
+            input_ids.len(),
+            i,
+            effective_tokens
+        );
         let batch = Batch {
             input_ids,
             token_type_ids,
@@ -436,6 +478,65 @@ impl Backend {
         receiver.await.expect(
             "Backend blocking task dropped the sender without send a response. This is a bug.",
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::effective_warmup_tokens;
+
+    #[test]
+    fn default_padded_warmup_uses_model_or_batch_limit() {
+        assert_eq!(
+            effective_warmup_tokens(32_768, 16_384, true, None).unwrap(),
+            Some(16_384)
+        );
+        assert_eq!(
+            effective_warmup_tokens(512, 16_384, true, None).unwrap(),
+            Some(512)
+        );
+    }
+
+    #[test]
+    fn default_non_padded_warmup_uses_batch_tokens() {
+        assert_eq!(
+            effective_warmup_tokens(512, 16_384, false, None).unwrap(),
+            Some(16_384)
+        );
+    }
+
+    #[test]
+    fn explicit_warmup_tokens_override_default() {
+        assert_eq!(
+            effective_warmup_tokens(32_768, 16_384, true, Some(64)).unwrap(),
+            Some(64)
+        );
+        assert_eq!(
+            effective_warmup_tokens(512, 16_384, false, Some(64)).unwrap(),
+            Some(64)
+        );
+    }
+
+    #[test]
+    fn zero_warmup_tokens_skips_warmup() {
+        assert_eq!(
+            effective_warmup_tokens(32_768, 16_384, true, Some(0)).unwrap(),
+            None
+        );
+        assert_eq!(
+            effective_warmup_tokens(512, 16_384, false, Some(0)).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn explicit_warmup_tokens_cannot_exceed_batch_limit() {
+        let err = effective_warmup_tokens(32_768, 16_384, true, Some(16_385))
+            .expect_err("oversized warmup should fail");
+        assert!(
+            err.to_string().contains("exceeds max_batch_tokens"),
+            "unexpected error: {err}"
+        );
     }
 }
 
