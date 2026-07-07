@@ -4,6 +4,7 @@ use opentelemetry::global;
 use veil::Redact;
 
 use text_embeddings_backend::DType;
+use text_embeddings_router::usage_stats::UsageStatsLevel;
 
 #[cfg(not(target_os = "linux"))]
 #[global_allocator]
@@ -198,6 +199,12 @@ struct Args {
     /// Unused for gRPC servers
     #[clap(long, env)]
     cors_allow_origin: Option<Vec<String>>,
+
+    /// Control if anonymous usage stats are collected.
+    /// Options are "on", "off" and "no-stack".
+    /// Default is on.
+    #[clap(default_value = "on", long, env)]
+    usage_stats: UsageStatsLevel,
 }
 
 #[tokio::main]
@@ -266,6 +273,7 @@ async fn main() -> Result<()> {
         args.otlp_service_name,
         args.prometheus_port,
         args.cors_allow_origin,
+        args.usage_stats,
     )
     .await?;
 

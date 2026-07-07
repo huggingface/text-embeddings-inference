@@ -39,6 +39,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-opentelemetry = "0.24.0"
 tracing-subscriber = { version = "0.3.16", features = ["json", "env-filter"] }
+uuid = { version = "1.16.0", features = ["v4"] }
 veil = "0.1.6"
 
 # HTTP dependencies

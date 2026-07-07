@@ -1,6 +1,7 @@
 /// Text Embedding Inference Webserver
 mod logging;
 mod prometheus;
+pub mod usage_stats;
 
 #[cfg(feature = "http")]
 mod http;
@@ -25,6 +26,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{DType, Pool};
 use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
@@ -67,6 +69,7 @@ pub async fn run(
     otlp_service_name: String,
     prometheus_port: u16,
     cors_allow_origin: Option<Vec<String>>,
+    usage_stats_level: usage_stats::UsageStatsLevel,
 ) -> Result<()> {
     let model_id_path = Path::new(&model_id);
     let (model_root, api_repo) = if model_id_path.exists() && model_id_path.is_dir() {
@@ -367,27 +370,62 @@ pub async fn run(
     #[cfg(not(any(feature = "http", feature = "grpc")))]
     compile_error!("Either feature `http` or `grpc` must be enabled.");
 
-    #[cfg(feature = "http")]
-    {
-        http::server::run(
-            infer,
-            info,
-            addr,
-            prom_builder,
-            payload_limit,
-            api_key,
-            cors_allow_origin,
-        )
-        .await
+    let user_agent = usage_stats::user_agent(info.clone(), usage_stats_level);
+    let stop_usage_task = user_agent.clone().map(usage_stats::spawn_ping_task);
+
+    let result = {
+        #[cfg(feature = "http")]
+        {
+            http::server::run(
+                infer,
+                info,
+                addr,
+                prom_builder,
+                payload_limit,
+                api_key,
+                cors_allow_origin,
+            )
+            .await
+        }
+
+        #[cfg(feature = "grpc")]
+        {
+            // cors_allow_origin and payload_limit are not used for gRPC servers
+            let _ = cors_allow_origin;
+            let _ = payload_limit;
+            grpc::server::run(infer, info, addr, prom_builder, api_key).await
+        }
+    };
+
+    if let Some(stop_usage_task) = stop_usage_task {
+        stop_usage_task.store(true, Ordering::Relaxed);
     }
 
-    #[cfg(feature = "grpc")]
-    {
-        // cors_allow_origin and payload_limit are not used for gRPC servers
-        let _ = cors_allow_origin;
-        let _ = payload_limit;
-        grpc::server::run(infer, info, addr, prom_builder, api_key).await
+    if let Some(user_agent) = user_agent {
+        match &result {
+            Ok(_) => {
+                usage_stats::UsageStatsEvent::new(user_agent, usage_stats::EventType::Stop, None)
+                    .send()
+                    .await;
+            }
+            Err(err) => {
+                let description = match usage_stats_level {
+                    usage_stats::UsageStatsLevel::On => Some(err.to_string()),
+                    usage_stats::UsageStatsLevel::NoStack => Some("unknown_error".to_string()),
+                    usage_stats::UsageStatsLevel::Off => None,
+                };
+                usage_stats::UsageStatsEvent::new(
+                    user_agent,
+                    usage_stats::EventType::Error,
+                    description,
+                )
+                .send()
+                .await;
+            }
+        }
     }
+
+    result
 }
 
 fn get_backend_model_type(
