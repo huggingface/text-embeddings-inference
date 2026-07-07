@@ -59,7 +59,7 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     cargo build --release --bin text-embeddings-router -F grpc -F python --no-default-features && sccache -s
 
 # ── ROCm Python runtime ───────────────────────────────────────────────────────
-FROM rocm/pytorch:rocm7.1_ubuntu22.04_py3.10_pytorch_release_2.8.0 AS rocm
+FROM rocm/pytorch:rocm7.2.2_ubuntu22.04_py3.10_pytorch_release_2.10.0 AS rocm
 
 LABEL maintainer="Hugging Face"
 
@@ -69,21 +69,14 @@ ENV HUGGINGFACE_HUB_CACHE=/data \
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     build-essential \
     git \
-    cmake \
-    ninja-build \
     python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install flash-attention from the ROCm fork.
-# Pinned to a specific commit to stay within the CI 6h build time limit.
-# GPU_ARCHS: gfx942 = MI300X / MI300A.
-#            Add gfx90a for MI200 series, gfx908 for MI100.
-ARG GPU_ARCHS="gfx942"
-RUN git clone https://github.com/ROCm/flash-attention/ -b tridao && \
-    cd flash-attention && \
-    git checkout 6387433156558135a998d5568a9d74c1778666d8 && \
-    GPU_ARCHS="${GPU_ARCHS}" python setup.py install && \
-    cd .. && rm -rf flash-attention
+# Install flash-attention from AMD's prebuilt ROCm wheels (no source build).
+# The wheel is built for gfx942 (MI300X / MI300A) and gfx950 (MI350) and is
+# pinned to match the ROCm / Python / PyTorch ABI of the base image.
+ARG FLASH_ATTN_WHEEL="https://rocm.frameworks-devreleases.amd.com/whl/gfx942-gfx950/flash_attn-2.8.3-cp310-cp310-linux_x86_64.whl"
+RUN python3 -m pip install --no-cache-dir "${FLASH_ATTN_WHEEL}"
 
 WORKDIR /usr/src
 COPY backends backends
