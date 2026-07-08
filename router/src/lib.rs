@@ -39,6 +39,9 @@ use tracing::Span;
 
 pub use logging::init_logging;
 
+const USER_AGENT_NAME: &str = "text-embeddings-inference";
+const USER_AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Create entrypoint
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
@@ -73,7 +76,9 @@ pub async fn run(
         // Using a local model
         (model_id_path.to_path_buf(), None)
     } else {
-        let mut builder = ApiBuilder::from_env().with_progress(false);
+        let mut builder = ApiBuilder::from_env()
+            .with_progress(false)
+            .with_user_agent(USER_AGENT_NAME, USER_AGENT_VERSION);
 
         if let Some(cache_dir) = huggingface_hub_cache {
             builder = builder.with_cache_dir(cache_dir.into());
