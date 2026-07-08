@@ -126,11 +126,10 @@
     "dockerfile": "Dockerfile-intel"
   },
   {
-    "name": "rocm-mi300-mi325",
+    "name": "rocm-gfx942-gfx950",
     "imageNamePrefix": "rocm-",
     "runOn": "always",
     "sccache": true,
-    "extraBuildArgs": "GPU_ARCHS=gfx942",
     "grpc": true,
     "dockerfile": "Dockerfile-amd"
   }

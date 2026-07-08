@@ -31,7 +31,7 @@ model=BAAI/bge-base-en-v1.5
 volume=$PWD/data  # share a volume to avoid re-downloading weights
 
 docker run \
-  --device /dev/kfd --device /dev/dri \
+  --device /dev/kfd --device /dev/dri/renderD128 \
   --group-add video \
   --ipc=host \
   -p 8080:80 \
@@ -44,10 +44,13 @@ docker run \
 Then test it:
 
 ```shell
-curl http://localhost:8080/embed \
-    -X POST \
+curl http://localhost:8080/v1/embeddings \
     -H 'Content-Type: application/json' \
-    -d '{"inputs": "What is Deep Learning?"}'
+    -d '{
+      "input": "What is Deep Learning?",
+      "model": "text-embeddings-inference",
+      "encoding_format": "float"
+    }'
 ```
 
 ---
@@ -59,7 +62,7 @@ If you prefer to build from source, use AMD's official ROCm PyTorch image as the
 ## Step 1: Start the container
 
 ```shell
-docker run -it --device=/dev/kfd --device=/dev/dri \
+docker run -it --device=/dev/kfd --device=/dev/dri/renderD128 \
   --group-add video --shm-size 8g \
   -v $PWD:/workspace \
   rocm/pytorch:latest bash
@@ -132,10 +135,13 @@ model=BAAI/bge-base-en-v1.5
 Once the server is ready, you can test it with a simple embed request:
 
 ```shell
-curl http://localhost:8080/embed \
-    -X POST \
+curl http://localhost:8080/v1/embeddings \
     -H 'Content-Type: application/json' \
-    -d '{"inputs": "What is Deep Learning?"}'
+    -d '{
+      "input": "What is Deep Learning?",
+      "model": "text-embeddings-inference",
+      "encoding_format": "float"
+    }'
 ```
 
 ## Verifying GPU detection
