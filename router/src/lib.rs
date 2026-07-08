@@ -39,6 +39,9 @@ use tracing::Span;
 
 pub use logging::init_logging;
 
+const USER_AGENT_NAME: &str = "text-embeddings-inference";
+const USER_AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Create entrypoint
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
@@ -46,6 +49,7 @@ pub async fn run(
     revision: Option<String>,
     tokenization_workers: Option<usize>,
     dtype: Option<DType>,
+    served_model_name: String,
     pooling: Option<text_embeddings_backend::Pool>,
     max_concurrent_requests: usize,
     max_batch_tokens: usize,
@@ -75,10 +79,16 @@ pub async fn run(
     } else {
         let mut builder = ApiBuilder::from_env()
             .with_progress(false)
-            .with_token(hf_token);
+            .with_user_agent(USER_AGENT_NAME, USER_AGENT_VERSION);
 
         if let Some(cache_dir) = huggingface_hub_cache {
             builder = builder.with_cache_dir(cache_dir.into());
+        }
+
+        // NOTE: Only set the `token` if it's not None, otherwise leave it as default so that the
+        // token from the cache location is pulled instead, if exists
+        if hf_token.is_some() {
+            builder = builder.with_token(hf_token);
         }
 
         if let Ok(origin) = std::env::var("HF_HUB_USER_AGENT_ORIGIN") {
@@ -177,7 +187,7 @@ pub async fn run(
         || &config.model_type == "camembert"
         || &config.model_type == "roberta"
     {
-        config.pad_token_id + 1
+        config.pad_token_id.unwrap_or(0) + 1
     } else {
         0
     };
@@ -193,34 +203,35 @@ pub async fn run(
         }
     }
 
+    let max_position_embeddings = match config.max_position_embeddings {
+        Some(max_position_embeddings) => max_position_embeddings,
+        None => match config.max_trained_positions {
+            Some(max_trained_positions) => max_trained_positions,
+            None => anyhow::bail!("At least any of `max_position_embeddings` or `max_trained_positions` (only applies for NomicBERT), in that order of priority, should be defined in `config.json`."),
+        },
+    };
+
     let base_input_length = match st_config {
         Some(config) => config.max_seq_length,
         None => {
             tracing::warn!("Could not find a Sentence Transformers config");
-            config.max_position_embeddings - position_offset
+            max_position_embeddings - position_offset
         }
     };
 
-    // Raise an error when max_input_length is bigger than max_batch tokens to prevent an infinite loop in the queue
     let max_input_length = if base_input_length > max_batch_tokens {
         if !auto_truncate {
             anyhow::bail!(
-                "`--max-batch-tokens` cannot be lower than the model `max_input_length` ({} < {}) when `--auto-truncate` is disabled, add the `--auto-truncate` flag to truncate the input sequences to match the `--max-batch-tokens`.",
-                base_input_length,
-                max_batch_tokens
+                "The maximum input length is `{base_input_length}` which exceeds `--max-batch-tokens={max_batch_tokens}`. Either increase `--max-batch-tokens` to at least `{base_input_length}`, or set `--auto-truncate true` so that regardless the maximum input length, those are truncated to `{max_batch_tokens}` tokens."
             );
         }
         tracing::warn!(
-            "The input sequences will be truncated to {} tokens even if the model `max_input_length` is greater than the provided `--max-batch-tokens` ({} > {}), as `--auto-truncate` is enabled.",
-            max_batch_tokens,
-            base_input_length,
-            max_batch_tokens
+            "The maximum input length is `{base_input_length}` which exceeds `--max-batch-tokens={max_batch_tokens}`. Input sequences will be truncated to `{max_batch_tokens}` tokens, as `--auto-truncate` is either not provided (defaults to true) or provided as true. To avoid truncation, increase `--max-batch-tokens` to at least `{base_input_length}` and set `--auto-truncate false`."
         );
         max_batch_tokens
     } else {
         base_input_length
     };
-
     tracing::info!("Maximum number of tokens per request: {max_input_length}");
 
     // fall-back to num_cpus - 1 to leave some CPU for the backend, and at most 64 workers.
@@ -292,7 +303,12 @@ pub async fn run(
 
     tracing::info!("Warming up model");
     backend
-        .warmup(max_input_length, max_batch_tokens, max_batch_requests)
+        .warmup(
+            max_input_length,
+            max_batch_tokens,
+            max_batch_requests,
+            backend.padded_model,
+        )
         .await
         .context("Model backend is not healthy")?;
 
@@ -320,6 +336,7 @@ pub async fn run(
         model_id,
         model_sha: revision,
         model_dtype: dtype.to_string(),
+        served_model_name,
         model_type,
         max_concurrent_requests,
         max_input_length,
@@ -454,10 +471,14 @@ fn get_backend_model_type(
 pub struct ModelConfig {
     pub architectures: Vec<String>,
     pub model_type: String,
-    #[serde(alias = "n_positions")]
-    pub max_position_embeddings: usize,
+    // NOTE: `max_trained_positions` is specific for NomicBERT when it required custom code, but
+    // since Transformers v5 it's no longer required, and it now defines `max_position_embeddings`
+    // in the `config.json` instead. Not included as an `alias` since both can be present at the
+    // same time, see https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/blob/e9b6763023c676ca8431644204f50c2b100d9aab/config.json#L33-L34
+    pub max_trained_positions: Option<usize>,
+    pub max_position_embeddings: Option<usize>,
     #[serde(default)]
-    pub pad_token_id: usize,
+    pub pad_token_id: Option<usize>,
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
     pub auto_map: Option<HashMap<String, String>>,
@@ -536,6 +557,8 @@ pub struct Info {
     pub model_sha: Option<String>,
     #[cfg_attr(feature = "http", schema(example = "float16"))]
     pub model_dtype: String,
+    #[cfg_attr(feature = "http", schema(example = "thenlper/gte-base"))]
+    pub served_model_name: String,
     pub model_type: ModelType,
     /// Router Parameters
     #[cfg_attr(feature = "http", schema(example = "128"))]

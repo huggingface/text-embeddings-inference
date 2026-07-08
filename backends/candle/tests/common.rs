@@ -85,10 +85,11 @@ impl Deref for SnapshotEmbeddings {
 
 impl From<Vec<Vec<f32>>> for SnapshotEmbeddings {
     fn from(value: Vec<Vec<f32>>) -> Self {
-        Self(value.into_iter().map(|v| SnapEmbedding(v)).collect())
+        Self(value.into_iter().map(SnapEmbedding).collect())
     }
 }
 
+#[allow(unused)]
 pub fn sort_embeddings(embeddings: Embeddings) -> (Vec<Vec<f32>>, Vec<Vec<f32>>) {
     let mut pooled_embeddings = Vec::new();
     let mut raw_embeddings = Vec::new();
@@ -181,7 +182,7 @@ pub fn download_artifacts(
                 }
                 _ => {
                     for path in &paths {
-                        download_dense_module(&api_repo, &path)?;
+                        download_dense_module(&api_repo, path)?;
                     }
                     Some(paths)
                 }
@@ -272,6 +273,7 @@ pub(crate) fn relative_matcher() -> YamlMatcher<SnapshotScores> {
     YamlMatcher::new()
 }
 
+#[allow(unused)]
 pub fn cosine_matcher() -> YamlMatcher<SnapshotEmbeddings> {
     YamlMatcher::new()
 }

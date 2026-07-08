@@ -46,7 +46,9 @@ impl Queue {
         max_concurrent_requests: usize,
     ) -> Self {
         // Create channels
-        let (queue_sender, queue_receiver) = mpsc::channel(max_concurrent_requests);
+        // The queue rarely fails to send the QueueCommand due to a lack of buffer size.
+        // So, naively increasing the buffer size to twice than `max_concurrent_requests` to prevent the failure temporarily
+        let (queue_sender, queue_receiver) = mpsc::channel(2 * max_concurrent_requests);
 
         // Launch background queue task
         std::thread::spawn(move || {

@@ -1,0 +1,5 @@
+---
+source: backends/candle/tests/test_debertav2.rs
+expression: predictions
+---
+- - -2.5560656

@@ -11,6 +11,7 @@ struct MistralAttention {
     o_proj: Linear,
 
     window_size_left: Option<usize>,
+    use_bidirectional_attention: bool,
 
     num_attention_heads: usize,
     num_key_value_heads: usize,
@@ -23,7 +24,6 @@ struct MistralAttention {
 
 impl MistralAttention {
     pub fn load(vb: VarBuilder, config: &MistralConfig) -> Result<Self> {
-        let window_size_left = config.sliding_window;
         let num_attention_heads = config.num_attention_heads;
         let attention_head_size = config.hidden_size / config.num_attention_heads;
         let num_key_value_heads = config.num_key_value_heads;
@@ -53,7 +53,8 @@ impl MistralAttention {
         Ok(Self {
             qkv_linear,
             o_proj,
-            window_size_left,
+            window_size_left: config.sliding_window,
+            use_bidirectional_attention: config.use_bidirectional_attention.unwrap_or(false),
             num_attention_heads,
             num_key_value_heads,
             attention_head_size,
@@ -103,7 +104,7 @@ impl MistralAttention {
             max_s,
             max_s,
             self.softmax_scale,
-            true,
+            !self.use_bidirectional_attention,
             self.window_size_left,
             None,
         )?;
@@ -265,11 +266,20 @@ impl FlashMistralModel {
 
         let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
 
+        // NOTE: https://github.com/huggingface/transformers/pull/39847
+        let rope_theta = match config.rope_theta {
+            Some(rope_theta) => rope_theta,
+            None => match &config.rope_parameters {
+                Some(rope_parameters) => rope_parameters.rope_theta,
+                None => candle::bail!("Neither `rope_theta` nor `rope_parameters.rope_theta` are defined in the `config.json`"),
+            },
+        };
+
         let inv_freqs = get_inv_freqs(
             layers[0].attention.attention_head_size,
-            config.rope_theta,
+            rope_theta,
             vb.device(),
-            None,
+            config.rope_scaling.as_ref(),
         )?;
         let (cos_cache, sin_cache) = get_cos_sin(
             config.max_position_embeddings,

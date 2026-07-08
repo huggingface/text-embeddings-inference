@@ -8,16 +8,19 @@ use candle::{Result, Tensor};
 use text_embeddings_backend_core::Batch;
 
 mod bert;
+mod debertav2;
 mod dense;
 mod distilbert;
 mod gemma3;
 mod gte;
 mod jina;
 mod jina_code;
+mod llama;
 mod mistral;
 mod modernbert;
 mod mpnet;
 mod nomic;
+mod pplx1;
 mod qwen2;
 mod qwen3;
 
@@ -52,16 +55,19 @@ mod flash_qwen2;
 mod flash_qwen3;
 
 pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
+pub use debertav2::{DebertaV2Config, DebertaV2Model};
 pub use dense::{Dense, DenseConfig, DenseLayer};
 pub use distilbert::{DistilBertConfig, DistilBertModel};
 pub use gemma3::{Gemma3Config, Gemma3Model};
 pub use gte::{GTEConfig, GTEModel};
 pub use jina::JinaBertModel;
 pub use jina_code::JinaCodeBertModel;
+pub use llama::LlamaConfig;
 pub use mistral::MistralConfig;
 pub use modernbert::{ModernBertConfig, ModernBertModel};
 pub use mpnet::{MPNetConfig, MPNetModel};
 pub use nomic::{NomicBertModel, NomicConfig};
+pub use pplx1::{Pplx1Config, Pplx1Model};
 pub use qwen2::Qwen2Config;
 pub use qwen3::{Qwen3Config, Qwen3Model};
 

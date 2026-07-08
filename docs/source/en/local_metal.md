@@ -17,7 +17,26 @@ rendered properly in your Markdown viewer.
 # Using TEI locally with Metal
 
 You can install `text-embeddings-inference` locally to run it on your own Mac with Metal support.
-Here are the step-by-step instructions for installation:
+
+## Homebrew (Apple Silicon)
+
+On Apple Silicon (M1/M2/M3/M4), you can install a prebuilt binary via Homebrew:
+
+```shell
+brew install text-embeddings-inference
+```
+
+Then launch Text Embeddings Inference:
+
+```shell
+model=Qwen/Qwen3-Embedding-0.6B
+
+text-embeddings-router --model-id $model --port 8080
+```
+
+## Build from source
+
+Alternatively, you can build from source. Here are the step-by-step instructions:
 
 ## Step 1: Install Rust
 

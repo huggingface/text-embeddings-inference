@@ -10,12 +10,12 @@ from opentelemetry import trace
 from text_embeddings_server.models import Model
 from text_embeddings_server.models.types import FlashBatch, Embedding, PaddedBatch
 from text_embeddings_server.utils.flash_attn import attention
-from text_embeddings_server.utils.device import use_ipex
+from text_embeddings_server.utils.device import is_rocm, use_ipex
 
 tracer = trace.get_tracer(__name__)
 
 
-def hpu_add_layer_norm(
+def add_layer_norm(
     add: torch.Tensor,
     x: torch.Tensor,
     weight: torch.Tensor,
@@ -40,12 +40,13 @@ class FastLayerNorm:
         self.variance_epsilon = config.layer_norm_eps
         self.device = device
         self.use_ipex = use_ipex()
+        self.is_rocm = is_rocm()
 
     def forward(self, hidden_states, residual=None):
         # Flash attention imports
         normed_hidden_states = None
         res = None
-        if self.device.type == "cuda":
+        if self.device.type == "cuda" and not self.is_rocm:
             import dropout_layer_norm
 
             normed_hidden_states, res, *rest = dropout_layer_norm.dropout_add_ln_fwd(
@@ -67,6 +68,16 @@ class FastLayerNorm:
             )
             if res is None:
                 res = hidden_states
+        elif self.is_rocm:
+            normed_hidden_states = add_layer_norm(
+                residual,
+                hidden_states,
+                self.weight,
+                self.bias,
+                self.variance_epsilon,
+                residual is not None,
+            )
+            res = residual if residual is not None else hidden_states
         elif self.use_ipex:
             import intel_extension_for_pytorch as ipex
 
@@ -81,7 +92,7 @@ class FastLayerNorm:
 
             res = residual if residual is not None else hidden_states
         elif self.device.type == "hpu":
-            normed_hidden_states = hpu_add_layer_norm(
+            normed_hidden_states = add_layer_norm(
                 residual,
                 hidden_states,
                 self.weight,
@@ -314,13 +325,16 @@ class FlashBert(Model):
         self.device = device
         self.dtype = dtype
         self.hidden_size = config.hidden_size
+        self._is_rocm = is_rocm()
 
         super(FlashBert, self).__init__(model=model, dtype=dtype, device=device)
 
     @property
     def batch_type(self) -> Union[FlashBatch, PaddedBatch]:
-        # for hpu devices, we use PaddedBatch as we do not have real varlen fwd yet
-        return FlashBatch if self.device.type != "hpu" else PaddedBatch
+        # HPU and ROCm use PaddedBatch since they rely on SDPA (no varlen fwd)
+        if self.device.type == "hpu" or self._is_rocm:
+            return PaddedBatch
+        return FlashBatch
 
     @tracer.start_as_current_span("embed")
     def embed(self, batch: Union[FlashBatch, PaddedBatch]) -> List[Embedding]:

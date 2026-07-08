@@ -46,10 +46,11 @@ async fn check_health(port: u16, timeout: Duration) -> Result<()> {
 pub async fn start_server(model_id: String, revision: Option<String>, dtype: DType) -> Result<()> {
     let server_task = tokio::spawn({
         run(
-            model_id,
+            model_id.clone(),
             revision,
             Some(1),
             Some(dtype),
+            model_id,
             None,
             4,
             1024,
