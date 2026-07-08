@@ -20,7 +20,9 @@ _triton_layer_norm = None
 if is_rocm():
     try:
         from kernels import get_kernel as _get_kernel
-        _triton_layer_norm = _get_kernel("kernels-community/triton-layer-norm")
+        _triton_layer_norm = _get_kernel(
+            "kernels-community/triton-layer-norm", revision="v0.1.0"
+        )
     except Exception:
         pass
 
