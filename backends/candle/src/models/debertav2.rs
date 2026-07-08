@@ -176,7 +176,7 @@ impl DebertaV2Embeddings {
 
         if let Some(mask) = mask {
             let mut mask = mask.clone();
-            if mask.dims() != embeddings.dims() {
+            if mask.dims().len() != embeddings.dims().len() {
                 if mask.dims().len() == 4 {
                     mask = mask.squeeze(1)?.squeeze(1)?;
                 }
