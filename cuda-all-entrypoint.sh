@@ -1,5 +1,15 @@
 #!/bin/bash
 
+# Some runtimes mount host NVIDIA tools and libraries under /usr/local/nvidia
+# without adding them to PATH or refreshing the dynamic linker cache.
+if [ -d /usr/local/nvidia/bin ]; then
+    export PATH="${PATH}:/usr/local/nvidia/bin"
+fi
+if [ -d /usr/local/nvidia/lib64 ]; then
+    echo /usr/local/nvidia/lib64 >/etc/ld.so.conf.d/nvidia-host.conf
+    ldconfig
+fi
+
 if ! command -v nvidia-smi &>/dev/null; then
     echo "Error: 'nvidia-smi' command not found."
     exit 1
@@ -10,7 +20,8 @@ fi
 # version is lower than that; whilst we shouldn't include that when CUDA is 13.0+
 # as otherwise it will fail due to it.
 if [ -d /usr/local/cuda/compat ]; then
-    DRIVER_CUDA=$(nvidia-smi 2>/dev/null | awk '/CUDA Version/ {print $3; exit}')
+    # Match both "CUDA Version" and "CUDA UMD Version" (on `driver-6xx` onwards)
+    DRIVER_CUDA=$(nvidia-smi 2>/dev/null | grep -oE 'CUDA[[:space:]]+([A-Za-z]+[[:space:]])?Version:[[:space:]]*[0-9]+(\.[0-9]+)+' | grep -oE '[0-9]+(\.[0-9]+)+' | head -n1)
 
     IFS='.' read -r MAJ MIN PATCH <<EOF
 ${DRIVER_CUDA:-0.0.0}
