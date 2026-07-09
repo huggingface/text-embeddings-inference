@@ -131,6 +131,6 @@
     "runOn": "always",
     "sccache": true,
     "grpc": true,
-    "dockerfile": "Dockerfile-amd"
+    "dockerfile": "Dockerfile-rocm"
   }
 ]

@@ -73,8 +73,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 # Install flash-attention from AMD's prebuilt ROCm wheels (no source build).
 # The wheel is built for gfx942 (MI300X / MI300A) and gfx950 (MI350) and is
 # pinned to match the ROCm / Python / PyTorch ABI of the base image.
-ARG FLASH_ATTN_WHEEL="https://rocm.frameworks-devreleases.amd.com/whl/gfx942-gfx950/flash_attn-2.8.3-cp310-cp310-linux_x86_64.whl"
-RUN python3 -m pip install --no-cache-dir "${FLASH_ATTN_WHEEL}"
+RUN python3 -m pip install --no-cache-dir "https://rocm.frameworks-devreleases.amd.com/whl/gfx942-gfx950/flash_attn-2.8.3-cp310-cp310-linux_x86_64.whl"
 
 WORKDIR /usr/src
 COPY backends backends
@@ -82,8 +81,7 @@ COPY proto proto
 COPY backends/python/server/pyproject.toml backends/python/server/pyproject.toml
 COPY backends/python/server/requirements-amd.txt backends/python/server/requirements.txt
 
-RUN cd backends/python/server && \
-    make install
+RUN cd backends/python/server && make install
 
 FROM rocm AS grpc
 
