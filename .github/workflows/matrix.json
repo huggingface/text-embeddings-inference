@@ -124,5 +124,13 @@
     "extraBuildArgs": "PLATFORM=hpu",
     "grpc": true,
     "dockerfile": "Dockerfile-intel"
+  },
+  {
+    "name": "rocm-gfx942-gfx950",
+    "imageNamePrefix": "rocm-",
+    "runOn": "always",
+    "sccache": true,
+    "grpc": true,
+    "dockerfile": "Dockerfile-rocm"
   }
 ]
