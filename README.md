@@ -121,6 +121,18 @@ volume=$PWD/data # share a volume with the Docker container to avoid downloading
 docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 --model-id $model
 ```
 
+> [!WARNING]
+> **Turing GPUs (T4, RTX 2000 series, ...):** the `cuda-1.9` image above auto-detects your GPU
+> architecture and dispatches the correct binary, but it always starts with
+> `USE_FLASH_ATTENTION=True` regardless of architecture. On Turing this is not just a precision
+> hit — it has been observed to silently produce **100% NaN embeddings while the server still
+> returns HTTP 200 "Success" with no warnings or errors**. If you are running on a Turing GPU,
+> either use the dedicated `turing-1.9` image (see [Docker Images](#docker-images)) or add
+> `-e USE_FLASH_ATTENTION=False` to the command above. Note that disabling Flash Attention can
+> increase memory usage during warmup; if you hit a CUDA out-of-memory error, also lower
+> `--max-batch-tokens` (e.g. `--max-batch-tokens 2048`) or use the `turing-1.9` image, which does
+> not require any of these overrides.
+
 And then you can make requests like
 
 ```bash
@@ -351,8 +363,17 @@ Text Embeddings Inference ships with multiple Docker images that you can use to 
 | Blackwell 12.0 (GeForce RTX 50X0, ...) | x86_64   | ghcr.io/huggingface/text-embeddings-inference:120-1.9 (experimental)    |
 | Blackwell 12.1 (DGX Spark GB10, ...)   | multi    | ghcr.io/huggingface/text-embeddings-inference:121-1.9 (experimental)    |
 
-**Warning**: Flash Attention is turned off by default for the Turing image as it suffers from precision issues.
-You can turn Flash Attention v1 ON by using the `USE_FLASH_ATTENTION=True` environment variable.
+**Warning**: Flash Attention is turned off by default for the Turing image (`turing-1.9`) as it
+suffers from precision issues. You can turn Flash Attention v1 ON by using the
+`USE_FLASH_ATTENTION=True` environment variable.
+
+This warning also applies to the multi-architecture `cuda-1.9` image used in the
+[Docker quickstart](#docker) above: on Turing GPUs (T4, RTX 2000 series, ...) it correctly
+dispatches to the Turing binary, but it still defaults to `USE_FLASH_ATTENTION=True` since that
+default is baked in at build time and is not adjusted per-architecture. In practice this has been
+observed to go beyond "precision issues" and produce fully NaN embedding outputs with no error
+reported. Turing users should prefer the dedicated `turing-1.9` image, or explicitly pass
+`-e USE_FLASH_ATTENTION=False` when using `cuda-1.9`.
 
 ### API documentation
 
