@@ -70,6 +70,7 @@ pub async fn run(
     otlp_service_name: String,
     prometheus_port: u16,
     cors_allow_origin: Option<Vec<String>>,
+    otlp_tracing_filter: Option<Vec<String>>,
 ) -> Result<()> {
     let model_id_path = Path::new(&model_id);
     let (model_root, api_repo) = if model_id_path.exists() && model_id_path.is_dir() {
@@ -390,6 +391,7 @@ pub async fn run(
             payload_limit,
             api_key,
             cors_allow_origin,
+            otlp_tracing_filter,
         )
         .await
     }

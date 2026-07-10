@@ -191,6 +191,12 @@ struct Args {
     #[clap(default_value = "text-embeddings-inference.server", long, env)]
     otlp_service_name: String,
 
+    /// HTTP paths to exclude from OpenTelemetry tracing.
+    /// Can be specified multiple times or as a comma-separated list.
+    /// e.g. `--otlp-tracing-filter /health --otlp-tracing-filter /metrics`
+    #[clap(long, env, value_delimiter = ',')]
+    otlp_tracing_filter: Option<Vec<String>>,
+
     /// The Prometheus port to listen on.
     #[clap(default_value = "9000", long, env)]
     prometheus_port: u16,
@@ -266,6 +272,7 @@ async fn main() -> Result<()> {
         args.otlp_service_name,
         args.prometheus_port,
         args.cors_allow_origin,
+        args.otlp_tracing_filter,
     )
     .await?;
 
