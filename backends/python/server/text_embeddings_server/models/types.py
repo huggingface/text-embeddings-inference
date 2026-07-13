@@ -12,6 +12,7 @@ from text_embeddings_server.pb.embed_pb2 import Embedding, Score
 tracer = trace.get_tracer(__name__)
 PAD_SEQUENCE_TO_MULTIPLE_OF = int(os.environ.get("PAD_SEQUENCE_TO_MULTIPLE_OF", 128))
 SEQ_LEN_EXPONENT_BASE = int(os.environ.get("SEQ_LEN_EXPONENT_BASE", 2))
+MAX_HPU_BATCH_SIZE = int(os.environ.get("MAX_HPU_BATCH_SIZE", 256))
 
 
 def round_up_seq(number, k, base):
@@ -53,6 +54,7 @@ class PaddedBatch(Batch):
             )
             max_length = min(max_length, max_input_length)
             new_bs = 2 ** math.ceil(math.log2(batch_size))
+            new_bs = min(new_bs, MAX_HPU_BATCH_SIZE)
         else:
             new_bs = batch_size
             max_length = pb.max_length
