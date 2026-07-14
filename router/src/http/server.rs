@@ -1624,6 +1624,7 @@ async fn metrics(prom_handle: Extension<PrometheusHandle>) -> String {
 }
 
 /// Serving method
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     infer: Infer,
     info: Info,
