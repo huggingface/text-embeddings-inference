@@ -86,7 +86,9 @@ pub struct ModernBertMLP {
 }
 
 fn should_split_wi(device: &Device, activation: &HiddenAct) -> bool {
-    matches!(device, Device::Cuda(_)) && matches!(activation, HiddenAct::Gelu)
+    matches!(device, Device::Cuda(_))
+        && matches!(activation, HiddenAct::Gelu)
+        && get_cublas_lt_wrapper().is_some()
 }
 
 impl ModernBertMLP {
