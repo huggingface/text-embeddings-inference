@@ -2,11 +2,47 @@ mod common;
 
 use crate::common::{sort_embeddings, SnapshotEmbeddings};
 use anyhow::Result;
+use candle::{Device, Tensor, D};
 use common::{
     batch, cosine_matcher, download_artifacts, load_tokenizer, relative_matcher, SnapshotScores,
 };
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
+
+#[test]
+fn test_modernbert_split_mlp_matches_unsplit_mlp() -> Result<()> {
+    let device = Device::Cpu;
+    let wi_weight = Tensor::from_slice(
+        &[
+            0.2f32, -0.3, 0.4, 0.5, // GELU projection
+            -0.6, 0.7, 0.8, -0.9, // gate projection
+        ],
+        (4, 2),
+        &device,
+    )?;
+    let wo_weight = Tensor::from_slice(&[1.0f32, 0.0, 0.0, 1.0], (2, 2), &device)?;
+    let hidden_states = Tensor::from_slice(&[0.1f32, -0.2, 0.3, 0.4], (2, 2), &device)?;
+
+    let projected = hidden_states.matmul(&wi_weight.t()?)?;
+    let input = projected.narrow(D::Minus1, 0, 2)?.gelu()?;
+    let gate = projected.narrow(D::Minus1, 2, 2)?;
+    let expected = (input * gate)?.matmul(&wo_weight.t()?)?;
+
+    let input = hidden_states
+        .matmul(&wi_weight.narrow(0, 0, 2)?.t()?)?
+        .gelu()?;
+    let gate = hidden_states.matmul(&wi_weight.narrow(0, 2, 2)?.t()?)?;
+    let actual = (input * gate)?.matmul(&wo_weight.t()?)?;
+
+    let expected = expected.to_vec2::<f32>()?;
+    let actual = actual.to_vec2::<f32>()?;
+    for (expected_row, actual_row) in expected.iter().zip(actual.iter()) {
+        for (expected, actual) in expected_row.iter().zip(actual_row.iter()) {
+            assert!((expected - actual).abs() < 1e-6);
+        }
+    }
+    Ok(())
+}
 
 #[test]
 #[serial_test::serial]
