@@ -78,10 +78,17 @@ impl ModernBertEmbeddings {
 
 pub struct ModernBertMLP {
     wi: Linear,
+    gate: Option<Linear>,
     wo: Linear,
     activation: Option<HiddenAct>,
     intermediate_size: usize,
     span: tracing::Span,
+}
+
+fn should_split_wi(device: &Device, activation: &HiddenAct) -> bool {
+    matches!(device, Device::Cuda(_))
+        && matches!(activation, HiddenAct::Gelu)
+        && get_cublas_lt_wrapper().is_some()
 }
 
 impl ModernBertMLP {
@@ -90,7 +97,34 @@ impl ModernBertMLP {
             .pp("Wi")
             .get((config.intermediate_size * 2, config.hidden_size), "weight")?;
         let wi_bias = vb.pp("Wi").get(config.intermediate_size * 2, "bias").ok();
-        let wi = Linear::new(wi_weight, wi_bias, None);
+
+        // Split the CUDA GELU projection to use cuBLASLt's fused GELU epilogue.
+        // Keep CPU, Metal, and non-GELU paths on the original full-width projection.
+        let (wi, gate, activation) = if should_split_wi(vb.device(), &config.hidden_activation) {
+            let wi = Linear::new(
+                wi_weight.narrow(0, 0, config.intermediate_size)?,
+                wi_bias
+                    .as_ref()
+                    .map(|bias| bias.narrow(0, 0, config.intermediate_size))
+                    .transpose()?,
+                Some(HiddenAct::Gelu),
+            );
+            let gate = Linear::new(
+                wi_weight.narrow(0, config.intermediate_size, config.intermediate_size)?,
+                wi_bias
+                    .as_ref()
+                    .map(|bias| bias.narrow(0, config.intermediate_size, config.intermediate_size))
+                    .transpose()?,
+                None,
+            );
+            (wi, Some(gate), None)
+        } else {
+            (
+                Linear::new(wi_weight, wi_bias, None),
+                None,
+                Some(config.hidden_activation.clone()),
+            )
+        };
 
         let wo_weight = vb
             .pp("Wo")
@@ -99,10 +133,9 @@ impl ModernBertMLP {
 
         let wo = Linear::new(wo_weight, wo_bias, None);
 
-        let activation = Some(config.hidden_activation.clone());
-
         Ok(Self {
             wi,
+            gate,
             wo,
             activation,
             intermediate_size: config.intermediate_size,
@@ -113,19 +146,26 @@ impl ModernBertMLP {
     pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let hidden_states = self.wi.forward(hidden_states)?;
+        let hidden_states = if let Some(gate) = &self.gate {
+            let input = self.wi.forward(hidden_states)?;
+            let gate = gate.forward(hidden_states)?;
 
-        let input = hidden_states.narrow(D::Minus1, 0, self.intermediate_size)?;
-        let gate =
-            hidden_states.narrow(D::Minus1, self.intermediate_size, self.intermediate_size)?;
-
-        let input = if let Some(activation) = &self.activation {
-            activation.forward(&input)
+            self.wo.forward(&(&input * &gate)?)?
         } else {
-            Ok(input)
-        };
+            let hidden_states = self.wi.forward(hidden_states)?;
 
-        let hidden_states = self.wo.forward(&(input * gate)?)?;
+            let input = hidden_states.narrow(D::Minus1, 0, self.intermediate_size)?;
+            let gate =
+                hidden_states.narrow(D::Minus1, self.intermediate_size, self.intermediate_size)?;
+
+            let input = if let Some(activation) = &self.activation {
+                activation.forward(&input)
+            } else {
+                Ok(input)
+            };
+
+            self.wo.forward(&(input? * gate)?)?
+        };
 
         Ok(hidden_states)
     }
@@ -822,5 +862,108 @@ impl Model for ModernBertModel {
                 classifier.forward(&pooled_embeddings)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Only hidden_size, intermediate_size, and hidden_activation affect the MLP
+    // path. The remaining fields are valid values needed to build the config.
+    fn cpu_test_config() -> ModernBertConfig {
+        ModernBertConfig {
+            vocab_size: 1,
+            hidden_size: 2,
+            intermediate_size: 2,
+            num_hidden_layers: 1,
+            num_attention_heads: 1,
+            hidden_activation: HiddenAct::Gelu,
+            max_position_embeddings: 2,
+            initializer_range: 0.02,
+            initializer_cutoff_factor: 3.0,
+            norm_eps: 1e-5,
+            norm_bias: false,
+            pad_token_id: 0,
+            eos_token_id: 0,
+            bos_token_id: 0,
+            cls_token_id: 0,
+            sep_token_id: 0,
+            global_rope_theta: 10_000.0,
+            attention_bias: false,
+            attention_dropout: 0.0,
+            global_attn_every_n_layers: 1,
+            local_attention: 128,
+            local_rope_theta: 10_000.0,
+            embedding_dropout: None,
+            mlp_bias: None,
+            mlp_dropout: None,
+            decoder_bias: None,
+            classifier_pooling: None,
+            classifier_dropout: None,
+            classifier_bias: None,
+            classifier_activation: HiddenAct::Gelu,
+            deterministic_flash_attn: None,
+            sparse_prediction: None,
+            sparse_pred_ignore_index: None,
+            reference_compile: None,
+            num_labels: None,
+        }
+    }
+
+    #[test]
+    fn cpu_modernbert_uses_unsplit_gelu_projection() -> Result<()> {
+        let mlp = ModernBertMLP::load(
+            VarBuilder::zeros(DType::F32, &Device::Cpu),
+            &cpu_test_config(),
+        )?;
+
+        // The Wi split is a CUDA optimization. CPU must keep the original
+        // full-width projection followed by the separate GELU path.
+        assert!(mlp.gate.is_none());
+        assert_eq!(mlp.activation, Some(HiddenAct::Gelu));
+        Ok(())
+    }
+
+    #[test]
+    fn modernbert_split_mlp_matches_unsplit_mlp() -> Result<()> {
+        let device = Device::Cpu;
+        let wi_weight = Tensor::from_slice(
+            &[
+                0.2f32, -0.3, 0.4, 0.5, // GELU projection
+                -0.6, 0.7, 0.8, -0.9, // gate projection
+            ],
+            (4, 2),
+            &device,
+        )?;
+        let wo_weight = Tensor::from_slice(&[1.0f32, 0.0, 0.0, 1.0], (2, 2), &device)?;
+        let hidden_states = Tensor::from_slice(&[0.1f32, -0.2, 0.3, 0.4], (2, 2), &device)?;
+
+        let unsplit = ModernBertMLP {
+            wi: Linear::new(wi_weight.clone(), None, None),
+            gate: None,
+            wo: Linear::new(wo_weight.clone(), None, None),
+            activation: Some(HiddenAct::Gelu),
+            intermediate_size: 2,
+            span: tracing::span!(tracing::Level::TRACE, "mlp"),
+        };
+        let split = ModernBertMLP {
+            wi: Linear::new(wi_weight.narrow(0, 0, 2)?, None, Some(HiddenAct::Gelu)),
+            gate: Some(Linear::new(wi_weight.narrow(0, 2, 2)?, None, None)),
+            wo: Linear::new(wo_weight, None, None),
+            activation: None,
+            intermediate_size: 2,
+            span: tracing::span!(tracing::Level::TRACE, "mlp"),
+        };
+
+        let expected = unsplit.forward(&hidden_states)?.to_vec2::<f32>()?;
+        let actual = split.forward(&hidden_states)?.to_vec2::<f32>()?;
+
+        for (expected_row, actual_row) in expected.iter().zip(actual.iter()) {
+            for (expected, actual) in expected_row.iter().zip(actual_row.iter()) {
+                assert!((expected - actual).abs() < 1e-6);
+            }
+        }
+        Ok(())
     }
 }
