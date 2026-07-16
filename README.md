@@ -650,7 +650,7 @@ docker build . -f Dockerfile-cuda \
 
 TEI has experimental support for AMD Instinct GPUs (MI200, MI300 series) via ROCm. You can use the `rocm/pytorch:latest` Docker image or a bare-metal ROCm installation. TEI will auto-detect the GPU at startup.
 
-For full setup instructions, see the **[AMD Instinct GPU guide](https://huggingface.github.io/text-embeddings-inference/amd_gpu)**.
+For full setup instructions, see the **[AMD Instinct GPU guide](https://huggingface.co/docs/text-embeddings-inference/amd_gpu)**.
 
 ## Examples
 
