@@ -95,6 +95,7 @@ impl Backend {
         dtype: DType,
         model_type: ModelType,
         dense_path: Option<String>,
+        onnx_filename: Option<String>,
         uds_path: String,
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
@@ -107,6 +108,7 @@ impl Backend {
             dtype,
             model_type.clone(),
             dense_path,
+            onnx_filename,
             uds_path,
             otlp_endpoint,
             otlp_service_name,
@@ -446,6 +448,7 @@ async fn init_backend(
     dtype: DType,
     model_type: ModelType,
     dense_path: Option<String>,
+    onnx_filename: Option<String>,
     uds_path: String,
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
@@ -482,7 +485,8 @@ async fn init_backend(
             }
         }
 
-        let backend = OrtBackend::new(&model_path, dtype.to_string(), model_type.clone());
+        let backend =
+            OrtBackend::new(&model_path, dtype.to_string(), model_type.clone(), onnx_filename);
         match backend {
             Ok(b) => return Ok(Box::new(b)),
             Err(err) => {
