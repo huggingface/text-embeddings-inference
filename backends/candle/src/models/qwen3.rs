@@ -646,15 +646,11 @@ impl Qwen3Model {
                             &self.device,
                         )?;
 
-                        let cls_indices = if has_raw_requests {
-                            Tensor::zeros(
-                                batch.pooled_indices.len(),
-                                candle::DType::U32,
-                                &self.device,
-                            )?
-                        } else {
-                            Tensor::arange(0u32, batch_size as u32, &self.device)?
-                        };
+                        let cls_indices = Tensor::zeros(
+                            batch.pooled_indices.len(),
+                            candle::DType::U32,
+                            &self.device,
+                        )?;
 
                         Some(outputs.i((&pooled_indices, &cls_indices))?)
                     } else {
