@@ -662,7 +662,7 @@ impl GTEModel {
 
                     (outputs.sum(1)?.broadcast_div(&input_lengths))?
                 }
-                Pool::Splade => unreachable!(),
+                Pool::Splade | Pool::M3Sparse => unreachable!(),
             };
             Some(pooled_embeddings)
         } else {

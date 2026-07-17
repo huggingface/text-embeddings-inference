@@ -98,7 +98,7 @@ pub async fn run(
 
         // Download model from the Hub
         (
-            download_artifacts(&api_repo, pooling.is_none())
+            download_artifacts(&api_repo, pooling)
                 .await
                 .context("Could not download model artifacts")?,
             Some(api_repo),
@@ -423,6 +423,23 @@ fn get_backend_model_type(
         return Err(anyhow!(
             "Splade pooling is not supported: model is not a ForMaskedLM model"
         ));
+    }
+
+    // The bge-m3 sparse head is a standalone `sparse_linear.pt` on top of an XLM-RoBERTa
+    // backbone; reject anything else here so the backend never has to.
+    if Some(text_embeddings_backend::Pool::M3Sparse) == pooling {
+        if !config.model_type.to_lowercase().contains("xlm-roberta") {
+            return Err(anyhow!(
+                "`m3_sparse` pooling is not supported: model is not an XLM-RoBERTa model \
+                 (expected `BAAI/bge-m3` or a fine-tune of it)"
+            ));
+        }
+        if !model_root.join("sparse_linear.pt").is_file() {
+            return Err(anyhow!(
+                "`m3_sparse` pooling is not supported: model does not ship a `sparse_linear.pt` \
+                 head (expected `BAAI/bge-m3` or a fine-tune of it)"
+            ));
+        }
     }
 
     // Set pooling

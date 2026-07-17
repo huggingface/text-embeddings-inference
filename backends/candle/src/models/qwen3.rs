@@ -708,6 +708,9 @@ impl Qwen3Model {
                 Pool::Splade => {
                     unreachable!("Splade is not supported for Qwen3");
                 }
+                Pool::M3Sparse => {
+                    unreachable!("M3Sparse is not supported for Qwen3");
+                }
             }
         } else {
             None

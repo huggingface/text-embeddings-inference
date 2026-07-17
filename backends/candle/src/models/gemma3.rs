@@ -817,8 +817,8 @@ impl Gemma3Model {
 
         let pooled_embeddings = if has_pooling_requests {
             match self.pool {
-                Pool::Cls | Pool::LastToken | Pool::Splade => {
-                    unreachable!("Only Mean Pooling is supported for Gemma3, neither CLS, nor Last-Token, nor SPLADE");
+                Pool::Cls | Pool::LastToken | Pool::Splade | Pool::M3Sparse => {
+                    unreachable!("Only Mean Pooling is supported for Gemma3, neither CLS, nor Last-Token, nor SPLADE, nor M3Sparse");
                 }
                 Pool::Mean => {
                     if batch_size > 1 {

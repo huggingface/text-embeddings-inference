@@ -226,6 +226,9 @@ impl FlashNomicBertModel {
                 if pool == Pool::Splade {
                     candle::bail!("`splade` is not supported for Nomic")
                 }
+                if pool == Pool::M3Sparse {
+                    candle::bail!("`m3_sparse` is not supported for Nomic")
+                }
                 pool
             }
         };
@@ -383,7 +386,7 @@ impl FlashNomicBertModel {
                         Some((outputs.sum_keepdim(0)? / (batch.max_length as f64))?)
                     }
                 }
-                Pool::Splade => {
+                Pool::Splade | Pool::M3Sparse => {
                     unreachable!();
                 }
             }

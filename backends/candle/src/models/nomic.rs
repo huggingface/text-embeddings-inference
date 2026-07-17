@@ -692,6 +692,9 @@ impl NomicBertModel {
                 if pool == Pool::Splade {
                     candle::bail!("`splade` is not supported for Nomic")
                 }
+                if pool == Pool::M3Sparse {
+                    candle::bail!("`m3_sparse` is not supported for Nomic")
+                }
                 if pool == Pool::LastToken {
                     candle::bail!("`last_token` is not supported for Nomic");
                 }
@@ -925,7 +928,7 @@ impl NomicBertModel {
 
                     (outputs.sum(1)?.broadcast_div(&input_lengths))?
                 }
-                Pool::Splade => unreachable!(),
+                Pool::Splade | Pool::M3Sparse => unreachable!(),
             };
             Some(pooled_embeddings)
         } else {
