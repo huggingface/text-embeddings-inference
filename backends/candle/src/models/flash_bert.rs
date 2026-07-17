@@ -1,12 +1,13 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{index_select, LayerNorm, Linear};
 use crate::models::bert::{
-    BertClassificationHead, BertConfig, BertEmbeddings, BertSpladeHead, ClassificationHead,
-    PositionEmbeddingType, RobertaClassificationHead,
+    BertClassificationHead, BertConfig, BertEmbeddings, BertM3Head, BertSpladeHead,
+    ClassificationHead, PositionEmbeddingType, RobertaClassificationHead,
 };
 use crate::models::Model;
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::VarBuilder;
+use std::path::Path;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 struct BertAttention {
@@ -220,6 +221,7 @@ pub struct FlashBertModel {
     pool: Pool,
     classifier: Option<Box<dyn ClassificationHead + Send>>,
     splade: Option<BertSpladeHead>,
+    m3: Option<BertM3Head>,
 
     pub device: Device,
 
@@ -254,8 +256,8 @@ impl FlashBertModel {
             ModelType::Embedding(pool) => {
                 if pool == Pool::M3Sparse {
                     candle::bail!(
-                        "`m3_sparse` is not supported on the flash attention path yet; run with \
-                         `USE_FLASH_ATTENTION=false`"
+                        "`m3_sparse` pooling is only supported for XLM-RoBERTa models that ship a \
+                         sparse head, i.e. `BAAI/bge-m3` and its fine-tunes"
                     )
                 }
 
@@ -291,6 +293,7 @@ impl FlashBertModel {
             pool,
             classifier,
             splade,
+            m3: None,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
@@ -300,6 +303,7 @@ impl FlashBertModel {
         vb: VarBuilder,
         config: &BertConfig,
         model_type: ModelType,
+        model_path: &Path,
     ) -> Result<Self> {
         match vb.device() {
             Device::Cuda(_) => {}
@@ -315,7 +319,7 @@ impl FlashBertModel {
             candle::bail!("FlashBert only supports absolute position embeddings")
         }
 
-        let (pool, classifier, splade) = match model_type {
+        let (pool, classifier, splade, m3) = match model_type {
             // Classifier models always use CLS pooling
             ModelType::Classifier => {
                 let pool = Pool::Cls;
@@ -323,22 +327,22 @@ impl FlashBertModel {
                 let classifier: Box<dyn ClassificationHead + Send> = Box::new(
                     RobertaClassificationHead::load(vb.pp("classifier"), config)?,
                 );
-                (pool, Some(classifier), None)
+                (pool, Some(classifier), None, None)
             }
             ModelType::Embedding(pool) => {
-                if pool == Pool::M3Sparse {
-                    candle::bail!(
-                        "`m3_sparse` is not supported on the flash attention path yet; run with \
-                         `USE_FLASH_ATTENTION=false`"
-                    )
-                }
-
                 let splade = if pool == Pool::Splade {
                     Some(BertSpladeHead::load_roberta(vb.clone(), config)?)
                 } else {
                     None
                 };
-                (pool, None, splade)
+
+                let m3 = if pool == Pool::M3Sparse {
+                    Some(BertM3Head::load(model_path, config, &vb)?)
+                } else {
+                    None
+                };
+
+                (pool, None, splade, m3)
             }
         };
 
@@ -375,6 +379,7 @@ impl FlashBertModel {
             pool,
             classifier,
             splade,
+            m3,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
@@ -475,7 +480,33 @@ impl FlashBertModel {
                         Some((outputs.sum_keepdim(0)? / (batch.max_length as f64))?)
                     }
                 }
-                Pool::M3Sparse => unreachable!(),
+                Pool::M3Sparse => {
+                    // Unwrap is safe here
+                    let m3_head = self.m3.as_ref().unwrap();
+                    let vocab_size = m3_head.vocab_size;
+
+                    // Flash packs the batch into a single varlen sequence; the head is indexed by
+                    // input token id, so we scatter each request's token slice (delimited by
+                    // `cumulative_seq_lengths`) with the same logic as the padded path.
+                    let token_weights = m3_head.token_weights(&outputs)?;
+                    let input_ids = input_ids.to_vec1::<u32>()?;
+
+                    let n = batch.pooled_indices.len();
+                    let mut pooled = vec![0f32; n * vocab_size];
+
+                    for (row, i) in batch.pooled_indices.iter().enumerate() {
+                        let i = *i as usize;
+                        let start = batch.cumulative_seq_lengths[i] as usize;
+                        let end = batch.cumulative_seq_lengths[i + 1] as usize;
+                        m3_head.scatter_sequence(
+                            &token_weights[start..end],
+                            &input_ids[start..end],
+                            &mut pooled[row * vocab_size..(row + 1) * vocab_size],
+                        );
+                    }
+
+                    Some(Tensor::from_vec(pooled, (n, vocab_size), &self.device)?)
+                }
                 Pool::Splade => {
                     // Unwrap is safe here
                     let splade_head = self.splade.as_ref().unwrap();

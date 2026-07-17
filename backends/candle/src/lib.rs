@@ -423,7 +423,7 @@ impl CandleBackend {
                 if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2]) {
                     tracing::info!("Starting FlashBert model on {:?}", device);
                     Ok(Box::new(
-                        FlashBertModel::load_roberta(vb, &config, model_type).s()?,
+                        FlashBertModel::load_roberta(vb, &config, model_type, model_path).s()?,
                     ))
                 } else {
                     tracing::info!("Starting Bert model on {:?}", device);
