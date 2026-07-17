@@ -5,9 +5,11 @@ use text_embeddings_backend::DType;
 use text_embeddings_router::run;
 use tokio::time::Instant;
 
+#[allow(dead_code)]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Score(f32);
 
+#[allow(dead_code)]
 impl Score {
     fn is_close(&self, other: &Self, abs_tol: f32) -> bool {
         is_close::default()
@@ -43,7 +45,18 @@ async fn check_health(port: u16, timeout: Duration) -> Result<()> {
     }
 }
 
+#[allow(dead_code)]
 pub async fn start_server(model_id: String, revision: Option<String>, dtype: DType) -> Result<()> {
+    start_server_with_ports(model_id, revision, dtype, 8090, 9000).await
+}
+
+pub async fn start_server_with_ports(
+    model_id: String,
+    revision: Option<String>,
+    dtype: DType,
+    port: u16,
+    prometheus_port: u16,
+) -> Result<()> {
     let server_task = tokio::spawn({
         run(
             model_id.clone(),
@@ -62,21 +75,21 @@ pub async fn start_server(model_id: String, revision: Option<String>, dtype: DTy
             None,
             None,
             None,
-            8090,
+            port,
             None,
             None,
             2_000_000,
             None,
             None,
             "text-embeddings-inference.server".to_owned(),
-            9000,
+            prometheus_port,
             None,
         )
     });
 
     tokio::select! {
         err = server_task => err?,
-        _ = check_health(8090, Duration::from_secs(60)) => Ok(())
+        _ = check_health(port, Duration::from_secs(60)) => Ok(())
     }?;
     Ok(())
 }
