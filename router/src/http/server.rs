@@ -1624,6 +1624,7 @@ async fn metrics(prom_handle: Extension<PrometheusHandle>) -> String {
 }
 
 /// Serving method
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     infer: Infer,
     info: Info,
@@ -1632,6 +1633,7 @@ pub async fn run(
     payload_limit: usize,
     api_key: Option<String>,
     cors_allow_origin: Option<Vec<String>>,
+    root_path: Option<String>,
 ) -> Result<(), anyhow::Error> {
     // OpenAPI documentation
     #[derive(OpenApi)]
@@ -1872,6 +1874,14 @@ pub async fn run(
         .layer(DefaultBodyLimit::max(payload_limit))
         .layer(cors_layer);
 
+    let app = match normalize_root_path(root_path.as_deref())? {
+        Some(root_path) => {
+            tracing::info!("Serving HTTP routes under root path: {root_path}");
+            Router::new().nest(&root_path, app)
+        }
+        None => app,
+    };
+
     // Run server
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
@@ -1886,6 +1896,24 @@ pub async fn run(
         .await?;
 
     Ok(())
+}
+
+fn normalize_root_path(root_path: Option<&str>) -> Result<Option<String>, anyhow::Error> {
+    let Some(root_path) = root_path else {
+        return Ok(None);
+    };
+
+    let root_path = root_path.trim();
+    if root_path.is_empty() || root_path == "/" {
+        return Ok(None);
+    }
+
+    if root_path.contains('?') || root_path.contains('#') {
+        anyhow::bail!("`--root-path` must be a path and cannot contain `?` or `#`");
+    }
+
+    let root_path = format!("/{}", root_path.trim_matches('/'));
+    Ok(Some(root_path))
 }
 
 impl From<&ErrorType> for StatusCode {
@@ -1930,5 +1958,36 @@ impl From<serde_json::Error> for ErrorResponse {
             error: err.to_string(),
             error_type: ErrorType::Validation,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_root_path;
+
+    #[test]
+    fn normalize_root_path_ignores_empty_and_root() {
+        assert_eq!(normalize_root_path(None).unwrap(), None);
+        assert_eq!(normalize_root_path(Some("")).unwrap(), None);
+        assert_eq!(normalize_root_path(Some("   ")).unwrap(), None);
+        assert_eq!(normalize_root_path(Some("/")).unwrap(), None);
+    }
+
+    #[test]
+    fn normalize_root_path_adds_leading_slash_and_trims_trailing_slashes() {
+        assert_eq!(
+            normalize_root_path(Some("jinaai/jina-embeddings-v2-base-en")).unwrap(),
+            Some("/jinaai/jina-embeddings-v2-base-en".to_string())
+        );
+        assert_eq!(
+            normalize_root_path(Some("/jinaai/jina-embeddings-v2-base-en/")).unwrap(),
+            Some("/jinaai/jina-embeddings-v2-base-en".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_root_path_rejects_query_and_fragment() {
+        assert!(normalize_root_path(Some("/foo?bar")).is_err());
+        assert!(normalize_root_path(Some("/foo#bar")).is_err());
     }
 }
