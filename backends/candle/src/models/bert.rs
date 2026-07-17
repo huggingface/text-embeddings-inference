@@ -628,7 +628,7 @@ fn m3_special_token_ids(model_path: &Path) -> Result<Vec<u32>> {
 #[derive(Debug)]
 pub struct BertM3Head {
     sparse_linear: Linear,
-    vocab_size: usize,
+    pub(crate) vocab_size: usize,
     special_token_ids: Vec<u32>,
     span: tracing::Span,
 }
@@ -657,35 +657,54 @@ impl BertM3Head {
         })
     }
 
-    /// Scatters `relu(sparse_linear(hidden_states))` into vocabulary space, keyed by input token
-    /// id and deduplicated by `max`. Returns a `[batch_size, vocab_size]` tensor, which the router
-    /// sparsifies by dropping zeros — yielding exactly bge-m3's `lexical_weights`.
-    pub(crate) fn forward(&self, hidden_states: &Tensor, input_ids: &Tensor) -> Result<Tensor> {
+    /// Applies `relu(sparse_linear(·))` to hidden states and returns the per-token weights as a
+    /// host `f32` vector, flattened over all leading dims. Shared by the padded (`bert`) and flash
+    /// pooling paths so the head arithmetic exists in one place.
+    pub(crate) fn token_weights(&self, hidden_states: &Tensor) -> Result<Vec<f32>> {
         let _enter = self.span.enter();
 
-        // [batch, seq, hidden] -> [batch, seq, 1] -> [batch, seq]
-        let token_weights = self
-            .sparse_linear
+        // [.., hidden] -> [.., 1] -> [..] (relu is applied inside `sparse_linear`)
+        self.sparse_linear
             .forward(hidden_states)?
-            .squeeze(D::Minus1)?;
+            .squeeze(D::Minus1)?
+            .to_dtype(DType::F32)?
+            .flatten_all()?
+            .to_vec1::<f32>()
+    }
 
-        let device = token_weights.device().clone();
-        let token_weights = token_weights.to_dtype(DType::F32)?.to_vec2::<f32>()?;
+    /// Scatters one sequence's per-token `weights` into `pooled` (a `vocab_size`-length slice),
+    /// keyed by input token id and deduplicated by `max`. Special tokens and non-positive weights
+    /// are dropped; padded positions carry a special token id (`<s>`) and drop out here too, so no
+    /// attention mask is needed. Shared verbatim by the padded and flash paths so they cannot
+    /// drift.
+    pub(crate) fn scatter_sequence(&self, weights: &[f32], token_ids: &[u32], pooled: &mut [f32]) {
+        for (weight, token_id) in weights.iter().zip(token_ids.iter()) {
+            if *weight <= 0.0 || self.special_token_ids.contains(token_id) {
+                continue;
+            }
+            let slot = &mut pooled[*token_id as usize];
+            *slot = slot.max(*weight);
+        }
+    }
+
+    /// Padded-batch pooling: scatters `relu(sparse_linear(hidden_states))` into vocabulary space,
+    /// keyed by input token id and deduplicated by `max`. Returns a `[batch_size, vocab_size]`
+    /// tensor, which the router sparsifies by dropping zeros — yielding exactly bge-m3's
+    /// `lexical_weights`.
+    pub(crate) fn forward(&self, hidden_states: &Tensor, input_ids: &Tensor) -> Result<Tensor> {
+        let device = hidden_states.device().clone();
+        let seq_len = hidden_states.dim(1)?;
+
+        let token_weights = self.token_weights(hidden_states)?;
         let input_ids = input_ids.to_vec2::<u32>()?;
 
-        let batch_size = token_weights.len();
+        let batch_size = input_ids.len();
         let mut pooled = vec![0f32; batch_size * self.vocab_size];
 
-        for (i, (weights, ids)) in token_weights.iter().zip(input_ids.iter()).enumerate() {
-            for (weight, token_id) in weights.iter().zip(ids.iter()) {
-                // Padded positions are filled with token id 0 (`<s>`), a special token, so they
-                // drop out here as well and need no attention mask.
-                if *weight <= 0.0 || self.special_token_ids.contains(token_id) {
-                    continue;
-                }
-                let slot = &mut pooled[i * self.vocab_size + *token_id as usize];
-                *slot = slot.max(*weight);
-            }
+        for (i, ids) in input_ids.iter().enumerate() {
+            let weights = &token_weights[i * seq_len..(i + 1) * seq_len];
+            let out = &mut pooled[i * self.vocab_size..(i + 1) * self.vocab_size];
+            self.scatter_sequence(weights, ids, out);
         }
 
         Tensor::from_vec(pooled, (batch_size, self.vocab_size), &device)
