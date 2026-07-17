@@ -252,6 +252,13 @@ impl FlashBertModel {
                 (pool, Some(classifier), None)
             }
             ModelType::Embedding(pool) => {
+                if pool == Pool::M3Sparse {
+                    candle::bail!(
+                        "`m3_sparse` is not supported on the flash attention path yet; run with \
+                         `USE_FLASH_ATTENTION=false`"
+                    )
+                }
+
                 let splade = if pool == Pool::Splade {
                     Some(BertSpladeHead::load(vb.clone(), config)?)
                 } else {
@@ -319,6 +326,13 @@ impl FlashBertModel {
                 (pool, Some(classifier), None)
             }
             ModelType::Embedding(pool) => {
+                if pool == Pool::M3Sparse {
+                    candle::bail!(
+                        "`m3_sparse` is not supported on the flash attention path yet; run with \
+                         `USE_FLASH_ATTENTION=false`"
+                    )
+                }
+
                 let splade = if pool == Pool::Splade {
                     Some(BertSpladeHead::load_roberta(vb.clone(), config)?)
                 } else {
@@ -461,6 +475,7 @@ impl FlashBertModel {
                         Some((outputs.sum_keepdim(0)? / (batch.max_length as f64))?)
                     }
                 }
+                Pool::M3Sparse => unreachable!(),
                 Pool::Splade => {
                     // Unwrap is safe here
                     let splade_head = self.splade.as_ref().unwrap();

@@ -448,6 +448,9 @@ impl MPNetModel {
                 if pool == Pool::Splade {
                     candle::bail!("`splade` is not supported for MPNet")
                 }
+                if pool == Pool::M3Sparse {
+                    candle::bail!("`m3_sparse` is not supported for MPNet")
+                }
                 pool
             }
         };
@@ -634,7 +637,7 @@ impl MPNetModel {
 
                     (outputs.sum(1)?.broadcast_div(&input_lengths))?
                 }
-                Pool::Splade => unreachable!(),
+                Pool::Splade | Pool::M3Sparse => unreachable!(),
             };
             Some(pooled_embeddings)
         } else {

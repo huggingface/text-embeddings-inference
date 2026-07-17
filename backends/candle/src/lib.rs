@@ -310,7 +310,7 @@ impl CandleBackend {
             ) => {
                 tracing::info!("Starting Bert model on {:?}", device);
                 Ok(Box::new(
-                    BertModel::load_roberta(vb, &config, model_type).s()?,
+                    BertModel::load_roberta(vb, &config, model_type, model_path).s()?,
                 ))
             }
             (Config::DistilBert(config), Device::Cpu | Device::Metal(_)) => {
@@ -428,7 +428,7 @@ impl CandleBackend {
                 } else {
                     tracing::info!("Starting Bert model on {:?}", device);
                     Ok(Box::new(
-                        BertModel::load_roberta(vb, &config, model_type).s()?,
+                        BertModel::load_roberta(vb, &config, model_type, model_path).s()?,
                     ))
                 }
             }

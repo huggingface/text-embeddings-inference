@@ -4,6 +4,7 @@ use candle::{DType, Device, IndexOp, Module, Result, Tensor, D};
 use candle_nn::{Embedding, VarBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::path::Path;
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 // https://github.com/huggingface/transformers/blob/6eedfa6dd15dc1e22a55ae036f681914e5a0d9a1/src/transformers/models/bert/configuration_bert.py#L1
@@ -558,12 +559,146 @@ impl BertSpladeHead {
     }
 }
 
+/// Returns the token content of a `tokenizer_config.json` entry, which is either a bare string
+/// or an `AddedToken` object.
+fn token_content(value: &serde_json::Value) -> Option<&str> {
+    match value {
+        serde_json::Value::String(content) => Some(content.as_str()),
+        serde_json::Value::Object(obj) => obj.get("content").and_then(|c| c.as_str()),
+        _ => None,
+    }
+}
+
+/// Resolves the token ids that the bge-m3 sparse head must ignore: `{cls, eos, pad, unk}`.
+///
+/// These are read from the tokenizer files rather than hardcoded, mirroring FlagEmbedding's
+/// `_process_token_weights`, which reads them off the tokenizer instance.
+fn m3_special_token_ids(model_path: &Path) -> Result<Vec<u32>> {
+    let read = |path: &Path| -> Result<serde_json::Value> {
+        let raw = std::fs::read_to_string(path)
+            .map_err(|err| candle::Error::Msg(format!("Unable to read {path:?}: {err}")))?;
+        serde_json::from_str(&raw)
+            .map_err(|err| candle::Error::Msg(format!("Unable to parse {path:?}: {err}")))
+    };
+
+    let tokenizer_config = read(&model_path.join("tokenizer_config.json"))?;
+    let tokenizer = read(&model_path.join("tokenizer.json"))?;
+
+    let mut id_by_content = HashMap::new();
+    if let Some(added_tokens) = tokenizer.get("added_tokens").and_then(|t| t.as_array()) {
+        for token in added_tokens {
+            if let (Some(content), Some(id)) = (
+                token.get("content").and_then(|c| c.as_str()),
+                token.get("id").and_then(|i| i.as_u64()),
+            ) {
+                id_by_content.insert(content.to_string(), id as u32);
+            }
+        }
+    }
+
+    let mut ids = Vec::new();
+    for key in ["cls_token", "eos_token", "pad_token", "unk_token"] {
+        if let Some(id) = tokenizer_config
+            .get(key)
+            .and_then(token_content)
+            .and_then(|content| id_by_content.get(content))
+        {
+            ids.push(*id);
+        }
+    }
+
+    if ids.is_empty() {
+        candle::bail!(
+            "`m3_sparse` pooling could not resolve any of the `cls`/`eos`/`pad`/`unk` special \
+             token ids from the tokenizer files in {model_path:?}"
+        )
+    }
+
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(ids)
+}
+
+/// bge-m3 sparse (lexical weights) head.
+///
+/// Unlike SPLADE, this is a standalone `sparse_linear` layer shipped next to the model weights as
+/// `sparse_linear.pt`, and it is indexed by the *input* token ids rather than by vocabulary
+/// argmax. The pooled vector is therefore sparse by construction: at most `seq_len` of
+/// `vocab_size` entries are non-zero.
+#[derive(Debug)]
+pub struct BertM3Head {
+    sparse_linear: Linear,
+    vocab_size: usize,
+    special_token_ids: Vec<u32>,
+    span: tracing::Span,
+}
+
+impl BertM3Head {
+    pub(crate) fn load(model_path: &Path, config: &BertConfig, vb: &VarBuilder) -> Result<Self> {
+        let head_path = model_path.join("sparse_linear.pt");
+        if !head_path.is_file() {
+            candle::bail!(
+                "`m3_sparse` pooling requires a `sparse_linear.pt` head alongside the model \
+                 weights (shipped by `BAAI/bge-m3` and its fine-tunes); none found at {head_path:?}"
+            )
+        }
+
+        // `sparse_linear.pt` stores `weight`/`bias` as fp16; the VarBuilder dtype casts them to
+        // the hidden-state dtype, without which the matmul dtype-mismatches.
+        let head_vb = VarBuilder::from_pth(&head_path, vb.dtype(), vb.device())?;
+        let weight = head_vb.get((1, config.hidden_size), "weight")?;
+        let bias = head_vb.get(1, "bias")?;
+
+        Ok(Self {
+            sparse_linear: Linear::new(weight, Some(bias), Some(HiddenAct::Relu)),
+            vocab_size: config.vocab_size,
+            special_token_ids: m3_special_token_ids(model_path)?,
+            span: tracing::span!(tracing::Level::TRACE, "m3"),
+        })
+    }
+
+    /// Scatters `relu(sparse_linear(hidden_states))` into vocabulary space, keyed by input token
+    /// id and deduplicated by `max`. Returns a `[batch_size, vocab_size]` tensor, which the router
+    /// sparsifies by dropping zeros — yielding exactly bge-m3's `lexical_weights`.
+    pub(crate) fn forward(&self, hidden_states: &Tensor, input_ids: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        // [batch, seq, hidden] -> [batch, seq, 1] -> [batch, seq]
+        let token_weights = self
+            .sparse_linear
+            .forward(hidden_states)?
+            .squeeze(D::Minus1)?;
+
+        let device = token_weights.device().clone();
+        let token_weights = token_weights.to_dtype(DType::F32)?.to_vec2::<f32>()?;
+        let input_ids = input_ids.to_vec2::<u32>()?;
+
+        let batch_size = token_weights.len();
+        let mut pooled = vec![0f32; batch_size * self.vocab_size];
+
+        for (i, (weights, ids)) in token_weights.iter().zip(input_ids.iter()).enumerate() {
+            for (weight, token_id) in weights.iter().zip(ids.iter()) {
+                // Padded positions are filled with token id 0 (`<s>`), a special token, so they
+                // drop out here as well and need no attention mask.
+                if *weight <= 0.0 || self.special_token_ids.contains(token_id) {
+                    continue;
+                }
+                let slot = &mut pooled[i * self.vocab_size + *token_id as usize];
+                *slot = slot.max(*weight);
+            }
+        }
+
+        Tensor::from_vec(pooled, (batch_size, self.vocab_size), &device)
+    }
+}
+
 pub struct BertModel {
     embeddings: BertEmbeddings,
     encoder: BertEncoder,
     pool: Pool,
     classifier: Option<Box<dyn ClassificationHead + Send>>,
     splade: Option<BertSpladeHead>,
+    m3: Option<BertM3Head>,
 
     num_attention_heads: usize,
 
@@ -590,6 +725,13 @@ impl BertModel {
                 (pool, Some(classifier), None)
             }
             ModelType::Embedding(pool) => {
+                if pool == Pool::M3Sparse {
+                    candle::bail!(
+                        "`m3_sparse` pooling is only supported for XLM-RoBERTa models that ship a \
+                         sparse head, i.e. `BAAI/bge-m3` and its fine-tunes"
+                    );
+                }
+
                 let splade = if pool == Pool::Splade {
                     Some(BertSpladeHead::load(vb.clone(), config)?)
                 } else {
@@ -622,6 +764,7 @@ impl BertModel {
             pool,
             classifier,
             splade,
+            m3: None,
             num_attention_heads: config.num_attention_heads,
             device: vb.device().clone(),
             dtype: vb.dtype(),
@@ -633,13 +776,14 @@ impl BertModel {
         vb: VarBuilder,
         config: &BertConfig,
         model_type: ModelType,
+        model_path: &Path,
     ) -> Result<Self> {
         // Check position embedding type
         if config.position_embedding_type != PositionEmbeddingType::Absolute {
             candle::bail!("Bert only supports absolute position embeddings")
         }
 
-        let (pool, classifier, splade) = match model_type {
+        let (pool, classifier, splade, m3) = match model_type {
             // Classifier models always use CLS pooling
             ModelType::Classifier => {
                 let pool = Pool::Cls;
@@ -647,7 +791,7 @@ impl BertModel {
                 let classifier: Box<dyn ClassificationHead + Send> = Box::new(
                     RobertaClassificationHead::load(vb.pp("classifier"), config)?,
                 );
-                (pool, Some(classifier), None)
+                (pool, Some(classifier), None, None)
             }
             ModelType::Embedding(pool) => {
                 if pool == Pool::LastToken {
@@ -659,7 +803,14 @@ impl BertModel {
                 } else {
                     None
                 };
-                (pool, None, splade)
+
+                let m3 = if pool == Pool::M3Sparse {
+                    Some(BertM3Head::load(model_path, config, &vb)?)
+                } else {
+                    None
+                };
+
+                (pool, None, splade, m3)
             }
         };
 
@@ -696,6 +847,7 @@ impl BertModel {
             pool,
             classifier,
             splade,
+            m3,
             num_attention_heads: config.num_attention_heads,
             device: vb.device().clone(),
             dtype: vb.dtype(),
@@ -885,6 +1037,19 @@ impl BertModel {
                     }
 
                     relu_log.max(1)?
+                }
+                Pool::M3Sparse => {
+                    // Unwrap is safe here
+                    let m3_head = self.m3.as_ref().unwrap();
+
+                    // The head is indexed by input token id, so the ids must follow the same
+                    // batch selection that was applied to the hidden states
+                    let input_ids = match pooled_indices {
+                        Some(pooled_indices) => input_ids.index_select(&pooled_indices, 0)?,
+                        None => input_ids.clone(),
+                    };
+
+                    m3_head.forward(&outputs, &input_ids)?
                 }
             };
             Some(pooled_embeddings)
