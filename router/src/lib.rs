@@ -69,6 +69,7 @@ pub async fn run(
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
     prometheus_port: u16,
+    warmup_tokens: Option<usize>,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
     let model_id_path = Path::new(&model_id);
@@ -306,6 +307,7 @@ pub async fn run(
             max_batch_tokens,
             max_batch_requests,
             backend.padded_model,
+            warmup_tokens,
         )
         .await
         .context("Model backend is not healthy")?;
