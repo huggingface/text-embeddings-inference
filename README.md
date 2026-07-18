@@ -184,6 +184,7 @@ Options:
           - mean:       Apply Mean pooling to the model embeddings
           - splade:     Apply SPLADE (Sparse Lexical and Expansion) to the model embeddings. This option is only available if the loaded model is a `ForMaskedLM` Transformer model
           - last-token: Select the last token as embedding
+          - m3_sparse:  Apply the bge-m3 sparse (lexical weights) head to the model embeddings. This option is only available if the loaded model ships a `sparse_linear.pt` head (i.e. `BAAI/bge-m3` and its fine-tunes)
 
       --max-concurrent-requests <MAX_CONCURRENT_REQUESTS>
           The maximum amount of concurrent requests for this particular deployment. Having a low limit will refuse clients requests instead of having them wait for too long and is usually good to handle backpressure correctly
