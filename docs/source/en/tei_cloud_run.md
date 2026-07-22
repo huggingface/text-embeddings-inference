@@ -73,8 +73,7 @@ The command needs you to specify the following parameters:
 - `--image`: The container image URI to deploy.
 - `--args`: The arguments to pass to the container entrypoint, being `text-embeddings-inference` for the Hugging Face DLC for TEI. Read more about the supported arguments [here](https://huggingface.co/docs/text-embeddings-inference/cli_arguments).
   - `--model-id`: The model ID to use, in this case, [`ibm-granite/granite-embedding-278m-multilingual`](https://huggingface.co/ibm-granite/granite-embedding-278m-multilingual).
-  - `--quantize`: The quantization method to use. If not specified, it will be retrieved from the `quantization_config->quant_method` in the `config.json` file.
-  - `--max-concurrent-requests`: The maximum amount of concurrent requests for this particular deployment. Having a low limit will refuse clients requests instead of having them wait for too long and is usually good to handle back pressure correctly. Set to 64, but default is 128.
+  - `--max-concurrent-requests`: The maximum amount of concurrent requests for this particular deployment. Having a low limit will refuse clients requests instead of having them wait for too long and is usually good to handle back pressure correctly. Set to 64, but default is 512.
 - `--port`: The port the container listens to.
 - `--cpu` and `--memory`: The number of CPUs and amount of memory to allocate to the container. Needs to be set to 4 and 16Gi (16 GiB), respectively; as that's the minimum requirement for using the GPU.
 - `--no-cpu-throttling`: Disables CPU throttling, which is required for using the GPU.
