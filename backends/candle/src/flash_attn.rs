@@ -3,6 +3,7 @@ use std::sync::Once;
 
 static INIT: Once = Once::new();
 static mut RUNTIME_COMPUTE_CAP: usize = 0;
+
 fn init_runtime_compute_cap() {
     unsafe {
         INIT.call_once(|| {
