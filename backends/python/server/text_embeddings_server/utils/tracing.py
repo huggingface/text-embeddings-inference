@@ -1,7 +1,12 @@
 import grpc
 
 from opentelemetry import trace
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+    OTLPSpanExporter as GrpcOTLPSpanExporter,
+)
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+    OTLPSpanExporter as HttpOTLPSpanExporter,
+)
 from opentelemetry.instrumentation.grpc._aio_server import (
     OpenTelemetryAioServerInterceptor,
 )
@@ -54,9 +59,16 @@ class UDSOpenTelemetryAioServerInterceptor(OpenTelemetryAioServerInterceptor):
         )
 
 
-def setup_tracing(otlp_endpoint: str, otlp_service_name: str):
+def setup_tracing(
+    otlp_endpoint: str, otlp_service_name: str, otlp_protocol: str = "grpc"
+):
     resource = Resource.create(attributes={"service.name": otlp_service_name})
-    span_exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
+    if otlp_protocol == "http-proto":
+        # The HTTP exporter honors OTEL_EXPORTER_OTLP_HEADERS natively and
+        # appends /v1/traces to the endpoint
+        span_exporter = HttpOTLPSpanExporter(endpoint=otlp_endpoint)
+    else:
+        span_exporter = GrpcOTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
     span_processor = BatchSpanProcessor(span_exporter)
 
     trace.set_tracer_provider(TracerProvider(resource=resource))
