@@ -187,7 +187,7 @@ Options:
           [env: DISABLE_SPANS=]
 
       --otlp-endpoint <OTLP_ENDPOINT>
-          The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC. e.g. `http://localhost:4317`
+          The endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over the protocol selected by `--otlp-protocol`. e.g. `http://localhost:4317` (gRPC) or `http://localhost:4318` (HTTP)
 
           [env: OTLP_ENDPOINT=]
 
@@ -196,6 +196,13 @@ Options:
 
           [env: OTLP_SERVICE_NAME=]
           [default: text-embeddings-inference.server]
+
+      --otlp-protocol <OTLP_PROTOCOL>
+          The protocol used to export OTLP telemetry. `grpc` sends OTLP over gRPC (e.g. an OpenTelemetry collector on port 4317). `http-proto` sends OTLP over HTTP with protobuf encoding (e.g. an OpenTelemetry collector on port 4318, or the Langfuse OTLP endpoint). Custom export headers can be set with the standard `OTEL_EXPORTER_OTLP_HEADERS` environment variable (comma-separated `key=value` pairs)
+
+          [env: OTLP_PROTOCOL=]
+          [default: grpc]
+          [possible values: grpc, http-proto]
 
       --prometheus-port <PROMETHEUS_PORT>
           The Prometheus port to listen on
@@ -213,4 +220,18 @@ Options:
 
   -V, --version
           Print version
+```
+
+## Exporting traces to Langfuse
+
+Langfuse ingests OTLP over HTTP only (gRPC is not supported), so use `--otlp-protocol http-proto`.
+The exporter appends `/v1/traces` to the endpoint, so pass the base OTLP URL only:
+
+```bash
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic <base64(public_key:secret_key)>,x-langfuse-ingestion-version=4"
+
+text-embeddings-router \
+  --model-id <model> \
+  --otlp-endpoint https://cloud.langfuse.com/api/public/otel \
+  --otlp-protocol http-proto
 ```

@@ -13,7 +13,7 @@ use tracing::{instrument, Span};
 
 use text_embeddings_backend_core::{Backend as CoreBackend, Predictions};
 pub use text_embeddings_backend_core::{
-    BackendError, Batch, Embedding, Embeddings, ModelType, Pool,
+    BackendError, Batch, Embedding, Embeddings, ModelType, OtlpProtocol, Pool,
 };
 
 mod dtype;
@@ -98,6 +98,7 @@ impl Backend {
         uds_path: String,
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
+        otlp_protocol: OtlpProtocol,
     ) -> Result<Self, BackendError> {
         let (backend_sender, backend_receiver) = mpsc::channel(8);
 
@@ -110,6 +111,7 @@ impl Backend {
             uds_path,
             otlp_endpoint,
             otlp_service_name,
+            otlp_protocol,
         )
         .await?;
         let padded_model = backend.is_padded();
@@ -449,6 +451,7 @@ async fn init_backend(
     uds_path: String,
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
+    otlp_protocol: OtlpProtocol,
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     let mut backend_start_failed = false;
     let api_repo = api_repo.map(Arc::new);
@@ -582,6 +585,7 @@ async fn init_backend(
                     uds_path,
                     otlp_endpoint,
                     otlp_service_name,
+                    otlp_protocol,
                 )
             })
             .join()

@@ -5,7 +5,7 @@ use backend_grpc_client::Client;
 use nohash_hasher::BuildNoHashHasher;
 use std::collections::HashMap;
 use text_embeddings_backend_core::{
-    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool, Predictions,
+    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, OtlpProtocol, Pool, Predictions,
 };
 use tokio::runtime::Runtime;
 
@@ -23,6 +23,7 @@ impl PythonBackend {
         uds_path: String,
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
+        otlp_protocol: OtlpProtocol,
     ) -> Result<Self, BackendError> {
         let pool = match model_type {
             ModelType::Classifier => Pool::Cls,
@@ -35,6 +36,7 @@ impl PythonBackend {
             &uds_path,
             otlp_endpoint,
             otlp_service_name,
+            otlp_protocol,
             pool,
         )?;
         let tokio_runtime = tokio::runtime::Builder::new_current_thread()

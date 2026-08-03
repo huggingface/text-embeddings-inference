@@ -3,7 +3,7 @@ use clap::Parser;
 use opentelemetry::global;
 use veil::Redact;
 
-use text_embeddings_backend::DType;
+use text_embeddings_backend::{DType, OtlpProtocol};
 
 #[cfg(not(target_os = "linux"))]
 #[global_allocator]
@@ -181,8 +181,9 @@ struct Args {
     #[clap(long, env)]
     disable_spans: bool,
 
-    /// The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC.
-    /// e.g. `http://localhost:4317`
+    /// The endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over the protocol
+    /// selected by `--otlp-protocol`.
+    /// e.g. `http://localhost:4317` (gRPC) or `http://localhost:4318` (HTTP)
     #[clap(long, env)]
     otlp_endpoint: Option<String>,
 
@@ -190,6 +191,15 @@ struct Args {
     /// e.g. `text-embeddings-inference.server`
     #[clap(default_value = "text-embeddings-inference.server", long, env)]
     otlp_service_name: String,
+
+    /// The protocol used to export OTLP telemetry.
+    /// `grpc` sends OTLP over gRPC (e.g. an OpenTelemetry collector on port 4317).
+    /// `http-proto` sends OTLP over HTTP with protobuf encoding (e.g. an OpenTelemetry collector
+    /// on port 4318, or the Langfuse OTLP endpoint).
+    /// Custom export headers can be set with the standard `OTEL_EXPORTER_OTLP_HEADERS`
+    /// environment variable (comma-separated `key=value` pairs).
+    #[clap(default_value = "grpc", long, env, value_enum)]
+    otlp_protocol: OtlpProtocol,
 
     /// The Prometheus port to listen on.
     #[clap(default_value = "9000", long, env)]
@@ -209,6 +219,7 @@ async fn main() -> Result<()> {
     let global_tracer = text_embeddings_router::init_logging(
         args.otlp_endpoint.as_ref(),
         args.otlp_service_name.clone(),
+        args.otlp_protocol,
         args.json_output,
         args.disable_spans,
     );
@@ -264,6 +275,7 @@ async fn main() -> Result<()> {
         args.api_key,
         args.otlp_endpoint,
         args.otlp_service_name,
+        args.otlp_protocol,
         args.prometheus_port,
         args.cors_allow_origin,
     )

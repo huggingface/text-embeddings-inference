@@ -26,7 +26,7 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use text_embeddings_backend::{DType, Pool};
+use text_embeddings_backend::{DType, OtlpProtocol, Pool};
 use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
@@ -68,6 +68,7 @@ pub async fn run(
     api_key: Option<String>,
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
+    otlp_protocol: OtlpProtocol,
     prometheus_port: u16,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
@@ -291,6 +292,7 @@ pub async fn run(
         uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_string()),
         otlp_endpoint.clone(),
         otlp_service_name.clone(),
+        otlp_protocol,
     )
     .await
     .context("Could not create backend")?;
