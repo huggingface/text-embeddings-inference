@@ -1,3 +1,36 @@
+/*
+## CPU
+
+```bash
+nix develop
+cargo build --release
+```
+## GPU
+
+```bash
+nix develop .#cuda
+# -F candle-cuda for GPU
+# -F dynamic-linking or -F static-linking should be set explicitly because of cudarc
+# --no-default-features prevent Cargo from compiling unnecessary, heavy backends
+# -F http because of previous flag we need to state it explicitely now
+cargo build --release -F candle-cuda -F http -F static-linking --no-default-features
+# or
+cargo build --release -F candle-cuda -F http -F dynamic-linking --no-default-features
+```
+
+## Running with Ubuntu libraries example
+
+```bash
+# 1. Create a hidden folder in your current directory
+mkdir -p .nvidia-shims
+# 2. Symlink only the NVIDIA driver libraries from your host
+ln -sf /usr/lib/x86_64-linux-gnu/libcuda.so* .nvidia-shims/
+ln -sf /usr/lib/x86_64-linux-gnu/libnvidia-*.so* .nvidia-shims/
+# 3. Run
+LD_LIBRARY_PATH=$(pwd)/.nvidia-shims ./target/release/text-embeddings-router --port 8888 --model-id nomic-ai/nomic-embed-text-v2-moe
+```
+*/
+
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
