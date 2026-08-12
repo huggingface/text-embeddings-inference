@@ -93,7 +93,7 @@ response = client.embeddings.create(
 print(response.data[0].embedding)
 ```
 
-> **Note:** The same `OpenAI(base_url=...)` client pattern also works with OpenAI-compatible multi-model gateways when you are not self-hosting TEI — for example [DaoXE](https://daoxe.com/?utm_source=github&utm_medium=organic&utm_campaign=text-embeddings-inference&utm_content=openai_base_url) at `https://api.daoxe.com/v1`.
+> **Note:** The same `OpenAI(base_url=...)` client pattern also works with OpenAI-compatible multi-model gateways when you are not self-hosting TEI — for example [DaoXE](https://daoxe.com/) at `https://api.daoxe.com/v1`.
 
 Alternatively, you can also send the request with cURL as follows:
 ```bash
