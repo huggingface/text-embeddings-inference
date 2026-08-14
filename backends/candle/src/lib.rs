@@ -41,8 +41,9 @@ pub enum FlashAttn {
     V2,
 }
 
+/// Flash Attention v1 only supports F16, whilst v2 supports both F16 and BF16.
 #[allow(unused)]
-fn use_flash_attn(supported: &[FlashAttn]) -> bool {
+fn use_flash_attn(dtype: DType, supported: &[FlashAttn]) -> bool {
     #[cfg(not(feature = "cuda"))]
     {
         tracing::warn!("Flash Attention is not supported on CPU yet");
@@ -58,9 +59,11 @@ fn use_flash_attn(supported: &[FlashAttn]) -> bool {
             false
         } else {
             supported.iter().any(|v| match v {
-                FlashAttn::V1 => cfg!(feature = "flash-attn-v1"),
+                FlashAttn::V1 => dtype == DType::F16 && cfg!(feature = "flash-attn-v1"),
                 FlashAttn::V2 => {
-                    cfg!(feature = "flash-attn") && get_runtime_compute_cap().is_ok_and(|x| x >= 80)
+                    matches!(dtype, DType::F16 | DType::BF16)
+                        && cfg!(feature = "flash-attn")
+                        && get_runtime_compute_cap().is_ok_and(|x| x >= 80)
                 }
             })
         }
@@ -273,27 +276,26 @@ impl CandleBackend {
                             .to_string(),
                     ));
                 }
+                #[cfg(not(feature = "cuda"))]
                 Device::Cuda(_) => {
                     return Err(BackendError::Start(
                         "CUDA feature is not enabled".to_string(),
                     ));
                 }
-                // NOTE: Temporarily left out given that supporting BF16 w/ Flash Attn requires an
-                // update on `candle` and `candle-extensions` which is still in progress
-                // #[cfg(feature = "cuda")]
-                // Device::Cuda(_) => {
-                //     let compute_cap = get_runtime_compute_cap().map_err(|e| {
-                //         BackendError::Start(format!("Failed to get CUDA compute capability: {e:?}"))
-                //     })?;
-                //     if compute_cap < 80 {
-                //         return Err(BackendError::Start(format!(
-                //             "BFloat16 requires CUDA compute capability >= 8.0 (Ampere or newer), \
-                //              but found {}.{}. Use float16 or float32 instead.",
-                //             compute_cap / 10,
-                //             compute_cap % 10
-                //         )));
-                //     }
-                // }
+                #[cfg(feature = "cuda")]
+                Device::Cuda(_) => {
+                    let compute_cap = get_runtime_compute_cap().map_err(|e| {
+                        BackendError::Start(format!("Failed to get CUDA compute capability: {e:?}"))
+                    })?;
+                    if compute_cap < 80 {
+                        return Err(BackendError::Start(format!(
+                            "BFloat16 requires CUDA compute capability >= 8.0 (Ampere or newer), \
+                             but found {}.{}. Use float16 or float32 instead.",
+                            compute_cap / 10,
+                            compute_cap % 10
+                        )));
+                    }
+                }
                 Device::Metal(_) => (),
             }
             Ok(DType::BF16)
@@ -408,8 +410,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
-                // TODO(alvarobartt): Include the `dtype` as an arg in `use_flash_attn`
-                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2]) {
+                if use_flash_attn(dtype, &[FlashAttn::V1, FlashAttn::V2]) {
                     match config {
                         BertConfigWrapper::JinaBert(config) => {
                             tracing::info!("Starting FlashJinaBert model on {:?}", device);
@@ -452,8 +453,7 @@ impl CandleBackend {
                 Config::Camembert(config) | Config::Roberta(config) | Config::XlmRoberta(config),
                 Device::Cuda(_),
             ) => {
-                // TODO(alvarobartt): Include the `dtype` as an arg in `use_flash_attn`
-                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2]) {
+                if use_flash_attn(dtype, &[FlashAttn::V1, FlashAttn::V2]) {
                     tracing::info!("Starting FlashBert model on {:?}", device);
                     Ok(Box::new(
                         FlashBertModel::load_roberta(vb, &config, model_type).s()?,
@@ -472,8 +472,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::DistilBert(config), Device::Cuda(_)) => {
-                // TODO(alvarobartt): Include the `dtype` as an arg in `use_flash_attn`
-                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V2]) {
+                if use_flash_attn(dtype, &[FlashAttn::V2]) {
                     tracing::info!("Starting FlashDistilBert model on {:?}", device);
                     Ok(Box::new(
                         FlashDistilBertModel::load(vb, &config, model_type).s()?,
@@ -487,10 +486,10 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Gemma3(config), Device::Cuda(_)) => {
-                // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on CUDA
-                if dtype != DType::F32 {
+                // Gemma3 is not numerically stable in fp16, so only fp32 and bf16 are allowed
+                if !matches!(dtype, DType::F32 | DType::BF16) {
                     Err(BackendError::Start(
-                        "Gemma3 is only supported in fp32 precision".to_string(),
+                        "Gemma3 is only supported in fp32 or bf16 precision".to_string(),
                     ))
                 } else {
                     tracing::info!("Starting Gemma3 model on {:?}", device);
@@ -499,8 +498,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Gte(config), Device::Cuda(_)) => {
-                // TODO(alvarobartt): Include the `dtype` as an arg in `use_flash_attn`
-                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2]) {
+                if use_flash_attn(dtype, &[FlashAttn::V1, FlashAttn::V2]) {
                     tracing::info!("Starting FlashGTE model on {:?}", device);
                     Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))
                 } else {
@@ -510,9 +508,8 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Mistral(config), Device::Cuda(_)) => {
-                // TODO(alvarobartt): Include the `dtype` as an arg in `use_flash_attn`
-                if !(dtype == DType::F16 && use_flash_attn(&[FlashAttn::V2])) {
-                    return Err(BackendError::Start("Mistral is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
+                if !use_flash_attn(dtype, &[FlashAttn::V2]) {
+                    return Err(BackendError::Start("Mistral is only supported on Cuda devices in fp16 or bf16 with flash attention v2 enabled".to_string()));
                 }
                 tracing::info!("Starting FlashMistral model on {:?}", device);
                 Ok(Box::new(
@@ -521,8 +518,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::ModernBert(config), Device::Cuda(_)) => {
-                // TODO(alvarobartt): Include the `dtype` as an arg in `use_flash_attn`
-                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V2]) {
+                if use_flash_attn(dtype, &[FlashAttn::V2]) {
                     tracing::info!("Starting FlashModernBert model on {:?}", device);
                     Ok(Box::new(
                         FlashModernBertModel::load(vb, &config, model_type).s()?,
@@ -538,8 +534,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::NomicBert(config), Device::Cuda(_)) => {
-                // TODO(alvarobartt): Include the `dtype` as an arg in `use_flash_attn`
-                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V2]) {
+                if use_flash_attn(dtype, &[FlashAttn::V2]) {
                     tracing::info!("Starting FlashNomicBert model on {:?}", device);
                     Ok(Box::new(
                         FlashNomicBertModel::load(vb, &config, model_type).s()?,
@@ -551,9 +546,8 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Qwen2(config), Device::Cuda(_)) => {
-                // TODO(alvarobartt): Include the `dtype` as an arg in `use_flash_attn`
-                if !(dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2])) {
-                    return Err(BackendError::Start("Qwen2 is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
+                if !use_flash_attn(dtype, &[FlashAttn::V1, FlashAttn::V2]) {
+                    return Err(BackendError::Start("Qwen2 is only supported on Cuda devices in fp16 or bf16 with flash attention enabled".to_string()));
                 }
                 tracing::info!("Starting FlashQwen2 model on {:?}", device);
                 Ok(Box::new(
@@ -562,8 +556,7 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Qwen3(config), Device::Cuda(_)) => {
-                // TODO(alvarobartt): Include the `dtype` as an arg in `use_flash_attn`
-                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2]) {
+                if use_flash_attn(dtype, &[FlashAttn::V1, FlashAttn::V2]) {
                     tracing::info!("Starting FlashQwen3 model on {:?}", device);
                     Ok(Box::new(
                         FlashQwen3Model::load(vb, &config, model_type).s()?,

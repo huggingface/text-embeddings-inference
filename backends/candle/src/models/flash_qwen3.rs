@@ -306,8 +306,8 @@ impl FlashQwen3Model {
             _ => candle::bail!("FlashQwen3 requires Cuda"),
         }
 
-        if vb.dtype() != DType::F16 {
-            candle::bail!("FlashQwen3 requires DType::F16")
+        if !matches!(vb.dtype(), DType::F16 | DType::BF16) {
+            candle::bail!("FlashQwen3 requires DType::F16 or DType::BF16")
         }
 
         let pool = match model_type {

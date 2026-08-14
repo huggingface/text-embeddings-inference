@@ -214,8 +214,8 @@ impl FlashNomicBertModel {
             _ => candle::bail!("FlashNomicBertModel requires Cuda"),
         }
 
-        if vb.dtype() != DType::F16 {
-            candle::bail!("FlashNomicBertModel requires DType::F16")
+        if !matches!(vb.dtype(), DType::F16 | DType::BF16) {
+            candle::bail!("FlashNomicBertModel requires DType::F16 or DType::BF16")
         }
 
         let pool = match model_type {

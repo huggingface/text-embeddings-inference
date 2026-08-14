@@ -233,8 +233,8 @@ impl FlashBertModel {
             _ => candle::bail!("FlashBert requires Cuda"),
         }
 
-        if vb.dtype() != DType::F16 {
-            candle::bail!("FlashBert requires DType::F16")
+        if !matches!(vb.dtype(), DType::F16 | DType::BF16) {
+            candle::bail!("FlashBert requires DType::F16 or DType::BF16")
         }
 
         // Check position embedding type
@@ -299,8 +299,8 @@ impl FlashBertModel {
             _ => candle::bail!("FlashBert requires Cuda"),
         }
 
-        if vb.dtype() != DType::F16 {
-            candle::bail!("FlashBert requires DType::F16")
+        if !matches!(vb.dtype(), DType::F16 | DType::BF16) {
+            candle::bail!("FlashBert requires DType::F16 or DType::BF16")
         }
 
         // Check position embedding type
