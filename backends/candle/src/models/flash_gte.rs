@@ -170,8 +170,8 @@ impl FlashGTEModel {
             _ => candle::bail!("FlashGTE requires Cuda"),
         }
 
-        if vb.dtype() != DType::F16 {
-            candle::bail!("FlashGTE requires DType::F16")
+        if !matches!(vb.dtype(), DType::F16 | DType::BF16) {
+            candle::bail!("FlashGTE requires DType::F16 or DType::BF16")
         }
 
         if config.logn_attention_clip1 {

@@ -16,9 +16,12 @@ pub enum DType {
     // NOTE: For CUDA, BF16 requires Ampere (SM 80) or newer, which is validated at runtime, as
     // there are no specific features for the different CUDA compute capabilities to filter out
     // Turing and Volta from having `DType::Bfloat16`.
-    // NOTE: At the moment only Intel HPU and Metal are supported, given that there are still a few
-    // missing pieces to update `candle` and `candle-extensions` w/ support for BF16 Flash Attn
-    #[cfg(any(feature = "python", all(feature = "candle", feature = "metal")))]
+    // NOTE: Supported on Intel HPU via the Python backend, and on Metal and CUDA (Ampere or
+    // newer, enforced at runtime) via the Candle backend
+    #[cfg(any(
+        feature = "python",
+        all(feature = "candle", any(feature = "metal", feature = "cuda"))
+    ))]
     Bfloat16,
 }
 
@@ -36,7 +39,10 @@ impl FromStr for DType {
                 all(feature = "candle", not(feature = "accelerate"))
             ))]
             "float16" => DType::Float16,
-            #[cfg(any(feature = "python", all(feature = "candle", feature = "metal")))]
+            #[cfg(any(
+                feature = "python",
+                all(feature = "candle", any(feature = "metal", feature = "cuda"))
+            ))]
             "bfloat16" => DType::Bfloat16,
             _ => return Err(DTypeParseError),
         };
@@ -55,7 +61,10 @@ impl fmt::Display for DType {
             DType::Float16 => write!(f, "float16"),
             #[cfg(any(feature = "python", feature = "candle", feature = "ort"))]
             DType::Float32 => write!(f, "float32"),
-            #[cfg(any(feature = "python", all(feature = "candle", feature = "metal")))]
+            #[cfg(any(
+                feature = "python",
+                all(feature = "candle", any(feature = "metal", feature = "cuda"))
+            ))]
             DType::Bfloat16 => write!(f, "bfloat16"),
         }
     }

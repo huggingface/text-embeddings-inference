@@ -254,8 +254,8 @@ impl FlashModernBertModel {
             _ => candle::bail!("FlashModernBert requires Cuda"),
         }
 
-        if vb.dtype() != DType::F16 {
-            candle::bail!("FlashModernBert requires DType::F16")
+        if !matches!(vb.dtype(), DType::F16 | DType::BF16) {
+            candle::bail!("FlashModernBert requires DType::F16 or DType::BF16")
         }
 
         let (pool, classifier) = match model_type {

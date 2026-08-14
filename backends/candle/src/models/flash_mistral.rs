@@ -243,8 +243,8 @@ impl FlashMistralModel {
             _ => candle::bail!("FlashMistral requires Cuda"),
         }
 
-        if vb.dtype() != DType::F16 {
-            candle::bail!("FlashMistral requires DType::F16")
+        if !matches!(vb.dtype(), DType::F16 | DType::BF16) {
+            candle::bail!("FlashMistral requires DType::F16 or DType::BF16")
         }
 
         let pool = match model_type {
