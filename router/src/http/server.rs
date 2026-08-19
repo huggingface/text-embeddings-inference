@@ -77,6 +77,14 @@ async fn health(infer: Extension<Infer>) -> Result<(), (StatusCode, Json<ErrorRe
     }
 }
 
+fn record_single_predict_request() {
+    metrics::counter!("te_request_count", "method" => "single").increment(1);
+}
+
+fn record_single_predict_success() {
+    metrics::counter!("te_request_success", "method" => "single").increment(1);
+}
+
 /// Get Predictions. Returns a 424 status code if the model is not a Sequence Classification model
 #[utoipa::path(
 post,
@@ -174,16 +182,14 @@ async fn predict(
 
     let (response, metadata) = match req.inputs {
         PredictInput::Single(inputs) => {
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            record_single_predict_request();
 
             let compute_chars = inputs.count_chars();
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let (prompt_tokens, tokenization, queue, inference, predictions) =
                 predict_inner(inputs, truncate, infer.0, info.0, Some(permit)).await?;
 
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            record_single_predict_success();
 
             (
                 PredictResponse::Single(predictions),
@@ -1930,5 +1936,50 @@ impl From<serde_json::Error> for ErrorResponse {
             error: err.to_string(),
             error_type: ErrorType::Validation,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{record_single_predict_request, record_single_predict_success};
+    use metrics_exporter_prometheus::PrometheusBuilder;
+
+    fn counter_value(rendered: &str, metric: &str) -> u64 {
+        rendered
+            .lines()
+            .find(|line| line.starts_with(metric))
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|value| value.parse().ok())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn single_predict_records_request_and_success_separately() {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+
+        metrics::with_local_recorder(&recorder, || {
+            record_single_predict_request();
+            let rendered = handle.render();
+            assert_eq!(
+                counter_value(&rendered, "te_request_count{method=\"single\"}"),
+                1
+            );
+            assert_eq!(
+                counter_value(&rendered, "te_request_success{method=\"single\"}"),
+                0
+            );
+
+            record_single_predict_success();
+            let rendered = handle.render();
+            assert_eq!(
+                counter_value(&rendered, "te_request_count{method=\"single\"}"),
+                1
+            );
+            assert_eq!(
+                counter_value(&rendered, "te_request_success{method=\"single\"}"),
+                1
+            );
+        });
     }
 }
