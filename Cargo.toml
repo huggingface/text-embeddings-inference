@@ -35,7 +35,7 @@ metrics = "0.23.1"
 nohash-hasher = "0.2"
 num_cpus = "1.16.0"
 tokenizers = { version = "0.21.0", default-features = false, features = ["onig", "esaxx_fast"] }
-tokio = { version = "1.25", features = ["rt", "rt-multi-thread", "parking_lot", "sync", "signal"] }
+tokio = { version = "1.25", features = ["rt", "rt-multi-thread", "parking_lot", "sync", "signal", "process"] }
 tracing = "0.1"
 serde = { version = "1.0", features = ["serde_derive"] }
 serde_json = "1.0"

@@ -4623,6 +4623,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "simsimd",
+ "tempfile",
  "text-embeddings-backend",
  "text-embeddings-core",
  "thiserror 1.0.69",
