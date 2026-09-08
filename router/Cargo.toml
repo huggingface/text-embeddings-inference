@@ -60,6 +60,7 @@ tokio-stream = { version = "0.1.14", optional = true }
 # Optional
 cudarc = { workspace = true, optional = true }
 intel-mkl-src = { workspace = true, optional = true }
+uuid = { version = "1.19.0", features = ["v4"] }
 
 # Malloc trim hack for linux
 [target.'cfg(target_os = "linux")'.dependencies]
