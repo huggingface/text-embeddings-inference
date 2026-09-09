@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, str::FromStr};
 
 #[cfg(feature = "clap")]
 use clap::ValueEnum;
@@ -6,7 +6,6 @@ use clap::ValueEnum;
 #[derive(Debug, PartialEq)]
 #[cfg_attr(feature = "clap", derive(Clone, ValueEnum))]
 pub enum DType {
-    // Float16 is not available on accelerate
     #[cfg(any(
         feature = "python",
         all(feature = "candle", not(feature = "accelerate"))
@@ -14,14 +13,41 @@ pub enum DType {
     Float16,
     #[cfg(any(feature = "python", feature = "candle", feature = "ort"))]
     Float32,
-    #[cfg(feature = "python")]
+    // NOTE: For CUDA, BF16 requires Ampere (SM 80) or newer, which is validated at runtime, as
+    // there are no specific features for the different CUDA compute capabilities to filter out
+    // Turing and Volta from having `DType::Bfloat16`.
+    // NOTE: At the moment only Intel HPU and Metal are supported, given that there are still a few
+    // missing pieces to update `candle` and `candle-extensions` w/ support for BF16 Flash Attn
+    #[cfg(any(feature = "python", all(feature = "candle", feature = "metal")))]
     Bfloat16,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct DTypeParseError;
+
+impl FromStr for DType {
+    type Err = DTypeParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let dtype = match s {
+            "float32" => DType::Float32,
+            #[cfg(any(
+                feature = "python",
+                all(feature = "candle", not(feature = "accelerate"))
+            ))]
+            "float16" => DType::Float16,
+            #[cfg(any(feature = "python", all(feature = "candle", feature = "metal")))]
+            "bfloat16" => DType::Bfloat16,
+            _ => return Err(DTypeParseError),
+        };
+
+        Ok(dtype)
+    }
 }
 
 impl fmt::Display for DType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            // Float16 is not available on accelerate
             #[cfg(any(
                 feature = "python",
                 all(feature = "candle", not(feature = "accelerate"))
@@ -29,7 +55,7 @@ impl fmt::Display for DType {
             DType::Float16 => write!(f, "float16"),
             #[cfg(any(feature = "python", feature = "candle", feature = "ort"))]
             DType::Float32 => write!(f, "float32"),
-            #[cfg(feature = "python")]
+            #[cfg(any(feature = "python", all(feature = "candle", feature = "metal")))]
             DType::Bfloat16 => write!(f, "bfloat16"),
         }
     }

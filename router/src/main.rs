@@ -35,7 +35,9 @@ struct Args {
     #[clap(long, env)]
     tokenization_workers: Option<usize>,
 
-    /// The dtype to be forced upon the model.
+    /// The dtype to be forced upon the model, otherwise the value set in `dtype` (or `torch_dtype`
+    /// as fallback) in the `config.json` file is used. Note that `bfloat16` is not supported on
+    /// CPU, neither for Turing on CUDA, but only from Ampere onwards.
     #[clap(long, env, value_enum)]
     dtype: Option<DType>,
 

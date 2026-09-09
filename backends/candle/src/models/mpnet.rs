@@ -495,7 +495,11 @@ impl MPNetModel {
 
         let min_value = match self.dtype {
             DType::F32 => f32::MIN as f64,
-            _ => -65504.0_f64, // f16 minumum value
+            DType::BF16 => -3.3895314e38_f64,
+            DType::F16 => -65504.0_f64,
+            // SAFETY: Default to F16 min finite value, even if dtype will always match any of the
+            // previous variants
+            _ => -65504.0_f64,
         };
 
         let extended_attention_mask = ((1.0 - extended_attention_mask)? * min_value)?;

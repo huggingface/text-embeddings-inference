@@ -8,9 +8,12 @@ ENV CARGO_CHEF=0.1.73
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     curl \
+    git \
     libssl-dev \
+    libstdc++-13-dev \
     pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf "$(gcc --print-file-name=libstdc++.a)" "/usr/lib/$(gcc -print-multiarch)/libstdc++.a"
 
 # Download and configure sccache (multi-arch)
 ARG TARGETARCH
