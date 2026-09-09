@@ -80,6 +80,26 @@ impl fmt::Display for Pool {
     }
 }
 
+/// Protocol used to export OTLP traces
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "clap", derive(ValueEnum))]
+pub enum OtlpProtocol {
+    /// OTLP over gRPC
+    #[default]
+    Grpc,
+    /// OTLP over HTTP with protobuf encoding
+    HttpProto,
+}
+
+impl fmt::Display for OtlpProtocol {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            OtlpProtocol::Grpc => write!(f, "grpc"),
+            OtlpProtocol::HttpProto => write!(f, "http-proto"),
+        }
+    }
+}
+
 #[derive(Debug, Error, Clone)]
 pub enum BackendError {
     #[error("No backend found")]

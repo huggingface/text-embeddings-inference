@@ -15,6 +15,11 @@ class Dtype(str, Enum):
     bloat16 = "bfloat16"
 
 
+class OtlpProtocol(str, Enum):
+    grpc = "grpc"
+    http_proto = "http-proto"
+
+
 @app.command()
 def serve(
     model_path: Path,
@@ -24,6 +29,7 @@ def serve(
     json_output: bool = False,
     otlp_endpoint: Optional[str] = None,
     otlp_service_name: str = "text-embeddings-inference.server",
+    otlp_protocol: OtlpProtocol = OtlpProtocol.grpc,
     pool: str = "cls",
 ):
     # Remove default handler
@@ -44,7 +50,11 @@ def serve(
 
     # Setup OpenTelemetry distributed tracing
     if otlp_endpoint is not None:
-        setup_tracing(otlp_endpoint=otlp_endpoint, otlp_service_name=otlp_service_name)
+        setup_tracing(
+            otlp_endpoint=otlp_endpoint,
+            otlp_service_name=otlp_service_name,
+            otlp_protocol=otlp_protocol.value,
+        )
 
     # Downgrade enum into str for easier management later on
     dtype = None if dtype is None else dtype.value
