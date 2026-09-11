@@ -20,8 +20,8 @@ rendered properly in your Markdown viewer.
 
 An Endpoint runs until you stop or delete it. Allocated resources are billed while it runs, including while idle; these instructions do not configure automatic scaling. See [Serverless pricing and quotas](https://docs.nebius.com/serverless/pricing-quotas).
 
-> [!WARNING]
-> This guide is awaiting end-to-end GPU validation on Nebius. The commands and API payloads have been checked locally, but startup, managed ingress authentication, and resource cleanup have not yet been verified with this image/model pair.
+> [!NOTE]
+> Validated on September 11, 2026 with Nebius CLI `0.12.265`, one regular L40S in `eu-north1`, and the image/model pins below. Checks covered GPU startup, authenticated native/OpenAI embedding requests, input limits, small batching samples, stop/start recovery, and deletion of the Endpoint, VM and boot disk. These checks do not establish production throughput or memory sizing.
 
 ## Prerequisites
 
@@ -88,7 +88,7 @@ nebius ai endpoint create \
   --public=false --preemptible=false --retries 1 --async
 ```
 
-`--async` returns after submission, before model readiness. Copy the returned Endpoint ID and save it with the project ID:
+`--async` returns after submission, before model readiness. The CLI output can include the Endpoint token, including when `--format json` is requested; keep create/get/lifecycle output out of shared logs. Copy the returned Endpoint ID and save it with the project ID:
 
 ```bash
 export ENDPOINT_ID='<endpoint-id>'
