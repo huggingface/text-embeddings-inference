@@ -1,0 +1,12 @@
+[
+  {
+    "repo_id": "kernels-community/triton-layer-norm",
+    "sha": "229047cce234bcdeab0b737b9017448a4239193b",
+    "variants": {
+      "torch-universal": {
+        "hash": "sha256-15b7385f37978b78f924c7c38e9d29dfbae2bbdc64f3b27a195134266bda8dcb",
+        "hash_type": "git_lfs_concat"
+      }
+    }
+  }
+]
