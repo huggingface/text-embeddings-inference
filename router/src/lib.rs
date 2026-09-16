@@ -1,6 +1,7 @@
 /// Text Embedding Inference Webserver
 mod logging;
 mod prometheus;
+mod oci;
 
 #[cfg(feature = "http")]
 mod http;
@@ -72,7 +73,18 @@ pub async fn run(
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
     let model_id_path = Path::new(&model_id);
-    let (model_root, api_repo) = if model_id_path.exists() && model_id_path.is_dir() {
+    let (model_root, api_repo) = if oci::is_oci_ref(&model_id) {
+        // A CNCF ModelPack artifact is pulled through llmman and extracted to a
+        // local directory, which is then loaded exactly like any other local
+        // model. There is no Hub repo behind it, so `api_repo` is None: the
+        // dense-module and 1_Dense lookups fall back to what is on disk.
+        (
+            oci::from_oci(&model_id)
+                .await
+                .context("Could not fetch OCI model artifact")?,
+            None,
+        )
+    } else if model_id_path.exists() && model_id_path.is_dir() {
         // Using a local model
         (model_id_path.to_path_buf(), None)
     } else {
