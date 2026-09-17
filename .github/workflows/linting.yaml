@@ -7,8 +7,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
   run_tests:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
 
     env:
@@ -34,12 +38,17 @@ jobs:
           chmod +x /usr/local/bin/sccache
       - name: configure sccache
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        env:
+          RUNNER_OS_NAME: ${{ runner.os }}
+          GIT_REF_NAME: ${{ github.ref_name }}
         with:
           script: |
+            const runnerOs = process.env.RUNNER_OS_NAME || '';
+            const refName = process.env.GIT_REF_NAME || '';
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-            core.exportVariable('SCCACHE_GHA_CACHE_TO', 'sccache-${{runner.os}}-${{github.ref_name}}');
-            core.exportVariable('SCCACHE_GHA_CACHE_FROM', 'sccache-${{runner.os}}-main,sccache-${{runner.os}}-');
+            core.exportVariable('SCCACHE_GHA_CACHE_TO', `sccache-${runnerOs}-${refName}`);
+            core.exportVariable('SCCACHE_GHA_CACHE_FROM', `sccache-${runnerOs}-main,sccache-${runnerOs}-`);
       - name: cargo registry cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v5
         with:
