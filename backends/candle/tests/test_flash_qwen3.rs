@@ -19,6 +19,7 @@ fn test_flash_qwen3() -> Result<()> {
         "float16".to_string(),
         ModelType::Embedding(Pool::LastToken),
         None,
+        0,
     )?;
 
     let input_batch = batch(
