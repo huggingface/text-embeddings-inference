@@ -458,6 +458,18 @@ impl Infer {
         if !raw_scores {
             // Softmax
             if response.results.len() > 1 {
+                // Check that the results do not contain NaN or the partial_cmp
+                // in the max_by below will panic
+                if response.results.iter().any(|s| s.is_nan()) {
+                    let counter = metrics::counter!("te_request_failure", "err" => "inference");
+                    counter.increment(1);
+                    let message = "score is NaN".to_string();
+                    tracing::error!("{message}");
+                    return Err(TextEmbeddingsError::Backend(BackendError::Inference(
+                        message,
+                    )));
+                }
+
                 let max = *response
                     .results
                     .iter()
