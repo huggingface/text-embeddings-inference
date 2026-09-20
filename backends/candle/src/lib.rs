@@ -25,9 +25,9 @@ use crate::compute_cap::{
 use crate::models::{
     BertConfig, BertModel, DebertaV2Config, DebertaV2Model, Dense, DenseConfig, DenseLayer,
     DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, Gemma3Config, Gemma3Model,
-    JinaBertModel, JinaCodeBertModel, LlamaConfig, MPNetConfig, MPNetModel, MistralConfig, Model,
-    ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Pplx1Config, Pplx1Model,
-    Qwen2Config, Qwen3Config, Qwen3Model,
+    JinaBertModel, JinaCodeBertModel, LayaModel, LlamaConfig, MPNetConfig, MPNetModel,
+    MistralConfig, Model, ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig,
+    Pplx1Config, Pplx1Model, Qwen2Config, Qwen3Config, Qwen3Model,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -511,7 +511,18 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::ModernBert(config), Device::Cuda(_)) => {
-                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V2]) {
+                if matches!(model_type, ModelType::Decision) {
+                    tracing::info!("Starting ModernBert decision model on {:?}", device);
+                    let laya_config = match std::fs::read_to_string(model_path.join("rl_agent_config.json")) {
+                        Ok(contents) => serde_json::from_str(&contents)
+                            .context("Unable to parse rl_agent_config.json")
+                            .map_err(|err| BackendError::Start(format!("{err:?}")))?,
+                        Err(err) if err.kind() == std::io::ErrorKind::NotFound =>
+                            crate::models::LayaConfig::default(),
+                        Err(err) => return Err(BackendError::Start(err.to_string())),
+                    };
+                    Ok(Box::new(LayaModel::load(vb, &config, laya_config).s()?))
+                } else if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V2]) {
                     tracing::info!("Starting FlashModernBert model on {:?}", device);
                     Ok(Box::new(
                         FlashModernBertModel::load(vb, &config, model_type).s()?,
