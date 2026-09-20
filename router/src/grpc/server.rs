@@ -1,7 +1,9 @@
 use crate::grpc::pb::tei::v1::{
-    EmbedAllRequest, EmbedAllResponse, EmbedSparseRequest, EmbedSparseResponse, EncodeRequest,
-    EncodeResponse, PredictPairRequest, RerankStreamRequest, SimpleToken, SparseValue,
-    TokenEmbedding, TruncationDirection,
+    decision_server::Decision, DecisionAnswer, DecisionCriterion, DecisionLegend,
+    DecisionProbability, DecisionQuestion, DecisionRequest, DecisionResponse, DecisionType,
+    EmbedAllRequest, EmbedAllResponse, EmbedSparseRequest,
+    EmbedSparseResponse, EncodeRequest, EncodeResponse, PredictPairRequest, RerankStreamRequest,
+    SimpleToken, SparseValue, TokenEmbedding, TruncationDirection,
 };
 use crate::grpc::{
     DecodeRequest, DecodeResponse, EmbedRequest, EmbedResponse, InfoRequest, InfoResponse,
@@ -38,6 +40,38 @@ impl From<&ResponseMetadata> for grpc::Metadata {
             tokenization_time_ns: value.tokenization_time.as_nanos() as u64,
             queue_time_ns: value.queue_time.as_nanos() as u64,
             inference_time_ns: value.inference_time.as_nanos() as u64,
+        }
+    }
+}
+
+fn decision_option_text(criterion: &DecisionCriterion) -> String {
+    if criterion.description.is_empty() {
+        criterion.label.clone()
+    } else {
+        format!("{}: {}", criterion.label, criterion.description)
+    }
+}
+
+fn decision_prompt(state: &str, question: &DecisionQuestion, options: &[String]) -> String {
+    let state = state.replace("[MASK]", " ");
+    let instructions = question.instructions.replace("[MASK]", " ");
+    let question_type = DecisionType::try_from(question.r#type)
+        .unwrap_or(DecisionType::Choice)
+        .type_name();
+    let options = options
+        .iter()
+        .map(|option| format!("[MASK] {}", option.replace("[MASK]", " ")))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("[CLS] {} question: {} [SEP] {} [SEP] {} [SEP]", question_type, instructions, options, state)
+}
+
+impl DecisionType {
+    fn type_name(self) -> &'static str {
+        match self {
+            Self::Choice => "choice",
+            Self::Score => "score",
+            Self::Noul => "noul",
         }
     }
 }
@@ -559,12 +593,165 @@ impl TextEmbeddingsService {
 }
 
 #[tonic::async_trait]
+impl Decision for TextEmbeddingsService {
+    #[instrument(skip_all)]
+    async fn decide(
+        &self,
+        request: Request<DecisionRequest>,
+    ) -> Result<Response<DecisionResponse>, Status> {
+        if !matches!(self.info.model_type, ModelType::Decision(_)) {
+            return Err(Status::failed_precondition("model is not a decision model"));
+        }
+
+        let request = request.into_inner();
+        if request.questions.is_empty() {
+            return Err(Status::invalid_argument("questions cannot be empty"));
+        }
+        let permit = self.infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+        let (_, mask_encoding) = self
+            .infer
+            .tokenize("[MASK]", false, None)
+            .await
+            .map_err(ErrorResponse::from)?;
+        let mask_ids = mask_encoding.get_ids();
+        if mask_ids.len() != 1 {
+            return Err(Status::failed_precondition(
+                "decision tokenizer must encode [MASK] as one token",
+            ));
+        }
+
+        let mut inputs = Vec::with_capacity(request.questions.len());
+        for (index, question) in request.questions.iter().enumerate() {
+            let mut options = question
+                .criteria
+                .iter()
+                .map(decision_option_text)
+                .collect::<Vec<_>>();
+            let qtype = match DecisionType::try_from(question.r#type)
+                .map_err(|_| Status::invalid_argument("invalid decision type"))?
+            {
+                DecisionType::Choice => 0,
+                DecisionType::Score => 1,
+                DecisionType::Noul => {
+                    options = vec![
+                        format!(
+                            "false: {}",
+                            question
+                                .criteria
+                                .first()
+                                .filter(|criterion| !criterion.description.is_empty())
+                                .map(|criterion| criterion.description.as_str())
+                                .unwrap_or("no, the statement does not hold")
+                        ),
+                        format!(
+                            "true: {}",
+                            question
+                                .criteria
+                                .get(1)
+                                .filter(|criterion| !criterion.description.is_empty())
+                                .map(|criterion| criterion.description.as_str())
+                                .unwrap_or("yes, the statement holds")
+                        ),
+                    ];
+                    2
+                }
+            };
+            if options.is_empty() {
+                return Err(Status::invalid_argument(format!(
+                    "question {} must define at least one criterion",
+                    question.id
+                )));
+            }
+            let prompt = decision_prompt(&request.state, question, &options);
+            let (_, encoding) = self
+                .infer
+                .tokenize(prompt, false, None)
+                .await
+                .map_err(ErrorResponse::from)?;
+            let ids = encoding.get_ids().to_vec();
+            let marker_positions = ids
+                .iter()
+                .enumerate()
+                .filter_map(|(position, id)| (*id == mask_ids[0]).then_some(position as u32))
+                .collect::<Vec<_>>();
+            if marker_positions.len() != options.len() {
+                return Err(Status::invalid_argument(
+                    "decision prompt did not produce one marker per option",
+                ));
+            }
+            inputs.push(text_embeddings_backend_core::DecisionInput {
+                input_ids: ids,
+                attention_mask: Some(encoding.get_attention_mask().to_vec()),
+                qtype,
+                marker_positions,
+                question_index: index,
+            });
+        }
+
+        let decisions = self
+            .infer
+            .decide(inputs, permit)
+            .await
+            .map_err(ErrorResponse::from)?;
+        let answers = decisions
+            .into_iter()
+            .zip(request.questions)
+            .map(|(decision, question)| {
+                let question_type = DecisionType::try_from(question.r#type).unwrap_or(DecisionType::Choice);
+                let probabilities = decision
+                    .probabilities
+                    .iter()
+                    .enumerate()
+                    .map(|(index, value)| DecisionProbability {
+                        label: if question_type == DecisionType::Score {
+                            index.to_string()
+                        } else {
+                            question.criteria.get(index).map(|criterion| criterion.label.clone()).unwrap_or_else(|| index.to_string())
+                        },
+                        value: *value,
+                    })
+                    .collect();
+                let selected = decision
+                    .probabilities
+                    .iter()
+                    .enumerate()
+                    .max_by(|left, right| left.1.total_cmp(right.1))
+                    .map(|(index, _)| index)
+                    .unwrap_or(0);
+                DecisionAnswer {
+                    id: question.id,
+                    r#type: question_type as i32,
+                    label: question
+                        .criteria
+                        .get(selected)
+                        .map(|criterion| criterion.label.clone())
+                        .or_else(|| (question_type == DecisionType::Noul).then(|| ["false", "true"][selected.min(1)].to_string()))
+                        .unwrap_or_default(),
+                    score: decision.probabilities.iter().enumerate().map(|(index, probability)| index as f32 * probability).sum(),
+                    noul: decision.probabilities.get(1).copied().unwrap_or(0.0),
+                    probabilities,
+                    legend: question.criteria.iter().enumerate().map(|(index, criterion)| DecisionLegend {
+                        label: if question_type == DecisionType::Score { index.to_string() } else { criterion.label.clone() },
+                        description: criterion.description.clone(),
+                    }).collect(),
+                    confidence: decision.confidence,
+                    action: decision.action as u32,
+                    action_probability: decision.action_probability,
+                }
+            })
+            .collect();
+        Ok(Response::new(DecisionResponse { answers }))
+    }
+}
+
+#[tonic::async_trait]
 impl grpc::info_server::Info for TextEmbeddingsService {
     async fn info(&self, _request: Request<InfoRequest>) -> Result<Response<InfoResponse>, Status> {
         let model_type = match self.info.model_type {
             ModelType::Classifier(_) => grpc::ModelType::Classifier,
             ModelType::Embedding(_) => grpc::ModelType::Embedding,
             ModelType::Reranker(_) => grpc::ModelType::Reranker,
+            ModelType::Decision(_) => grpc::ModelType::Decision,
         };
 
         Ok(Response::new(InfoResponse {
@@ -915,6 +1102,10 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
                 tracing::error!("{message}");
                 Err(Status::new(Code::FailedPrecondition, message))
             }
+            ModelType::Decision(_) => {
+                let message = "gRPC is not supported for decision models".to_string();
+                Err(TextEmbeddingsError::Backend(BackendError::Inference(message)))
+            }
         }?;
 
         // Closure for rerank
@@ -1092,6 +1283,10 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
                 let message = "model is not a classifier model".to_string();
                 tracing::error!("{message}");
                 Err(Status::new(Code::FailedPrecondition, message))
+            }
+            ModelType::Decision(_) => {
+                let message = "gRPC is not supported for decision models".to_string();
+                Err(TextEmbeddingsError::Backend(BackendError::Inference(message)))
             }
         }?;
 
@@ -1398,6 +1593,9 @@ pub async fn run(
     health_reporter
         .set_not_serving::<grpc::PredictServer<TextEmbeddingsService>>()
         .await;
+    health_reporter
+        .set_not_serving::<grpc::DecisionServer<TextEmbeddingsService>>()
+        .await;
 
     // Backend health watcher
     let mut health_watcher = infer.health_watcher();
@@ -1456,6 +1654,14 @@ pub async fn run(
                         )
                         .await;
                 }
+                ModelType::Decision(_) => {
+                    health_reporter
+                        .set_service_status(
+                            <grpc::DecisionServer<TextEmbeddingsService>>::NAME,
+                            status,
+                        )
+                        .await
+                }
             };
         }
     });
@@ -1494,6 +1700,7 @@ pub async fn run(
             ))
             .add_service(grpc::EmbedServer::with_interceptor(service.clone(), auth))
             .add_service(grpc::PredictServer::with_interceptor(service.clone(), auth))
+            .add_service(grpc::DecisionServer::with_interceptor(service.clone(), auth))
             .add_service(grpc::RerankServer::with_interceptor(service, auth))
             .serve_with_shutdown(addr, shutdown::shutdown_signal())
     } else {
@@ -1504,6 +1711,7 @@ pub async fn run(
             .add_service(grpc::TokenizeServer::new(service.clone()))
             .add_service(grpc::EmbedServer::new(service.clone()))
             .add_service(grpc::PredictServer::new(service.clone()))
+            .add_service(grpc::DecisionServer::new(service.clone()))
             .add_service(grpc::RerankServer::new(service))
             .serve_with_shutdown(addr, shutdown::shutdown_signal())
     };

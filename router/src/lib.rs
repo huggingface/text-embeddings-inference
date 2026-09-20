@@ -27,7 +27,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{DType, Pool};
-use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
+use text_embeddings_core::download::{download_artifacts, download_decision_artifacts, ST_CONFIG_NAMES};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
 use text_embeddings_core::tokenization::Tokenization;
@@ -72,9 +72,11 @@ pub async fn run(
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
     let model_id_path = Path::new(&model_id);
-    let (model_root, api_repo) = if model_id_path.exists() && model_id_path.is_dir() {
+    let (model_root, api_repo, decision_model) = if model_id_path.exists() && model_id_path.is_dir() {
         // Using a local model
-        (model_id_path.to_path_buf(), None)
+        let decision_model = model_id_path.join("rl_agent_config.json").exists()
+            || model_id_path.join("encoder/config.json").exists();
+        (model_id_path.to_path_buf(), None, decision_model)
     } else {
         let mut builder = ApiBuilder::from_env()
             .with_progress(false)
@@ -101,17 +103,22 @@ pub async fn run(
             revision.clone().unwrap_or("main".to_string()),
         ));
 
-        // Download model from the Hub
-        (
-            download_artifacts(&api_repo, pooling.is_none())
-                .await
-                .context("Could not download model artifacts")?,
-            Some(api_repo),
-        )
+        let decision_model = api_repo.get("rl_agent_config.json").await.is_ok();
+        let model_root = if decision_model {
+            download_decision_artifacts(&api_repo).await
+        } else {
+            download_artifacts(&api_repo, pooling.is_none()).await
+        }
+        .context("Could not download model artifacts")?;
+        (model_root, Some(api_repo), decision_model)
     };
 
     // Load config
-    let config_path = model_root.join("config.json");
+    let config_path = if decision_model {
+        model_root.join("encoder/config.json")
+    } else {
+        model_root.join("config.json")
+    };
     let config = fs::read_to_string(config_path).context("`config.json` not found")?;
     let config: ModelConfig =
         serde_json::from_str(&config).context("Failed to parse `config.json`")?;
@@ -121,6 +128,7 @@ pub async fn run(
 
     // Info model type
     let model_type = match &backend_model_type {
+        text_embeddings_backend::ModelType::Decision => ModelType::Decision(DecisionModel),
         text_embeddings_backend::ModelType::Classifier => {
             let id2label = config
                 .id2label
@@ -146,7 +154,11 @@ pub async fn run(
     };
 
     // Load tokenizer
-    let tokenizer_path = model_root.join("tokenizer.json");
+    let tokenizer_path = if decision_model {
+        model_root.join("tokenizer/tokenizer.json")
+    } else {
+        model_root.join("tokenizer.json")
+    };
     let mut tokenizer = Tokenizer::from_file(tokenizer_path).expect(
         "tokenizer.json not found. text-embeddings-inference only supports fast tokenizers",
     );
@@ -408,6 +420,14 @@ fn get_backend_model_type(
     model_root: &Path,
     pooling: Option<text_embeddings_backend::Pool>,
 ) -> Result<text_embeddings_backend::ModelType> {
+    let decision_config = model_root.join("rl_agent_config.json");
+    if decision_config.exists() {
+        if pooling.is_some() {
+            tracing::warn!("`--pooling` is ignored for a decision model");
+        }
+        return Ok(text_embeddings_backend::ModelType::Decision);
+    }
+
     for arch in &config.architectures {
         // Edge case affecting `Alibaba-NLP/gte-multilingual-base` and possibly other fine-tunes of
         // the same base model. More context at https://huggingface.co/Alibaba-NLP/gte-multilingual-base/discussions/7
@@ -535,11 +555,16 @@ pub struct ClassifierModel {
 
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
+pub struct DecisionModel;
+
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "http", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum ModelType {
     Classifier(ClassifierModel),
     Embedding(EmbeddingModel),
     Reranker(ClassifierModel),
+    Decision(DecisionModel),
 }
 
 #[derive(Clone, Debug, Serialize)]

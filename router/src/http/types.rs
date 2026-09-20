@@ -2,6 +2,8 @@ use crate::ErrorType;
 use serde::de::{SeqAccess, Visitor};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::json;
+use serde_json::Value;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Formatter;
 use text_embeddings_core::tokenization::EncodingInput;
 use utoipa::openapi::{RefOr, Schema};
@@ -222,6 +224,315 @@ pub(crate) struct PredictRequest {
     #[serde(default)]
     #[schema(default = "false", example = "false")]
     pub raw_scores: bool,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(untagged)]
+pub(crate) enum DecisionState {
+    Text(String),
+    Json(Value),
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(tag = "type")]
+pub(crate) enum DecisionQuestion {
+    #[serde(rename = "choice")]
+    Choice {
+        instructions: String,
+        criteria: BTreeMap<String, Value>,
+    },
+    #[serde(rename = "score")]
+    Score {
+        instructions: String,
+        criteria: Vec<Value>,
+    },
+    #[serde(rename = "noul")]
+    Noul {
+        instructions: String,
+        #[serde(default)]
+        criteria: Option<BTreeMap<String, Value>>,
+    },
+}
+
+impl DecisionQuestion {
+    pub(crate) fn qtype(&self) -> u32 {
+        match self {
+            Self::Choice { .. } => 0,
+            Self::Score { .. } => 1,
+            Self::Noul { .. } => 2,
+        }
+    }
+
+    pub(crate) fn instructions(&self) -> &str {
+        match self {
+            Self::Choice { instructions, .. }
+            | Self::Score { instructions, .. }
+            | Self::Noul { instructions, .. } => instructions,
+        }
+    }
+
+    pub(crate) fn type_name(&self) -> &'static str {
+        match self {
+            Self::Choice { .. } => "choice",
+            Self::Score { .. } => "score",
+            Self::Noul { .. } => "noul",
+        }
+    }
+
+    pub(crate) fn options(&self) -> Vec<DecisionOption> {
+        match self {
+            Self::Choice { criteria, .. } => criteria
+                .iter()
+                .map(|(label, description)| DecisionOption {
+                    label: label.clone(),
+                    description: description_value(description),
+                })
+                .collect(),
+            Self::Score { criteria, .. } => criteria
+                .iter()
+                .enumerate()
+                .map(|(index, value)| DecisionOption {
+                    label: format!("level {index}"),
+                    description: value_text(value),
+                })
+                .collect(),
+            Self::Noul { criteria, .. } => ["false", "true"]
+                .into_iter()
+                .map(|label| DecisionOption {
+                    label: label.to_string(),
+                    description: criteria
+                        .as_ref()
+                        .and_then(|values| values.get(label))
+                        .and_then(description_value),
+                })
+                .enumerate()
+                .map(|(index, mut option)| {
+                    if option.description.is_none() {
+                        option.description = Some(match index {
+                            0 => "no, the statement does not hold".to_string(),
+                            _ => "yes, the statement holds".to_string(),
+                        });
+                    }
+                    option
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DecisionOption {
+    pub label: String,
+    pub description: Option<String>,
+}
+
+fn value_text(value: &Value) -> Option<String> {
+    value
+        .as_str()
+        .map(ToOwned::to_owned)
+        .or_else(|| (!value.is_null()).then(|| value.to_string()))
+}
+
+fn description_value(value: &Value) -> Option<String> {
+    value
+        .as_object()
+        .and_then(|object| object.get("description"))
+        .and_then(value_text)
+        .or_else(|| value_text(value))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct DecisionRequest {
+    pub state: DecisionState,
+    pub questions: HashMap<String, DecisionQuestion>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(tag = "type")]
+pub(crate) enum DecisionAnswer {
+    #[serde(rename = "choice")]
+    Choice { label: String, probabilities: BTreeMap<String, f32>, confidence: f32, action: usize, action_probability: f32 },
+    #[serde(rename = "score")]
+    Score { score: f32, legend: BTreeMap<String, String>, probabilities: BTreeMap<String, f32>, confidence: f32, action: usize, action_probability: f32 },
+    #[serde(rename = "noul")]
+    Noul { noul: f32, confidence: f32, action: usize, action_probability: f32 },
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct DecisionResponse {
+    pub answers: HashMap<String, DecisionAnswer>,
+}
+
+pub(crate) fn decision_prompt(
+    state: &DecisionState,
+    qtype: &str,
+    instructions: &str,
+    options: &[DecisionOption],
+) -> String {
+    let state = match state {
+        DecisionState::Text(state) => state.replace("[MASK]", " "),
+        DecisionState::Json(state) => state.to_string().replace("[MASK]", " "),
+    };
+    let instructions = instructions.replace("[MASK]", " ");
+    let options = options
+        .iter()
+        .map(|option| match &option.description {
+            Some(description) => format!("{}: {}", option.label, description),
+            None => option.label.clone(),
+        })
+        .map(|option| format!("[MASK] {}", option.replace("[MASK]", " ")))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("[CLS] {qtype} question: {instructions} [SEP] {options} [SEP] {state} [SEP]")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decision_prompt, DecisionOption, DecisionQuestion, DecisionState};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn decision_prompt_preserves_text_and_json_state() {
+        assert_eq!(
+            decision_prompt(
+                &DecisionState::Text("ready".to_string()),
+                "choice",
+                "open door",
+                &[DecisionOption {
+                    label: "yes".to_string(),
+                    description: Some("open it".to_string()),
+                }],
+            ),
+            "[CLS] choice question: open door [SEP] [MASK] yes: open it [SEP] ready [SEP]"
+        );
+        assert_eq!(
+            decision_prompt(
+                &DecisionState::Json(serde_json::json!({"x": 1})),
+                "score",
+                "open door",
+                &[DecisionOption {
+                    label: "one".to_string(),
+                    description: None,
+                }],
+            ),
+            "[CLS] score question: open door [SEP] [MASK] one [SEP] {\"x\":1} [SEP]"
+        );
+    }
+
+    #[test]
+    fn decision_question_supports_shorthand_and_typed_forms() {
+        assert_eq!(
+            DecisionQuestion::Noul {
+                instructions: "is it urgent?".to_string(),
+                criteria: None,
+            }
+            .qtype(),
+            2
+        );
+        assert_eq!(
+            DecisionQuestion::Choice {
+                instructions: "custom".to_string(),
+                criteria: BTreeMap::new(),
+            }
+            .instructions(),
+            "custom"
+        );
+    }
+
+    #[test]
+    fn choice_options_are_sorted_and_render_descriptions() {
+        let question: DecisionQuestion = serde_json::from_value(serde_json::json!({
+            "type": "choice",
+            "instructions": "where?",
+            "criteria": {"z": "last", "a": "first"}
+        }))
+        .unwrap();
+
+        assert_eq!(
+            question.options(),
+            vec![
+                DecisionOption {
+                    label: "a".to_string(),
+                    description: Some("first".to_string()),
+                },
+                DecisionOption {
+                    label: "z".to_string(),
+                    description: Some("last".to_string()),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn score_and_noul_options_have_stable_semantics() {
+        let score: DecisionQuestion = serde_json::from_value(serde_json::json!({
+            "type": "score",
+            "instructions": "how urgent?",
+            "criteria": ["low", {"description": "high"}]
+        }))
+        .unwrap();
+        assert_eq!(score.options()[0].label, "level 0");
+        assert_eq!(score.options()[1].description.as_deref(), Some("{\"description\":\"high\"}"));
+
+        let noul: DecisionQuestion = serde_json::from_value(serde_json::json!({
+            "type": "noul",
+            "instructions": "is it urgent?",
+            "criteria": {"false": "no", "true": "yes"}
+        }))
+        .unwrap();
+        assert_eq!(noul.options()[0].description.as_deref(), Some("no"));
+        assert_eq!(noul.options()[1].description.as_deref(), Some("yes"));
+
+        let default_noul: DecisionQuestion = serde_json::from_value(serde_json::json!({
+            "type": "noul",
+            "instructions": "is it urgent?"
+        }))
+        .unwrap();
+        assert_eq!(
+            default_noul.options()[0].description.as_deref(),
+            Some("no, the statement does not hold")
+        );
+        assert_eq!(
+            default_noul.options()[1].description.as_deref(),
+            Some("yes, the statement holds")
+        );
+    }
+
+    #[test]
+    fn decision_prompt_allows_only_one_marker_per_option() {
+        let prompt = decision_prompt(
+            &DecisionState::Text("state [MASK]".to_string()),
+            "choice",
+            "question [MASK]",
+            &[
+                DecisionOption {
+                    label: "yes [MASK]".to_string(),
+                    description: Some("accept [MASK]".to_string()),
+                },
+                DecisionOption {
+                    label: "no".to_string(),
+                    description: None,
+                },
+            ],
+        );
+
+        assert_eq!(prompt.matches("[MASK]").count(), 2);
+        assert!(!prompt.contains("question [MASK]"));
+        assert!(!prompt.contains("state [MASK]"));
+    }
+
+    #[test]
+    fn choice_deserialization_uses_btree_order() {
+        let criteria = BTreeMap::from([
+            ("b".to_string(), serde_json::json!("second")),
+            ("a".to_string(), serde_json::json!("first")),
+        ]);
+        let question = DecisionQuestion::Choice {
+            instructions: "pick".to_string(),
+            criteria,
+        };
+        assert_eq!(question.options()[0].label, "a");
+    }
 }
 
 #[derive(Serialize, ToSchema)]

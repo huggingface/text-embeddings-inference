@@ -3,7 +3,7 @@ use crate::tokenization::{EncodingInput, RawEncoding, Tokenization};
 use crate::TextEmbeddingsError;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use text_embeddings_backend::{Backend, BackendError, Embedding, ModelType};
+use text_embeddings_backend::{Backend, BackendError, DecisionInput, DecisionResult, Embedding, ModelType};
 use tokenizers::TruncationDirection;
 use tokio::sync::{mpsc, oneshot, watch, Notify, OwnedSemaphorePermit, Semaphore};
 use tracing::instrument;
@@ -497,6 +497,25 @@ impl Infer {
         Ok(response)
     }
 
+    #[instrument(skip(self, inputs, _permit))]
+    pub async fn decide(
+        &self,
+        inputs: Vec<DecisionInput>,
+        _permit: OwnedSemaphorePermit,
+    ) -> Result<Vec<DecisionResult>, TextEmbeddingsError> {
+        if !matches!(self.backend.model_type, ModelType::Decision) {
+            return Err(TextEmbeddingsError::Backend(BackendError::Inference(
+                "Model is not a decision model".to_string(),
+            )));
+        }
+
+        self.backend
+            .decide(inputs)
+            .await
+            .map(|(decisions, _)| decisions)
+            .map_err(TextEmbeddingsError::from)
+    }
+
     #[instrument(skip(self))]
     pub fn is_classifier(&self) -> bool {
         matches!(self.backend.model_type, ModelType::Classifier)
@@ -618,6 +637,14 @@ async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextB
                             let _ = m.response_tx.send(Err(err.clone()));
                         });
                     }
+                });
+            }
+            ModelType::Decision => {
+                let error = BackendError::Inference(
+                    "embedding inference is not supported by decision models".to_string(),
+                );
+                batch.0.into_iter().for_each(|message| {
+                    let _ = message.response_tx.send(Err(error.clone().into()));
                 });
             }
         };

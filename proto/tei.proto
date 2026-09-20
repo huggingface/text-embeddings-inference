@@ -29,6 +29,10 @@ service Rerank {
     rpc RerankStream (stream RerankStreamRequest) returns (RerankResponse);
 }
 
+service Decision {
+    rpc Decide (DecisionRequest) returns (DecisionResponse);
+}
+
 service Tokenize {
     rpc Tokenize (EncodeRequest) returns (EncodeResponse);
     rpc TokenizeStream (stream EncodeRequest) returns (stream EncodeResponse);
@@ -42,6 +46,7 @@ enum ModelType {
     MODEL_TYPE_EMBEDDING = 0;
     MODEL_TYPE_CLASSIFIER = 1;
     MODEL_TYPE_RERANKER = 2;
+    MODEL_TYPE_DECISION = 3;
 }
 
 message InfoResponse {
@@ -174,6 +179,56 @@ message Rank {
 message RerankResponse {
     repeated Rank ranks = 1;
     Metadata metadata = 2;
+}
+
+message DecisionRequest {
+    string state = 1;
+    repeated DecisionQuestion questions = 2;
+}
+
+enum DecisionType {
+    DECISION_TYPE_CHOICE = 0;
+    DECISION_TYPE_SCORE = 1;
+    DECISION_TYPE_NOUL = 2;
+}
+
+message DecisionCriterion {
+    string label = 1;
+    string description = 2;
+}
+
+message DecisionQuestion {
+    string id = 1;
+    DecisionType type = 2;
+    string instructions = 3;
+    repeated DecisionCriterion criteria = 4;
+}
+
+message DecisionProbability {
+    string label = 1;
+    float value = 2;
+}
+
+message DecisionLegend {
+    string label = 1;
+    string description = 2;
+}
+
+message DecisionAnswer {
+    string id = 1;
+    DecisionType type = 2;
+    string label = 3;
+    float score = 4;
+    float noul = 5;
+    repeated DecisionProbability probabilities = 6;
+    repeated DecisionLegend legend = 7;
+    float confidence = 8;
+    uint32 action = 9;
+    float action_probability = 10;
+}
+
+message DecisionResponse {
+    repeated DecisionAnswer answers = 1;
 }
 
 message EncodeRequest {

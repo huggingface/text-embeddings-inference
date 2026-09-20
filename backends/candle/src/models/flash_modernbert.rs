@@ -259,6 +259,7 @@ impl FlashModernBertModel {
         }
 
         let (pool, classifier) = match model_type {
+            ModelType::Decision => candle::bail!("Decision model loading is not configured"),
             ModelType::Classifier => {
                 let pool: Pool = config.classifier_pooling.clone().unwrap_or(Pool::Cls);
 

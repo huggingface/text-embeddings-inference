@@ -402,6 +402,7 @@ impl GTEModel {
         }
 
         let (pool, classifier) = match model_type {
+            ModelType::Decision => candle::bail!("Decision models require a ModernBERT backend"),
             ModelType::Classifier => {
                 let pool = Pool::Cls;
 

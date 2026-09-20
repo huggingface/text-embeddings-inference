@@ -34,6 +34,24 @@ pub enum Embedding {
 pub type Embeddings = IntMap<usize, Embedding>;
 pub type Predictions = IntMap<usize, Vec<f32>>;
 
+#[derive(Debug, Clone)]
+pub struct DecisionInput {
+    pub input_ids: Vec<u32>,
+    pub attention_mask: Option<Vec<u32>>,
+    pub qtype: u32,
+    pub marker_positions: Vec<u32>,
+    pub question_index: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct DecisionResult {
+    pub question_index: usize,
+    pub probabilities: Vec<f32>,
+    pub confidence: f32,
+    pub action: usize,
+    pub action_probability: f32,
+}
+
 pub trait Backend {
     fn health(&self) -> Result<(), BackendError>;
     fn max_batch_size(&self) -> Option<usize> {
@@ -45,12 +63,19 @@ pub trait Backend {
     fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError>;
 
     fn predict(&self, batch: Batch) -> Result<Predictions, BackendError>;
+
+    fn decide(&self, _inputs: Vec<DecisionInput>) -> Result<Vec<DecisionResult>, BackendError> {
+        Err(BackendError::Inference(
+            "Decision inference is not implemented by this backend".to_string(),
+        ))
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ModelType {
     Classifier,
     Embedding(Pool),
+    Decision,
 }
 
 #[derive(Debug, PartialEq, Clone, Deserialize)]
