@@ -1,0 +1,21 @@
+---
+source: backends/candle/tests/test_laya.rs
+expression: snapshots
+---
+- probabilities:
+    - 0.9431394
+    - 0.056860656
+  confidence: 0.68514526
+  action: 0
+- probabilities:
+    - 0.37197226
+    - 0.6081191
+    - 0.019908683
+  confidence: 0.31886786
+  action: 0
+- probabilities:
+    - 0.3598981
+    - 0.64010185
+  confidence: 0.05740136
+  action: 0
+

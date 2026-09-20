@@ -12,6 +12,7 @@ pub struct Pplx1Model {
 impl Pplx1Model {
     pub fn load(vb: VarBuilder, config: &Pplx1Config, model_type: ModelType) -> Result<Self> {
         match model_type {
+            ModelType::Decision => candle::bail!("Decision models require a ModernBERT backend"),
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for Pplx1")
             }

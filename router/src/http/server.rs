@@ -7,11 +7,13 @@ use crate::http::types::{
     RerankRequest, RerankResponse, Sequence, SimilarityInput, SimilarityParameters,
     SimilarityRequest, SimilarityResponse, SimpleToken, SparseValue, TokenizeInput,
     TokenizeRequest, TokenizeResponse, TruncationDirection, VertexPrediction, VertexRequest,
-    VertexResponse,
+    VertexResponse, DecisionAnswer, DecisionRequest, DecisionResponse, DecisionQuestion,
+    decision_prompt,
 };
+use std::collections::BTreeMap;
 use crate::{
-    logging, shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
-    ResponseMetadata,
+    logging, shutdown, ClassifierModel, DecisionModel, EmbeddingModel, ErrorResponse, ErrorType,
+    Info, ModelType, ResponseMetadata,
 };
 use ::http::HeaderMap;
 use anyhow::Context;
@@ -29,6 +31,7 @@ use http::header::AUTHORIZATION;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use simsimd::SpatialSimilarity;
 use std::net::SocketAddr;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::BackendError;
 use text_embeddings_core::infer::{
@@ -277,6 +280,161 @@ async fn predict(
     Ok((headers, Json(response)))
 }
 
+#[utoipa::path(
+post,
+tag = "Text Embeddings Inference",
+path = "/v1/decide",
+request_body = DecisionRequest,
+responses((status = 200, description = "Typed decisions", body = DecisionResponse))
+)]
+#[instrument(skip_all)]
+async fn decide(
+    infer: Extension<Infer>,
+    info: Extension<Info>,
+    Json(req): Json<DecisionRequest>,
+) -> Result<Json<DecisionResponse>, (StatusCode, Json<ErrorResponse>)> {
+    if !matches!(info.model_type, ModelType::Decision(_)) {
+        return Err(ErrorResponse {
+            error: "model is not a decision model".to_string(),
+            error_type: ErrorType::Backend,
+        }.into());
+    }
+    if req.questions.is_empty() {
+        return Err(ErrorResponse {
+            error: "questions cannot be empty".to_string(),
+            error_type: ErrorType::Empty,
+        }.into());
+    }
+
+    let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
+    let mut names = Vec::with_capacity(req.questions.len());
+    let mut inputs = Vec::with_capacity(req.questions.len());
+    for (index, (name, question)) in req.questions.iter().enumerate() {
+        let options = question.options();
+        if options.is_empty() {
+            return Err(ErrorResponse {
+                error: format!("question {name} must define at least one criterion"),
+                error_type: ErrorType::Empty,
+            }.into());
+        }
+        let prompt = decision_prompt(
+            &req.state,
+            question.type_name(),
+            question.instructions(),
+            &options,
+        );
+        let (_, encoding) = infer
+            .tokenize(prompt, false, None)
+            .await
+            .map_err(ErrorResponse::from)?;
+        let ids = encoding.get_ids().to_vec();
+        if ids.is_empty() {
+            return Err(ErrorResponse {
+                error: "decision prompt tokenized to an empty sequence".to_string(),
+                error_type: ErrorType::Tokenizer,
+            }.into());
+        }
+        let (_, mask_encoding) = infer
+            .tokenize("[MASK]".to_string(), false, None)
+            .await
+            .map_err(ErrorResponse::from)?;
+        let mask_ids = mask_encoding.get_ids();
+        if mask_ids.len() != 1 {
+            return Err(ErrorResponse {
+                error: "decision tokenizer must encode [MASK] as one token".to_string(),
+                error_type: ErrorType::Tokenizer,
+            }.into());
+        }
+        let marker_positions = ids
+            .iter()
+            .enumerate()
+            .filter_map(|(position, id)| (*id == mask_ids[0]).then_some(position as u32))
+            .collect::<Vec<_>>();
+        if marker_positions.len() != options.len() {
+            return Err(ErrorResponse {
+                error: "decision prompt did not produce one marker per option".to_string(),
+                error_type: ErrorType::Tokenizer,
+            }.into());
+        }
+        names.push(name.clone());
+        inputs.push(text_embeddings_backend::DecisionInput {
+            input_ids: ids,
+            attention_mask: Some(encoding.get_attention_mask().to_vec()),
+            qtype: question.qtype(),
+            marker_positions,
+            question_index: index,
+        });
+    }
+
+    let decisions = infer.decide(inputs, permit).await.map_err(ErrorResponse::from)?;
+    let mut answers = HashMap::with_capacity(decisions.len());
+    for decision in decisions {
+        if let Some(name) = names.get(decision.question_index) {
+            let question = req.questions.get(name).expect("question name is preserved");
+            let options = question.options();
+            let selected = decision
+                .probabilities
+                .iter()
+                .enumerate()
+                .max_by(|left, right| left.1.total_cmp(right.1))
+                .map(|(index, _)| index)
+                .unwrap_or(0)
+                .min(options.len().saturating_sub(1));
+            let answer = match question {
+                DecisionQuestion::Choice { .. } => DecisionAnswer::Choice {
+                    label: options
+                        .get(selected)
+                        .map(|option| option.label.clone())
+                        .unwrap_or_default(),
+                    probabilities: options
+                        .iter()
+                        .zip(decision.probabilities.iter().copied())
+                        .map(|(option, probability)| (option.label.clone(), probability))
+                        .collect(),
+                    confidence: decision.confidence,
+                    action: decision.action,
+                    action_probability: decision.action_probability,
+                },
+                DecisionQuestion::Score { .. } => DecisionAnswer::Score {
+                    score: decision
+                        .probabilities
+                        .iter()
+                        .enumerate()
+                        .map(|(index, probability)| index as f32 * probability)
+                        .sum(),
+                    legend: options
+                        .iter()
+                        .enumerate()
+                        .map(|(index, option)| (index.to_string(), option.description.clone().unwrap_or_else(|| option.label.clone())))
+                        .collect::<BTreeMap<_, _>>(),
+                    probabilities: decision
+                        .probabilities
+                        .iter()
+                        .enumerate()
+                        .map(|(index, probability)| (index.to_string(), *probability))
+                        .collect(),
+                    confidence: decision.confidence,
+                    action: decision.action,
+                    action_probability: decision.action_probability,
+                },
+                DecisionQuestion::Noul { .. } => DecisionAnswer::Noul {
+                    noul: decision.probabilities.get(1).copied().unwrap_or(0.0),
+                    confidence: decision
+                        .probabilities
+                        .get(1)
+                        .copied()
+                        .unwrap_or(0.0)
+                        .max(1.0 - decision.probabilities.first().copied().unwrap_or(0.0)),
+                    action: decision.action,
+                    action_probability: decision.action_probability,
+                },
+            };
+            answers.insert(name.clone(), answer);
+        }
+    }
+    Ok(Json(DecisionResponse { answers }))
+}
+
 /// Get Ranks. Returns a 424 status code if the model is not a Sequence Classification model with
 /// a single class.
 #[utoipa::path(
@@ -329,7 +487,7 @@ async fn rerank(
 
     match &info.model_type {
         ModelType::Reranker(_) => Ok(()),
-        ModelType::Classifier(_) | ModelType::Embedding(_) => {
+        ModelType::Classifier(_) | ModelType::Embedding(_) | ModelType::Decision(_) => {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
             counter.increment(1);
             let message = "model is not a re-ranker model".to_string();
@@ -1599,6 +1757,12 @@ async fn vertex_compatibility(
                     );
                 }
             }
+            ModelType::Decision(_) => {
+                return Err(ErrorResponse {
+                    error: "Vertex compatibility is not supported for decision models".to_string(),
+                    error_type: ErrorType::Backend,
+                }.into());
+            }
         }
     }
 
@@ -1638,6 +1802,7 @@ pub async fn run(
     get_model_info,
     health,
     predict,
+    decide,
     rerank,
     embed,
     embed_all,
@@ -1658,6 +1823,10 @@ pub async fn run(
     Embedding,
     EncodingFormat,
     EmbeddingModel,
+    DecisionModel,
+    DecisionRequest,
+    DecisionResponse,
+    DecisionAnswer,
     PredictRequest,
     Prediction,
     PredictResponse,
@@ -1763,6 +1932,7 @@ pub async fn run(
         .route("/embed_all", post(embed_all))
         .route("/embed_sparse", post(embed_sparse))
         .route("/predict", post(predict))
+        .route("/v1/decide", post(decide))
         .route("/rerank", post(rerank))
         .route("/similarity", post(similarity))
         .route("/tokenize", post(tokenize))
@@ -1832,6 +2002,7 @@ pub async fn run(
                         .route("/invocations", post(embed))
                 }
             }
+            ModelType::Decision(_) => routes,
         };
     }
 

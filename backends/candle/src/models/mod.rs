@@ -5,7 +5,7 @@ extern crate accelerate_src;
 extern crate intel_mkl_src;
 
 use candle::{Result, Tensor};
-use text_embeddings_backend_core::Batch;
+use text_embeddings_backend_core::{Batch, DecisionInput, DecisionResult};
 
 mod bert;
 mod debertav2;
@@ -15,6 +15,7 @@ mod gemma3;
 mod gte;
 mod jina;
 mod jina_code;
+mod laya;
 mod llama;
 mod mistral;
 mod modernbert;
@@ -62,6 +63,7 @@ pub use gemma3::{Gemma3Config, Gemma3Model};
 pub use gte::{GTEConfig, GTEModel};
 pub use jina::JinaBertModel;
 pub use jina_code::JinaCodeBertModel;
+pub use laya::{LayaConfig, LayaModel};
 pub use llama::LlamaConfig;
 pub use mistral::MistralConfig;
 pub use modernbert::{ModernBertConfig, ModernBertModel};
@@ -110,5 +112,9 @@ pub(crate) trait Model {
 
     fn predict(&self, _batch: Batch) -> Result<Tensor> {
         candle::bail!("`predict` is not implemented for this model");
+    }
+
+    fn decide(&self, _inputs: Vec<DecisionInput>) -> Result<Vec<DecisionResult>> {
+        candle::bail!("`decide` is not implemented for this model");
     }
 }

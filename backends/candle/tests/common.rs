@@ -197,6 +197,33 @@ pub fn download_artifacts(
     Ok((model_root, dense_paths))
 }
 
+pub fn download_laya_artifacts(model_id: &str) -> Result<PathBuf> {
+    let mut builder = ApiBuilder::from_env().with_progress(false);
+
+    if let Ok(token) = std::env::var("HF_TOKEN") {
+        builder = builder.with_token(Some(token));
+    }
+
+    if let Some(cache_dir) = std::env::var_os("HUGGINGFACE_HUB_CACHE") {
+        builder = builder.with_cache_dir(cache_dir.into());
+    }
+
+    let api = builder.build()?;
+    let api_repo = api.repo(Repo::new(model_id.to_string(), RepoType::Model));
+    api_repo.get("tokenizer/tokenizer.json")?;
+    api_repo.get("rl_agent_config.json")?;
+    api_repo
+        .get("encoder/config.json")
+        .or_else(|_| api_repo.get("config.json"))?;
+
+    let model_files = match download_safetensors(&api_repo) {
+        Ok(paths) => paths,
+        Err(_) => vec![api_repo.get("pytorch_model.bin")?],
+    };
+
+    Ok(model_files[0].parent().unwrap().to_path_buf())
+}
+
 fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     // Single file
     tracing::info!("Downloading `model.safetensors`");

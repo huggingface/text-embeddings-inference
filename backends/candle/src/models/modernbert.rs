@@ -27,11 +27,13 @@ pub struct ModernBertConfig {
     pub bos_token_id: usize,
     pub cls_token_id: usize,
     pub sep_token_id: usize,
+    #[serde(default = "default_global_rope_theta")]
     pub global_rope_theta: f64,
     pub attention_bias: bool,
     pub attention_dropout: f64,
     pub global_attn_every_n_layers: usize,
     pub local_attention: usize,
+    #[serde(default = "default_local_rope_theta")]
     pub local_rope_theta: f64,
     pub embedding_dropout: Option<f64>,
     pub mlp_bias: Option<bool>,
@@ -46,6 +48,14 @@ pub struct ModernBertConfig {
     pub sparse_pred_ignore_index: Option<i64>,
     pub reference_compile: Option<bool>,
     pub num_labels: Option<usize>,
+}
+
+fn default_global_rope_theta() -> f64 {
+    160_000.0
+}
+
+fn default_local_rope_theta() -> f64 {
+    10_000.0
 }
 
 #[derive(Debug)]
@@ -467,7 +477,7 @@ pub struct ModernBertModel {
     global_inv_freqs: Tensor,
     local_inv_freqs: Tensor,
     rotary_dim: usize,
-    pad_token_id: u32,
+    pub(crate) pad_token_id: u32,
     num_attention_heads: usize,
 
     device: Device,
@@ -478,7 +488,8 @@ pub struct ModernBertModel {
 
 impl ModernBertModel {
     pub fn load(vb: VarBuilder, config: &ModernBertConfig, model_type: ModelType) -> Result<Self> {
-        let (pool, classifier) = match model_type {
+        let (pool, classifier) = match &model_type {
+            ModelType::Decision => (Pool::Cls, None),
             ModelType::Classifier => {
                 let pool: Pool = config.classifier_pooling.clone().unwrap_or(Pool::Cls);
 
@@ -488,16 +499,22 @@ impl ModernBertModel {
                 (pool, Some(classifier))
             }
             ModelType::Embedding(pool) => {
-                if pool == Pool::Splade {
+                if *pool == Pool::Splade {
                     candle::bail!("`splade` is not supported for ModernBert")
                 }
 
-                if pool == Pool::LastToken {
+                if *pool == Pool::LastToken {
                     candle::bail!("`LastToken` is not supported for ModernBert")
                 }
 
-                (pool, None)
+                (pool.clone(), None)
             }
+        };
+
+        let vb = if matches!(model_type, ModelType::Decision) {
+            vb.pp("encoder")
+        } else {
+            vb
         };
 
         let embeddings = ModernBertEmbeddings::load(vb.pp("model.embeddings"), config)
@@ -801,6 +818,253 @@ impl ModernBertModel {
 
         Ok((pooled_embeddings, raw_embeddings))
     }
+
+    pub(crate) fn forward_hidden(
+        &self,
+        input_ids: &Tensor,
+        position_ids: &Tensor,
+        attention_mask: Option<&Tensor>,
+    ) -> Result<Tensor> {
+        let (batch_size, max_length) = input_ids.dims2()?;
+        let shape = (batch_size, max_length);
+        let global_attention_mask = self
+            .get_global_attention_mask(attention_mask, &shape)?
+            .to_dtype(self.dtype)?;
+        let local_attention_mask = self
+            .get_local_attention_mask(&global_attention_mask)?
+            .to_dtype(self.dtype)?;
+        let min_value = match self.dtype {
+            DType::F32 => f32::MIN as f64,
+            _ => -65504.0,
+        };
+        let global_attention_mask = ((1.0 - global_attention_mask)? * min_value)?;
+        let local_attention_mask = ((1.0 - local_attention_mask)? * min_value)?;
+        let global_rotary_cache = get_cos_sin(
+            max_length,
+            &self.global_inv_freqs,
+            self.dtype,
+            true,
+        )?;
+        let local_rotary_cache = get_cos_sin(max_length, &self.local_inv_freqs, self.dtype, true)?;
+        let global_rotary_cache = (
+            global_rotary_cache
+                .0
+                .index_select(position_ids, 0)?
+                .reshape((batch_size, 1, max_length, self.rotary_dim))?,
+            global_rotary_cache
+                .1
+                .index_select(position_ids, 0)?
+                .reshape((batch_size, 1, max_length, self.rotary_dim))?,
+        );
+        let local_rotary_cache = (
+            local_rotary_cache
+                .0
+                .index_select(position_ids, 0)?
+                .reshape((batch_size, 1, max_length, self.rotary_dim))?,
+            local_rotary_cache
+                .1
+                .index_select(position_ids, 0)?
+                .reshape((batch_size, 1, max_length, self.rotary_dim))?,
+        );
+        let hidden_states = self.embeddings.forward(input_ids)?;
+        let hidden_states = self.encoder.forward(
+            &hidden_states,
+            &global_attention_mask,
+            &local_attention_mask,
+            &global_rotary_cache,
+            &local_rotary_cache,
+        )?;
+        self.final_norm.forward(&hidden_states, None)
+    }
+}
+
+#[cfg(any())]
+pub struct DecisionModel {
+    encoder: ModernBertModel,
+    head: Vec<DecisionTransformerLayer>,
+    type_emb: Embedding,
+    scorer_norm: LayerNorm,
+    scorer_dense: Linear,
+    scorer: Linear,
+    act_dense: Linear,
+    act: Linear,
+    device: Device,
+    dtype: DType,
+}
+
+#[cfg(any())]
+impl DecisionModel {
+    fn load(vb: VarBuilder, config: &ModernBertConfig) -> Result<Self> {
+        let hidden_size = config.hidden_size;
+        let encoder = ModernBertModel::load(vb.clone(), config, ModelType::Decision)?;
+        let head = (0..2)
+            .map(|index| {
+                DecisionTransformerLayer::load(
+                    vb.pp(format!("head.layers.{index}")),
+                    hidden_size,
+                    config.norm_eps as f32,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let type_emb = Embedding::new(
+            vb.pp("type_emb").get((3, hidden_size), "weight")?,
+            hidden_size,
+        )?;
+        let scorer_norm = LayerNorm::load(vb.pp("scorer.0"), hidden_size, config.norm_eps as f32)?;
+        let scorer_dense = Linear::new(
+            vb.pp("scorer.1").get((hidden_size, hidden_size), "weight")?,
+            Some(vb.pp("scorer.1").get(hidden_size, "bias")?),
+            Some(HiddenAct::Gelu),
+        );
+        let scorer = Linear::new(
+            vb.pp("scorer.3").get((1, hidden_size), "weight")?,
+            Some(vb.pp("scorer.3").get(1, "bias")?),
+            None,
+        );
+        let act_dense = Linear::new(
+            vb.pp("act_head.0").get((256, hidden_size + 4), "weight")?,
+            Some(vb.pp("act_head.0").get(256, "bias")?),
+            Some(HiddenAct::Gelu),
+        );
+        let act = Linear::new(
+            vb.pp("act_head.2").get((2, 256), "weight")?,
+            Some(vb.pp("act_head.2").get(2, "bias")?),
+            None,
+        );
+        Ok(Self {
+            encoder,
+            head,
+            type_emb,
+            scorer_norm,
+            scorer_dense,
+            scorer,
+            act_dense,
+            act,
+            device: vb.device().clone(),
+            dtype: vb.dtype(),
+            temperature: 1.0,
+            option_budget: 255.0,
+        })
+    }
+
+    fn forward(&self, inputs: Vec<DecisionInput>) -> Result<Vec<DecisionResult>> {
+        let batch_size = inputs.len();
+        let max_length = inputs.iter().map(|input| input.input_ids.len()).max().unwrap_or(0);
+        if max_length == 0 {
+            candle::bail!("decision inputs cannot be empty");
+        }
+        let mut input_ids = Vec::with_capacity(batch_size * max_length);
+        let mut masks = Vec::with_capacity(batch_size * max_length);
+        let mut positions = Vec::with_capacity(batch_size * max_length);
+        for input in &inputs {
+            let length = input.input_ids.len();
+            if let Some(mask) = &input.attention_mask {
+                if mask.len() != length {
+                    candle::bail!("decision attention mask length does not match input length");
+                }
+            }
+            input_ids.extend_from_slice(&input.input_ids);
+            input_ids.extend(std::iter::repeat_n(self.encoder.pad_token_id, max_length - length));
+            if let Some(mask) = &input.attention_mask {
+                masks.extend_from_slice(mask);
+                masks.extend(std::iter::repeat_n(0, max_length - mask.len()));
+            } else {
+                masks.extend(std::iter::repeat_n(1, length));
+                masks.extend(std::iter::repeat_n(0, max_length - length));
+            }
+            positions.extend(0..length as u32);
+            positions.extend(std::iter::repeat_n(0, max_length - length));
+        }
+        let input_ids = Tensor::from_vec(input_ids, (batch_size, max_length), &self.device)?;
+        let positions = Tensor::from_vec(positions, (batch_size, max_length), &self.device)?;
+        let mask = Tensor::from_vec(masks, (batch_size, max_length, 1), &self.device)?
+            .to_dtype(self.dtype)?;
+        let hidden = self.encoder.forward_hidden(&input_ids, &positions, Some(&mask))?;
+        let type_ids = Tensor::from_vec(
+            inputs.iter().map(|input| input.qtype.min(2)).collect(),
+            batch_size,
+            &self.device,
+        )?;
+        let mut hidden = hidden.broadcast_add(&self.type_emb.forward(&type_ids)?.unsqueeze(1)?)?;
+        let head_mask = ((1.0 - mask.squeeze(2)?.unsqueeze(1)?)? * -65504.0)?;
+        for layer in &self.head {
+            hidden = layer.forward(&hidden, &head_mask)?;
+        }
+        let scored = self
+            .scorer
+            .forward(&self.scorer_dense.forward(&self.scorer_norm.forward(&hidden, None)?)?)?
+            .squeeze(2)?;
+        let mut decisions = Vec::with_capacity(batch_size);
+        for (index, input) in inputs.into_iter().enumerate() {
+            if input.marker_positions.is_empty()
+                || input
+                    .marker_positions
+                    .iter()
+                    .any(|position| *position as usize >= input.input_ids.len())
+            {
+                candle::bail!("decision marker position is outside the input");
+            }
+            let markers = input.marker_positions;
+            let marker_tensor = Tensor::from_vec(markers.clone(), markers.len(), &self.device)?;
+            let logits = (scored.i(index)?.index_select(&marker_tensor, 0)? / self.temperature)?;
+            let probabilities = candle_nn::ops::softmax_last_dim(&logits.unsqueeze(0)?)?
+                .squeeze(0)?
+                .to_dtype(DType::F32)?
+                .to_vec1()?;
+            let entropy = probabilities
+                .iter()
+                .filter(|probability| **probability > 0.0)
+                .map(|probability| -probability * probability.ln())
+                .sum::<f32>();
+            let normalized_entropy = if probabilities.len() > 1 {
+                entropy / (probabilities.len() as f32).ln()
+            } else {
+                0.0
+            };
+            let max_probability = probabilities.iter().copied().fold(0.0, f32::max);
+            let top_two = {
+                let mut sorted = probabilities.clone();
+                sorted.sort_by(|left, right| right.total_cmp(left));
+                sorted.get(1).copied().unwrap_or(0.0)
+            };
+            let features = Tensor::from_vec(
+                vec![
+                    max_probability,
+                    max_probability - top_two,
+                    normalized_entropy,
+                    probabilities.len() as f32 / self.option_budget,
+                ],
+                (1, 4),
+                &self.device,
+            )?
+            .to_dtype(self.dtype)?;
+            let marker = hidden.i((index, markers[0] as usize))?.unsqueeze(0)?;
+            let action_logits = self.act.forward(&self.act_dense.forward(&Tensor::cat(
+                &[&marker, &features],
+                1,
+            )?)?)?;
+            let action_probabilities = candle_nn::ops::softmax_last_dim(
+                &action_logits.unsqueeze(0)?,
+            )?
+            .squeeze(0)?
+            .to_dtype(DType::F32)?
+            .to_vec1()?;
+            let (action, confidence) = action_probabilities
+                .iter()
+                .enumerate()
+                .max_by(|left, right| left.1.total_cmp(right.1))
+                .map(|(action, probability)| (action, *probability))
+                .unwrap_or((0, 0.0));
+            decisions.push(DecisionResult {
+                question_index: input.question_index,
+                probabilities,
+                confidence,
+                action,
+                action_probability: action_probabilities.get(action).copied().unwrap_or(0.0),
+            });
+        }
+        Ok(decisions)
+    }
 }
 
 impl Model for ModernBertModel {
@@ -822,5 +1086,16 @@ impl Model for ModernBertModel {
                 classifier.forward(&pooled_embeddings)
             }
         }
+    }
+}
+
+#[cfg(any())]
+impl Model for DecisionModel {
+    fn is_padded(&self) -> bool {
+        true
+    }
+
+    fn decide(&self, inputs: Vec<DecisionInput>) -> Result<Vec<DecisionResult>> {
+        self.forward(inputs)
     }
 }

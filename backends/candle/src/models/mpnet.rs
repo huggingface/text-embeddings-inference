@@ -440,6 +440,7 @@ pub struct MPNetModel {
 impl MPNetModel {
     pub fn load(vb: VarBuilder, config: &MPNetConfig, model_type: ModelType) -> Result<Self> {
         let pool = match model_type {
+            ModelType::Decision => candle::bail!("Decision models require a ModernBERT backend"),
             // Classifier models always use CLS pooling
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for MPNet")

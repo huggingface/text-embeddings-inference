@@ -14,7 +14,8 @@ use serde::{de::Deserializer, Deserialize};
 use std::collections::HashMap;
 use std::path::Path;
 use text_embeddings_backend_core::{
-    Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Predictions,
+    Backend, BackendError, Batch, DecisionInput, DecisionResult, Embedding, Embeddings, ModelType,
+    Predictions,
 };
 
 #[cfg(feature = "cuda")]
@@ -215,7 +216,17 @@ impl CandleBackend {
         };
 
         // Load config
-        let config: String = std::fs::read_to_string(model_path.join("config.json"))
+        let config_path = if matches!(model_type, ModelType::Decision) {
+            let encoder_config = model_path.join("encoder/config.json");
+            if encoder_config.exists() {
+                encoder_config
+            } else {
+                model_path.join("config.json")
+            }
+        } else {
+            model_path.join("config.json")
+        };
+        let config: String = std::fs::read_to_string(config_path)
             .context("Unable to read config file")
             .map_err(|err| BackendError::Start(format!("{err:?}")))?;
 
@@ -347,10 +358,25 @@ impl CandleBackend {
                     .to_string(),
             )),
             (Config::ModernBert(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting ModernBert model on {:?}", device);
-                Ok(Box::new(
-                    ModernBertModel::load(vb, &config, model_type).s()?,
-                ))
+                if matches!(model_type, ModelType::Decision) {
+                    tracing::info!("Starting ModernBert decision model on {:?}", device);
+                    let laya_config = match std::fs::read_to_string(model_path.join("rl_agent_config.json")) {
+                        Ok(contents) => serde_json::from_str(&contents)
+                            .context("Unable to parse rl_agent_config.json")
+                            .map_err(|err| BackendError::Start(format!("{err:?}")))?,
+                        Err(err) if err.kind() == std::io::ErrorKind::NotFound =>
+                            crate::models::LayaConfig::default(),
+                        Err(err) => return Err(BackendError::Start(err.to_string())),
+                    };
+                    Ok(Box::new(
+                        crate::models::LayaModel::load(vb, &config, laya_config).s()?,
+                    ))
+                } else {
+                    tracing::info!("Starting ModernBert model on {:?}", device);
+                    Ok(Box::new(
+                        ModernBertModel::load(vb, &config, model_type).s()?,
+                    ))
+                }
             }
             (Config::NomicBert(config), Device::Cpu | Device::Metal(_)) => {
                 tracing::info!("Starting NomicBert model on {:?}", device);
@@ -722,6 +748,10 @@ impl Backend for CandleBackend {
         }
 
         Ok(predictions)
+    }
+
+    fn decide(&self, inputs: Vec<DecisionInput>) -> Result<Vec<DecisionResult>, BackendError> {
+        self.model.decide(inputs).e()
     }
 }
 

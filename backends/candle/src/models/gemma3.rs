@@ -643,6 +643,7 @@ pub struct Gemma3Model {
 impl Gemma3Model {
     pub fn load(vb: VarBuilder, config: &Gemma3Config, model_type: ModelType) -> Result<Self> {
         let pool = match model_type {
+            ModelType::Decision => candle::bail!("Decision models require a ModernBERT backend"),
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for Gemma3")
             }

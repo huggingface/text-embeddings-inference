@@ -447,6 +447,7 @@ pub struct DistilBertModel {
 impl DistilBertModel {
     pub fn load(vb: VarBuilder, config: &DistilBertConfig, model_type: ModelType) -> Result<Self> {
         let (pool, classifier) = match model_type {
+            ModelType::Decision => candle::bail!("Decision models require a ModernBERT backend"),
             // Classifier models always use CLS pooling
             ModelType::Classifier => {
                 let pool = Pool::Cls;

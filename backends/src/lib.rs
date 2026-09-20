@@ -13,7 +13,7 @@ use tracing::{instrument, Span};
 
 use text_embeddings_backend_core::{Backend as CoreBackend, Predictions};
 pub use text_embeddings_backend_core::{
-    BackendError, Batch, Embedding, Embeddings, ModelType, Pool,
+    BackendError, Batch, DecisionInput, DecisionResult, Embedding, Embeddings, ModelType, Pool,
 };
 
 mod dtype;
@@ -183,6 +183,7 @@ impl Backend {
             match &self.model_type {
                 ModelType::Classifier => self.predict(batch).await.map(|_| ()),
                 ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+                ModelType::Decision => Ok(()),
             }?;
             tracing::info!("finish warmup for batch: {}, length: {}", shape.0, shape.1);
         }
@@ -243,6 +244,7 @@ impl Backend {
             match &self.model_type {
                 ModelType::Classifier => self.predict(batch).await.map(|_| ()),
                 ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+                ModelType::Decision => Ok(()),
             }?;
             tracing::info!(
                 "finish rocm warmup for batch: {}, length: {}",
@@ -372,6 +374,7 @@ impl Backend {
         match &self.model_type {
             ModelType::Classifier => self.predict(batch).await.map(|_| ()),
             ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+            ModelType::Decision => Ok(()),
         }
     }
 
@@ -405,6 +408,7 @@ impl Backend {
             match &self.model_type {
                 ModelType::Classifier => self.predict(batch).await.map(|_| ()),
                 ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+                ModelType::Decision => Ok(()),
             }
         }
     }
@@ -435,6 +439,21 @@ impl Backend {
             .expect("No backend receiver. This is a bug.");
         receiver.await.expect(
             "Backend blocking task dropped the sender without send a response. This is a bug.",
+        )
+    }
+
+    #[instrument(skip_all)]
+    pub async fn decide(
+        &self,
+        inputs: Vec<DecisionInput>,
+    ) -> Result<(Vec<DecisionResult>, Duration), BackendError> {
+        let (sender, receiver) = oneshot::channel();
+
+        self.backend_sender
+            .try_send(BackendCommand::Decide(inputs, Span::current(), sender))
+            .expect("No backend receiver. This is a bug.");
+        receiver.await.expect(
+            "Backend blocking task dropped the sender without sending a response. This is a bug.",
         )
     }
 }
@@ -638,6 +657,13 @@ impl BackendThread {
                             (e, start.elapsed())
                         }));
                     }
+                    BackendCommand::Decide(inputs, span, sender) => {
+                        let _span = span.entered();
+                        let _ = sender.send(backend.decide(inputs).map(|e| {
+                            healthy = true;
+                            (e, start.elapsed())
+                        }));
+                    }
                 };
                 let _ = health_sender.send(healthy);
             }
@@ -664,6 +690,11 @@ enum BackendCommand {
         Span,
         #[allow(clippy::type_complexity)]
         oneshot::Sender<Result<(Predictions, Duration), BackendError>>,
+    ),
+    Decide(
+        Vec<DecisionInput>,
+        Span,
+        oneshot::Sender<Result<(Vec<DecisionResult>, Duration), BackendError>>,
     ),
 }
 

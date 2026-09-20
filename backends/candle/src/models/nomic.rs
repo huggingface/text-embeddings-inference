@@ -685,6 +685,7 @@ impl NomicBertModel {
         }
 
         let pool = match model_type {
+            ModelType::Decision => candle::bail!("Decision models require a ModernBERT backend"),
             // Classifier models always use CLS pooling
             ModelType::Classifier => {
                 candle::bail!("`classifier` model type is not supported for Nomic")
