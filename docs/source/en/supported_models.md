@@ -65,6 +65,16 @@ Below are some examples of the currently supported models:
 | Re-Ranking         | ModernBert  | [Alibaba-NLP/gte-reranker-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-reranker-modernbert-base) |
 | Sentiment Analysis | RoBERTa     | [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions)                     |
 
+## Supported decision models
+
+TEI supports structured decision models that answer multiple typed questions about one input state through the `/v1/decide` endpoint.
+
+| Model Type | Model ID | Endpoint |
+|------------|----------|----------|
+| Laya       | [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) | `/v1/decide` |
+
+See the [structured decision models](decision_models) guide for request and response examples.
+
 ## Supported hardware
 
 Text Embeddings Inference supports can be used on CPU, Turing (T4, RTX 2000 series, ...), Ampere 80 (A100, A30),
