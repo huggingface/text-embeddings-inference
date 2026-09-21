@@ -3,19 +3,19 @@ source: backends/candle/tests/test_laya.rs
 expression: snapshots
 ---
 - probabilities:
-    - 0.9431394
-    - 0.056860656
-  confidence: 0.68514526
+    - 0.94272673
+    - 0.057273246
+  confidence: 0.68347573
   action: 0
 - probabilities:
-    - 0.37197226
-    - 0.6081191
-    - 0.019908683
-  confidence: 0.31886786
+    - 0.3721097
+    - 0.6077717
+    - 0.020118577
+  confidence: 0.31815428
   action: 0
 - probabilities:
-    - 0.3598981
-    - 0.64010185
-  confidence: 0.05740136
+    - 0.36051673
+    - 0.6394833
+  confidence: 0.05688876
   action: 0
 
