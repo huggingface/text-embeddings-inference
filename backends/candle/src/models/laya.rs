@@ -131,7 +131,7 @@ impl DecisionTransformerLayer {
                 vb.pp("linear1")
                     .get((hidden_size * 4, hidden_size), "weight")?,
                 Some(vb.pp("linear1").get(hidden_size * 4, "bias")?),
-                Some(HiddenAct::Gelu),
+                Some(HiddenAct::Relu),
             ),
             linear2: Linear::new(
                 vb.pp("linear2")
@@ -142,8 +142,8 @@ impl DecisionTransformerLayer {
             norm1: LayerNorm::load(vb.pp("norm1"), hidden_size, epsilon)?,
             norm2: LayerNorm::load(vb.pp("norm2"), hidden_size, epsilon)?,
             hidden_size,
-            // The serialized decision head uses 16 attention heads in every layer.
-            num_heads: 16,
+            // Match the 64-dimensional attention heads used during training.
+            num_heads: std::cmp::max(1, hidden_size / 64),
         })
     }
 
@@ -339,49 +339,64 @@ impl LayaModel {
             .squeeze(2)?;
         let mut decisions = Vec::with_capacity(batch_size);
         for (index, input) in inputs.into_iter().enumerate() {
-            // Require at least one valid option-marker position in the unpadded
+            // Require at least two valid option-marker positions in the unpadded
             // sequence. Positions are consumed in order; repeated positions produce
             // repeated logits and are not deduplicated here.
-            if input.marker_positions.is_empty()
-                || input
-                    .marker_positions
-                    .iter()
-                    .any(|position| *position as usize >= input.input_ids.len())
+            if input.marker_positions.len() < 2 {
+                candle::bail!("decision inputs require at least two marker positions");
+            }
+            if input
+                .marker_positions
+                .iter()
+                .any(|position| *position as usize >= input.input_ids.len())
             {
                 candle::bail!("decision marker position is outside the input");
             }
             let markers = input.marker_positions;
             let marker_tensor = Tensor::from_vec(markers.clone(), markers.len(), &self.device)?;
-            let temperature = self.config.temperature(input.qtype, markers.len());
-            // Gather option logits before temperature scaling and softmax so other
-            // token positions do not contribute to the normalization denominator.
+            // Gather option logits in FP32 so other token positions do not enter the
+            // softmax and low-precision inference does not distort calibration.
             let logits = scored
                 .i(index)?
                 .index_select(&marker_tensor, 0)?
-                .broadcast_div(&Tensor::new(&[temperature], &self.device)?.to_dtype(self.dtype)?)?;
+                .to_dtype(DType::F32)?;
+            // The action head was trained on the uncalibrated option distribution.
+            let uncalibrated_probabilities: Vec<f32> =
+                candle_nn::ops::softmax_last_dim(&logits.unsqueeze(0)?)?
+                    .squeeze(0)?
+                    .to_vec1()?;
+            let temperature = self.config.temperature(input.qtype, markers.len());
+            let calibrated_logits =
+                logits.broadcast_div(&Tensor::new(&[temperature], &self.device)?)?;
             // Materialize calibrated option probabilities on the host for the API
-            // response and the action-classifier features.
-            let probabilities = candle_nn::ops::softmax_last_dim(&logits.unsqueeze(0)?)?
-                .squeeze(0)?
-                .to_dtype(DType::F32)?
-                .to_vec1()?;
-            let max_probability = probabilities.iter().copied().fold(0.0, f32::max);
-            let mut sorted = probabilities.clone();
+            // response and confidence calculation.
+            let probabilities: Vec<f32> =
+                candle_nn::ops::softmax_last_dim(&calibrated_logits.unsqueeze(0)?)?
+                    .squeeze(0)?
+                    .to_vec1()?;
+            let max_probability = uncalibrated_probabilities
+                .iter()
+                .copied()
+                .fold(0.0, f32::max);
+            let mut sorted = uncalibrated_probabilities.clone();
             sorted.sort_by(|left, right| right.total_cmp(left));
             let top_two = sorted.get(1).copied().unwrap_or(0.0);
-            let entropy = probabilities
+            let action_entropy = uncalibrated_probabilities
                 .iter()
                 .filter(|probability| **probability > 0.0)
                 .map(|probability| -probability * probability.ln())
                 .sum::<f32>();
-            let normalized_entropy = if probabilities.len() > 1 {
-                entropy / (probabilities.len() as f32).ln()
-            } else {
-                0.0
-            };
+            let option_count_log = (probabilities.len() as f32).ln();
+            let action_entropy = action_entropy / option_count_log;
+            let calibrated_entropy = probabilities
+                .iter()
+                .filter(|probability| **probability > 0.0)
+                .map(|probability| -probability * probability.ln())
+                .sum::<f32>()
+                / option_count_log;
             // Divide by log(option_count), the entropy of a uniform categorical
             // distribution, before converting entropy to confidence.
-            let confidence = 1.0 - normalized_entropy;
+            let confidence = 1.0 - calibrated_entropy;
             // Concatenate CLS with max probability, top-two margin, normalized entropy,
             // and option count divided by 255, the fixed feature scale used to train
             // the checkpoint's action head.
@@ -389,7 +404,7 @@ impl LayaModel {
                 vec![
                     max_probability,
                     max_probability - top_two,
-                    normalized_entropy,
+                    action_entropy,
                     probabilities.len() as f32 / 255.0,
                 ],
                 (1, 4),
