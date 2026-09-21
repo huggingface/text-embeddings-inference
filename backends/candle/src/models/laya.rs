@@ -6,11 +6,20 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use text_embeddings_backend_core::{DecisionInput, DecisionResult, ModelType};
 
+// Laya encodes the prompt with ModernBERT, adds a learned question-type embedding,
+// and applies a decision-transformer head that produces one logit per token. Option
+// logits are read at marker positions; a separate head predicts an action from the
+// final CLS state and summary statistics of the option distribution.
 #[derive(Debug, Default, Deserialize)]
 pub struct LayaConfig {
+    // Legacy temperatures indexed by question type: 0=choice, 1=score, and
+    // 2=noul, the binary false/true question type.
     pub temperature: Option<Vec<f32>>,
+    // Bucket-specific temperatures, e.g. "choice:2", "score:3-5", or "noul:11+".
     pub temperature_by_options: Option<HashMap<String, f32>>,
+    // Number of transformer blocks applied after the ModernBERT encoder.
     pub head_layers: Option<usize>,
+    // Output dimension of the action classifier. Legacy configs derive it from act_costs.
     pub n_act: Option<usize>,
     pub act_costs: Option<HashMap<String, f32>>,
 }
@@ -21,12 +30,15 @@ impl LayaConfig {
     }
 
     fn action_count(&self) -> usize {
+        // Legacy checkpoints have one more action-class row than entries in act_costs.
         self.n_act
             .or_else(|| self.act_costs.as_ref().map(|costs| costs.len() + 1))
             .unwrap_or(2)
     }
 
     fn temperature(&self, qtype: u32, option_count: usize) -> f32 {
+        // Prefer calibration for the exact question-type/count bucket, then fall
+        // back to the legacy per-type value and finally to an identity scale.
         let qtype_name = match qtype {
             0 => "choice",
             1 => "score",
@@ -45,7 +57,11 @@ impl LayaConfig {
             .as_ref()
             .and_then(|temperatures| temperatures.get(&format!("{qtype_name}:{bucket}")))
             .copied()
-            .or_else(|| self.temperature.as_ref().and_then(|values| values.get(qtype as usize).copied()))
+            .or_else(|| {
+                self.temperature
+                    .as_ref()
+                    .and_then(|values| values.get(qtype as usize).copied())
+            })
             .unwrap_or(1.0)
             .max(f32::EPSILON)
     }
@@ -105,32 +121,39 @@ impl DecisionTransformerLayer {
                 None,
             ),
             out_proj: Linear::new(
-                self_attn.pp("out_proj").get((hidden_size, hidden_size), "weight")?,
+                self_attn
+                    .pp("out_proj")
+                    .get((hidden_size, hidden_size), "weight")?,
                 Some(self_attn.pp("out_proj").get(hidden_size, "bias")?),
                 None,
             ),
             linear1: Linear::new(
-                vb.pp("linear1").get((hidden_size * 4, hidden_size), "weight")?,
+                vb.pp("linear1")
+                    .get((hidden_size * 4, hidden_size), "weight")?,
                 Some(vb.pp("linear1").get(hidden_size * 4, "bias")?),
                 Some(HiddenAct::Gelu),
             ),
             linear2: Linear::new(
-                vb.pp("linear2").get((hidden_size, hidden_size * 4), "weight")?,
+                vb.pp("linear2")
+                    .get((hidden_size, hidden_size * 4), "weight")?,
                 Some(vb.pp("linear2").get(hidden_size, "bias")?),
                 None,
             ),
             norm1: LayerNorm::load(vb.pp("norm1"), hidden_size, epsilon)?,
             norm2: LayerNorm::load(vb.pp("norm2"), hidden_size, epsilon)?,
             hidden_size,
+            // The serialized decision head uses 16 attention heads in every layer.
             num_heads: 16,
         })
     }
 
     fn forward(&self, hidden_states: &Tensor, attention_mask: &Tensor) -> Result<Tensor> {
+        // Pre-norm self-attention followed by a pre-norm MLP, each with a residual path.
         let normalized = self.norm1.forward(hidden_states, None)?;
         let qkv = self.qkv.forward(&normalized)?.chunk(3, candle::D::Minus1)?;
         let (batch_size, sequence_length, _) = hidden_states.dims3()?;
         let head_size = self.hidden_size / self.num_heads;
+        // Reshape [batch, sequence, hidden] to [batch, heads, sequence, head_size].
         let query = qkv[0]
             .reshape((batch_size, sequence_length, self.num_heads, head_size))?
             .transpose(1, 2)?
@@ -144,8 +167,7 @@ impl DecisionTransformerLayer {
             .transpose(1, 2)?
             .contiguous()?;
         let key_transposed = key.transpose(2, 3)?.contiguous()?;
-        let scores = (query.matmul(&key_transposed)?
-            / (head_size as f64).sqrt())?
+        let scores = (query.matmul(&key_transposed)? / (head_size as f64).sqrt())?
             .broadcast_add(attention_mask)?;
         let attention = candle_nn::ops::softmax_last_dim(&scores)?;
         let attention = attention
@@ -155,13 +177,22 @@ impl DecisionTransformerLayer {
             .reshape((batch_size, sequence_length, self.hidden_size))?;
         let attention = self.out_proj.forward(&attention)?;
         let hidden_states = hidden_states.add(&attention)?;
-        let feed_forward = self
-            .linear2
-            .forward(&self.linear1.forward(&self.norm2.forward(&hidden_states, None)?)?)?;
+        let feed_forward = self.linear2.forward(
+            &self
+                .linear1
+                .forward(&self.norm2.forward(&hidden_states, None)?)?,
+        )?;
         hidden_states.add(&feed_forward)
     }
 }
 
+/// Laya decision inference on top of the shared ModernBERT encoder.
+///
+/// The scorer emits a scalar logit at every sequence position. Only logits at
+/// `DecisionInput::marker_positions` enter the option softmax, in the supplied
+/// order; the returned probabilities use that same option order. The action
+/// classifier consumes the final CLS state and option-distribution features;
+/// its classes are independent of the answer options.
 pub struct LayaModel {
     encoder: ModernBertModel,
     head: Vec<DecisionTransformerLayer>,
@@ -183,6 +214,9 @@ impl LayaModel {
         laya_config: LayaConfig,
     ) -> Result<Self> {
         let hidden_size = config.hidden_size;
+        // Decision checkpoints store ModernBERT under encoder.* and omit its task
+        // classifier. The decision head, type embedding, scorer, and action head
+        // remain at the checkpoint root.
         let encoder = ModernBertModel::load(vb.clone(), config, ModelType::Decision)?;
         let head = (0..laya_config.head_layers())
             .map(|index| {
@@ -199,7 +233,8 @@ impl LayaModel {
         );
         let scorer_norm = LayerNorm::load(vb.pp("scorer.0"), hidden_size, config.norm_eps as f32)?;
         let scorer_dense = Linear::new(
-            vb.pp("scorer.1").get((hidden_size, hidden_size), "weight")?,
+            vb.pp("scorer.1")
+                .get((hidden_size, hidden_size), "weight")?,
             Some(vb.pp("scorer.1").get(hidden_size, "bias")?),
             Some(HiddenAct::Gelu),
         );
@@ -214,8 +249,12 @@ impl LayaModel {
             Some(HiddenAct::Gelu),
         );
         let act = Linear::new(
-            vb.pp("act_head.2").get((laya_config.action_count(), 256), "weight")?,
-            Some(vb.pp("act_head.2").get(laya_config.action_count(), "bias")?),
+            vb.pp("act_head.2")
+                .get((laya_config.action_count(), 256), "weight")?,
+            Some(
+                vb.pp("act_head.2")
+                    .get(laya_config.action_count(), "bias")?,
+            ),
             None,
         );
         Ok(Self {
@@ -235,7 +274,11 @@ impl LayaModel {
 
     fn forward(&self, inputs: Vec<DecisionInput>) -> Result<Vec<DecisionResult>> {
         let batch_size = inputs.len();
-        let max_length = inputs.iter().map(|input| input.input_ids.len()).max().unwrap_or(0);
+        let max_length = inputs
+            .iter()
+            .map(|input| input.input_ids.len())
+            .max()
+            .unwrap_or(0);
         if max_length == 0 {
             candle::bail!("decision inputs cannot be empty");
         }
@@ -244,8 +287,12 @@ impl LayaModel {
         let mut positions = Vec::with_capacity(batch_size * max_length);
         for input in &inputs {
             let length = input.input_ids.len();
+            // Right-pad each sequence to the longest sequence in the batch.
             input_ids.extend_from_slice(&input.input_ids);
-            input_ids.extend(std::iter::repeat_n(self.encoder.pad_token_id, max_length - length));
+            input_ids.extend(std::iter::repeat_n(
+                self.encoder.pad_token_id,
+                max_length - length,
+            ));
             if let Some(mask) = &input.attention_mask {
                 if mask.len() != length {
                     candle::bail!("decision attention mask length does not match input length");
@@ -261,26 +308,40 @@ impl LayaModel {
         }
         let input_ids = Tensor::from_vec(input_ids, (batch_size, max_length), &self.device)?;
         let positions = Tensor::from_vec(positions, batch_size * max_length, &self.device)?;
+        // Callers provide a binary mask: 1 keeps a token and 0 masks it.
         let mask = Tensor::from_vec(masks, (batch_size, max_length, 1), &self.device)?
             .to_dtype(self.dtype)?;
-        let hidden = self.encoder.forward_hidden(&input_ids, &positions, Some(&mask))?;
+        let hidden = self
+            .encoder
+            .forward_hidden(&input_ids, &positions, Some(&mask))?;
+        // Broadcast one learned question-type embedding over every token. Unknown
+        // type IDs share row 2 with noul questions.
         let type_ids = Tensor::from_vec(
             inputs.iter().map(|input| input.qtype.min(2)).collect(),
             batch_size,
             &self.device,
         )?;
         let mut hidden = hidden.broadcast_add(&self.type_emb.forward(&type_ids)?.unsqueeze(1)?)?;
-        let head_mask =
-            ((1.0 - mask.squeeze(2)?.unsqueeze(1)?.unsqueeze(1)?)? * -65504.0)?;
+        // Convert the binary padding mask to additive attention bias with shape
+        // [batch, 1, 1, sequence]. Masked keys receive a bias of -65504.
+        let head_mask = ((1.0 - mask.squeeze(2)?.unsqueeze(1)?.unsqueeze(1)?)? * -65504.0)?;
         for layer in &self.head {
             hidden = layer.forward(&hidden, &head_mask)?;
         }
+        // Map each decision-head token state to a scalar option logit candidate.
         let scored = self
             .scorer
-            .forward(&self.scorer_dense.forward(&self.scorer_norm.forward(&hidden, None)?)?)?
+            .forward(
+                &self
+                    .scorer_dense
+                    .forward(&self.scorer_norm.forward(&hidden, None)?)?,
+            )?
             .squeeze(2)?;
         let mut decisions = Vec::with_capacity(batch_size);
         for (index, input) in inputs.into_iter().enumerate() {
+            // Require at least one valid option-marker position in the unpadded
+            // sequence. Positions are consumed in order; repeated positions produce
+            // repeated logits and are not deduplicated here.
             if input.marker_positions.is_empty()
                 || input
                     .marker_positions
@@ -292,16 +353,18 @@ impl LayaModel {
             let markers = input.marker_positions;
             let marker_tensor = Tensor::from_vec(markers.clone(), markers.len(), &self.device)?;
             let temperature = self.config.temperature(input.qtype, markers.len());
+            // Gather option logits before temperature scaling and softmax so other
+            // token positions do not contribute to the normalization denominator.
             let logits = scored
                 .i(index)?
                 .index_select(&marker_tensor, 0)?
                 .broadcast_div(&Tensor::new(&[temperature], &self.device)?.to_dtype(self.dtype)?)?;
-            let probabilities = candle_nn::ops::softmax_last_dim(
-                &logits.unsqueeze(0)?,
-            )?
-            .squeeze(0)?
-            .to_dtype(DType::F32)?
-            .to_vec1()?;
+            // Materialize calibrated option probabilities on the host for the API
+            // response and the action-classifier features.
+            let probabilities = candle_nn::ops::softmax_last_dim(&logits.unsqueeze(0)?)?
+                .squeeze(0)?
+                .to_dtype(DType::F32)?
+                .to_vec1()?;
             let max_probability = probabilities.iter().copied().fold(0.0, f32::max);
             let mut sorted = probabilities.clone();
             sorted.sort_by(|left, right| right.total_cmp(left));
@@ -316,20 +379,36 @@ impl LayaModel {
             } else {
                 0.0
             };
+            // Divide by log(option_count), the entropy of a uniform categorical
+            // distribution, before converting entropy to confidence.
             let confidence = 1.0 - normalized_entropy;
+            // Concatenate CLS with max probability, top-two margin, normalized entropy,
+            // and option count divided by 255, the fixed feature scale used to train
+            // the checkpoint's action head.
             let features = Tensor::from_vec(
-                vec![max_probability, max_probability - top_two, normalized_entropy, probabilities.len() as f32 / 255.0],
+                vec![
+                    max_probability,
+                    max_probability - top_two,
+                    normalized_entropy,
+                    probabilities.len() as f32 / 255.0,
+                ],
                 (1, 4),
                 &self.device,
             )?
             .to_dtype(self.dtype)?;
             let cls = hidden.i((index, 0usize))?.unsqueeze(0)?;
             let action_probabilities: Vec<f32> = candle_nn::ops::softmax_last_dim(
-                &self.act.forward(&self.act_dense.forward(&Tensor::cat(&[&cls, &features], 1)?)?)?,
+                &self.act.forward(
+                    &self
+                        .act_dense
+                        .forward(&Tensor::cat(&[&cls, &features], 1)?)?,
+                )?,
             )?
             .squeeze(0)?
             .to_dtype(DType::F32)?
             .to_vec1()?;
+            // Action IDs are classifier-row indices. This backend does not map them
+            // to labels; their semantics are defined by the model checkpoint.
             let action = action_probabilities
                 .iter()
                 .enumerate()
