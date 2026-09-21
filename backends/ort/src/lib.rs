@@ -77,6 +77,7 @@ impl OrtBackend {
         model_path: &Path,
         dtype: String,
         model_type: ModelType,
+        onnx_filename: Option<String>,
     ) -> Result<Self, BackendError> {
         if dtype != "float32" {
             return Err(BackendError::Start(format!(
@@ -96,11 +97,14 @@ impl OrtBackend {
             },
         };
 
-        let onnx_path = {
-            let default_path = model_path.join("model.onnx");
-            match default_path.exists() {
-                true => default_path,
-                false => model_path.join("onnx/model.onnx"),
+        let onnx_path = match onnx_filename {
+            Some(filename) => model_path.join(filename),
+            None => {
+                let default_path = model_path.join("model.onnx");
+                match default_path.exists() {
+                    true => default_path,
+                    false => model_path.join("onnx/model.onnx"),
+                }
             }
         };
 
