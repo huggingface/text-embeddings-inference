@@ -5,6 +5,7 @@ ENV RUSTC_WRAPPER=/usr/local/bin/sccache
 ENV PATH="/root/.cargo/bin:${PATH}"
 # aligned with `cargo-chef` version in `lukemathwalker/cargo-chef:latest-rust-1.92-bookworm`
 ENV CARGO_CHEF=0.1.73
+ENV RUST_VERSION=1.85.1
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     curl \
@@ -17,7 +18,7 @@ RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sc
     chmod +x /usr/local/bin/sccache
 
 COPY rust-toolchain.toml rust-toolchain.toml
-RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
+RUN curl https://sh.rustup.rs -sSf | bash -s -- -y --profile minimal --default-toolchain $RUST_VERSION
 RUN cargo install cargo-chef --version $CARGO_CHEF --locked
 
 FROM base-builder AS planner
@@ -63,11 +64,19 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    CUDA_COMPUTE_CAP=89 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s;
+
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     CUDA_COMPUTE_CAP=90 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s;
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     CUDA_COMPUTE_CAP=100 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s;
+
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    CUDA_COMPUTE_CAP=103 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s;
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
@@ -93,6 +102,12 @@ RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/te
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    CUDA_COMPUTE_CAP=89 cargo build --release --bin text-embeddings-router -F candle-cuda && sccache -s;
+
+RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-89
+
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     CUDA_COMPUTE_CAP=90 cargo build --release --bin text-embeddings-router -F candle-cuda && sccache -s;
 
 RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-90
@@ -102,6 +117,13 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     CUDA_COMPUTE_CAP=100 cargo build --release --bin text-embeddings-router -F candle-cuda && sccache -s;
 
 RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-100
+
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    CUDA_COMPUTE_CAP=103 cargo build --release --bin text-embeddings-router -F candle-cuda && sccache -s;
+
+RUN mv /usr/src/target/release/text-embeddings-router /usr/src/target/release/text-embeddings-router-103
+
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
@@ -127,8 +149,10 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 
 COPY --from=builder /usr/src/target/release/text-embeddings-router-75 /usr/local/bin/text-embeddings-router-75
 COPY --from=builder /usr/src/target/release/text-embeddings-router-80 /usr/local/bin/text-embeddings-router-80
+COPY --from=builder /usr/src/target/release/text-embeddings-router-89 /usr/local/bin/text-embeddings-router-89
 COPY --from=builder /usr/src/target/release/text-embeddings-router-90 /usr/local/bin/text-embeddings-router-90
 COPY --from=builder /usr/src/target/release/text-embeddings-router-100 /usr/local/bin/text-embeddings-router-100
+COPY --from=builder /usr/src/target/release/text-embeddings-router-103 /usr/local/bin/text-embeddings-router-103
 COPY --from=builder /usr/src/target/release/text-embeddings-router-120 /usr/local/bin/text-embeddings-router-120
 
 COPY --chmod=775 cuda-all-entrypoint.sh entrypoint.sh
