@@ -195,6 +195,16 @@ struct Args {
     #[clap(default_value = "9000", long, env)]
     prometheus_port: u16,
 
+    /// Control the number of tokens used for model warmup (a synthetic inference pass
+    /// that can pre-allocate memory and trigger kernel compilation).
+    ///
+    /// Defaults to `min(max_input_length, max_batch_tokens)` on CPU and
+    /// `max_batch_tokens` on GPU. Set to `0` to skip the explicit warmup pass
+    /// for fast cold-start scenarios like CPU spot instances. Positive values
+    /// are ignored by HPU and ROCm backends, which use backend-specific warmup.
+    #[clap(long, env)]
+    warmup_tokens: Option<usize>,
+
     /// Unused for gRPC servers
     #[clap(long, env)]
     cors_allow_origin: Option<Vec<String>>,
@@ -265,6 +275,7 @@ async fn main() -> Result<()> {
         args.otlp_endpoint,
         args.otlp_service_name,
         args.prometheus_port,
+        args.warmup_tokens,
         args.cors_allow_origin,
     )
     .await?;
