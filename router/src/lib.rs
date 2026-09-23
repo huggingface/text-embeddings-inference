@@ -17,7 +17,7 @@ use tonic::codegen::http::HeaderMap;
 mod shutdown;
 
 use anyhow::{anyhow, Context, Result};
-use hf_hub::api::tokio::ApiBuilder;
+use hf_hub::api::tokio::{ApiBuilder, ApiRepo};
 use hf_hub::{Repo, RepoType};
 use serde::Deserialize;
 use serde::Serialize;
@@ -26,7 +26,7 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use text_embeddings_backend::{DType, Pool};
+use text_embeddings_backend::{BackendOutput, DType, ModelType as BackendModelType, Pool};
 use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
@@ -110,6 +110,10 @@ pub async fn run(
         )
     };
 
+    if let Some(api_repo) = api_repo.as_ref() {
+        download_modular_reranker_detection_files(api_repo).await?;
+    }
+
     // Load config
     let config_path = model_root.join("config.json");
     let config = fs::read_to_string(config_path).context("`config.json` not found")?;
@@ -117,32 +121,22 @@ pub async fn run(
         serde_json::from_str(&config).context("Failed to parse `config.json`")?;
 
     // Set model type from config
-    let backend_model_type = get_backend_model_type(&config, &model_root, pooling)?;
+    let (backend_model_type, backend_output) =
+        get_backend_model_type(&config, &model_root, pooling)?;
 
     // Info model type
-    let model_type = match &backend_model_type {
-        text_embeddings_backend::ModelType::Classifier => {
-            let id2label = config
-                .id2label
-                .context("`config.json` does not contain `id2label`")?;
-            let n_classes = id2label.len();
-            let classifier_model = ClassifierModel {
-                id2label,
-                label2id: config
-                    .label2id
-                    .context("`config.json` does not contain `label2id`")?,
-            };
-            if n_classes > 1 {
-                ModelType::Classifier(classifier_model)
-            } else {
-                ModelType::Reranker(classifier_model)
-            }
-        }
-        text_embeddings_backend::ModelType::Embedding(pool) => {
-            ModelType::Embedding(EmbeddingModel {
-                pooling: pool.to_string(),
-            })
-        }
+    let model_type = match (&backend_model_type, backend_output) {
+        (text_embeddings_backend::ModelType::Classifier, _) => classifier_model_type(&config)?,
+        (
+            text_embeddings_backend::ModelType::Embedding(_),
+            text_embeddings_backend::BackendOutput::Predict,
+        ) => reranker_model_type(&config),
+        (
+            text_embeddings_backend::ModelType::Embedding(pool),
+            text_embeddings_backend::BackendOutput::Embed,
+        ) => ModelType::Embedding(EmbeddingModel {
+            pooling: pool.to_string(),
+        }),
     };
 
     // Load tokenizer
@@ -196,9 +190,17 @@ pub async fn run(
     for name in ST_CONFIG_NAMES {
         let config_path = model_root.join(name);
         if let Ok(config) = fs::read_to_string(config_path) {
-            st_config =
-                Some(serde_json::from_str(&config).context(format!("Failed to parse `{}`", name))?);
-            break;
+            let config: STConfig =
+                serde_json::from_str(&config).context(format!("Failed to parse `{}`", name))?;
+            if config.max_seq_length.is_some() {
+                st_config = Some(config);
+                break;
+            } else {
+                tracing::warn!(
+                    "`{}` does not define `max_seq_length`; falling back to `config.json` maximum position embeddings.",
+                    name
+                );
+            }
         }
     }
 
@@ -211,7 +213,7 @@ pub async fn run(
     };
 
     let base_input_length = match st_config {
-        Some(config) => config.max_seq_length,
+        Some(config) => config.max_seq_length.expect("checked above"),
         None => {
             tracing::warn!("Could not find a Sentence Transformers config");
             max_position_embeddings - position_offset
@@ -282,11 +284,12 @@ pub async fn run(
 
     // Create backend
     tracing::info!("Starting model backend");
-    let backend = text_embeddings_backend::Backend::new(
+    let backend = text_embeddings_backend::Backend::new_with_output(
         model_root,
         api_repo,
         dtype.clone(),
         backend_model_type,
+        backend_output,
         dense_path,
         uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_string()),
         otlp_endpoint.clone(),
@@ -407,7 +410,7 @@ fn get_backend_model_type(
     config: &ModelConfig,
     model_root: &Path,
     pooling: Option<text_embeddings_backend::Pool>,
-) -> Result<text_embeddings_backend::ModelType> {
+) -> Result<(BackendModelType, BackendOutput)> {
     for arch in &config.architectures {
         // Edge case affecting `Alibaba-NLP/gte-multilingual-base` and possibly other fine-tunes of
         // the same base model. More context at https://huggingface.co/Alibaba-NLP/gte-multilingual-base/discussions/7
@@ -419,8 +422,9 @@ fn get_backend_model_type(
         }
 
         if Some(text_embeddings_backend::Pool::Splade) == pooling && arch.ends_with("MaskedLM") {
-            return Ok(text_embeddings_backend::ModelType::Embedding(
-                text_embeddings_backend::Pool::Splade,
+            return Ok((
+                BackendModelType::Embedding(text_embeddings_backend::Pool::Splade),
+                BackendOutput::Embed,
             ));
         } else if arch.ends_with("Classification") {
             if pooling.is_some() {
@@ -428,7 +432,7 @@ fn get_backend_model_type(
                     "`--pooling` arg is set but model is a classifier. Ignoring `--pooling` arg."
                 );
             }
-            return Ok(text_embeddings_backend::ModelType::Classifier);
+            return Ok((BackendModelType::Classifier, BackendOutput::Predict));
         }
     }
 
@@ -436,6 +440,15 @@ fn get_backend_model_type(
         return Err(anyhow!(
             "Splade pooling is not supported: model is not a ForMaskedLM model"
         ));
+    }
+
+    if let Some(pool) = detect_modular_reranker(model_root)? {
+        if pooling.is_some() {
+            tracing::warn!(
+                "`--pooling` arg is set but model is a modular reranker. Using the pooling module config instead."
+            );
+        }
+        return Ok((BackendModelType::Embedding(pool), BackendOutput::Predict));
     }
 
     // Set pooling
@@ -462,7 +475,212 @@ fn get_backend_model_type(
         }
     };
 
-    Ok(text_embeddings_backend::ModelType::Embedding(pool))
+    Ok((BackendModelType::Embedding(pool), BackendOutput::Embed))
+}
+
+fn detect_modular_reranker(model_root: &Path) -> Result<Option<Pool>> {
+    let modules_path = model_root.join("modules.json");
+    let modules = match fs::read_to_string(&modules_path) {
+        Ok(content) => content,
+        Err(_) => return Ok(None),
+    };
+    let modules: Vec<ModuleConfig> = match serde_json::from_str(&modules) {
+        Ok(modules) => modules,
+        Err(err) => {
+            tracing::warn!("Failed to parse `modules.json` for modular reranker detection: {err}");
+            return Ok(None);
+        }
+    };
+
+    if modules
+        .first()
+        .is_none_or(|module| !module.is_transformer())
+    {
+        return Ok(None);
+    }
+
+    let Some(pooling_index) = modules.iter().position(|module| module.is_pooling()) else {
+        return Ok(None);
+    };
+    let pooling_module = &modules[pooling_index];
+
+    let Some(final_module) = modules.last().filter(|module| module.is_dense()) else {
+        return Ok(None);
+    };
+
+    // The final dense config discriminates reranker (out_features == 1, output
+    // "scores") from embedding, so a missing config falls back to embedding, not error.
+    let dense_config_path = model_root.join(&final_module.path).join("config.json");
+    let dense_config = match fs::read_to_string(&dense_config_path) {
+        Ok(content) => content,
+        Err(_) => return Ok(None),
+    };
+    let dense_config: DenseDetectionConfig = match serde_json::from_str(&dense_config) {
+        Ok(config) => config,
+        Err(err) => {
+            tracing::warn!(
+                "Failed to parse `{}` for modular reranker detection: {err}",
+                dense_config_path.display()
+            );
+            return Ok(None);
+        }
+    };
+
+    if dense_config.out_features != 1
+        || dense_config.module_output_name.as_deref() != Some("scores")
+    {
+        return Ok(None);
+    }
+
+    for module in &modules[pooling_index + 1..] {
+        if !module.is_supported_prediction_layer() {
+            return Err(anyhow!(
+                "Unsupported module in modular reranker head: `{}` at `{}`",
+                module.module_type,
+                module.path
+            ));
+        }
+    }
+
+    // Confirmed a reranker here, so a missing pooling config is a broken model:
+    // fail loudly instead of falling back to embedding.
+    let pooling_config_path = model_root.join(&pooling_module.path).join("config.json");
+    let pooling_config = fs::read_to_string(&pooling_config_path).with_context(|| {
+        format!(
+            "Failed to read modular reranker pooling config `{}`",
+            pooling_config_path.display()
+        )
+    })?;
+    let pooling_config: PoolConfig = serde_json::from_str(&pooling_config)
+        .context("Failed to parse modular reranker pooling config")?;
+
+    Ok(Some(Pool::try_from(pooling_config)?))
+}
+
+// Pre-downloads the configs `detect_modular_reranker` reads locally. For a
+// transformer -> pooling -> ... -> dense pipeline the download is fatal, not
+// best-effort: a missing config would silently downgrade a reranker to embedding.
+async fn download_modular_reranker_detection_files(api: &ApiRepo) -> Result<()> {
+    let Ok(modules_path) = api.get("modules.json").await else {
+        return Ok(());
+    };
+    let Ok(modules) = fs::read_to_string(modules_path) else {
+        return Ok(());
+    };
+    let Ok(modules) = serde_json::from_str::<Vec<ModuleConfig>>(&modules) else {
+        return Ok(());
+    };
+
+    // Only a transformer -> pooling -> ... -> dense pipeline needs this extra
+    // classification; anything else is left to the regular embedding path.
+    if modules
+        .first()
+        .is_none_or(|module| !module.is_transformer())
+    {
+        return Ok(());
+    }
+    let Some(pooling_module) = modules.iter().find(|module| module.is_pooling()) else {
+        return Ok(());
+    };
+    let Some(final_module) = modules.last().filter(|module| module.is_dense()) else {
+        return Ok(());
+    };
+
+    let pooling_config = format!("{}/config.json", pooling_module.path);
+    api.get(&pooling_config).await.map_err(|err| {
+        anyhow!("Could not download `{pooling_config}` needed to classify the Sentence Transformers pipeline: {err}")
+    })?;
+    let dense_config = format!("{}/config.json", final_module.path);
+    api.get(&dense_config).await.map_err(|err| {
+        anyhow!("Could not download `{dense_config}` needed to classify the Sentence Transformers pipeline: {err}")
+    })?;
+
+    Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct ModuleConfig {
+    path: String,
+    #[serde(rename = "type")]
+    module_type: String,
+}
+
+impl ModuleConfig {
+    fn is_transformer(&self) -> bool {
+        matches!(
+            self.module_type.as_str(),
+            "sentence_transformers.models.Transformer"
+                | "sentence_transformers.base.modules.transformer.Transformer"
+        )
+    }
+
+    fn is_pooling(&self) -> bool {
+        matches!(
+            self.module_type.as_str(),
+            "sentence_transformers.models.Pooling"
+                | "sentence_transformers.sentence_transformer.modules.pooling.Pooling"
+        )
+    }
+
+    fn is_dense(&self) -> bool {
+        matches!(
+            self.module_type.as_str(),
+            "sentence_transformers.models.Dense" | "sentence_transformers.base.modules.dense.Dense"
+        )
+    }
+
+    fn is_layer_norm(&self) -> bool {
+        matches!(
+            self.module_type.as_str(),
+            "sentence_transformers.models.LayerNorm"
+                | "sentence_transformers.sentence_transformer.modules.layer_norm.LayerNorm"
+        )
+    }
+
+    fn is_supported_prediction_layer(&self) -> bool {
+        self.is_dense() || self.is_layer_norm()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct DenseDetectionConfig {
+    out_features: usize,
+    module_output_name: Option<String>,
+}
+
+fn classifier_model_type(config: &ModelConfig) -> Result<ModelType> {
+    let id2label = config
+        .id2label
+        .clone()
+        .context("`config.json` does not contain `id2label`")?;
+    let n_classes = id2label.len();
+    let classifier_model = ClassifierModel {
+        id2label,
+        label2id: config
+            .label2id
+            .clone()
+            .context("`config.json` does not contain `label2id`")?,
+    };
+    if n_classes > 1 {
+        Ok(ModelType::Classifier(classifier_model))
+    } else {
+        Ok(ModelType::Reranker(classifier_model))
+    }
+}
+
+fn reranker_model_type(config: &ModelConfig) -> ModelType {
+    ModelType::Reranker(ClassifierModel {
+        id2label: config.id2label.clone().unwrap_or_else(default_id2label),
+        label2id: config.label2id.clone().unwrap_or_else(default_label2id),
+    })
+}
+
+fn default_id2label() -> HashMap<String, String> {
+    HashMap::from([("0".to_string(), "LABEL_0".to_string())])
+}
+
+fn default_label2id() -> HashMap<String, usize> {
+    HashMap::from([("LABEL_0".to_string(), 0)])
 }
 
 #[derive(Debug, Deserialize)]
@@ -484,16 +702,26 @@ pub struct ModelConfig {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PoolConfig {
+    #[serde(default)]
     pooling_mode_cls_token: bool,
+    #[serde(default)]
     pooling_mode_mean_tokens: bool,
     #[serde(default)]
     pooling_mode_lasttoken: bool,
+    #[serde(default)]
+    pooling_mode: Option<String>,
 }
 
 impl TryFrom<PoolConfig> for Pool {
     type Error = anyhow::Error;
 
     fn try_from(config: PoolConfig) -> std::result::Result<Self, Self::Error> {
+        match config.pooling_mode.as_deref() {
+            Some("cls") => return Ok(Pool::Cls),
+            Some("mean") => return Ok(Pool::Mean),
+            Some("lasttoken" | "last_token") => return Ok(Pool::LastToken),
+            Some(_) | None => {}
+        }
         if config.pooling_mode_cls_token {
             return Ok(Pool::Cls);
         }
@@ -507,9 +735,233 @@ impl TryFrom<PoolConfig> for Pool {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::path::PathBuf;
+
+    fn test_model_config() -> ModelConfig {
+        test_model_config_with_architecture("ModernBertModel", "modernbert")
+    }
+
+    fn test_model_config_without_labels() -> ModelConfig {
+        let mut config = test_model_config();
+        config.id2label = None;
+        config.label2id = None;
+        config
+    }
+
+    fn test_model_config_with_architecture(architecture: &str, model_type: &str) -> ModelConfig {
+        ModelConfig {
+            architectures: vec![architecture.to_string()],
+            model_type: model_type.to_string(),
+            max_position_embeddings: 8192,
+            pad_token_id: Some(50283),
+            id2label: Some(HashMap::from([("0".to_string(), "LABEL_0".to_string())])),
+            label2id: Some(HashMap::from([("LABEL_0".to_string(), 0)])),
+            auto_map: None,
+        }
+    }
+
+    fn temp_model_dir(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "tei-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn write_file(path: PathBuf, contents: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let mut file = std::fs::File::create(path).unwrap();
+        file.write_all(contents.as_bytes()).unwrap();
+    }
+
+    fn write_pooling_config(model_root: &Path) {
+        write_file(
+            model_root.join("1_Pooling/config.json"),
+            r#"{
+                "pooling_mode_cls_token": true,
+                "pooling_mode_mean_tokens": false,
+                "pooling_mode_max_tokens": false
+            }"#,
+        );
+    }
+
+    fn write_pooling_mode_config(model_root: &Path) {
+        write_file(
+            model_root.join("1_Pooling/config.json"),
+            r#"{
+                "pooling_mode": "cls"
+            }"#,
+        );
+    }
+
+    #[test]
+    fn detects_modular_sentence_transformers_reranker() {
+        let model_root = temp_model_dir("modular-reranker");
+        write_pooling_mode_config(&model_root);
+        write_file(
+            model_root.join("modules.json"),
+            r#"[
+                {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.base.modules.transformer.Transformer"},
+                {"idx": 1, "name": "1", "path": "1_Pooling", "type": "sentence_transformers.sentence_transformer.modules.pooling.Pooling"},
+                {"idx": 2, "name": "2", "path": "2_Dense", "type": "sentence_transformers.base.modules.dense.Dense"},
+                {"idx": 3, "name": "3", "path": "3_LayerNorm", "type": "sentence_transformers.sentence_transformer.modules.layer_norm.LayerNorm"},
+                {"idx": 4, "name": "4", "path": "4_Dense", "type": "sentence_transformers.base.modules.dense.Dense"}
+            ]"#,
+        );
+        write_file(
+            model_root.join("4_Dense/config.json"),
+            r#"{
+                "in_features": 384,
+                "out_features": 1,
+                "bias": true,
+                "activation_function": "torch.nn.modules.linear.Identity",
+                "module_input_name": "sentence_embedding",
+                "module_output_name": "scores"
+            }"#,
+        );
+
+        let model_type = get_backend_model_type(&test_model_config(), &model_root, None).unwrap();
+
+        assert_eq!(
+            model_type,
+            (
+                text_embeddings_backend::ModelType::Embedding(Pool::Cls),
+                BackendOutput::Predict
+            )
+        );
+    }
+
+    #[test]
+    fn detects_legacy_sentence_transformers_reranker_for_other_backbone() {
+        let model_root = temp_model_dir("legacy-reranker");
+        write_pooling_config(&model_root);
+        write_file(
+            model_root.join("modules.json"),
+            r#"[
+                {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.models.Transformer"},
+                {"idx": 1, "name": "1", "path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+                {"idx": 2, "name": "2", "path": "2_Dense", "type": "sentence_transformers.models.Dense"},
+                {"idx": 3, "name": "3", "path": "3_LayerNorm", "type": "sentence_transformers.models.LayerNorm"},
+                {"idx": 4, "name": "4", "path": "4_Dense", "type": "sentence_transformers.models.Dense"}
+            ]"#,
+        );
+        write_file(
+            model_root.join("4_Dense/config.json"),
+            r#"{
+                "in_features": 768,
+                "out_features": 1,
+                "bias": true,
+                "activation_function": "torch.nn.modules.linear.Identity",
+                "module_input_name": "sentence_embedding",
+                "module_output_name": "scores"
+            }"#,
+        );
+
+        let config = test_model_config_with_architecture("BertModel", "bert");
+        let model_type = get_backend_model_type(&config, &model_root, None).unwrap();
+
+        assert_eq!(
+            model_type,
+            (
+                text_embeddings_backend::ModelType::Embedding(Pool::Cls),
+                BackendOutput::Predict
+            )
+        );
+    }
+
+    #[test]
+    fn keeps_sentence_transformers_embedding_dense_as_embedding() {
+        let model_root = temp_model_dir("sentence-transformers-embedding");
+        write_pooling_config(&model_root);
+        write_file(
+            model_root.join("modules.json"),
+            r#"[
+                {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.models.Transformer"},
+                {"idx": 1, "name": "1", "path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+                {"idx": 2, "name": "2", "path": "2_Dense", "type": "sentence_transformers.models.Dense"}
+            ]"#,
+        );
+        write_file(
+            model_root.join("2_Dense/config.json"),
+            r#"{
+                "in_features": 1024,
+                "out_features": 1024,
+                "bias": true,
+                "activation_function": "torch.nn.modules.linear.Identity",
+                "module_output_name": "sentence_embedding"
+            }"#,
+        );
+
+        let model_type = get_backend_model_type(&test_model_config(), &model_root, None).unwrap();
+
+        assert_eq!(
+            model_type,
+            (
+                text_embeddings_backend::ModelType::Embedding(Pool::Cls),
+                BackendOutput::Embed
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_modular_reranker_with_unsupported_head_module() {
+        let model_root = temp_model_dir("unsupported-reranker");
+        write_pooling_config(&model_root);
+        write_file(
+            model_root.join("modules.json"),
+            r#"[
+                {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.models.Transformer"},
+                {"idx": 1, "name": "1", "path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+                {"idx": 2, "name": "2", "path": "2_Dense", "type": "sentence_transformers.models.Dense"},
+                {"idx": 3, "name": "3", "path": "3_Normalize", "type": "sentence_transformers.models.Normalize"},
+                {"idx": 4, "name": "4", "path": "4_Dense", "type": "sentence_transformers.models.Dense"}
+            ]"#,
+        );
+        write_file(
+            model_root.join("4_Dense/config.json"),
+            r#"{
+                "in_features": 768,
+                "out_features": 1,
+                "bias": true,
+                "activation_function": "torch.nn.modules.linear.Identity",
+                "module_input_name": "sentence_embedding",
+                "module_output_name": "scores"
+            }"#,
+        );
+
+        let err = get_backend_model_type(&test_model_config(), &model_root, None).unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("Unsupported module in modular reranker head"));
+    }
+
+    #[test]
+    fn modular_reranker_uses_default_label_map_when_config_omits_labels() {
+        let model_type = reranker_model_type(&test_model_config_without_labels());
+
+        let ModelType::Reranker(classifier) = model_type else {
+            panic!("expected reranker model type");
+        };
+        assert_eq!(classifier.id2label.get("0").unwrap(), "LABEL_0");
+        assert_eq!(classifier.label2id.get("LABEL_0").copied(), Some(0));
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct STConfig {
-    pub max_seq_length: usize,
+    pub max_seq_length: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]

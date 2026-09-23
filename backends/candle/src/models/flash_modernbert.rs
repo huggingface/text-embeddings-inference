@@ -298,9 +298,9 @@ impl FlashModernBertModel {
 
         for use_local_attention in [true, false] {
             let rope_theta = if use_local_attention {
-                config.local_rope_theta
+                config.local_rope_theta()?
             } else {
-                config.global_rope_theta
+                config.global_rope_theta()?
             };
 
             let max_position_embeddings = config.max_position_embeddings;
