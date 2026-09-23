@@ -1,0 +1,10 @@
+---
+source: backends/candle/tests/test_laya.rs
+expression: "DecisionSnapshot::from(&decisions[0])"
+---
+probabilities:
+  - 0.36051673
+  - 0.6394833
+confidence: 0.05688876
+action: 0
+

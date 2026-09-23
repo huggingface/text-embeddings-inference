@@ -27,11 +27,13 @@ pub struct ModernBertConfig {
     pub bos_token_id: usize,
     pub cls_token_id: usize,
     pub sep_token_id: usize,
+    #[serde(default = "default_global_rope_theta")]
     pub global_rope_theta: f64,
     pub attention_bias: bool,
     pub attention_dropout: f64,
     pub global_attn_every_n_layers: usize,
     pub local_attention: usize,
+    #[serde(default = "default_local_rope_theta")]
     pub local_rope_theta: f64,
     pub embedding_dropout: Option<f64>,
     pub mlp_bias: Option<bool>,
@@ -46,6 +48,14 @@ pub struct ModernBertConfig {
     pub sparse_pred_ignore_index: Option<i64>,
     pub reference_compile: Option<bool>,
     pub num_labels: Option<usize>,
+}
+
+fn default_global_rope_theta() -> f64 {
+    160_000.0
+}
+
+fn default_local_rope_theta() -> f64 {
+    10_000.0
 }
 
 #[derive(Debug)]
@@ -467,7 +477,7 @@ pub struct ModernBertModel {
     global_inv_freqs: Tensor,
     local_inv_freqs: Tensor,
     rotary_dim: usize,
-    pad_token_id: u32,
+    pub(crate) pad_token_id: u32,
     num_attention_heads: usize,
 
     device: Device,
@@ -478,7 +488,8 @@ pub struct ModernBertModel {
 
 impl ModernBertModel {
     pub fn load(vb: VarBuilder, config: &ModernBertConfig, model_type: ModelType) -> Result<Self> {
-        let (pool, classifier) = match model_type {
+        let (pool, classifier) = match &model_type {
+            ModelType::Decision => (Pool::Cls, None),
             ModelType::Classifier => {
                 let pool: Pool = config.classifier_pooling.clone().unwrap_or(Pool::Cls);
 
@@ -488,16 +499,22 @@ impl ModernBertModel {
                 (pool, Some(classifier))
             }
             ModelType::Embedding(pool) => {
-                if pool == Pool::Splade {
+                if *pool == Pool::Splade {
                     candle::bail!("`splade` is not supported for ModernBert")
                 }
 
-                if pool == Pool::LastToken {
+                if *pool == Pool::LastToken {
                     candle::bail!("`LastToken` is not supported for ModernBert")
                 }
 
-                (pool, None)
+                (pool.clone(), None)
             }
+        };
+
+        let vb = if matches!(model_type, ModelType::Decision) {
+            vb.pp("encoder")
+        } else {
+            vb
         };
 
         let embeddings = ModernBertEmbeddings::load(vb.pp("model.embeddings"), config)
@@ -800,6 +817,60 @@ impl ModernBertModel {
         };
 
         Ok((pooled_embeddings, raw_embeddings))
+    }
+
+    pub(crate) fn forward_hidden(
+        &self,
+        input_ids: &Tensor,
+        position_ids: &Tensor,
+        attention_mask: Option<&Tensor>,
+    ) -> Result<Tensor> {
+        let (batch_size, max_length) = input_ids.dims2()?;
+        let shape = (batch_size, max_length);
+        let global_attention_mask = self
+            .get_global_attention_mask(attention_mask, &shape)?
+            .to_dtype(self.dtype)?;
+        let local_attention_mask = self
+            .get_local_attention_mask(&global_attention_mask)?
+            .to_dtype(self.dtype)?;
+        let min_value = match self.dtype {
+            DType::F32 => f32::MIN as f64,
+            _ => -65504.0,
+        };
+        let global_attention_mask = ((1.0 - global_attention_mask)? * min_value)?;
+        let local_attention_mask = ((1.0 - local_attention_mask)? * min_value)?;
+        let global_rotary_cache =
+            get_cos_sin(max_length, &self.global_inv_freqs, self.dtype, true)?;
+        let local_rotary_cache = get_cos_sin(max_length, &self.local_inv_freqs, self.dtype, true)?;
+        let global_rotary_cache = (
+            global_rotary_cache
+                .0
+                .index_select(position_ids, 0)?
+                .reshape((batch_size, 1, max_length, self.rotary_dim))?,
+            global_rotary_cache
+                .1
+                .index_select(position_ids, 0)?
+                .reshape((batch_size, 1, max_length, self.rotary_dim))?,
+        );
+        let local_rotary_cache = (
+            local_rotary_cache
+                .0
+                .index_select(position_ids, 0)?
+                .reshape((batch_size, 1, max_length, self.rotary_dim))?,
+            local_rotary_cache
+                .1
+                .index_select(position_ids, 0)?
+                .reshape((batch_size, 1, max_length, self.rotary_dim))?,
+        );
+        let hidden_states = self.embeddings.forward(input_ids)?;
+        let hidden_states = self.encoder.forward(
+            &hidden_states,
+            &global_attention_mask,
+            &local_attention_mask,
+            &global_rotary_cache,
+            &local_rotary_cache,
+        )?;
+        self.final_norm.forward(&hidden_states, None)
     }
 }
 

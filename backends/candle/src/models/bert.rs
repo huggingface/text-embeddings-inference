@@ -581,6 +581,7 @@ impl BertModel {
         }
 
         let (pool, classifier, splade) = match model_type {
+            ModelType::Decision => candle::bail!("Decision models require a ModernBERT backend"),
             // Classifier models always use CLS pooling
             ModelType::Classifier => {
                 let pool = Pool::Cls;
@@ -640,6 +641,7 @@ impl BertModel {
         }
 
         let (pool, classifier, splade) = match model_type {
+            ModelType::Decision => candle::bail!("Decision models require a ModernBERT backend"),
             // Classifier models always use CLS pooling
             ModelType::Classifier => {
                 let pool = Pool::Cls;

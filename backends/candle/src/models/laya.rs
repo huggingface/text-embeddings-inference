@@ -1,0 +1,454 @@
+use crate::layers::{HiddenAct, LayerNorm, Linear};
+use crate::models::{Model, ModernBertConfig, ModernBertModel};
+use candle::{DType, Device, IndexOp, Module, Result, Tensor};
+use candle_nn::{Embedding, VarBuilder};
+use serde::Deserialize;
+use std::collections::HashMap;
+use text_embeddings_backend_core::{DecisionInput, DecisionResult, ModelType};
+
+// Laya encodes the prompt with ModernBERT, adds a learned question-type embedding,
+// and applies a decision-transformer head that produces one logit per token. Option
+// logits are read at marker positions; a separate head predicts an action from the
+// final CLS state and summary statistics of the option distribution.
+#[derive(Debug, Default, Deserialize)]
+pub struct LayaConfig {
+    // Legacy temperatures indexed by question type: 0=choice, 1=score, and
+    // 2=noul, the binary false/true question type.
+    pub temperature: Option<Vec<f32>>,
+    // Bucket-specific temperatures, e.g. "choice:2", "score:3-5", or "noul:11+".
+    pub temperature_by_options: Option<HashMap<String, f32>>,
+    // Number of transformer blocks applied after the ModernBERT encoder.
+    pub head_layers: Option<usize>,
+    // Output dimension of the action classifier. Legacy configs derive it from act_costs.
+    pub n_act: Option<usize>,
+    pub act_costs: Option<HashMap<String, f32>>,
+}
+
+impl LayaConfig {
+    fn head_layers(&self) -> usize {
+        self.head_layers.unwrap_or(2)
+    }
+
+    fn action_count(&self) -> usize {
+        // Legacy checkpoints have one more action-class row than entries in act_costs.
+        self.n_act
+            .or_else(|| self.act_costs.as_ref().map(|costs| costs.len() + 1))
+            .unwrap_or(2)
+    }
+
+    fn temperature(&self, qtype: u32, option_count: usize) -> f32 {
+        // Prefer calibration for the exact question-type/count bucket, then fall
+        // back to the legacy per-type value and finally to an identity scale.
+        let qtype_name = match qtype {
+            0 => "choice",
+            1 => "score",
+            _ => "noul",
+        };
+        let bucket = if option_count <= 2 {
+            "2"
+        } else if option_count <= 5 {
+            "3-5"
+        } else if option_count <= 10 {
+            "6-10"
+        } else {
+            "11+"
+        };
+        self.temperature_by_options
+            .as_ref()
+            .and_then(|temperatures| temperatures.get(&format!("{qtype_name}:{bucket}")))
+            .copied()
+            .or_else(|| {
+                self.temperature
+                    .as_ref()
+                    .and_then(|values| values.get(qtype as usize).copied())
+            })
+            .unwrap_or(1.0)
+            .max(f32::EPSILON)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LayaConfig;
+    use std::collections::HashMap;
+
+    #[test]
+    fn temperature_uses_question_bucket_before_type_default() {
+        let config = LayaConfig {
+            temperature: Some(vec![1.0, 1.1, 1.2]),
+            temperature_by_options: Some(HashMap::from([
+                ("choice:3-5".to_string(), 0.7),
+                ("noul:2".to_string(), 0.9),
+            ])),
+            ..Default::default()
+        };
+
+        assert_eq!(config.temperature(0, 4), 0.7);
+        assert_eq!(config.temperature(1, 4), 1.1);
+        assert_eq!(config.temperature(2, 2), 0.9);
+    }
+
+    #[test]
+    fn temperature_clamps_non_positive_values() {
+        let config = LayaConfig {
+            temperature: Some(vec![0.0]),
+            temperature_by_options: None,
+            ..Default::default()
+        };
+
+        assert!(config.temperature(0, 2) > 0.0);
+    }
+}
+
+struct DecisionTransformerLayer {
+    qkv: Linear,
+    out_proj: Linear,
+    linear1: Linear,
+    linear2: Linear,
+    norm1: LayerNorm,
+    norm2: LayerNorm,
+    hidden_size: usize,
+    num_heads: usize,
+}
+
+impl DecisionTransformerLayer {
+    fn load(vb: VarBuilder, hidden_size: usize, epsilon: f32) -> Result<Self> {
+        let self_attn = vb.pp("self_attn");
+        Ok(Self {
+            qkv: Linear::new(
+                self_attn.get((hidden_size * 3, hidden_size), "in_proj_weight")?,
+                Some(self_attn.get(hidden_size * 3, "in_proj_bias")?),
+                None,
+            ),
+            out_proj: Linear::new(
+                self_attn
+                    .pp("out_proj")
+                    .get((hidden_size, hidden_size), "weight")?,
+                Some(self_attn.pp("out_proj").get(hidden_size, "bias")?),
+                None,
+            ),
+            linear1: Linear::new(
+                vb.pp("linear1")
+                    .get((hidden_size * 4, hidden_size), "weight")?,
+                Some(vb.pp("linear1").get(hidden_size * 4, "bias")?),
+                Some(HiddenAct::Relu),
+            ),
+            linear2: Linear::new(
+                vb.pp("linear2")
+                    .get((hidden_size, hidden_size * 4), "weight")?,
+                Some(vb.pp("linear2").get(hidden_size, "bias")?),
+                None,
+            ),
+            norm1: LayerNorm::load(vb.pp("norm1"), hidden_size, epsilon)?,
+            norm2: LayerNorm::load(vb.pp("norm2"), hidden_size, epsilon)?,
+            hidden_size,
+            // Match the 64-dimensional attention heads used during training.
+            num_heads: std::cmp::max(1, hidden_size / 64),
+        })
+    }
+
+    fn forward(&self, hidden_states: &Tensor, attention_mask: &Tensor) -> Result<Tensor> {
+        // Pre-norm self-attention followed by a pre-norm MLP, each with a residual path.
+        let normalized = self.norm1.forward(hidden_states, None)?;
+        let qkv = self.qkv.forward(&normalized)?.chunk(3, candle::D::Minus1)?;
+        let (batch_size, sequence_length, _) = hidden_states.dims3()?;
+        let head_size = self.hidden_size / self.num_heads;
+        // Reshape [batch, sequence, hidden] to [batch, heads, sequence, head_size].
+        let query = qkv[0]
+            .reshape((batch_size, sequence_length, self.num_heads, head_size))?
+            .transpose(1, 2)?
+            .contiguous()?;
+        let key = qkv[1]
+            .reshape((batch_size, sequence_length, self.num_heads, head_size))?
+            .transpose(1, 2)?
+            .contiguous()?;
+        let value = qkv[2]
+            .reshape((batch_size, sequence_length, self.num_heads, head_size))?
+            .transpose(1, 2)?
+            .contiguous()?;
+        let key_transposed = key.transpose(2, 3)?.contiguous()?;
+        let scores = (query.matmul(&key_transposed)? / (head_size as f64).sqrt())?
+            .broadcast_add(attention_mask)?;
+        let attention = candle_nn::ops::softmax_last_dim(&scores)?;
+        let attention = attention
+            .matmul(&value)?
+            .transpose(1, 2)?
+            .contiguous()?
+            .reshape((batch_size, sequence_length, self.hidden_size))?;
+        let attention = self.out_proj.forward(&attention)?;
+        let hidden_states = hidden_states.add(&attention)?;
+        let feed_forward = self.linear2.forward(
+            &self
+                .linear1
+                .forward(&self.norm2.forward(&hidden_states, None)?)?,
+        )?;
+        hidden_states.add(&feed_forward)
+    }
+}
+
+/// Laya decision inference on top of the shared ModernBERT encoder.
+///
+/// The scorer emits a scalar logit at every sequence position. Only logits at
+/// `DecisionInput::marker_positions` enter the option softmax, in the supplied
+/// order; the returned probabilities use that same option order. The action
+/// classifier consumes the final CLS state and option-distribution features;
+/// its classes are independent of the answer options.
+pub struct LayaModel {
+    encoder: ModernBertModel,
+    head: Vec<DecisionTransformerLayer>,
+    type_emb: Embedding,
+    scorer_norm: LayerNorm,
+    scorer_dense: Linear,
+    scorer: Linear,
+    act_dense: Linear,
+    act: Linear,
+    device: Device,
+    dtype: DType,
+    config: LayaConfig,
+}
+
+impl LayaModel {
+    pub fn load(
+        vb: VarBuilder,
+        config: &ModernBertConfig,
+        laya_config: LayaConfig,
+    ) -> Result<Self> {
+        let hidden_size = config.hidden_size;
+        // Decision checkpoints store ModernBERT under encoder.* and omit its task
+        // classifier. The decision head, type embedding, scorer, and action head
+        // remain at the checkpoint root.
+        let encoder = ModernBertModel::load(vb.clone(), config, ModelType::Decision)?;
+        let head = (0..laya_config.head_layers())
+            .map(|index| {
+                DecisionTransformerLayer::load(
+                    vb.pp(format!("head.layers.{index}")),
+                    hidden_size,
+                    config.norm_eps as f32,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let type_emb = Embedding::new(
+            vb.pp("type_emb").get((3, hidden_size), "weight")?,
+            hidden_size,
+        );
+        let scorer_norm = LayerNorm::load(vb.pp("scorer.0"), hidden_size, config.norm_eps as f32)?;
+        let scorer_dense = Linear::new(
+            vb.pp("scorer.1")
+                .get((hidden_size, hidden_size), "weight")?,
+            Some(vb.pp("scorer.1").get(hidden_size, "bias")?),
+            Some(HiddenAct::Gelu),
+        );
+        let scorer = Linear::new(
+            vb.pp("scorer.3").get((1, hidden_size), "weight")?,
+            Some(vb.pp("scorer.3").get(1, "bias")?),
+            None,
+        );
+        let act_dense = Linear::new(
+            vb.pp("act_head.0").get((256, hidden_size + 4), "weight")?,
+            Some(vb.pp("act_head.0").get(256, "bias")?),
+            Some(HiddenAct::Gelu),
+        );
+        let act = Linear::new(
+            vb.pp("act_head.2")
+                .get((laya_config.action_count(), 256), "weight")?,
+            Some(
+                vb.pp("act_head.2")
+                    .get(laya_config.action_count(), "bias")?,
+            ),
+            None,
+        );
+        Ok(Self {
+            encoder,
+            head,
+            type_emb,
+            scorer_norm,
+            scorer_dense,
+            scorer,
+            act_dense,
+            act,
+            device: vb.device().clone(),
+            dtype: vb.dtype(),
+            config: laya_config,
+        })
+    }
+
+    fn forward(&self, inputs: Vec<DecisionInput>) -> Result<Vec<DecisionResult>> {
+        let batch_size = inputs.len();
+        let max_length = inputs
+            .iter()
+            .map(|input| input.input_ids.len())
+            .max()
+            .unwrap_or(0);
+        if max_length == 0 {
+            candle::bail!("decision inputs cannot be empty");
+        }
+        let mut input_ids = Vec::with_capacity(batch_size * max_length);
+        let mut masks = Vec::with_capacity(batch_size * max_length);
+        let mut positions = Vec::with_capacity(batch_size * max_length);
+        for input in &inputs {
+            let length = input.input_ids.len();
+            // Right-pad each sequence to the longest sequence in the batch.
+            input_ids.extend_from_slice(&input.input_ids);
+            input_ids.extend(std::iter::repeat_n(
+                self.encoder.pad_token_id,
+                max_length - length,
+            ));
+            if let Some(mask) = &input.attention_mask {
+                if mask.len() != length {
+                    candle::bail!("decision attention mask length does not match input length");
+                }
+                masks.extend_from_slice(mask);
+                masks.extend(std::iter::repeat_n(0, max_length - mask.len()));
+            } else {
+                masks.extend(std::iter::repeat_n(1, length));
+                masks.extend(std::iter::repeat_n(0, max_length - length));
+            }
+            positions.extend(0..length as u32);
+            positions.extend(std::iter::repeat_n(0, max_length - length));
+        }
+        let input_ids = Tensor::from_vec(input_ids, (batch_size, max_length), &self.device)?;
+        let positions = Tensor::from_vec(positions, batch_size * max_length, &self.device)?;
+        // Callers provide a binary mask: 1 keeps a token and 0 masks it.
+        let mask = Tensor::from_vec(masks, (batch_size, max_length, 1), &self.device)?
+            .to_dtype(self.dtype)?;
+        let hidden = self
+            .encoder
+            .forward_hidden(&input_ids, &positions, Some(&mask))?;
+        // Broadcast one learned question-type embedding over every token. Unknown
+        // type IDs share row 2 with noul questions.
+        let type_ids = Tensor::from_vec(
+            inputs.iter().map(|input| input.qtype.min(2)).collect(),
+            batch_size,
+            &self.device,
+        )?;
+        let mut hidden = hidden.broadcast_add(&self.type_emb.forward(&type_ids)?.unsqueeze(1)?)?;
+        // Convert the binary padding mask to additive attention bias with shape
+        // [batch, 1, 1, sequence]. Masked keys receive a bias of -65504.
+        let head_mask = ((1.0 - mask.squeeze(2)?.unsqueeze(1)?.unsqueeze(1)?)? * -65504.0)?;
+        for layer in &self.head {
+            hidden = layer.forward(&hidden, &head_mask)?;
+        }
+        // Map each decision-head token state to a scalar option logit candidate.
+        let scored = self
+            .scorer
+            .forward(
+                &self
+                    .scorer_dense
+                    .forward(&self.scorer_norm.forward(&hidden, None)?)?,
+            )?
+            .squeeze(2)?;
+        let mut decisions = Vec::with_capacity(batch_size);
+        for (index, input) in inputs.into_iter().enumerate() {
+            // Require at least two valid option-marker positions in the unpadded
+            // sequence. Positions are consumed in order; repeated positions produce
+            // repeated logits and are not deduplicated here.
+            if input.marker_positions.len() < 2 {
+                candle::bail!("decision inputs require at least two marker positions");
+            }
+            if input
+                .marker_positions
+                .iter()
+                .any(|position| *position as usize >= input.input_ids.len())
+            {
+                candle::bail!("decision marker position is outside the input");
+            }
+            let markers = input.marker_positions;
+            let marker_tensor = Tensor::from_vec(markers.clone(), markers.len(), &self.device)?;
+            // Gather option logits in FP32 so other token positions do not enter the
+            // softmax and low-precision inference does not distort calibration.
+            let logits = scored
+                .i(index)?
+                .index_select(&marker_tensor, 0)?
+                .to_dtype(DType::F32)?;
+            // The action head was trained on the uncalibrated option distribution.
+            let uncalibrated_probabilities: Vec<f32> =
+                candle_nn::ops::softmax_last_dim(&logits.unsqueeze(0)?)?
+                    .squeeze(0)?
+                    .to_vec1()?;
+            let temperature = self.config.temperature(input.qtype, markers.len());
+            let calibrated_logits =
+                logits.broadcast_div(&Tensor::new(&[temperature], &self.device)?)?;
+            // Materialize calibrated option probabilities on the host for the API
+            // response and confidence calculation.
+            let probabilities: Vec<f32> =
+                candle_nn::ops::softmax_last_dim(&calibrated_logits.unsqueeze(0)?)?
+                    .squeeze(0)?
+                    .to_vec1()?;
+            let max_probability = uncalibrated_probabilities
+                .iter()
+                .copied()
+                .fold(0.0, f32::max);
+            let mut sorted = uncalibrated_probabilities.clone();
+            sorted.sort_by(|left, right| right.total_cmp(left));
+            let top_two = sorted.get(1).copied().unwrap_or(0.0);
+            let action_entropy = uncalibrated_probabilities
+                .iter()
+                .filter(|probability| **probability > 0.0)
+                .map(|probability| -probability * probability.ln())
+                .sum::<f32>();
+            let option_count_log = (probabilities.len() as f32).ln();
+            let action_entropy = action_entropy / option_count_log;
+            let calibrated_entropy = probabilities
+                .iter()
+                .filter(|probability| **probability > 0.0)
+                .map(|probability| -probability * probability.ln())
+                .sum::<f32>()
+                / option_count_log;
+            // Divide by log(option_count), the entropy of a uniform categorical
+            // distribution, before converting entropy to confidence.
+            let confidence = 1.0 - calibrated_entropy;
+            // Concatenate CLS with max probability, top-two margin, normalized entropy,
+            // and option count divided by 255, the fixed feature scale used to train
+            // the checkpoint's action head.
+            let features = Tensor::from_vec(
+                vec![
+                    max_probability,
+                    max_probability - top_two,
+                    action_entropy,
+                    probabilities.len() as f32 / 255.0,
+                ],
+                (1, 4),
+                &self.device,
+            )?
+            .to_dtype(self.dtype)?;
+            let cls = hidden.i((index, 0usize))?.unsqueeze(0)?;
+            let action_probabilities: Vec<f32> = candle_nn::ops::softmax_last_dim(
+                &self.act.forward(
+                    &self
+                        .act_dense
+                        .forward(&Tensor::cat(&[&cls, &features], 1)?)?,
+                )?,
+            )?
+            .squeeze(0)?
+            .to_dtype(DType::F32)?
+            .to_vec1()?;
+            // Action IDs are classifier-row indices. This backend does not map them
+            // to labels; their semantics are defined by the model checkpoint.
+            let action = action_probabilities
+                .iter()
+                .enumerate()
+                .max_by(|left, right| left.1.total_cmp(right.1))
+                .map(|(action, _)| action)
+                .unwrap_or(0);
+            let action_probability = action_probabilities.get(action).copied().unwrap_or(0.0);
+            decisions.push(DecisionResult {
+                question_index: input.question_index,
+                probabilities,
+                confidence,
+                action,
+                action_probability,
+            });
+        }
+        Ok(decisions)
+    }
+}
+
+impl Model for LayaModel {
+    fn is_padded(&self) -> bool {
+        true
+    }
+
+    fn decide(&self, inputs: Vec<DecisionInput>) -> Result<Vec<DecisionResult>> {
+        self.forward(inputs)
+    }
+}

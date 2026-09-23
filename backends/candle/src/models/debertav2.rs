@@ -1090,6 +1090,7 @@ pub struct DebertaV2Model {
 impl DebertaV2Model {
     pub fn load(vb: VarBuilder, config: &DebertaV2Config, model_type: ModelType) -> Result<Self> {
         let (classifier, pool) = match model_type {
+            ModelType::Decision => candle::bail!("Decision models require a ModernBERT backend"),
             ModelType::Classifier => {
                 let classifier = DebertaV2SeqClassificationHead::load(vb.clone(), config)?;
                 (Some(classifier), None)

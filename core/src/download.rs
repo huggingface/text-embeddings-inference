@@ -67,9 +67,22 @@ pub async fn download_artifacts(api: &ApiRepo, pool_config: bool) -> Result<Path
         });
 
     download_file(api, "config.json").await?;
+    let _ = download_file(api, "rl_agent_config.json").await;
     let path = download_file(api, "tokenizer.json").await?;
 
     tracing::info!("Model artifacts downloaded in {:?}", start.elapsed());
 
     Ok(path.parent().unwrap().to_path_buf())
+}
+
+#[instrument(skip_all)]
+pub async fn download_decision_artifacts(api: &ApiRepo) -> Result<PathBuf, ApiError> {
+    let start = std::time::Instant::now();
+    tracing::info!("Starting decision model download");
+    download_file(api, "rl_agent_config.json").await?;
+    download_file(api, "tokenizer/tokenizer.json").await?;
+    download_file(api, "encoder/config.json").await?;
+    download_file(api, "model.safetensors").await?;
+    tracing::info!("Decision model artifacts downloaded in {:?}", start.elapsed());
+    Ok(api.get("encoder/config.json").await?.parent().unwrap().parent().unwrap().to_path_buf())
 }
