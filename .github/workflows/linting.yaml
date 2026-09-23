@@ -7,8 +7,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+permissions: {}
+
 jobs:
   run_tests:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
 
     env:
