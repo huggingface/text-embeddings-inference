@@ -27,6 +27,7 @@ pub struct Qwen3Config {
     pub rope_parameters: Option<RopeParameters>,
     pub sliding_window: Option<usize>,
     pub use_sliding_window: bool,
+    pub tie_word_embeddings: bool,
     pub eos_token_id: usize,
     // TODO(alvarobartt): Migrate to `is_causal` instead
     // https://github.com/huggingface/transformers/pull/43705
@@ -385,6 +386,42 @@ impl Qwen3Layer {
     }
 }
 
+pub trait ClassificationHead {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
+}
+
+pub struct Qwen3ClassificationHead {
+    diff_weight: Tensor,
+
+    span: tracing::Span,
+}
+
+impl Qwen3ClassificationHead {
+    pub(crate) fn load(vb: VarBuilder, config: &Qwen3Config) -> Result<Self> {
+        let yes_token_id: usize = 9693;
+        let no_token_id: usize = 2152;
+
+        let lm_head_weight = vb.get((config.vocab_size, config.hidden_size), "weight")?;
+
+        let yes_weight = lm_head_weight.i((yes_token_id, ..))?;
+        let no_weight = lm_head_weight.i((no_token_id, ..))?;
+        let diff_weight = yes_weight.sub(&no_weight)?.unsqueeze(1)?;
+
+        Ok(Self {
+            diff_weight,
+            span: tracing::span!(tracing::Level::TRACE, "classifier"),
+        })
+    }
+}
+
+impl ClassificationHead for Qwen3ClassificationHead {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        hidden_states.matmul(&self.diff_weight)
+    }
+}
+
 pub struct Qwen3Model {
     embeddings: Embedding,
     layers: Vec<Qwen3Layer>,
@@ -398,6 +435,7 @@ pub struct Qwen3Model {
     pad_token_id: u32,
 
     use_bidirectional_attention: bool,
+    classifier: Option<Box<dyn ClassificationHead + Send>>,
 
     dtype: DType,
     device: Device,
@@ -407,33 +445,45 @@ pub struct Qwen3Model {
 
 impl Qwen3Model {
     pub fn load(vb: VarBuilder, config: &Qwen3Config, model_type: ModelType) -> Result<Self> {
-        let pool = match model_type {
-            ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for Qwen3")
-            }
-            ModelType::Embedding(pool) => pool,
-        };
-
         // The Qwen3-Reranker models contain the `model` key
         // https://huggingface.co/collections/Qwen/qwen3-reranker-6841b22d0192d7ade9cdefea
         let model_prefix = if vb.contains_tensor("model.embed_tokens.weight") {
-            "model."
+            "model"
         } else {
             ""
         };
 
+        let (pool, classifier) = match model_type {
+            ModelType::Classifier => {
+                // TODO(kozistr): need to adapt the pooling strategy based on the actual model variant
+                let pool = Pool::LastToken;
+
+                let classifier_weight_name = if config.tie_word_embeddings {
+                    "model.embed_tokens"
+                } else {
+                    "lm_head"
+                };
+
+                let classifier: Box<dyn ClassificationHead + Send> = Box::new(
+                    Qwen3ClassificationHead::load(vb.pp(classifier_weight_name), config)?,
+                );
+                (pool, Some(classifier))
+            }
+            ModelType::Embedding(pool) => (pool, None),
+        };
+
         let embeddings = Embedding::new(
-            vb.pp(format!("{model_prefix}embed_tokens"))
+            vb.pp(format!("{model_prefix}.embed_tokens"))
                 .get((config.vocab_size, config.hidden_size), "weight")?,
             config.hidden_size,
         );
 
         let layers = (0..config.num_hidden_layers)
-            .map(|index| Qwen3Layer::load(vb.pp(format!("{model_prefix}layers.{index}")), config))
+            .map(|index| Qwen3Layer::load(vb.pp(format!("{model_prefix}.layers.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
 
         let norm = RMSNorm::load(
-            vb.pp(format!("{model_prefix}norm")),
+            vb.pp(format!("{model_prefix}.norm")),
             config.hidden_size,
             config.rms_norm_eps,
         )?;
@@ -484,6 +534,7 @@ impl Qwen3Model {
             use_bidirectional_attention: config.use_bidirectional_attention.unwrap_or(false),
             dtype: vb.dtype(),
             device: vb.device().clone(),
+            classifier,
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
     }
@@ -751,5 +802,17 @@ impl Model for Qwen3Model {
 
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
+    }
+
+    fn predict(&self, batch: Batch) -> Result<Tensor> {
+        match &self.classifier {
+            None => candle::bail!("`predict` is not implemented for this model"),
+            Some(classifier) => {
+                let (pooled_embeddings, _raw_embeddings) = self.forward(batch)?;
+                let pooled_embeddings =
+                    pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
+                classifier.forward(&pooled_embeddings)
+            }
+        }
     }
 }
