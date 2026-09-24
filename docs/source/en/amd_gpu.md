@@ -55,67 +55,38 @@ curl http://localhost:8080/v1/embeddings \
 
 ---
 
-## Option B: Manual setup from source
+## Option B: Build from source inside the TEI ROCm image
 
-If you prefer to build from source, use AMD's official ROCm PyTorch image as the base environment.
+If you want to modify TEI and rebuild it, use the official TEI ROCm image
+(`ghcr.io/huggingface/text-embeddings-inference:rocm-latest`) as your base environment instead of AMD's
+`rocm/pytorch` image. It already ships the exact ROCm build of PyTorch, `flash-attn`, the compute kernels, and
+the installed Python backend that TEI expects, so you skip the PyTorch/dependency setup entirely and avoid
+version-mismatch issues — you only rebuild the parts you change.
 
 ## Step 1: Start the container
 
+Mount your checkout and override the entrypoint to get a shell:
+
 ```shell
 docker run -it --device=/dev/kfd --device=/dev/dri/renderD128 \
-  --group-add video --shm-size 8g \
-  -v $PWD:/workspace \
-  rocm/pytorch:latest bash
+  --group-add video --ipc=host --shm-size 8g \
+  -v $PWD:/workspace -w /workspace \
+  --entrypoint bash \
+  ghcr.io/huggingface/text-embeddings-inference:rocm-latest
 ```
 
-Inside the container, clone the TEI repository (or mount it via `-v`) and run the remaining steps from the repo root.
+PyTorch (ROCm), `flash-attn`, the compute kernels, and the `text-embeddings-server` Python backend are already
+installed in this image, and a prebuilt `text-embeddings-router` is on the `PATH`. The steps below only cover
+rebuilding after you edit the source.
 
-## Step 2: Install Rust
+## Step 2: Install Rust (only needed to rebuild the router)
 
 ```shell
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
 ```
 
-## Step 3: Install Python dependencies
-
-PyTorch is already provided by the container image, so install the remaining dependencies without pulling a new torch:
-
-```shell
-pip install --no-deps -r backends/python/server/requirements-amd.txt
-pip install safetensors opentelemetry-api opentelemetry-sdk \
-    opentelemetry-exporter-otlp-proto-grpc grpcio-reflection \
-    grpc-interceptor einops packaging
-```
-
-## Step 4: Generate protobuf stubs
-
-```shell
-pip install grpcio-tools==1.62.2 mypy-protobuf==3.6.0 types-protobuf
-
-mkdir -p backends/python/server/text_embeddings_server/pb
-
-python -m grpc_tools.protoc \
-    -I backends/proto \
-    --python_out=backends/python/server/text_embeddings_server/pb \
-    --grpc_python_out=backends/python/server/text_embeddings_server/pb \
-    --mypy_out=backends/python/server/text_embeddings_server/pb \
-    backends/proto/embed.proto
-
-# Fix relative imports in generated files
-find backends/python/server/text_embeddings_server/pb/ -name "*.py" \
-    -exec sed -i 's/^\(import.*pb2\)/from . \1/g' {} \;
-
-touch backends/python/server/text_embeddings_server/pb/__init__.py
-```
-
-## Step 5: Install the Python server package
-
-```shell
-pip install -e backends/python/server
-```
-
-## Step 6: Build the Rust router
+## Step 3: Rebuild the Rust router from your source
 
 ```shell
 cargo build --release \
@@ -124,7 +95,14 @@ cargo build --release \
     --bin text-embeddings-router
 ```
 
-## Step 7: Launch TEI
+> If you also changed the Python backend, reinstall it in editable mode from your mounted checkout:
+> ```shell
+> pip install --no-deps -e backends/python/server
+> ```
+> The protobuf stubs are already generated in the image; regenerate them only for a fresh checkout with
+> `cd backends/python/server && make gen-server`.
+
+## Step 4: Launch your build
 
 ```shell
 model=BAAI/bge-base-en-v1.5
