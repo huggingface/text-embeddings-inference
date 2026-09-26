@@ -2555,8 +2555,10 @@ dependencies = [
  "crossbeam-epoch",
  "crossbeam-utils",
  "hashbrown 0.14.5",
+ "indexmap 2.14.1",
  "metrics",
  "num_cpus",
+ "ordered-float",
  "quanta",
  "sketches-ddsketch",
 ]
@@ -4620,6 +4622,7 @@ dependencies = [
  "async-channel",
  "hf-hub",
  "metrics",
+ "metrics-util",
  "serde_json",
  "text-embeddings-backend",
  "thiserror 1.0.69",
