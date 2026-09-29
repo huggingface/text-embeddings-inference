@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use hf_hub::api::tokio::{ApiError, ApiRepo};
+use hf_hub::HFError as ApiError;
 use rand::Rng;
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{instrument, Span};
@@ -16,7 +16,9 @@ pub use text_embeddings_backend_core::{
     BackendError, Batch, Embedding, Embeddings, ModelType, Pool,
 };
 
+mod api_repo;
 mod dtype;
+pub use crate::api_repo::ApiRepo;
 pub use crate::dtype::DType;
 
 #[cfg(feature = "candle")]
@@ -712,7 +714,11 @@ async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiErro
     for handle in handles {
         // Await the JoinHandle to get the result of the task,
         // then unpack the inner result from api.get()
-        safetensors_files.push(handle.await??);
+        safetensors_files.push(
+            handle
+                .await
+                .map_err(|err| ApiError::Other(err.to_string()))??,
+        );
     }
 
     Ok(safetensors_files)
@@ -726,6 +732,7 @@ async fn download_onnx(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
     let filenames = match api.info().await {
         Ok(info) => Some(
             info.siblings
+                .unwrap_or_default()
                 .iter()
                 .filter_map(|s| {
                     if s.rfilename.starts_with("model.onnx")

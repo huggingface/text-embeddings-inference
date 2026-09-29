@@ -1,6 +1,5 @@
 use anyhow::Result;
-use hf_hub::api::sync::{ApiBuilder, ApiError, ApiRepo};
-use hf_hub::{Repo, RepoType};
+use hf_hub::{split_id, HFClient, HFError as ApiError, HFRepositorySync, RepoTypeModel};
 use insta::internals::YamlMatcher;
 use serde::{Deserialize, Serialize};
 use std::cmp::max;
@@ -132,25 +131,17 @@ pub fn download_artifacts(
     revision: Option<&'static str>,
     dense_path: Option<&'static str>,
 ) -> Result<(PathBuf, Option<Vec<String>>)> {
-    let mut builder = ApiBuilder::from_env().with_progress(false);
-
-    if let Ok(token) = std::env::var("HF_TOKEN") {
-        builder = builder.with_token(Some(token));
-    }
+    let mut builder = HFClient::builder();
 
     if let Some(cache_dir) = std::env::var_os("HUGGINGFACE_HUB_CACHE") {
-        builder = builder.with_cache_dir(cache_dir.into());
+        builder = builder.cache_dir(cache_dir);
     }
 
-    let api = builder.build().unwrap();
-    let api_repo = if let Some(revision) = revision {
-        api.repo(Repo::with_revision(
-            model_id.to_string(),
-            RepoType::Model,
-            revision.to_string(),
-        ))
-    } else {
-        api.repo(Repo::new(model_id.to_string(), RepoType::Model))
+    let api = builder.build_sync().unwrap();
+    let (owner, name) = split_id(model_id);
+    let api_repo = ApiRepo {
+        repo: api.model(owner, name),
+        revision,
     };
 
     api_repo.get("config.json")?;
@@ -195,6 +186,21 @@ pub fn download_artifacts(
 
     let model_root = model_files[0].parent().unwrap().to_path_buf();
     Ok((model_root, dense_paths))
+}
+
+struct ApiRepo {
+    repo: HFRepositorySync<RepoTypeModel>,
+    revision: Option<&'static str>,
+}
+
+impl ApiRepo {
+    fn get(&self, filename: &str) -> Result<PathBuf, ApiError> {
+        self.repo
+            .download_file()
+            .filename(filename)
+            .maybe_revision(self.revision)
+            .send()
+    }
 }
 
 fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {

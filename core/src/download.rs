@@ -1,5 +1,6 @@
-use hf_hub::api::tokio::{ApiError, ApiRepo};
+use hf_hub::HFError as ApiError;
 use std::path::PathBuf;
+use text_embeddings_backend::ApiRepo;
 use tracing::instrument;
 
 // `sentence_bert_config.json` default Sentence Transformers configuration file name, and other
