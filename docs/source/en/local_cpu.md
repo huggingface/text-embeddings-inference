@@ -36,6 +36,10 @@ Depending on your machine's architecture, run one of the following commands:
 cargo install --path router -F mkl
 ```
 
+To optimize a Linux x86 build for the local CPU, prefix the install command with
+`RUSTFLAGS="-C target-cpu=native"`. Only use this when the deployment CPUs support all
+the build CPU's instruction-set features; otherwise the binary can fail with an illegal instruction.
+
 ### For M1 or M2 Machines
 
 ```shell
