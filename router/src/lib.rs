@@ -25,7 +25,7 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use text_embeddings_backend::{ApiRepo, DType, Pool};
+use text_embeddings_backend::{DType, Pool};
 use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
@@ -94,11 +94,11 @@ pub async fn run(
 
         let client = builder.build().context("Could not build Hugging Face Hub client")?;
         let (owner, name) = split_id(&model_id);
-        let api_repo = ApiRepo::new(client.model(owner, name), revision.clone());
+        let api_repo = client.model(owner, name);
 
         // Download model from the Hub
         (
-            download_artifacts(&api_repo, pooling.is_none())
+            download_artifacts(&api_repo, revision.as_deref(), pooling.is_none())
                 .await
                 .context("Could not download model artifacts")?,
             Some(api_repo),
@@ -280,6 +280,7 @@ pub async fn run(
     let backend = text_embeddings_backend::Backend::new(
         model_root,
         api_repo,
+        revision.clone(),
         dtype.clone(),
         backend_model_type,
         dense_path,

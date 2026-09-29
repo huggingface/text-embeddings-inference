@@ -139,25 +139,39 @@ pub fn download_artifacts(
 
     let api = builder.build_sync().unwrap();
     let (owner, name) = split_id(model_id);
-    let api_repo = ApiRepo {
-        repo: api.model(owner, name),
-        revision,
-    };
+    let api_repo = api.model(owner, name);
 
-    api_repo.get("config.json")?;
-    api_repo.get("tokenizer.json")?;
+    api_repo
+        .download_file()
+        .filename("config.json")
+        .maybe_revision(revision)
+        .send()?;
+    api_repo
+        .download_file()
+        .filename("tokenizer.json")
+        .maybe_revision(revision)
+        .send()?;
 
-    let model_files = match download_safetensors(&api_repo) {
+    let model_files = match download_safetensors(&api_repo, revision) {
         Ok(p) => p,
         Err(_) => {
             tracing::warn!("safetensors weights not found. Using `pytorch_model.bin` instead. Model loading will be significantly slower.");
             tracing::info!("Downloading `pytorch_model.bin`");
-            let p = api_repo.get("pytorch_model.bin")?;
+            let p = api_repo
+                .download_file()
+                .filename("pytorch_model.bin")
+                .maybe_revision(revision)
+                .send()?;
             vec![p]
         }
     };
 
-    let dense_paths = if let Ok(modules_path) = api_repo.get("modules.json") {
+    let dense_paths = if let Ok(modules_path) = api_repo
+        .download_file()
+        .filename("modules.json")
+        .maybe_revision(revision)
+        .send()
+    {
         match parse_dense_paths_from_modules(&modules_path) {
             Ok(paths) => match paths.len() {
                 0 => None,
@@ -168,12 +182,12 @@ pub fn download_artifacts(
                         paths[0].clone()
                     };
 
-                    download_dense_module(&api_repo, &path)?;
+                    download_dense_module(&api_repo, revision, &path)?;
                     Some(vec![path])
                 }
                 _ => {
                     for path in &paths {
-                        download_dense_module(&api_repo, path)?;
+                        download_dense_module(&api_repo, revision, path)?;
                     }
                     Some(paths)
                 }
@@ -188,25 +202,18 @@ pub fn download_artifacts(
     Ok((model_root, dense_paths))
 }
 
-struct ApiRepo {
-    repo: HFRepositorySync<RepoTypeModel>,
-    revision: Option<&'static str>,
-}
-
-impl ApiRepo {
-    fn get(&self, filename: &str) -> Result<PathBuf, ApiError> {
-        self.repo
-            .download_file()
-            .filename(filename)
-            .maybe_revision(self.revision)
-            .send()
-    }
-}
-
-fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
+fn download_safetensors(
+    api: &HFRepositorySync<RepoTypeModel>,
+    revision: Option<&str>,
+) -> Result<Vec<PathBuf>, ApiError> {
     // Single file
     tracing::info!("Downloading `model.safetensors`");
-    match api.get("model.safetensors") {
+    match api
+        .download_file()
+        .filename("model.safetensors")
+        .maybe_revision(revision)
+        .send()
+    {
         Ok(p) => return Ok(vec![p]),
         Err(err) => tracing::warn!("Could not download `model.safetensors`: {}", err),
     };
@@ -214,7 +221,11 @@ fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     // Sharded weights
     // Download and parse index file
     tracing::info!("Downloading `model.safetensors.index.json`");
-    let index_file = api.get("model.safetensors.index.json")?;
+    let index_file = api
+        .download_file()
+        .filename("model.safetensors.index.json")
+        .maybe_revision(revision)
+        .send()?;
     let index_file_string: String =
         std::fs::read_to_string(index_file).expect("model.safetensors.index.json is corrupted");
     let json: serde_json::Value = serde_json::from_str(&index_file_string)
@@ -236,7 +247,12 @@ fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
     let mut safetensors_files = Vec::new();
     for n in safetensors_filenames {
         tracing::info!("Downloading `{}`", n);
-        safetensors_files.push(api.get(&n)?);
+        safetensors_files.push(
+            api.download_file()
+                .filename(&n)
+                .maybe_revision(revision)
+                .send()?,
+        );
     }
 
     Ok(safetensors_files)
@@ -254,20 +270,36 @@ fn parse_dense_paths_from_modules(modules_path: &PathBuf) -> Result<Vec<String>,
         .collect::<Vec<String>>())
 }
 
-fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBuf, ApiError> {
+fn download_dense_module(
+    api: &HFRepositorySync<RepoTypeModel>,
+    revision: Option<&str>,
+    dense_path: &str,
+) -> Result<PathBuf, ApiError> {
     let config_file = format!("{}/config.json", dense_path);
     tracing::info!("Downloading `{}`", config_file);
-    let config_path = api.get(&config_file)?;
+    let config_path = api
+        .download_file()
+        .filename(&config_file)
+        .maybe_revision(revision)
+        .send()?;
 
     let safetensors_file = format!("{}/model.safetensors", dense_path);
     tracing::info!("Downloading `{}`", safetensors_file);
-    match api.get(&safetensors_file) {
+    match api
+        .download_file()
+        .filename(&safetensors_file)
+        .maybe_revision(revision)
+        .send()
+    {
         Ok(_) => {}
         Err(err) => {
             tracing::warn!("Could not download `{}`: {}", safetensors_file, err);
             let pytorch_file = format!("{}/pytorch_model.bin", dense_path);
             tracing::info!("Downloading `{}`", pytorch_file);
-            api.get(&pytorch_file)?;
+            api.download_file()
+                .filename(&pytorch_file)
+                .maybe_revision(revision)
+                .send()?;
         }
     }
 
