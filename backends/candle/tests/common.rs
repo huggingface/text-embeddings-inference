@@ -131,10 +131,25 @@ pub fn download_artifacts(
     revision: Option<&'static str>,
     dense_path: Option<&'static str>,
 ) -> Result<(PathBuf, Option<Vec<String>>)> {
-    let mut builder = HFClient::builder();
+    let hf_home = std::env::var_os("HF_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap()).join(".cache/huggingface")
+        });
 
-    if let Some(cache_dir) = std::env::var_os("HUGGINGFACE_HUB_CACHE") {
-        builder = builder.cache_dir(cache_dir);
+    let cache_dir = std::env::var_os("HUGGINGFACE_HUB_CACHE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| hf_home.join("hub"));
+
+    let mut builder = HFClient::builder().cache_dir(cache_dir);
+
+    let token = std::env::var("HF_TOKEN").ok().or_else(|| {
+        std::fs::read_to_string(hf_home.join("token"))
+            .ok()
+            .map(|token| token.trim().to_string())
+    });
+    if let Some(token) = token {
+        builder = builder.token(token);
     }
 
     let api = builder.build_sync().unwrap();

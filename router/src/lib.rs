@@ -23,7 +23,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{DType, Pool};
 use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
@@ -80,19 +80,39 @@ pub async fn run(
             user_agent.push_str(&format!("; origin/{origin}"));
         }
 
-        let mut builder = HFClient::builder().user_agent(user_agent);
+        // NOTE: `hf-hub` doesn't read any configuration from the environment, so resolve
+        // `HF_HOME`, `HF_ENDPOINT` and the cached token here
+        let hf_home = std::env::var("HF_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".cache/huggingface")
+            });
 
-        if let Some(cache_dir) = huggingface_hub_cache {
-            builder = builder.cache_dir(cache_dir);
+        let cache_dir = huggingface_hub_cache
+            .map(PathBuf::from)
+            .unwrap_or_else(|| hf_home.join("hub"));
+
+        let mut builder = HFClient::builder()
+            .user_agent(user_agent)
+            .cache_dir(cache_dir);
+
+        if let Ok(endpoint) = std::env::var("HF_ENDPOINT") {
+            builder = builder.endpoint(endpoint);
         }
 
-        // NOTE: Only set the `token` if it's not None, otherwise leave it as default so that the
-        // token from the cache location is pulled instead, if exists
+        let hf_token = hf_token.or_else(|| {
+            fs::read_to_string(hf_home.join("token"))
+                .ok()
+                .map(|token| token.trim().to_string())
+                .filter(|token| !token.is_empty())
+        });
         if let Some(hf_token) = hf_token {
             builder = builder.token(hf_token);
         }
 
-        let client = builder.build().context("Could not build Hugging Face Hub client")?;
+        let client = builder
+            .build()
+            .context("Could not build Hugging Face Hub client")?;
         let (owner, name) = split_id(&model_id);
         let api_repo = client.model(owner, name);
 

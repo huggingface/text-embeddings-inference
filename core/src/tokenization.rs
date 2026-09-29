@@ -538,7 +538,12 @@ mod tests {
 
     #[test]
     fn tokenizer() {
-        let api = HFClient::builder().build_sync().unwrap();
+        let cache_dir =
+            std::path::PathBuf::from(std::env::var("HOME").unwrap()).join(".cache/huggingface/hub");
+        let api = HFClient::builder()
+            .cache_dir(cache_dir)
+            .build_sync()
+            .unwrap();
         let filename = api
             .model("BAAI", "bge-m3")
             .download_file()
