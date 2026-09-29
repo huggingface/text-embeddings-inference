@@ -476,14 +476,7 @@ async fn init_backend(
         // NOTE: for ONNX we need to retrieve the `tokenizer_config.json` to identify which
         // `padding_side` needs to be applied for the input processing and the pooling
         if let Some(api_repo) = api_repo.as_ref() {
-            tracing::info!("Downloading `tokenizer_config.json`");
-            match api_repo
-                .download_file()
-                .filename("tokenizer_config.json")
-                .maybe_revision(revision)
-                .send()
-                .await
-            {
+            match download_file(api_repo, revision, "tokenizer_config.json").await {
                 Ok(_) => (),
                 Err(err) => {
                     tracing::warn!("Could not download `tokenizer_config.json`: {}", err)
@@ -506,12 +499,7 @@ async fn init_backend(
             let start = std::time::Instant::now();
             if download_safetensors(api_repo, revision).await.is_err() {
                 tracing::warn!("safetensors weights not found. Using `pytorch_model.bin` instead. Model loading will be significantly slower.");
-                tracing::info!("Downloading `pytorch_model.bin`");
-                api_repo
-                    .download_file()
-                    .filename("pytorch_model.bin")
-                    .maybe_revision(revision)
-                    .send()
+                download_file(api_repo, revision, "pytorch_model.bin")
                     .await
                     .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
             }
@@ -684,27 +672,14 @@ async fn download_safetensors(
     revision: Option<&str>,
 ) -> Result<Vec<PathBuf>, ApiError> {
     // Single file
-    tracing::info!("Downloading `model.safetensors`");
-    match api
-        .download_file()
-        .filename("model.safetensors")
-        .maybe_revision(revision)
-        .send()
-        .await
-    {
+    match download_file(api, revision, "model.safetensors").await {
         Ok(p) => return Ok(vec![p]),
         Err(err) => tracing::warn!("Could not download `model.safetensors`: {}", err),
     };
 
     // Sharded weights
     // Download and parse index file
-    tracing::info!("Downloading `model.safetensors.index.json`");
-    let index_file = api
-        .download_file()
-        .filename("model.safetensors.index.json")
-        .maybe_revision(revision)
-        .send()
-        .await?;
+    let index_file = download_file(api, revision, "model.safetensors.index.json").await?;
     let index_file_string: String =
         std::fs::read_to_string(index_file).expect("model.safetensors.index.json is corrupted");
     let json: serde_json::Value = serde_json::from_str(&index_file_string)
@@ -728,14 +703,7 @@ async fn download_safetensors(
         .map(|n| {
             let api = api.clone();
             let revision = revision.map(str::to_owned);
-            tokio::spawn(async move {
-                tracing::info!("Downloading `{}`", n);
-                api.download_file()
-                    .filename(n)
-                    .maybe_revision(revision)
-                    .send()
-                    .await
-            })
+            tokio::spawn(async move { download_file(&api, revision.as_deref(), &n).await })
         })
         .collect();
 
@@ -788,15 +756,8 @@ async fn download_onnx(
                     let api = api.clone();
                     let revision = revision.map(str::to_owned);
                     tokio::spawn(async move {
-                        tracing::info!("Downloading `{}`", file);
                         let time = std::time::Instant::now();
-                        match api
-                            .download_file()
-                            .filename(&file)
-                            .maybe_revision(revision)
-                            .send()
-                            .await
-                        {
+                        match download_file(&api, revision.as_deref(), &file).await {
                             Ok(f) => {
                                 tracing::info!(
                                     "Successfully downloaded `{}` in {} s",
@@ -826,52 +787,23 @@ async fn download_onnx(
         _ => {
             let mut downloaded_files = Vec::<PathBuf>::new();
 
-            tracing::info!("Downloading `onnx/model.onnx`");
-            match api
-                .download_file()
-                .filename("onnx/model.onnx")
-                .maybe_revision(revision)
-                .send()
-                .await
-            {
+            match download_file(api, revision, "onnx/model.onnx").await {
                 Ok(p) => downloaded_files.push(p),
                 Err(err) => {
                     tracing::warn!("Could not download `onnx/model.onnx`: {err}");
-                    tracing::info!("Downloading `model.onnx`");
-
-                    match api
-                        .download_file()
-                        .filename("model.onnx")
-                        .maybe_revision(revision)
-                        .send()
-                        .await
-                    {
+                    match download_file(api, revision, "model.onnx").await {
                         Ok(p) => downloaded_files.push(p),
                         Err(err) => tracing::warn!("Could not download `model.onnx`: {err}"),
                     };
                 }
             };
 
-            tracing::info!("Downloading `onnx/model.onnx_data`");
-            match api
-                .download_file()
-                .filename("onnx/model.onnx_data")
-                .maybe_revision(revision)
-                .send()
-                .await
-            {
+            match download_file(api, revision, "onnx/model.onnx_data").await {
                 Ok(p) => downloaded_files.push(p),
                 Err(err) => {
                     tracing::warn!("Could not download `onnx/model.onnx_data`: {err}");
-                    tracing::info!("Downloading `model.onnx_data`");
 
-                    match api
-                        .download_file()
-                        .filename("model.onnx_data")
-                        .maybe_revision(revision)
-                        .send()
-                        .await
-                    {
+                    match download_file(api, revision, "model.onnx_data").await {
                         Ok(p) => downloaded_files.push(p),
                         Err(err) => tracing::warn!("Could not download `model.onnx_data`: {err}"),
                     }
@@ -908,7 +840,6 @@ struct ModuleConfig {
     module_type: ModuleType,
 }
 
-#[cfg(feature = "candle")]
 async fn download_file(
     api: &HFRepository<RepoTypeModel>,
     revision: Option<&str>,

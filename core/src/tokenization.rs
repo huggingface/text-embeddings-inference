@@ -538,10 +538,8 @@ mod tests {
 
     #[test]
     fn tokenizer() {
-        let cache_dir =
-            std::path::PathBuf::from(std::env::var("HOME").unwrap()).join(".cache/huggingface/hub");
         let api = HFClient::builder()
-            .cache_dir(cache_dir)
+            .cache_dir(crate::download::hf_home().join("hub"))
             .build_sync()
             .unwrap();
         let filename = api

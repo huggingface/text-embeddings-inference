@@ -26,7 +26,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use text_embeddings_backend::{DType, Pool};
-use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
+use text_embeddings_core::download::{download_artifacts, hf_home, ST_CONFIG_NAMES};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
 use text_embeddings_core::tokenization::Tokenization;
@@ -82,11 +82,7 @@ pub async fn run(
 
         // NOTE: `hf-hub` doesn't read any configuration from the environment, so resolve
         // `HF_HOME`, `HF_ENDPOINT` and the cached token here
-        let hf_home = std::env::var("HF_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".cache/huggingface")
-            });
+        let hf_home = hf_home();
 
         let cache_dir = huggingface_hub_cache
             .map(PathBuf::from)
@@ -96,7 +92,7 @@ pub async fn run(
             .user_agent(user_agent)
             .cache_dir(cache_dir);
 
-        if let Ok(endpoint) = std::env::var("HF_ENDPOINT") {
+        if let Some(endpoint) = std::env::var("HF_ENDPOINT").ok().filter(|e| !e.is_empty()) {
             builder = builder.endpoint(endpoint);
         }
 

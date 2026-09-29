@@ -14,6 +14,16 @@ pub const ST_CONFIG_NAMES: [&str; 7] = [
     "sentence_xlnet_config.json",
 ];
 
+/// Resolves `$HF_HOME`, defaulting to `~/.cache/huggingface`, as `hf-hub` doesn't read it
+pub fn hf_home() -> PathBuf {
+    std::env::var_os("HF_HOME")
+        .filter(|hf_home| !hf_home.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".cache/huggingface")
+        })
+}
+
 async fn download_file(
     api: &HFRepository<RepoTypeModel>,
     revision: Option<&str>,
