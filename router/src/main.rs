@@ -181,9 +181,9 @@ struct Args {
     #[clap(long, env)]
     disable_spans: bool,
 
-    /// The endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over the protocol
-    /// selected by `--otlp-protocol`.
-    /// e.g. `http://localhost:4317` (gRPC) or `http://localhost:4318` (HTTP)
+    /// The endpoint for OpenTelemetry traces. Use `http://localhost:4317` for gRPC or
+    /// `http://localhost:4318` for HTTP. With `http-proto`, `/v1/traces` is appended to the
+    /// endpoint path unless already present
     #[clap(long, env)]
     otlp_endpoint: Option<String>,
 
@@ -192,12 +192,7 @@ struct Args {
     #[clap(default_value = "text-embeddings-inference.server", long, env)]
     otlp_service_name: String,
 
-    /// The protocol used to export OTLP telemetry.
-    /// `grpc` sends OTLP over gRPC (e.g. an OpenTelemetry collector on port 4317).
-    /// `http-proto` sends OTLP over HTTP with protobuf encoding (e.g. an OpenTelemetry collector
-    /// on port 4318, or the Langfuse OTLP endpoint).
-    /// Custom export headers can be set with the standard `OTEL_EXPORTER_OTLP_HEADERS`
-    /// environment variable (comma-separated `key=value` pairs).
+    /// The protocol used to export OTLP traces: gRPC or HTTP with protobuf encoding
     #[clap(default_value = "grpc", long, env, value_enum)]
     otlp_protocol: OtlpProtocol,
 
