@@ -232,7 +232,30 @@ impl NomicRouter {
         let weights = self.layer.forward(&weights)?.to_dtype(DType::F32)?;
         let weights = candle_nn::ops::softmax_last_dim(&weights)?;
 
-        let TopKOutput { values, indices } = weights.topk(self.moe_top_k)?;
+        // candle's CUDA arg_sort kernel (used by `topk`) is launched with one
+        // grid.y block per row and gridDim.y is capped at 65535, so `topk` on
+        // more than 65535 rows fails with CUDA_ERROR_INVALID_VALUE. Chunk the
+        // routing weights to stay under the limit.
+        const MAX_TOPK_ROWS: usize = 65535;
+        let nrows = weights.dim(0)?;
+        let (values, indices) = if nrows > MAX_TOPK_ROWS {
+            let mut values_chunks = Vec::with_capacity(nrows.div_ceil(MAX_TOPK_ROWS));
+            let mut indices_chunks = Vec::with_capacity(nrows.div_ceil(MAX_TOPK_ROWS));
+            for start in (0..nrows).step_by(MAX_TOPK_ROWS) {
+                let len = usize::min(MAX_TOPK_ROWS, nrows - start);
+                let TopKOutput { values, indices } =
+                    weights.narrow(0, start, len)?.topk(self.moe_top_k)?;
+                values_chunks.push(values);
+                indices_chunks.push(indices);
+            }
+            (
+                Tensor::cat(&values_chunks, 0)?,
+                Tensor::cat(&indices_chunks, 0)?,
+            )
+        } else {
+            let TopKOutput { values, indices } = weights.topk(self.moe_top_k)?;
+            (values, indices)
+        };
 
         let values = values.to_dtype(hidden_states.dtype())?;
 
