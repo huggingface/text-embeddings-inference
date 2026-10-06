@@ -173,7 +173,8 @@ struct Args {
     #[clap(long, env)]
     api_key: Option<String>,
 
-    /// Outputs the logs in JSON format (useful for telemetry)
+    /// Outputs the logs in JSON format (useful for telemetry).
+    /// With an OTLP endpoint set, each log line also includes the trace_id and span_id of its span
     #[clap(long, env)]
     json_output: bool,
 
