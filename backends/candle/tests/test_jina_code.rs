@@ -16,6 +16,7 @@ fn test_jina_code_base() -> Result<()> {
         "float32".to_string(),
         ModelType::Embedding(Pool::Mean),
         None,
+        0,
     )?;
 
     let input_batch = batch(
