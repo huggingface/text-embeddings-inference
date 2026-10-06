@@ -77,11 +77,9 @@ fn is_rocm() -> bool {
 
 #[derive(Debug, Clone)]
 pub struct Backend {
-    /// Channel to communicate with the background thread
-    backend_sender: mpsc::Sender<BackendCommand>,
-    /// Health status
-    health_receiver: watch::Receiver<bool>,
     _backend_thread: Arc<BackendThread>,
+    health_receiver: watch::Receiver<bool>,
+    backend_sender: mpsc::Sender<BackendCommand>,
     pub padded_model: bool,
     pub max_batch_size: Option<usize>,
     pub model_type: ModelType,
@@ -120,9 +118,9 @@ impl Backend {
             Arc::new(BackendThread::new(backend, backend_receiver, health_sender));
 
         Ok(Self {
-            backend_sender,
-            health_receiver,
             _backend_thread,
+            health_receiver,
+            backend_sender,
             padded_model,
             max_batch_size,
             model_type,
