@@ -7,7 +7,7 @@ mod layers;
 mod models;
 
 use anyhow::Context;
-use candle::{DType, Device};
+use candle::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use nohash_hasher::BuildNoHashHasher;
 use serde::{de::Deserializer, Deserialize};
@@ -26,7 +26,8 @@ use crate::models::{
     DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, Gemma3Config, Gemma3Model,
     JinaBertModel, JinaCodeBertModel, LlamaConfig, MPNetConfig, MPNetModel, MistralConfig, Model,
     ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Pplx1Config, Pplx1Model,
-    Qwen2Config, Qwen3Config, Qwen3Model,
+    PredictionHeadLayerNorm, PredictionHeadModule, PredictionHeadModuleConfig, Qwen2Config,
+    Qwen3Config, Qwen3Model,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -157,6 +158,7 @@ pub struct CandleBackend {
     device: Device,
     model: Box<dyn Model + Send>,
     dense_layers: Vec<Box<dyn DenseLayer + Send>>,
+    prediction_head: Option<Vec<Box<dyn PredictionHeadModule + Send>>>,
 }
 
 impl CandleBackend {
@@ -165,6 +167,25 @@ impl CandleBackend {
         dtype: String,
         model_type: ModelType,
         dense_paths: Option<Vec<String>>,
+    ) -> Result<Self, BackendError> {
+        Self::load(model_path, dtype, model_type, dense_paths, false)
+    }
+
+    pub fn new_with_post_pooling_prediction(
+        model_path: &Path,
+        dtype: String,
+        model_type: ModelType,
+        dense_paths: Option<Vec<String>>,
+    ) -> Result<Self, BackendError> {
+        Self::load(model_path, dtype, model_type, dense_paths, true)
+    }
+
+    fn load(
+        model_path: &Path,
+        dtype: String,
+        model_type: ModelType,
+        dense_paths: Option<Vec<String>>,
+        use_post_pooling_prediction: bool,
     ) -> Result<Self, BackendError> {
         // Default files
         let default_safetensors = model_path.join("model.safetensors");
@@ -577,7 +598,74 @@ impl CandleBackend {
         };
 
         let mut dense_layers = Vec::new();
-        if let Some(dense_paths) = dense_paths {
+        let mut prediction_head = None;
+        if use_post_pooling_prediction {
+            // Modular Sentence Transformers reranker head: the post-pooling
+            // `Dense`/`LayerNorm` modules that produce the rerank score.
+            let module_paths = dense_paths
+                .filter(|paths| !paths.is_empty())
+                .ok_or_else(|| {
+                    BackendError::Start(
+                        "Post-pooling prediction requires at least one module".to_string(),
+                    )
+                })?;
+
+            tracing::info!(
+                "Loading post-pooling prediction module/s from path/s: {module_paths:?}"
+            );
+
+            let mut modules = Vec::new();
+            for module_path in module_paths.iter() {
+                let module_safetensors =
+                    model_path.join(format!("{module_path}/model.safetensors"));
+                let module_pytorch = model_path.join(format!("{module_path}/pytorch_model.bin"));
+
+                if !(module_safetensors.exists() || module_pytorch.exists()) {
+                    return Err(BackendError::Start(format!(
+                        "Post-pooling prediction module files not found for path: {module_path}"
+                    )));
+                }
+
+                let module_config_path = model_path.join(format!("{module_path}/config.json"));
+                let module_config_str =
+                    std::fs::read_to_string(&module_config_path).map_err(|err| {
+                        BackendError::Start(format!(
+                            "Unable to read `{module_path}/config.json` file: {err:?}",
+                        ))
+                    })?;
+                let module_config: PredictionHeadModuleConfig =
+                    serde_json::from_str(&module_config_str).map_err(|err| {
+                        BackendError::Start(format!(
+                            "Unable to parse `{module_path}/config.json`: {err:?}",
+                        ))
+                    })?;
+
+                let module_vb = if module_safetensors.exists() {
+                    unsafe {
+                        VarBuilder::from_mmaped_safetensors(&[module_safetensors], dtype, &device)
+                    }
+                    .s()?
+                } else {
+                    VarBuilder::from_pth(&module_pytorch, dtype, &device).s()?
+                };
+
+                let module = match module_config {
+                    PredictionHeadModuleConfig::Dense(config) => {
+                        Box::new(Dense::load(module_vb, &config).s()?)
+                            as Box<dyn PredictionHeadModule + Send>
+                    }
+                    PredictionHeadModuleConfig::LayerNorm(config) => {
+                        Box::new(PredictionHeadLayerNorm::load(module_vb, &config).s()?)
+                            as Box<dyn PredictionHeadModule + Send>
+                    }
+                };
+                modules.push(module);
+
+                tracing::info!("Loaded post-pooling prediction module from path: {module_path}");
+            }
+
+            prediction_head = Some(modules);
+        } else if let Some(dense_paths) = dense_paths {
             if !dense_paths.is_empty() {
                 tracing::info!("Loading Dense module/s from path/s: {dense_paths:?}");
 
@@ -632,7 +720,35 @@ impl CandleBackend {
             device,
             model: model?,
             dense_layers,
+            prediction_head,
         })
+    }
+
+    fn predict_from_pooled_embeddings(
+        &self,
+        batch: Batch,
+        prediction_head: &[Box<dyn PredictionHeadModule + Send>],
+    ) -> Result<Tensor, BackendError> {
+        let batch_size = batch.len();
+        let (Some(mut pooled_embeddings), _) = self.model.embed(batch).e()? else {
+            return Err(BackendError::Inference(
+                "prediction head did not receive pooled embeddings".to_string(),
+            ));
+        };
+        for module in prediction_head {
+            pooled_embeddings = module.forward(&pooled_embeddings).e()?;
+        }
+
+        match pooled_embeddings.dims() {
+            [rows, cols] if *rows == batch_size && *cols == 1 => {}
+            shape => {
+                return Err(BackendError::Inference(format!(
+                    "prediction head returned shape {shape:?}; expected [{batch_size}, 1]"
+                )));
+            }
+        }
+
+        Ok(pooled_embeddings)
     }
 }
 
@@ -711,7 +827,11 @@ impl Backend for CandleBackend {
     fn predict(&self, batch: Batch) -> Result<Predictions, BackendError> {
         let batch_size = batch.len();
 
-        let results = self.model.predict(batch).e()?;
+        let results = if let Some(prediction_head) = &self.prediction_head {
+            self.predict_from_pooled_embeddings(batch, prediction_head)?
+        } else {
+            self.model.predict(batch).e()?
+        };
 
         let results = results.to_dtype(DType::F32).e()?.to_vec2().e()?;
 

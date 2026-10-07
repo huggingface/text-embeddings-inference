@@ -13,7 +13,7 @@ use tracing::{instrument, Span};
 
 use text_embeddings_backend_core::{Backend as CoreBackend, Predictions};
 pub use text_embeddings_backend_core::{
-    BackendError, Batch, Embedding, Embeddings, ModelType, Pool,
+    BackendError, BackendOutput, Batch, Embedding, Embeddings, ModelType, Pool,
 };
 
 mod dtype;
@@ -85,6 +85,7 @@ pub struct Backend {
     pub padded_model: bool,
     pub max_batch_size: Option<usize>,
     pub model_type: ModelType,
+    pub output: BackendOutput,
 }
 
 impl Backend {
@@ -99,6 +100,33 @@ impl Backend {
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
     ) -> Result<Self, BackendError> {
+        let output = default_output(&model_type);
+        Self::new_with_output(
+            model_path,
+            api_repo,
+            dtype,
+            model_type,
+            output,
+            dense_path,
+            uds_path,
+            otlp_endpoint,
+            otlp_service_name,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn new_with_output(
+        model_path: PathBuf,
+        api_repo: Option<ApiRepo>,
+        dtype: DType,
+        model_type: ModelType,
+        output: BackendOutput,
+        dense_path: Option<String>,
+        uds_path: String,
+        otlp_endpoint: Option<String>,
+        otlp_service_name: String,
+    ) -> Result<Self, BackendError> {
         let (backend_sender, backend_receiver) = mpsc::channel(8);
 
         let backend = init_backend(
@@ -106,6 +134,7 @@ impl Backend {
             api_repo,
             dtype,
             model_type.clone(),
+            output,
             dense_path,
             uds_path,
             otlp_endpoint,
@@ -126,7 +155,12 @@ impl Backend {
             padded_model,
             max_batch_size,
             model_type,
+            output,
         })
+    }
+
+    fn predicts(&self) -> bool {
+        self.output == BackendOutput::Predict
     }
 
     #[instrument(skip(self))]
@@ -180,9 +214,10 @@ impl Backend {
         }
         for shape in shapes.iter() {
             let batch = self.create_warmup_batch(*shape, max_token as u32, seq_bucket_size as u32);
-            match &self.model_type {
-                ModelType::Classifier => self.predict(batch).await.map(|_| ()),
-                ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+            if self.predicts() {
+                self.predict(batch).await.map(|_| ())
+            } else {
+                self.embed(batch).await.map(|_| ())
             }?;
             tracing::info!("finish warmup for batch: {}, length: {}", shape.0, shape.1);
         }
@@ -240,9 +275,10 @@ impl Backend {
         }
         for shape in shapes.iter() {
             let batch = self.create_warmup_batch(*shape, max_token as u32, seq_bucket_size as u32);
-            match &self.model_type {
-                ModelType::Classifier => self.predict(batch).await.map(|_| ()),
-                ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+            if self.predicts() {
+                self.predict(batch).await.map(|_| ())
+            } else {
+                self.embed(batch).await.map(|_| ())
             }?;
             tracing::info!(
                 "finish rocm warmup for batch: {}, length: {}",
@@ -369,9 +405,10 @@ impl Backend {
             raw_indices: vec![],
         };
 
-        match &self.model_type {
-            ModelType::Classifier => self.predict(batch).await.map(|_| ()),
-            ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+        if self.predicts() {
+            self.predict(batch).await.map(|_| ())
+        } else {
+            self.embed(batch).await.map(|_| ())
         }
     }
 
@@ -402,9 +439,10 @@ impl Backend {
                 pooled_indices: vec![0],
                 raw_indices: vec![],
             };
-            match &self.model_type {
-                ModelType::Classifier => self.predict(batch).await.map(|_| ()),
-                ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+            if self.predicts() {
+                self.predict(batch).await.map(|_| ())
+            } else {
+                self.embed(batch).await.map(|_| ())
             }
         }
     }
@@ -445,6 +483,7 @@ async fn init_backend(
     api_repo: Option<ApiRepo>,
     dtype: DType,
     model_type: ModelType,
+    output: BackendOutput,
     dense_path: Option<String>,
     uds_path: String,
     otlp_endpoint: Option<String>,
@@ -452,9 +491,24 @@ async fn init_backend(
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     let mut backend_start_failed = false;
     let api_repo = api_repo.map(Arc::new);
+    let post_pooling_prediction = uses_post_pooling_prediction(&model_type, output);
+
+    #[cfg(not(feature = "candle"))]
+    if post_pooling_prediction {
+        return Err(BackendError::Start(
+            "Post-pooling prediction heads are only supported by the Candle backend".to_string(),
+        ));
+    }
 
     #[cfg(feature = "ort")]
-    {
+    'ort: {
+        if post_pooling_prediction {
+            tracing::info!(
+                "Skipping ORT backend because post-pooling prediction heads require Candle"
+            );
+            break 'ort;
+        }
+
         if let Some(api_repo) = api_repo.as_ref() {
             let start = std::time::Instant::now();
             let model_files = download_onnx(api_repo.clone())
@@ -513,10 +567,23 @@ async fn init_backend(
         {
             let dense_paths = if let Some(api_repo) = api_repo.as_ref() {
                 let start = std::time::Instant::now();
-                let dense_paths = download_dense_modules(api_repo, dense_path)
-                    .await
-                    .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
-                tracing::info!("Dense modules downloaded in {:?}", start.elapsed());
+                let dense_paths = if post_pooling_prediction {
+                    download_prediction_head_modules(api_repo)
+                        .await
+                        .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?
+                } else {
+                    download_dense_modules(api_repo, dense_path)
+                        .await
+                        .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?
+                };
+                if post_pooling_prediction {
+                    tracing::info!(
+                        "Prediction head modules downloaded in {:?}",
+                        start.elapsed()
+                    );
+                } else {
+                    tracing::info!("Dense modules downloaded in {:?}", start.elapsed());
+                }
                 Some(dense_paths)
             } else {
                 // TODO(alvarobartt): eventually detach the Sentence Transformers module handling
@@ -524,7 +591,12 @@ async fn init_backend(
                 // For local models, try to parse modules.json and handle dense_path logic
                 let modules_json_path = model_path.join("modules.json");
                 if modules_json_path.exists() {
-                    match parse_dense_paths_from_modules(&modules_json_path).await {
+                    let module_paths = if post_pooling_prediction {
+                        parse_prediction_head_paths_from_modules(&modules_json_path).await
+                    } else {
+                        parse_dense_paths_from_modules(&modules_json_path).await
+                    };
+                    match module_paths {
                         Ok(module_paths) => match module_paths.len() {
                             0 => Some(vec![]),
                             1 => {
@@ -555,12 +627,21 @@ async fn init_backend(
                 }
             };
 
-            let backend = CandleBackend::new(
-                &model_path,
-                dtype.to_string(),
-                model_type.clone(),
-                dense_paths,
-            );
+            let backend = if post_pooling_prediction {
+                CandleBackend::new_with_post_pooling_prediction(
+                    &model_path,
+                    dtype.to_string(),
+                    model_type.clone(),
+                    dense_paths,
+                )
+            } else {
+                CandleBackend::new(
+                    &model_path,
+                    dtype.to_string(),
+                    model_type.clone(),
+                    dense_paths,
+                )
+            };
             match backend {
                 Ok(b) => return Ok(Box::new(b)),
                 Err(err) => {
@@ -573,7 +654,14 @@ async fn init_backend(
 
     if cfg!(feature = "python") {
         #[cfg(feature = "python")]
-        {
+        'python: {
+            if post_pooling_prediction {
+                tracing::info!(
+                    "Skipping Python backend because post-pooling prediction heads require Candle"
+                );
+                break 'python;
+            }
+
             let backend = std::thread::spawn(move || {
                 PythonBackend::new(
                     model_path.to_str().unwrap().to_string(),
@@ -603,6 +691,17 @@ async fn init_backend(
         ))
     } else {
         Err(BackendError::NoBackend)
+    }
+}
+
+fn uses_post_pooling_prediction(model_type: &ModelType, output: BackendOutput) -> bool {
+    output == BackendOutput::Predict && matches!(model_type, ModelType::Embedding(_))
+}
+
+fn default_output(model_type: &ModelType) -> BackendOutput {
+    match model_type {
+        ModelType::Classifier => BackendOutput::Predict,
+        ModelType::Embedding(_) => BackendOutput::Embed,
     }
 }
 
@@ -817,13 +916,20 @@ async fn download_onnx(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 enum ModuleType {
     #[serde(rename = "sentence_transformers.models.Dense")]
+    #[serde(alias = "sentence_transformers.base.modules.dense.Dense")]
     Dense,
     #[serde(rename = "sentence_transformers.models.Normalize")]
+    #[serde(alias = "sentence_transformers.sentence_transformer.modules.normalize.Normalize")]
     Normalize,
     #[serde(rename = "sentence_transformers.models.Pooling")]
+    #[serde(alias = "sentence_transformers.sentence_transformer.modules.pooling.Pooling")]
     Pooling,
     #[serde(rename = "sentence_transformers.models.Transformer")]
+    #[serde(alias = "sentence_transformers.base.modules.transformer.Transformer")]
     Transformer,
+    #[serde(rename = "sentence_transformers.sentence_transformer.modules.layer_norm.LayerNorm")]
+    #[serde(alias = "sentence_transformers.models.LayerNorm")]
+    LayerNorm,
 }
 
 #[cfg(feature = "candle")]
@@ -857,6 +963,60 @@ async fn parse_dense_paths_from_modules(
         .filter(|module| module.module_type == ModuleType::Dense)
         .map(|module| module.path)
         .collect::<Vec<String>>())
+}
+
+#[cfg(feature = "candle")]
+async fn parse_prediction_head_paths_from_modules(
+    modules_path: &PathBuf,
+) -> Result<Vec<String>, std::io::Error> {
+    let content = std::fs::read_to_string(modules_path)?;
+    let modules: Vec<ModuleConfig> = serde_json::from_str(&content)
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+
+    let pooling_index = modules
+        .iter()
+        .position(|module| module.module_type == ModuleType::Pooling)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Missing Pooling module for post-pooling prediction head",
+            )
+        })?;
+
+    let head_modules = &modules[pooling_index + 1..];
+    if head_modules.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Missing post-pooling prediction head modules",
+        ));
+    }
+    if head_modules
+        .last()
+        .is_none_or(|module| module.module_type != ModuleType::Dense)
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Post-pooling prediction head must end with a Dense module",
+        ));
+    }
+
+    let mut paths = Vec::with_capacity(head_modules.len());
+    for module in head_modules {
+        match &module.module_type {
+            ModuleType::Dense | ModuleType::LayerNorm => paths.push(module.path.clone()),
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "Unsupported module in post-pooling prediction head: {:?} at `{}`",
+                        module.module_type, module.path
+                    ),
+                ));
+            }
+        }
+    }
+
+    Ok(paths)
 }
 
 #[cfg(feature = "candle")]
@@ -937,9 +1097,41 @@ pub async fn download_dense_modules(
 }
 
 #[cfg(feature = "candle")]
+#[instrument(skip_all)]
+pub async fn download_prediction_head_modules(api: &ApiRepo) -> Result<Vec<String>, ApiError> {
+    match download_file(api, "modules.json").await {
+        Ok(modules_path) => match parse_prediction_head_paths_from_modules(&modules_path).await {
+            Ok(module_paths) => {
+                for module_path in &module_paths {
+                    download_module_files(api, module_path)
+                        .await
+                        .map_err(|err| {
+                            tracing::error!("Failed to download `{module_path}` files: {err}");
+                            err
+                        })?;
+                }
+                Ok(module_paths)
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "`modules.json` could be downloaded but parsing the modules failed: {err}; so no prediction head modules will be downloaded."
+                );
+                Ok(vec![])
+            }
+        },
+        Err(_) => Ok(vec![]),
+    }
+}
+
+#[cfg(feature = "candle")]
 async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBuf, ApiError> {
-    // Download `config.json` for the Dense module
-    let config_file = format!("{}/config.json", dense_path);
+    download_module_files(api, dense_path).await
+}
+
+#[cfg(feature = "candle")]
+async fn download_module_files(api: &ApiRepo, module_path: &str) -> Result<PathBuf, ApiError> {
+    // Download `config.json` for the module.
+    let config_file = format!("{}/config.json", module_path);
     let config_path = match download_file(api, &config_file).await {
         Ok(path) => path,
         Err(err) => {
@@ -949,11 +1141,11 @@ async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBu
     };
 
     // Try to download the `model.safetensors` first
-    let safetensors_file = format!("{}/model.safetensors", dense_path);
+    let safetensors_file = format!("{}/model.safetensors", module_path);
     if let Err(err) = download_file(api, &safetensors_file).await {
         tracing::warn!("Failed to download `{safetensors_file}` file: {err}");
         // Fallback to former `pytorch_model.bin`
-        let pytorch_file = format!("{}/pytorch_model.bin", dense_path);
+        let pytorch_file = format!("{}/pytorch_model.bin", module_path);
         if let Err(err) = download_file(api, &pytorch_file).await {
             tracing::warn!("Failed to download `{pytorch_file}` file: {err}");
             return Err(err);
@@ -961,4 +1153,88 @@ async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBu
     }
 
     Ok(config_path.parent().unwrap().to_path_buf())
+}
+
+#[cfg(all(test, feature = "candle"))]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn temp_modules_file(name: &str, contents: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "tei-backend-{name}-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(contents.as_bytes()).unwrap();
+        path
+    }
+
+    fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    #[test]
+    fn parses_modular_sentence_transformers_reranker_modules() {
+        let modules_path = temp_modules_file(
+            "modular-reranker",
+            r#"[
+                {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.base.modules.transformer.Transformer"},
+                {"idx": 1, "name": "1", "path": "1_Pooling", "type": "sentence_transformers.sentence_transformer.modules.pooling.Pooling"},
+                {"idx": 2, "name": "2", "path": "2_Dense", "type": "sentence_transformers.base.modules.dense.Dense"},
+                {"idx": 3, "name": "3", "path": "3_LayerNorm", "type": "sentence_transformers.sentence_transformer.modules.layer_norm.LayerNorm"},
+                {"idx": 4, "name": "4", "path": "4_Dense", "type": "sentence_transformers.base.modules.dense.Dense"}
+            ]"#,
+        );
+
+        let paths = block_on(parse_prediction_head_paths_from_modules(&modules_path)).unwrap();
+
+        assert_eq!(paths, vec!["2_Dense", "3_LayerNorm", "4_Dense"]);
+    }
+
+    #[test]
+    fn rejects_unsupported_modular_reranker_modules() {
+        let modules_path = temp_modules_file(
+            "unsupported-reranker",
+            r#"[
+                {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.base.modules.transformer.Transformer"},
+                {"idx": 1, "name": "1", "path": "1_Pooling", "type": "sentence_transformers.sentence_transformer.modules.pooling.Pooling"},
+                {"idx": 2, "name": "2", "path": "2_Dense", "type": "sentence_transformers.base.modules.dense.Dense"},
+                {"idx": 3, "name": "3", "path": "3_Normalize", "type": "sentence_transformers.sentence_transformer.modules.normalize.Normalize"},
+                {"idx": 4, "name": "4", "path": "4_Dense", "type": "sentence_transformers.base.modules.dense.Dense"}
+            ]"#,
+        );
+
+        let err = block_on(parse_prediction_head_paths_from_modules(&modules_path)).unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("Unsupported module in post-pooling prediction head"));
+    }
+
+    #[test]
+    fn parses_legacy_sentence_transformers_reranker_modules() {
+        let modules_path = temp_modules_file(
+            "legacy-reranker",
+            r#"[
+                {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.models.Transformer"},
+                {"idx": 1, "name": "1", "path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+                {"idx": 2, "name": "2", "path": "2_Dense", "type": "sentence_transformers.models.Dense"},
+                {"idx": 3, "name": "3", "path": "3_LayerNorm", "type": "sentence_transformers.models.LayerNorm"},
+                {"idx": 4, "name": "4", "path": "4_Dense", "type": "sentence_transformers.models.Dense"}
+            ]"#,
+        );
+
+        let paths = block_on(parse_prediction_head_paths_from_modules(&modules_path)).unwrap();
+
+        assert_eq!(paths, vec!["2_Dense", "3_LayerNorm", "4_Dense"]);
+    }
 }

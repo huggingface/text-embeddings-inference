@@ -53,6 +53,12 @@ pub enum ModelType {
     Embedding(Pool),
 }
 
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum BackendOutput {
+    Predict,
+    Embed,
+}
+
 #[derive(Debug, PartialEq, Clone, Deserialize)]
 #[cfg_attr(feature = "clap", derive(ValueEnum))]
 #[serde(rename_all = "snake_case")]
