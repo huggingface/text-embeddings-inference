@@ -3,7 +3,7 @@ use serde::de::{SeqAccess, Visitor};
 use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::json;
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fmt::Formatter;
 use text_embeddings_core::tokenization::EncodingInput;
 use utoipa::openapi::{RefOr, Schema};
@@ -226,30 +226,18 @@ pub(crate) struct PredictRequest {
     pub raw_scores: bool,
 }
 
-#[derive(Debug, Deserialize, ToSchema)]
-#[serde(untagged)]
-pub(crate) enum DecisionState {
-    Text(String),
-    Json(Value),
-}
-
-#[derive(Debug, Deserialize, ToSchema)]
-#[serde(tag = "type")]
+#[derive(Debug)]
 pub(crate) enum DecisionQuestion {
-    #[serde(rename = "choice")]
     Choice {
         instructions: String,
         criteria: BTreeMap<String, Value>,
     },
-    #[serde(rename = "score")]
     Score {
         instructions: String,
         criteria: Vec<Value>,
     },
-    #[serde(rename = "noul")]
     Noul {
         instructions: String,
-        #[serde(default)]
         criteria: Option<BTreeMap<String, Value>>,
     },
 }
@@ -341,38 +329,258 @@ fn description_value(value: &Value) -> Option<String> {
         .or_else(|| value_text(value))
 }
 
+#[derive(Debug)]
+pub(crate) enum DecisionAnswer {
+    Choice {
+        label: String,
+        probabilities: BTreeMap<String, f32>,
+        confidence: f32,
+    },
+    Score {
+        score: f32,
+        probabilities: BTreeMap<String, f32>,
+        confidence: f32,
+    },
+    Noul {
+        noul: f32,
+    },
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
-pub(crate) struct DecisionRequest {
-    pub state: DecisionState,
-    pub questions: HashMap<String, DecisionQuestion>,
+#[serde(untagged)]
+pub(crate) enum OpenAIDecisionInput {
+    Text(String),
+    Messages(Vec<OpenAIDecisionMessage>),
+}
+
+impl OpenAIDecisionInput {
+    pub(crate) fn into_text(self) -> Result<String, String> {
+        match self {
+            Self::Text(text) => Ok(text),
+            Self::Messages(messages) => {
+                let mut text = Vec::new();
+                for message in messages {
+                    if message.role != "user" {
+                        return Err("decision input messages must use the user role".to_string());
+                    }
+                    match message.content {
+                        OpenAIDecisionMessageContent::Text(content) => text.push(content),
+                        OpenAIDecisionMessageContent::Parts(parts) => {
+                            for part in parts {
+                                match part {
+                                    OpenAIDecisionInputPart::Text { text: part_text } => {
+                                        text.push(part_text);
+                                    }
+                                    OpenAIDecisionInputPart::Image { image_url: _ } => {
+                                        return Err(
+                                            "this decision model does not support image input"
+                                                .to_string(),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(text.join("\n"))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct OpenAIDecisionMessage {
+    pub role: String,
+    pub content: OpenAIDecisionMessageContent,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(untagged)]
+pub(crate) enum OpenAIDecisionMessageContent {
+    Text(String),
+    Parts(Vec<OpenAIDecisionInputPart>),
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(tag = "type")]
+pub(crate) enum OpenAIDecisionInputPart {
+    #[serde(rename = "input_text")]
+    Text { text: String },
+    #[serde(rename = "input_image")]
+    #[allow(dead_code)]
+    Image { image_url: Value },
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub(crate) struct OpenAIDecisionRequest {
+    pub model: String,
+    pub input: OpenAIDecisionInput,
+    pub questions: Vec<OpenAIDecisionQuestion>,
+}
+
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+#[serde(tag = "type")]
+pub(crate) enum OpenAIDecisionQuestion {
+    #[serde(rename = "predicate")]
+    Predicate { name: String, instructions: String },
+    #[serde(rename = "choice")]
+    Choice {
+        name: String,
+        instructions: String,
+        choices: Vec<OpenAIDecisionChoice>,
+    },
+    #[serde(rename = "score")]
+    Score {
+        name: String,
+        instructions: String,
+        levels: Vec<OpenAIDecisionLevel>,
+    },
+}
+
+impl OpenAIDecisionQuestion {
+    pub(crate) fn name(&self) -> &str {
+        match self {
+            Self::Predicate { name, .. } | Self::Choice { name, .. } | Self::Score { name, .. } => {
+                name
+            }
+        }
+    }
+
+    pub(crate) fn to_model_question(&self) -> Result<DecisionQuestion, String> {
+        match self {
+            Self::Predicate { instructions, .. } => Ok(DecisionQuestion::Noul {
+                instructions: instructions.clone(),
+                criteria: None,
+            }),
+            Self::Choice {
+                instructions,
+                choices,
+                ..
+            } => {
+                let criteria = choices
+                    .iter()
+                    .map(|choice| {
+                        (
+                            choice.value.clone(),
+                            choice
+                                .description
+                                .clone()
+                                .map(Value::String)
+                                .unwrap_or(Value::Null),
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>();
+                if choices.is_empty() || criteria.len() != choices.len() {
+                    return Err(
+                        "choice questions require at least one distinct choice value".to_string(),
+                    );
+                }
+                Ok(DecisionQuestion::Choice {
+                    instructions: instructions.clone(),
+                    criteria,
+                })
+            }
+            Self::Score {
+                instructions,
+                levels,
+                ..
+            } => {
+                if levels.is_empty() {
+                    return Err("score questions require at least one level".to_string());
+                }
+                Ok(DecisionQuestion::Score {
+                    instructions: instructions.clone(),
+                    criteria: levels
+                        .iter()
+                        .map(|level| match &level.description {
+                            Some(description) => {
+                                Value::String(format!("{}: {}", level.label, description))
+                            }
+                            None => Value::String(level.label.clone()),
+                        })
+                        .collect(),
+                })
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub(crate) struct OpenAIDecisionChoice {
+    pub value: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub(crate) struct OpenAIDecisionLevel {
+    pub label: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct OpenAIDecisionResponse {
+    pub answers: Vec<OpenAIDecisionAnswer>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 #[serde(tag = "type")]
-pub(crate) enum DecisionAnswer {
+pub(crate) enum OpenAIDecisionAnswer {
+    #[serde(rename = "predicate")]
+    Predicate { name: String, probability: f32 },
     #[serde(rename = "choice")]
-    Choice { label: String, probabilities: BTreeMap<String, f32>, confidence: f32, action: usize, action_probability: f32 },
+    Choice {
+        name: String,
+        choice: String,
+        probabilities: Vec<OpenAIDecisionChoiceProbability>,
+        confidence: f32,
+    },
     #[serde(rename = "score")]
-    Score { score: f32, legend: BTreeMap<String, String>, probabilities: BTreeMap<String, f32>, confidence: f32, action: usize, action_probability: f32 },
-    #[serde(rename = "noul")]
-    Noul { noul: f32, confidence: f32, action: usize, action_probability: f32 },
+    Score {
+        name: String,
+        score: f32,
+        probabilities: Vec<OpenAIDecisionScoreProbability>,
+        confidence: f32,
+    },
+    #[serde(rename = "refusal")]
+    #[allow(dead_code)]
+    Refusal { name: String },
 }
 
 #[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct DecisionResponse {
-    pub answers: HashMap<String, DecisionAnswer>,
+pub(crate) struct OpenAIDecisionChoiceProbability {
+    pub value: String,
+    pub probability: f32,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct OpenAIDecisionScoreProbability {
+    pub value: usize,
+    pub label: String,
+    pub probability: f32,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct OpenAIDecisionErrorResponse {
+    pub error: OpenAIDecisionError,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct OpenAIDecisionError {
+    pub message: String,
+    pub r#type: String,
+    pub param: Option<String>,
+    pub code: Option<String>,
 }
 
 pub(crate) fn decision_prompt(
-    state: &DecisionState,
+    state: &str,
     qtype: &str,
     instructions: &str,
     options: &[DecisionOption],
 ) -> String {
-    let state = match state {
-        DecisionState::Text(state) => state.replace("[MASK]", " "),
-        DecisionState::Json(state) => state.to_string().replace("[MASK]", " "),
-    };
+    let state = state.replace("[MASK]", " ");
     let instructions = instructions.replace("[MASK]", " ");
     let options = options
         .iter()
@@ -383,19 +591,23 @@ pub(crate) fn decision_prompt(
         .map(|option| format!("[MASK] {}", option.replace("[MASK]", " ")))
         .collect::<Vec<_>>()
         .join(" ");
-    format!("[CLS] {qtype} question: {instructions} [SEP] {options} [SEP] {state} [SEP]")
+    return format!("[CLS] {qtype} question: {instructions} [SEP] {options} [SEP] {state} [SEP]");
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{decision_prompt, DecisionOption, DecisionQuestion, DecisionState};
+    use super::{
+        decision_prompt, DecisionOption, DecisionQuestion, OpenAIDecisionAnswer,
+        OpenAIDecisionChoiceProbability, OpenAIDecisionQuestion, OpenAIDecisionRequest,
+        OpenAIDecisionResponse, OpenAIDecisionScoreProbability,
+    };
     use std::collections::BTreeMap;
 
     #[test]
-    fn decision_prompt_preserves_text_and_json_state() {
+    fn decision_prompt_preserves_text_state() {
         assert_eq!(
             decision_prompt(
-                &DecisionState::Text("ready".to_string()),
+                "ready",
                 "choice",
                 "open door",
                 &[DecisionOption {
@@ -404,18 +616,6 @@ mod tests {
                 }],
             ),
             "[CLS] choice question: open door [SEP] [MASK] yes: open it [SEP] ready [SEP]"
-        );
-        assert_eq!(
-            decision_prompt(
-                &DecisionState::Json(serde_json::json!({"x": 1})),
-                "score",
-                "open door",
-                &[DecisionOption {
-                    label: "one".to_string(),
-                    description: None,
-                }],
-            ),
-            "[CLS] score question: open door [SEP] [MASK] one [SEP] {\"x\":1} [SEP]"
         );
     }
 
@@ -441,12 +641,13 @@ mod tests {
 
     #[test]
     fn choice_options_are_sorted_and_render_descriptions() {
-        let question: DecisionQuestion = serde_json::from_value(serde_json::json!({
-            "type": "choice",
-            "instructions": "where?",
-            "criteria": {"z": "last", "a": "first"}
-        }))
-        .unwrap();
+        let question = DecisionQuestion::Choice {
+            instructions: "where?".to_string(),
+            criteria: BTreeMap::from([
+                ("z".to_string(), serde_json::json!("last")),
+                ("a".to_string(), serde_json::json!("first")),
+            ]),
+        };
 
         assert_eq!(
             question.options(),
@@ -465,29 +666,33 @@ mod tests {
 
     #[test]
     fn score_and_noul_options_have_stable_semantics() {
-        let score: DecisionQuestion = serde_json::from_value(serde_json::json!({
-            "type": "score",
-            "instructions": "how urgent?",
-            "criteria": ["low", {"description": "high"}]
-        }))
-        .unwrap();
+        let score = DecisionQuestion::Score {
+            instructions: "how urgent?".to_string(),
+            criteria: vec![
+                serde_json::json!("low"),
+                serde_json::json!({"description": "high"}),
+            ],
+        };
         assert_eq!(score.options()[0].label, "level 0");
-        assert_eq!(score.options()[1].description.as_deref(), Some("{\"description\":\"high\"}"));
+        assert_eq!(
+            score.options()[1].description.as_deref(),
+            Some("{\"description\":\"high\"}")
+        );
 
-        let noul: DecisionQuestion = serde_json::from_value(serde_json::json!({
-            "type": "noul",
-            "instructions": "is it urgent?",
-            "criteria": {"false": "no", "true": "yes"}
-        }))
-        .unwrap();
+        let noul = DecisionQuestion::Noul {
+            instructions: "is it urgent?".to_string(),
+            criteria: Some(BTreeMap::from([
+                ("false".to_string(), serde_json::json!("no")),
+                ("true".to_string(), serde_json::json!("yes")),
+            ])),
+        };
         assert_eq!(noul.options()[0].description.as_deref(), Some("no"));
         assert_eq!(noul.options()[1].description.as_deref(), Some("yes"));
 
-        let default_noul: DecisionQuestion = serde_json::from_value(serde_json::json!({
-            "type": "noul",
-            "instructions": "is it urgent?"
-        }))
-        .unwrap();
+        let default_noul = DecisionQuestion::Noul {
+            instructions: "is it urgent?".to_string(),
+            criteria: None,
+        };
         assert_eq!(
             default_noul.options()[0].description.as_deref(),
             Some("no, the statement does not hold")
@@ -501,7 +706,7 @@ mod tests {
     #[test]
     fn decision_prompt_allows_only_one_marker_per_option() {
         let prompt = decision_prompt(
-            &DecisionState::Text("state [MASK]".to_string()),
+            "state [MASK]",
             "choice",
             "question [MASK]",
             &[
@@ -532,6 +737,118 @@ mod tests {
             criteria,
         };
         assert_eq!(question.options()[0].label, "a");
+    }
+
+    #[test]
+    fn openai_decision_request_accepts_text_and_text_messages() {
+        let request: OpenAIDecisionRequest = serde_json::from_value(serde_json::json!({
+            "model": "gpt-6-luna",
+            "input": [{
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "Inspect this item."},
+                    {"type": "input_text", "text": "It arrived today."}
+                ]
+            }],
+            "questions": [{
+                "type": "predicate",
+                "name": "arrived",
+                "instructions": "Has the item arrived?"
+            }]
+        }))
+        .unwrap();
+
+        assert_eq!(
+            request.input.into_text().unwrap(),
+            "Inspect this item.\nIt arrived today."
+        );
+        assert_eq!(request.questions[0].name(), "arrived");
+    }
+
+    #[test]
+    fn openai_questions_convert_to_model_decision_types() {
+        let choice: OpenAIDecisionQuestion = serde_json::from_value(serde_json::json!({
+            "type": "choice",
+            "name": "department",
+            "instructions": "Choose a department.",
+            "choices": [
+                {"value": "billing", "description": "Payments and refunds."},
+                {"value": "other", "description": "Everything else."}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(choice.to_model_question().unwrap().options().len(), 2);
+
+        let score: OpenAIDecisionQuestion = serde_json::from_value(serde_json::json!({
+            "type": "score",
+            "name": "severity",
+            "instructions": "Rate severity.",
+            "levels": [
+                {"label": "low", "description": "No loss of function."},
+                {"label": "high", "description": "Completely blocked."}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(
+            score.to_model_question().unwrap().options()[1]
+                .description
+                .as_deref(),
+            Some("high: Completely blocked.")
+        );
+    }
+
+    #[test]
+    fn openai_decision_answers_serialize_with_published_field_names() {
+        let response = OpenAIDecisionResponse {
+            answers: vec![
+                OpenAIDecisionAnswer::Predicate {
+                    name: "visible_damage".to_string(),
+                    probability: 0.92,
+                },
+                OpenAIDecisionAnswer::Choice {
+                    name: "department".to_string(),
+                    choice: "billing".to_string(),
+                    probabilities: vec![OpenAIDecisionChoiceProbability {
+                        value: "billing".to_string(),
+                        probability: 0.95,
+                    }],
+                    confidence: 0.93,
+                },
+                OpenAIDecisionAnswer::Score {
+                    name: "severity".to_string(),
+                    score: 1.1,
+                    probabilities: vec![OpenAIDecisionScoreProbability {
+                        value: 1,
+                        label: "Workaround available".to_string(),
+                        probability: 0.7,
+                    }],
+                    confidence: 0.55,
+                },
+            ],
+        };
+
+        assert_eq!(
+            serde_json::to_value(response).unwrap(),
+            serde_json::json!({
+                "answers": [
+                    {"type": "predicate", "name": "visible_damage", "probability": 0.92},
+                    {
+                        "type": "choice",
+                        "name": "department",
+                        "choice": "billing",
+                        "probabilities": [{"value": "billing", "probability": 0.95}],
+                        "confidence": 0.93
+                    },
+                    {
+                        "type": "score",
+                        "name": "severity",
+                        "score": 1.1,
+                        "probabilities": [{"value": 1, "label": "Workaround available", "probability": 0.7}],
+                        "confidence": 0.55
+                    }
+                ]
+            })
+        );
     }
 }
 

@@ -67,11 +67,11 @@ Below are some examples of the currently supported models:
 
 ## Supported decision models
 
-TEI supports structured decision models that answer multiple typed questions about one input state through the `/v1/decide` endpoint.
+TEI supports structured decision models that answer multiple typed questions about text input through the OpenAI-compatible `/v1/decisions` endpoint.
 
 | Model Type | Model ID | Endpoint |
 |------------|----------|----------|
-| Laya       | [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) | `/v1/decide` |
+| Laya       | [convaiinnovations/laya](https://huggingface.co/convaiinnovations/laya) | `/v1/decisions` |
 
 See the [structured decision models](decision_models) guide for request and response examples.
 

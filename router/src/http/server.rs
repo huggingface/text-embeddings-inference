@@ -1,16 +1,19 @@
 /// HTTP Server logic
 use crate::http::types::{
-    DecodeRequest, DecodeResponse, EmbedAllRequest, EmbedAllResponse, EmbedRequest, EmbedResponse,
-    EmbedSparseRequest, EmbedSparseResponse, Embedding, EncodingFormat, Input, InputIds, InputType,
+    decision_prompt, DecisionAnswer, DecisionQuestion, DecodeRequest, DecodeResponse,
+    EmbedAllRequest, EmbedAllResponse, EmbedRequest, EmbedResponse, EmbedSparseRequest,
+    EmbedSparseResponse, Embedding, EncodingFormat, Input, InputIds, InputType,
     OpenAICompatEmbedding, OpenAICompatErrorResponse, OpenAICompatRequest, OpenAICompatResponse,
-    OpenAICompatUsage, PredictInput, PredictRequest, PredictResponse, Prediction, Rank,
-    RerankRequest, RerankResponse, Sequence, SimilarityInput, SimilarityParameters,
+    OpenAICompatUsage, OpenAIDecisionAnswer, OpenAIDecisionChoice, OpenAIDecisionChoiceProbability,
+    OpenAIDecisionError, OpenAIDecisionErrorResponse, OpenAIDecisionInput, OpenAIDecisionInputPart,
+    OpenAIDecisionLevel, OpenAIDecisionMessage, OpenAIDecisionMessageContent,
+    OpenAIDecisionQuestion, OpenAIDecisionRequest, OpenAIDecisionResponse,
+    OpenAIDecisionScoreProbability, PredictInput, PredictRequest, PredictResponse, Prediction,
+    Rank, RerankRequest, RerankResponse, Sequence, SimilarityInput, SimilarityParameters,
     SimilarityRequest, SimilarityResponse, SimpleToken, SparseValue, TokenizeInput,
     TokenizeRequest, TokenizeResponse, TruncationDirection, VertexPrediction, VertexRequest,
-    VertexResponse, DecisionAnswer, DecisionRequest, DecisionResponse, DecisionQuestion,
-    decision_prompt,
+    VertexResponse,
 };
-use std::collections::BTreeMap;
 use crate::{
     logging, shutdown, ClassifierModel, DecisionModel, EmbeddingModel, ErrorResponse, ErrorType,
     Info, ModelType, ResponseMetadata,
@@ -30,8 +33,8 @@ use futures::FutureExt;
 use http::header::AUTHORIZATION;
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use simsimd::SpatialSimilarity;
-use std::net::SocketAddr;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use text_embeddings_backend::BackendError;
 use text_embeddings_core::infer::{
@@ -283,42 +286,185 @@ async fn predict(
 #[utoipa::path(
 post,
 tag = "Text Embeddings Inference",
-path = "/v1/decide",
-request_body = DecisionRequest,
-responses((status = 200, description = "Typed decisions", body = DecisionResponse))
+path = "/v1/decisions",
+request_body = OpenAIDecisionRequest,
+responses((status = 200, description = "OpenAI-compatible typed decisions", body = OpenAIDecisionResponse))
 )]
 #[instrument(skip_all)]
-async fn decide(
+async fn openai_decide(
     infer: Extension<Infer>,
     info: Extension<Info>,
-    Json(req): Json<DecisionRequest>,
-) -> Result<Json<DecisionResponse>, (StatusCode, Json<ErrorResponse>)> {
+    Json(req): Json<OpenAIDecisionRequest>,
+) -> Result<Json<OpenAIDecisionResponse>, (StatusCode, Json<OpenAIDecisionErrorResponse>)> {
+    if req.model != info.served_model_name {
+        tracing::warn!(
+            "The provided decision model `{}` differs from the served model `{}`",
+            req.model,
+            info.served_model_name
+        );
+    }
+
+    let input = req.input.into_text().map_err(|message| {
+        openai_decision_error(ErrorResponse {
+            error: message,
+            error_type: ErrorType::Validation,
+        })
+    })?;
+    if req.questions.is_empty() {
+        return Err(openai_decision_error(ErrorResponse {
+            error: "questions cannot be empty".to_string(),
+            error_type: ErrorType::Empty,
+        }));
+    }
+
+    let mut tei_questions = HashMap::with_capacity(req.questions.len());
+    for question in &req.questions {
+        if tei_questions.contains_key(question.name()) {
+            return Err(openai_decision_error(ErrorResponse {
+                error: format!("question name `{}` must be unique", question.name()),
+                error_type: ErrorType::Validation,
+            }));
+        }
+        let model_question = question.to_model_question().map_err(|message| {
+            openai_decision_error(ErrorResponse {
+                error: message,
+                error_type: ErrorType::Validation,
+            })
+        })?;
+        tei_questions.insert(question.name().to_string(), model_question);
+    }
+
+    let response = run_decision(infer.0, info.0, input, tei_questions)
+        .await
+        .map_err(openai_decision_error)?;
+
+    let mut answers = Vec::with_capacity(req.questions.len());
+    for question in req.questions {
+        let answer = response.get(question.name()).ok_or_else(|| {
+            openai_decision_error(ErrorResponse {
+                error: format!("inference returned no answer for `{}`", question.name()),
+                error_type: ErrorType::Backend,
+            })
+        })?;
+        let answer = match (question, answer) {
+            (OpenAIDecisionQuestion::Predicate { name, .. }, DecisionAnswer::Noul { noul, .. }) => {
+                OpenAIDecisionAnswer::Predicate {
+                    name,
+                    probability: *noul,
+                }
+            }
+            (
+                OpenAIDecisionQuestion::Choice { name, choices, .. },
+                DecisionAnswer::Choice {
+                    label,
+                    probabilities,
+                    confidence,
+                    ..
+                },
+            ) => OpenAIDecisionAnswer::Choice {
+                name,
+                choice: label.clone(),
+                probabilities: choices
+                    .into_iter()
+                    .map(|choice| OpenAIDecisionChoiceProbability {
+                        probability: probabilities.get(&choice.value).copied().unwrap_or(0.0),
+                        value: choice.value,
+                    })
+                    .collect(),
+                confidence: *confidence,
+            },
+            (
+                OpenAIDecisionQuestion::Score { name, levels, .. },
+                DecisionAnswer::Score {
+                    score,
+                    probabilities,
+                    confidence,
+                    ..
+                },
+            ) => OpenAIDecisionAnswer::Score {
+                name,
+                score: *score,
+                probabilities: levels
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, level)| OpenAIDecisionScoreProbability {
+                        value: index,
+                        label: level.label,
+                        probability: probabilities
+                            .get(&index.to_string())
+                            .copied()
+                            .unwrap_or(0.0),
+                    })
+                    .collect(),
+                confidence: *confidence,
+            },
+            _ => {
+                return Err(openai_decision_error(ErrorResponse {
+                    error: "inference returned an answer with an unexpected type".to_string(),
+                    error_type: ErrorType::Backend,
+                }));
+            }
+        };
+        answers.push(answer);
+    }
+
+    Ok(Json(OpenAIDecisionResponse { answers }))
+}
+
+fn openai_decision_error(error: ErrorResponse) -> (StatusCode, Json<OpenAIDecisionErrorResponse>) {
+    let status = StatusCode::from(&error.error_type);
+    let error_type = match error.error_type {
+        ErrorType::Validation | ErrorType::Empty | ErrorType::Tokenizer => "invalid_request_error",
+        ErrorType::Unhealthy | ErrorType::Backend | ErrorType::Overloaded => "server_error",
+    };
+    (
+        status,
+        Json(OpenAIDecisionErrorResponse {
+            error: OpenAIDecisionError {
+                message: error.error,
+                r#type: error_type.to_string(),
+                param: None,
+                code: None,
+            },
+        }),
+    )
+}
+
+async fn run_decision(
+    infer: Infer,
+    info: Info,
+    state: String,
+    questions: HashMap<String, DecisionQuestion>,
+) -> Result<HashMap<String, DecisionAnswer>, ErrorResponse> {
     if !matches!(info.model_type, ModelType::Decision(_)) {
         return Err(ErrorResponse {
             error: "model is not a decision model".to_string(),
             error_type: ErrorType::Backend,
-        }.into());
+        }
+        .into());
     }
-    if req.questions.is_empty() {
+    if questions.is_empty() {
         return Err(ErrorResponse {
             error: "questions cannot be empty".to_string(),
             error_type: ErrorType::Empty,
-        }.into());
+        }
+        .into());
     }
 
     let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
-    let mut names = Vec::with_capacity(req.questions.len());
-    let mut inputs = Vec::with_capacity(req.questions.len());
-    for (index, (name, question)) in req.questions.iter().enumerate() {
+    let mut names = Vec::with_capacity(questions.len());
+    let mut inputs = Vec::with_capacity(questions.len());
+    for (index, (name, question)) in questions.iter().enumerate() {
         let options = question.options();
         if options.is_empty() {
             return Err(ErrorResponse {
                 error: format!("question {name} must define at least one criterion"),
                 error_type: ErrorType::Empty,
-            }.into());
+            }
+            .into());
         }
         let prompt = decision_prompt(
-            &req.state,
+            &state,
             question.type_name(),
             question.instructions(),
             &options,
@@ -332,7 +478,8 @@ async fn decide(
             return Err(ErrorResponse {
                 error: "decision prompt tokenized to an empty sequence".to_string(),
                 error_type: ErrorType::Tokenizer,
-            }.into());
+            }
+            .into());
         }
         let (_, mask_encoding) = infer
             .tokenize("[MASK]".to_string(), false, None)
@@ -343,7 +490,8 @@ async fn decide(
             return Err(ErrorResponse {
                 error: "decision tokenizer must encode [MASK] as one token".to_string(),
                 error_type: ErrorType::Tokenizer,
-            }.into());
+            }
+            .into());
         }
         let marker_positions = ids
             .iter()
@@ -354,7 +502,8 @@ async fn decide(
             return Err(ErrorResponse {
                 error: "decision prompt did not produce one marker per option".to_string(),
                 error_type: ErrorType::Tokenizer,
-            }.into());
+            }
+            .into());
         }
         names.push(name.clone());
         inputs.push(text_embeddings_backend::DecisionInput {
@@ -366,11 +515,14 @@ async fn decide(
         });
     }
 
-    let decisions = infer.decide(inputs, permit).await.map_err(ErrorResponse::from)?;
+    let decisions = infer
+        .decide(inputs, permit)
+        .await
+        .map_err(ErrorResponse::from)?;
     let mut answers = HashMap::with_capacity(decisions.len());
     for decision in decisions {
         if let Some(name) = names.get(decision.question_index) {
-            let question = req.questions.get(name).expect("question name is preserved");
+            let question = questions.get(name).expect("question name is preserved");
             let options = question.options();
             let selected = decision
                 .probabilities
@@ -392,8 +544,6 @@ async fn decide(
                         .map(|(option, probability)| (option.label.clone(), probability))
                         .collect(),
                     confidence: decision.confidence,
-                    action: decision.action,
-                    action_probability: decision.action_probability,
                 },
                 DecisionQuestion::Score { .. } => DecisionAnswer::Score {
                     score: decision
@@ -402,11 +552,6 @@ async fn decide(
                         .enumerate()
                         .map(|(index, probability)| index as f32 * probability)
                         .sum(),
-                    legend: options
-                        .iter()
-                        .enumerate()
-                        .map(|(index, option)| (index.to_string(), option.description.clone().unwrap_or_else(|| option.label.clone())))
-                        .collect::<BTreeMap<_, _>>(),
                     probabilities: decision
                         .probabilities
                         .iter()
@@ -414,25 +559,15 @@ async fn decide(
                         .map(|(index, probability)| (index.to_string(), *probability))
                         .collect(),
                     confidence: decision.confidence,
-                    action: decision.action,
-                    action_probability: decision.action_probability,
                 },
                 DecisionQuestion::Noul { .. } => DecisionAnswer::Noul {
                     noul: decision.probabilities.get(1).copied().unwrap_or(0.0),
-                    confidence: decision
-                        .probabilities
-                        .get(1)
-                        .copied()
-                        .unwrap_or(0.0)
-                        .max(1.0 - decision.probabilities.first().copied().unwrap_or(0.0)),
-                    action: decision.action,
-                    action_probability: decision.action_probability,
                 },
             };
             answers.insert(name.clone(), answer);
         }
     }
-    Ok(Json(DecisionResponse { answers }))
+    Ok(answers)
 }
 
 /// Get Ranks. Returns a 424 status code if the model is not a Sequence Classification model with
@@ -1761,7 +1896,8 @@ async fn vertex_compatibility(
                 return Err(ErrorResponse {
                     error: "Vertex compatibility is not supported for decision models".to_string(),
                     error_type: ErrorType::Backend,
-                }.into());
+                }
+                .into());
             }
         }
     }
@@ -1802,7 +1938,7 @@ pub async fn run(
     get_model_info,
     health,
     predict,
-    decide,
+    openai_decide,
     rerank,
     embed,
     embed_all,
@@ -1824,9 +1960,20 @@ pub async fn run(
     EncodingFormat,
     EmbeddingModel,
     DecisionModel,
-    DecisionRequest,
-    DecisionResponse,
-    DecisionAnswer,
+    OpenAIDecisionInput,
+    OpenAIDecisionMessage,
+    OpenAIDecisionMessageContent,
+    OpenAIDecisionInputPart,
+    OpenAIDecisionRequest,
+    OpenAIDecisionQuestion,
+    OpenAIDecisionChoice,
+    OpenAIDecisionLevel,
+    OpenAIDecisionResponse,
+    OpenAIDecisionAnswer,
+    OpenAIDecisionChoiceProbability,
+    OpenAIDecisionScoreProbability,
+    OpenAIDecisionErrorResponse,
+    OpenAIDecisionError,
     PredictRequest,
     Prediction,
     PredictResponse,
@@ -1932,7 +2079,6 @@ pub async fn run(
         .route("/embed_all", post(embed_all))
         .route("/embed_sparse", post(embed_sparse))
         .route("/predict", post(predict))
-        .route("/v1/decide", post(decide))
         .route("/rerank", post(rerank))
         .route("/similarity", post(similarity))
         .route("/tokenize", post(tokenize))
@@ -1940,6 +2086,7 @@ pub async fn run(
         // OpenAI compat route
         .route("/embeddings", post(openai_embed))
         .route("/v1/embeddings", post(openai_embed))
+        .route("/v1/decisions", post(openai_decide))
         // Vertex compat route
         .route("/vertex", post(vertex_compatibility));
 

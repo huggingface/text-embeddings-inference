@@ -19,7 +19,7 @@ rendered properly in your Markdown viewer.
 Text Embeddings Inference (TEI) can serve structured decision models that answer several typed questions about one input state in a single request. The first supported model is [Laya](https://huggingface.co/convaiinnovations/laya).
 
 > [!WARNING]
-> Decision models use the `/v1/decide` HTTP endpoint. The HTTP server does not expose embedding, reranking, or prediction routes for them.
+> Decision models use the OpenAI-compatible `/v1/decisions` endpoint. The HTTP server does not expose embedding, reranking, or prediction routes for them.
 
 ## Deploy a decision model
 
@@ -38,75 +38,80 @@ Decision models are identified by their `rl_agent_config.json` file. TEI downloa
 
 ## Make a decision request
 
-Send the input state and a map of named questions to `/v1/decide`:
+Send a text input and an array of named questions to `/v1/decisions`:
 
 ```bash
-curl http://localhost:8080/v1/decide \
+curl http://localhost:8080/v1/decisions \
   -X POST \
   -H 'Content-Type: application/json' \
   -d '{
-    "state": {
-      "subject": "Duplicate charge on invoice #4411",
-      "body": "We were billed twice for March. Please refund the duplicate today."
-    },
-    "questions": {
-      "department": {
-        "type": "choice",
-        "instructions": "Which department should handle this request?",
-        "criteria": {
-          "billing": "invoices, payments, refunds",
-          "technical": "bugs, outages, system errors",
-          "other": "everything else"
-        }
-      },
-      "urgency": {
-        "type": "score",
-        "instructions": "How urgent is this request?",
-        "criteria": ["not urgent", "soon", "critical"]
-      },
-      "refund_requested": {
-        "type": "noul",
-        "instructions": "Does the user explicitly request a refund?"
-      }
-    }
+    "model": "convaiinnovations/laya",
+    "input": "We were billed twice for March. Please refund the duplicate today.",
+    "questions": [{
+      "type": "choice",
+      "name": "department",
+      "instructions": "Which department should handle this request?",
+      "choices": [
+        {"value": "billing", "description": "Invoices, payments, and refunds."},
+        {"value": "technical", "description": "Bugs, outages, and system errors."},
+        {"value": "other", "description": "Everything else."}
+      ]
+    }, {
+      "type": "score",
+      "name": "urgency",
+      "instructions": "How urgent is this request?",
+      "levels": [
+        {"label": "not urgent"},
+        {"label": "soon"},
+        {"label": "critical"}
+      ]
+    }, {
+      "type": "predicate",
+      "name": "refund_requested",
+      "instructions": "Does the user explicitly request a refund?"
+    }]
   }'
 ```
 
-`state` can be a string or a JSON value. Each question has an `instructions` field and a type-specific `criteria` field:
+`input` can be a text string or user messages containing `input_text` parts. Each question has a unique `name` and uses one of the OpenAI `predicate`, `choice`, or `score` types. Choice values must be distinct, and score levels are ordered from lowest to highest.
 
-- `choice` accepts a JSON object whose keys are option labels and whose values describe the options.
-- `score` accepts an array of ordered criteria. The response includes the expected score and a probability for each level.
-- `noul` is a binary question. Its two options are `false` and `true`; criteria descriptions are optional.
-
-A response contains an answer for each question:
+The response contains typed answers in the same order as the request:
 
 ```json
 {
-  "answers": {
-    "department": {
+  "answers": [
+    {
       "type": "choice",
-      "label": "billing",
-      "probabilities": {
-        "billing": 0.94,
-        "technical": 0.02,
-        "other": 0.04
-      },
-      "confidence": 0.79,
-      "action": 0,
-      "action_probability": 1.0
+      "name": "department",
+      "choice": "billing",
+      "probabilities": [
+        {"value": "billing", "probability": 0.94},
+        {"value": "technical", "probability": 0.02},
+        {"value": "other", "probability": 0.04}
+      ],
+      "confidence": 0.79
     },
-    "refund_requested": {
-      "type": "noul",
-      "noul": 0.84,
-      "confidence": 0.84,
-      "action": 0,
-      "action_probability": 1.0
+    {
+      "type": "score",
+      "name": "urgency",
+      "score": 1.1,
+      "probabilities": [
+        {"value": 0, "label": "not urgent", "probability": 0.1},
+        {"value": 1, "label": "soon", "probability": 0.7},
+        {"value": 2, "label": "critical", "probability": 0.2}
+      ],
+      "confidence": 0.55
+    },
+    {
+      "type": "predicate",
+      "name": "refund_requested",
+      "probability": 0.84
     }
-  }
+  ]
 }
 ```
 
-The response order is not significant because `answers` is a map keyed by question name.
+Image parts are rejected because the served decision models accept text input only.
 
 ## Model architecture
 
