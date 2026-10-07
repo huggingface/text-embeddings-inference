@@ -1,5 +1,6 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{get_cos_sin, get_inv_freqs, index_select, HiddenAct, Linear, RMSNorm};
+use crate::models::qwen3::{ClassificationHead, Qwen3ClassificationHead};
 use crate::models::{Model, Qwen3Config};
 
 use candle::{DType, Device, IndexOp, Result, Tensor};
@@ -294,6 +295,7 @@ pub struct FlashQwen3Model {
     cos_cache: Tensor,
     sin_cache: Tensor,
     pool: Pool,
+    classifier: Option<Box<dyn ClassificationHead + Send>>,
     pub device: Device,
 
     span: tracing::Span,
@@ -310,19 +312,46 @@ impl FlashQwen3Model {
             candle::bail!("FlashQwen3 requires DType::F16")
         }
 
-        let pool = match model_type {
-            ModelType::Classifier => {
-                candle::bail!("`classifier` model type is not supported for Qwen3")
-            }
-            ModelType::Embedding(pool) => pool,
-        };
-
         // The Qwen3-Reranker models contain the `model` key
         // https://huggingface.co/collections/Qwen/qwen3-reranker-6841b22d0192d7ade9cdefea
         let model_prefix = if vb.contains_tensor("model.embed_tokens.weight") {
             "model."
         } else {
             ""
+        };
+
+        let (pool, classifier) = match model_type {
+            ModelType::Classifier => {
+                // Guard against an ambiguous dual-head checkpoint: a trained `linear.weight`
+                // sequence-classification head (`num_labels`, see `projection` below) and the
+                // yes/no reranker head are mutually exclusive. Fail loudly here rather than with
+                // an opaque matmul shape error at `predict()` time.
+                if config.num_labels.is_some() && vb.contains_tensor("linear.weight") {
+                    candle::bail!(
+                        "Qwen3 checkpoint provides a trained `linear.weight` classification head \
+                         (`num_labels`), which is incompatible with the yes/no reranker head; only \
+                         one classification mechanism is supported per model."
+                    );
+                }
+
+                // Qwen3-Reranker scores the relevance of a (query, document) pair from the
+                // last token's hidden state, so we always use last-token pooling here.
+                let pool = Pool::LastToken;
+
+                // When the word embeddings are tied, the LM head shares the `embed_tokens`
+                // weights; otherwise it lives under the dedicated `lm_head` tensor.
+                let classifier_weight_name = if config.tie_word_embeddings {
+                    format!("{model_prefix}embed_tokens")
+                } else {
+                    "lm_head".to_string()
+                };
+
+                let classifier: Box<dyn ClassificationHead + Send> = Box::new(
+                    Qwen3ClassificationHead::load(vb.pp(&classifier_weight_name), config)?,
+                );
+                (pool, Some(classifier))
+            }
+            ModelType::Embedding(pool) => (pool, None),
         };
 
         let embeddings = Embedding::new(
@@ -386,6 +415,7 @@ impl FlashQwen3Model {
             cos_cache,
             sin_cache,
             pool,
+            classifier,
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
         })
@@ -553,5 +583,17 @@ impl Model for FlashQwen3Model {
 
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
+    }
+
+    fn predict(&self, batch: Batch) -> Result<Tensor> {
+        match &self.classifier {
+            None => candle::bail!("`predict` is not implemented for this model"),
+            Some(classifier) => {
+                let (pooled_embeddings, _raw_embeddings) = self.forward(batch)?;
+                let pooled_embeddings =
+                    pooled_embeddings.expect("pooled_embeddings is empty. This is a bug.");
+                classifier.forward(&pooled_embeddings)
+            }
+        }
     }
 }
