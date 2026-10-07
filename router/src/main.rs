@@ -151,6 +151,15 @@ struct Args {
     #[clap(default_value = "3000", long, short, env)]
     port: u16,
 
+    /// Root path to mount all HTTP routes under.
+    ///
+    /// For example, `--root-path jinaai/jina-embeddings-v2-base-en` serves the
+    /// OpenAI-compatible embeddings route at `/jinaai/jina-embeddings-v2-base-en/v1/embeddings`.
+    ///
+    /// Unused for gRPC servers.
+    #[clap(long, env)]
+    root_path: Option<String>,
+
     /// The name of the unix socket some text-embeddings-inference backends will use as they
     /// communicate internally with gRPC.
     #[clap(default_value = "/tmp/text-embeddings-inference-server", long, env)]
@@ -258,6 +267,7 @@ async fn main() -> Result<()> {
         token,
         Some(args.hostname),
         args.port,
+        args.root_path,
         Some(args.uds_path),
         args.huggingface_hub_cache,
         args.payload_limit,

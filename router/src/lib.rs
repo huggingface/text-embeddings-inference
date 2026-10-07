@@ -62,6 +62,7 @@ pub async fn run(
     hf_token: Option<String>,
     hostname: Option<String>,
     port: u16,
+    root_path: Option<String>,
     uds_path: Option<String>,
     huggingface_hub_cache: Option<String>,
     payload_limit: usize,
@@ -390,15 +391,17 @@ pub async fn run(
             payload_limit,
             api_key,
             cors_allow_origin,
+            root_path,
         )
         .await
     }
 
     #[cfg(feature = "grpc")]
     {
-        // cors_allow_origin and payload_limit are not used for gRPC servers
+        // cors_allow_origin, payload_limit and root_path are not used for gRPC servers
         let _ = cors_allow_origin;
         let _ = payload_limit;
+        let _ = root_path;
         grpc::server::run(infer, info, addr, prom_builder, api_key).await
     }
 }
