@@ -131,6 +131,12 @@ struct Args {
     #[clap(long, env)]
     dense_path: Option<String>,
 
+    /// Optionally override the ONNX model filename used by the ORT backend.
+    ///
+    /// Only has an effect when running with the `ort` feature.
+    #[clap(long, env)]
+    onnx_filename: Option<String>,
+
     /// [DEPRECATED IN FAVOR OF `--hf-token`] Your Hugging Face Hub token
     #[clap(long, env, hide = true)]
     #[redact(partial)]
@@ -255,6 +261,7 @@ async fn main() -> Result<()> {
         args.default_prompt,
         args.default_prompt_name,
         args.dense_path,
+        args.onnx_filename,
         token,
         Some(args.hostname),
         args.port,
