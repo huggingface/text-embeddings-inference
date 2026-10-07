@@ -29,6 +29,10 @@
     title: Cloud Run
   title: Deploying TEI on Google Cloud
 - sections:
+  - local: tei_nebius_serverless
+    title: Serverless AI Endpoints
+  title: Deploying TEI on Nebius
+- sections:
   - local: cli_arguments
     title: CLI arguments
   title: Reference
