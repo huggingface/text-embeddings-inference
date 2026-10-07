@@ -87,7 +87,7 @@ impl OrtBackend {
         let pool = match model_type {
             ModelType::Classifier => Pool::Cls,
             ModelType::Embedding(pool) => match pool {
-                Pool::Splade => {
+                Pool::Splade | Pool::M3Sparse => {
                     return Err(BackendError::Start(format!(
                         "Pooling {pool} is not supported for `ort`, use `candle` instead."
                     )));
@@ -598,7 +598,7 @@ impl Backend for OrtBackend {
                             outputs.mean_axis(Axis(1)).unwrap()
                         }
                     }
-                    Pool::Splade => unreachable!(),
+                    Pool::Splade | Pool::M3Sparse => unreachable!(),
                 };
 
                 for (i, e) in batch

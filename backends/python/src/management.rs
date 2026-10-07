@@ -37,6 +37,12 @@ impl BackendProcess {
             Pool::Mean => "mean",
             Pool::LastToken => "lasttoken",
             Pool::Splade => "splade",
+            Pool::M3Sparse => {
+                return Err(BackendError::Start(
+                    "Pooling m3_sparse is not supported for `python`, use `candle` instead."
+                        .to_string(),
+                ))
+            }
         };
 
         // Process args

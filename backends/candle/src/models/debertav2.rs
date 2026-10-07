@@ -1260,7 +1260,7 @@ impl DebertaV2Model {
 
                     (outputs.sum(1)?.broadcast_div(&input_lengths))?
                 }
-                Some(Pool::Splade) => unreachable!(),
+                Some(Pool::Splade) | Some(Pool::M3Sparse) => unreachable!(),
                 None => outputs,
             };
             Some(pooled_embeddings)
