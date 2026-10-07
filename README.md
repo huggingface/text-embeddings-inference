@@ -533,6 +533,10 @@ cargo install --path router -F mkl
 cargo install --path router -F metal
 ```
 
+To optimize a Linux x86 build for the local CPU, prefix the install command with
+`RUSTFLAGS="-C target-cpu=native"`. Only use this when the deployment CPUs support all
+the build CPU's instruction-set features; otherwise the binary can fail with an illegal instruction.
+
 You can now launch Text Embeddings Inference on CPU with:
 
 ```shell
