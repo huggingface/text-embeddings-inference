@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use hf_hub::api::tokio::{ApiError, ApiRepo};
+use hf_hub::{HFError as ApiError, HFRepository, RepoTypeModel};
 use rand::Rng;
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{instrument, Span};
@@ -91,7 +91,8 @@ impl Backend {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         model_path: PathBuf,
-        api_repo: Option<ApiRepo>,
+        api_repo: Option<HFRepository<RepoTypeModel>>,
+        revision: Option<String>,
         dtype: DType,
         model_type: ModelType,
         dense_path: Option<String>,
@@ -104,6 +105,7 @@ impl Backend {
         let backend = init_backend(
             model_path,
             api_repo,
+            revision,
             dtype,
             model_type.clone(),
             dense_path,
@@ -442,7 +444,8 @@ impl Backend {
 #[allow(unused, clippy::too_many_arguments)]
 async fn init_backend(
     model_path: PathBuf,
-    api_repo: Option<ApiRepo>,
+    api_repo: Option<HFRepository<RepoTypeModel>>,
+    revision: Option<String>,
     dtype: DType,
     model_type: ModelType,
     dense_path: Option<String>,
@@ -451,13 +454,13 @@ async fn init_backend(
     otlp_service_name: String,
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     let mut backend_start_failed = false;
-    let api_repo = api_repo.map(Arc::new);
+    let revision = revision.as_deref();
 
     #[cfg(feature = "ort")]
     {
         if let Some(api_repo) = api_repo.as_ref() {
             let start = std::time::Instant::now();
-            let model_files = download_onnx(api_repo.clone())
+            let model_files = download_onnx(api_repo, revision)
                 .await
                 .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
             match model_files.is_empty() {
@@ -473,8 +476,7 @@ async fn init_backend(
         // NOTE: for ONNX we need to retrieve the `tokenizer_config.json` to identify which
         // `padding_side` needs to be applied for the input processing and the pooling
         if let Some(api_repo) = api_repo.as_ref() {
-            tracing::info!("Downloading `tokenizer_config.json`");
-            match api_repo.get("tokenizer_config.json").await {
+            match download_file(api_repo, revision, "tokenizer_config.json").await {
                 Ok(_) => (),
                 Err(err) => {
                     tracing::warn!("Could not download `tokenizer_config.json`: {}", err)
@@ -495,11 +497,9 @@ async fn init_backend(
     if let Some(api_repo) = api_repo.as_ref() {
         if cfg!(feature = "python") || cfg!(feature = "candle") {
             let start = std::time::Instant::now();
-            if download_safetensors(api_repo.clone()).await.is_err() {
+            if download_safetensors(api_repo, revision).await.is_err() {
                 tracing::warn!("safetensors weights not found. Using `pytorch_model.bin` instead. Model loading will be significantly slower.");
-                tracing::info!("Downloading `pytorch_model.bin`");
-                api_repo
-                    .get("pytorch_model.bin")
+                download_file(api_repo, revision, "pytorch_model.bin")
                     .await
                     .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
             }
@@ -513,7 +513,7 @@ async fn init_backend(
         {
             let dense_paths = if let Some(api_repo) = api_repo.as_ref() {
                 let start = std::time::Instant::now();
-                let dense_paths = download_dense_modules(api_repo, dense_path)
+                let dense_paths = download_dense_modules(api_repo, revision, dense_path)
                     .await
                     .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
                 tracing::info!("Dense modules downloaded in {:?}", start.elapsed());
@@ -667,18 +667,19 @@ enum BackendCommand {
     ),
 }
 
-async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
+async fn download_safetensors(
+    api: &HFRepository<RepoTypeModel>,
+    revision: Option<&str>,
+) -> Result<Vec<PathBuf>, ApiError> {
     // Single file
-    tracing::info!("Downloading `model.safetensors`");
-    match api.get("model.safetensors").await {
+    match download_file(api, revision, "model.safetensors").await {
         Ok(p) => return Ok(vec![p]),
         Err(err) => tracing::warn!("Could not download `model.safetensors`: {}", err),
     };
 
     // Sharded weights
     // Download and parse index file
-    tracing::info!("Downloading `model.safetensors.index.json`");
-    let index_file = api.get("model.safetensors.index.json").await?;
+    let index_file = download_file(api, revision, "model.safetensors.index.json").await?;
     let index_file_string: String =
         std::fs::read_to_string(index_file).expect("model.safetensors.index.json is corrupted");
     let json: serde_json::Value = serde_json::from_str(&index_file_string)
@@ -700,11 +701,9 @@ async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiErro
     let handles: Vec<_> = safetensors_filenames
         .into_iter()
         .map(|n| {
-            let api = Arc::clone(&api);
-            tokio::spawn(async move {
-                tracing::info!("Downloading `{}`", n);
-                api.get(&n).await
-            })
+            let api = api.clone();
+            let revision = revision.map(str::to_owned);
+            tokio::spawn(async move { download_file(&api, revision.as_deref(), &n).await })
         })
         .collect();
 
@@ -712,20 +711,28 @@ async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiErro
     for handle in handles {
         // Await the JoinHandle to get the result of the task,
         // then unpack the inner result from api.get()
-        safetensors_files.push(handle.await??);
+        safetensors_files.push(
+            handle
+                .await
+                .map_err(|err| ApiError::Other(err.to_string()))??,
+        );
     }
 
     Ok(safetensors_files)
 }
 
 #[cfg(feature = "ort")]
-async fn download_onnx(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
+async fn download_onnx(
+    api: &HFRepository<RepoTypeModel>,
+    revision: Option<&str>,
+) -> Result<Vec<PathBuf>, ApiError> {
     // TODO: Most likely all the download functions could benefit from the information defined in
     // `info()` so that we just need to run the HTTP GET request once (and more efficiently
     // download the required and existing files only).
-    let filenames = match api.info().await {
+    let filenames = match api.info().maybe_revision(revision).send().await {
         Ok(info) => Some(
             info.siblings
+                .unwrap_or_default()
                 .iter()
                 .filter_map(|s| {
                     if s.rfilename.starts_with("model.onnx")
@@ -746,11 +753,11 @@ async fn download_onnx(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
             let handles: Vec<_> = files
                 .into_iter()
                 .map(|file| {
-                    let api = Arc::clone(&api);
+                    let api = api.clone();
+                    let revision = revision.map(str::to_owned);
                     tokio::spawn(async move {
-                        tracing::info!("Downloading `{}`", file);
                         let time = std::time::Instant::now();
-                        match api.get(&file).await {
+                        match download_file(&api, revision.as_deref(), &file).await {
                             Ok(f) => {
                                 tracing::info!(
                                     "Successfully downloaded `{}` in {} s",
@@ -780,28 +787,23 @@ async fn download_onnx(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
         _ => {
             let mut downloaded_files = Vec::<PathBuf>::new();
 
-            tracing::info!("Downloading `onnx/model.onnx`");
-            match api.get("onnx/model.onnx").await {
+            match download_file(api, revision, "onnx/model.onnx").await {
                 Ok(p) => downloaded_files.push(p),
                 Err(err) => {
                     tracing::warn!("Could not download `onnx/model.onnx`: {err}");
-                    tracing::info!("Downloading `model.onnx`");
-
-                    match api.get("model.onnx").await {
+                    match download_file(api, revision, "model.onnx").await {
                         Ok(p) => downloaded_files.push(p),
                         Err(err) => tracing::warn!("Could not download `model.onnx`: {err}"),
                     };
                 }
             };
 
-            tracing::info!("Downloading `onnx/model.onnx_data`");
-            match api.get("onnx/model.onnx_data").await {
+            match download_file(api, revision, "onnx/model.onnx_data").await {
                 Ok(p) => downloaded_files.push(p),
                 Err(err) => {
                     tracing::warn!("Could not download `onnx/model.onnx_data`: {err}");
-                    tracing::info!("Downloading `model.onnx_data`");
 
-                    match api.get("model.onnx_data").await {
+                    match download_file(api, revision, "model.onnx_data").await {
                         Ok(p) => downloaded_files.push(p),
                         Err(err) => tracing::warn!("Could not download `model.onnx_data`: {err}"),
                     }
@@ -838,10 +840,17 @@ struct ModuleConfig {
     module_type: ModuleType,
 }
 
-#[cfg(feature = "candle")]
-async fn download_file(api: &ApiRepo, file_path: &str) -> Result<PathBuf, ApiError> {
+async fn download_file(
+    api: &HFRepository<RepoTypeModel>,
+    revision: Option<&str>,
+    file_path: &str,
+) -> Result<PathBuf, ApiError> {
     tracing::info!("Downloading `{}`", file_path);
-    api.get(file_path).await
+    api.download_file()
+        .filename(file_path)
+        .maybe_revision(revision)
+        .send()
+        .await
 }
 
 #[cfg(feature = "candle")]
@@ -862,10 +871,11 @@ async fn parse_dense_paths_from_modules(
 #[cfg(feature = "candle")]
 #[instrument(skip_all)]
 pub async fn download_dense_modules(
-    api: &ApiRepo,
+    api: &HFRepository<RepoTypeModel>,
+    revision: Option<&str>,
     dense_path: Option<String>,
 ) -> Result<Vec<String>, ApiError> {
-    match download_file(api, "modules.json").await {
+    match download_file(api, revision, "modules.json").await {
         Ok(modules_path) => {
             // If `modules.json` exists, then parse it to capture the Dense modules
             match parse_dense_paths_from_modules(&modules_path).await {
@@ -888,7 +898,7 @@ pub async fn download_dense_modules(
                                 module_paths[0].clone()
                             };
 
-                            download_dense_module(api, &path_to_use)
+                            download_dense_module(api, revision, &path_to_use)
                                 .await
                                 .map_err(|err| {
                                     tracing::error!(
@@ -911,7 +921,7 @@ pub async fn download_dense_modules(
                                 // NOTE: since the Dense modules here are specified in the
                                 // `modules.json` file, then fail if any of those cannot be
                                 // downloaded
-                                download_dense_module(api, module_path)
+                                download_dense_module(api, revision, module_path)
                                     .await
                                     .map_err(|err| {
                                         tracing::error!(
@@ -937,10 +947,14 @@ pub async fn download_dense_modules(
 }
 
 #[cfg(feature = "candle")]
-async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBuf, ApiError> {
+async fn download_dense_module(
+    api: &HFRepository<RepoTypeModel>,
+    revision: Option<&str>,
+    dense_path: &str,
+) -> Result<PathBuf, ApiError> {
     // Download `config.json` for the Dense module
     let config_file = format!("{}/config.json", dense_path);
-    let config_path = match download_file(api, &config_file).await {
+    let config_path = match download_file(api, revision, &config_file).await {
         Ok(path) => path,
         Err(err) => {
             tracing::warn!("Failed to download `{config_file}` file: {err}");
@@ -950,11 +964,11 @@ async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBu
 
     // Try to download the `model.safetensors` first
     let safetensors_file = format!("{}/model.safetensors", dense_path);
-    if let Err(err) = download_file(api, &safetensors_file).await {
+    if let Err(err) = download_file(api, revision, &safetensors_file).await {
         tracing::warn!("Failed to download `{safetensors_file}` file: {err}");
         // Fallback to former `pytorch_model.bin`
         let pytorch_file = format!("{}/pytorch_model.bin", dense_path);
-        if let Err(err) = download_file(api, &pytorch_file).await {
+        if let Err(err) = download_file(api, revision, &pytorch_file).await {
             tracing::warn!("Failed to download `{pytorch_file}` file: {err}");
             return Err(err);
         }
