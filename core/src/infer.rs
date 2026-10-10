@@ -458,31 +458,11 @@ impl Infer {
         if !raw_scores {
             // Softmax
             if response.results.len() > 1 {
-                // Check that the results do not contain NaN or the partial_cmp
-                // in the max_by below will panic
-                if response.results.iter().any(|s| s.is_nan()) {
+                if let Err(err) = softmax(&mut response.results) {
                     let counter = metrics::counter!("te_request_failure", "err" => "inference");
                     counter.increment(1);
-                    let message = "score is NaN".to_string();
-                    tracing::error!("{message}");
-                    return Err(TextEmbeddingsError::Backend(BackendError::Inference(
-                        message,
-                    )));
-                }
-
-                let max = *response
-                    .results
-                    .iter()
-                    .max_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap())
-                    .unwrap();
-
-                let mut den = 0.0;
-                for v in response.results.iter_mut() {
-                    *v = (*v - max).exp();
-                    den += *v;
-                }
-                for v in response.results.iter_mut() {
-                    *v /= den;
+                    tracing::error!("{err}");
+                    return Err(TextEmbeddingsError::Backend(err));
                 }
             }
             // Sigmoid
@@ -636,6 +616,30 @@ async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextB
     }
 }
 
+/// In-place softmax over classification scores.
+///
+/// Returns an error if any score is NaN, as NaN cannot be ordered when computing the max.
+fn softmax(scores: &mut [f32]) -> Result<(), BackendError> {
+    if scores.iter().any(|s| s.is_nan()) {
+        return Err(BackendError::Inference("score is NaN".to_string()));
+    }
+
+    let max = *scores
+        .iter()
+        .max_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap())
+        .unwrap();
+
+    let mut den = 0.0;
+    for v in scores.iter_mut() {
+        *v = (*v - max).exp();
+        den += *v;
+    }
+    for v in scores.iter_mut() {
+        *v /= den;
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct InferMetadata {
     pub prompt_tokens: usize,
@@ -667,4 +671,24 @@ pub struct PooledEmbeddingsInferResponse {
 pub struct AllEmbeddingsInferResponse {
     pub results: Vec<Vec<f32>>,
     pub metadata: InferMetadata,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn softmax_normalizes_scores() {
+        let mut scores = vec![1.0, 2.0, 3.0];
+        softmax(&mut scores).unwrap();
+        assert!((scores.iter().sum::<f32>() - 1.0).abs() < 1e-6);
+        assert!(scores[0] < scores[1] && scores[1] < scores[2]);
+    }
+
+    #[test]
+    fn softmax_rejects_nan_scores() {
+        let mut scores = vec![1.0, f32::NAN, 3.0];
+        let err = softmax(&mut scores).unwrap_err();
+        assert!(matches!(&err, BackendError::Inference(m) if m == "score is NaN"));
+    }
 }
