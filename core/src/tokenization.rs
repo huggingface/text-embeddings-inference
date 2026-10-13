@@ -325,18 +325,44 @@ fn tokenize_input(
             (Some(s), encoding)
         }
         EncodingInput::Dual(s1, s2) => {
-            if pre_prompt.is_some() {
+            // Only reranker-style prompts (e.g. Qwen3-Reranker) carry the ChatML `prefix`/`suffix`
+            // markers, which we apply as a template around the (query, document) pair. Ordinary
+            // embedding Sentence Transformers configs ship only `query`/`document` prompts (used
+            // for single-input instruction prompting) and must NOT hijack pair encoding, so the
+            // template is keyed on the reranker-specific `prefix`/`suffix` keys, not on the mere
+            // presence of a prompts map.
+            // TODO(kozistr): This could be replaced with a proper template engine if more complex
+            // prompt structures are needed in the future.
+            let reranker_prompts =
+                prompts.filter(|p| p.contains_key("prefix") || p.contains_key("suffix"));
+
+            if let Some(prompts) = reranker_prompts {
+                let prefix_prompt = prompts.get("prefix").cloned().unwrap_or_default();
+                let suffix_prompt = prompts.get("suffix").cloned().unwrap_or_default();
+                let query_prompt = prompts.get("query").cloned().unwrap_or_default();
+                let document_prompt = prompts.get("document").cloned().unwrap_or_default();
+                let s = format!(
+                    "{prefix_prompt}{query_prompt}{s1}{document_prompt}{s2}{suffix_prompt}"
+                );
+
+                (
+                    None,
+                    tokenizer
+                        .with_truncation(truncate_params)?
+                        .encode::<&str>(&s, add_special_tokens)?,
+                )
+            } else if pre_prompt.is_some() {
                 return Err(TextEmbeddingsError::Validation(
                     "`prompt_name` cannot be set with dual inputs".to_string(),
                 ));
+            } else {
+                (
+                    None,
+                    tokenizer
+                        .with_truncation(truncate_params)?
+                        .encode::<(String, String)>((s1, s2), add_special_tokens)?,
+                )
             }
-
-            (
-                None,
-                tokenizer
-                    .with_truncation(truncate_params)?
-                    .encode::<(String, String)>((s1, s2), add_special_tokens)?,
-            )
         }
         // input is encoded -> convert to tokenizers Encoding
         EncodingInput::Ids(ids) => {

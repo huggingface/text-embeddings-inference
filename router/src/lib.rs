@@ -246,7 +246,38 @@ pub async fn run(
                 .context("Failed to parse `config_sentence_transformers.json`")?,
         );
     }
-    let prompts = new_st_config.and_then(|c| c.prompts);
+    let mut prompts = new_st_config.and_then(|c| c.prompts);
+    // NOTE: Qwen3-Reranker scores a (query, document) pair through a ChatML instruction
+    // template. The checkpoint does not always ship the full
+    // `prefix`/`query`/`document`/`suffix` prompt set, so we inject/overwrite all four
+    // parts here; they are assembled around the pair in
+    // `core::tokenization`. We gate on the *resolved model type* rather than the raw
+    // architecture string, because Qwen3-Embedding shares the `Qwen3ForCausalLM` architecture
+    // identically - only a model actually detected as a classifier/reranker (CausalLM +
+    // `id2label`/`label2id`) must receive the reranker template, and we overwrite even when a
+    // partial `prompts` map is already present.
+    let is_qwen3_reranker = matches!(
+        backend_model_type,
+        text_embeddings_backend::ModelType::Classifier
+    ) && config
+        .architectures
+        .first()
+        .is_some_and(|arch| arch == "Qwen3ForCausalLM");
+    if is_qwen3_reranker {
+        let prompts_map = prompts.get_or_insert_with(HashMap::new);
+
+        let entries = [
+            ("query", "<Instruct>: Given a web search query, retrieve relevant passages that answer the query\n<Query>: "),
+            ("document", "\n<Document>: "),
+            ("prefix", "<|im_start|>system\nJudge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\".<|im_end|>\n<|im_start|>user\n"),
+            ("suffix", "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"),
+        ];
+
+        for (key, value) in entries {
+            prompts_map.insert(key.to_string(), value.to_string());
+        }
+    }
+
     let default_prompt = if let Some(default_prompt_name) = default_prompt_name.as_ref() {
         match &prompts {
             None => {
@@ -412,10 +443,25 @@ fn get_backend_model_type(
         // Edge case affecting `Alibaba-NLP/gte-multilingual-base` and possibly other fine-tunes of
         // the same base model. More context at https://huggingface.co/Alibaba-NLP/gte-multilingual-base/discussions/7
         if arch == "NewForTokenClassification"
-            && (config.id2label.is_none() | config.label2id.is_none())
+            && (config.id2label.is_none() || config.label2id.is_none())
         {
             tracing::warn!("Provided `--model-id` is likely an AlibabaNLP GTE model, but the `config.json` contains the architecture `NewForTokenClassification` but it doesn't contain the `id2label` and `label2id` mapping, so `NewForTokenClassification` architecture will be ignored.");
             continue;
+        }
+
+        // Some causal LM models can also be used as classifiers/rerankers when the `id2label` and
+        // `label2id` mappings are provided in the `config.json`, as is the case for Qwen3-Reranker
+        // (`Qwen3ForCausalLM`).
+        if arch.ends_with("CausalLM") {
+            if config.id2label.is_some() && config.label2id.is_some() {
+                tracing::warn!("Provided `--model-id` is likely a CausalLM, but the `config.json` contains the architecture `{arch}` together with the `id2label` and `label2id` mappings, so it will be treated as a classifier.");
+                return Ok(text_embeddings_backend::ModelType::Classifier);
+            }
+            // The stock Qwen3-Reranker checkpoints do not ship `id2label`/`label2id`, so without
+            // them a reranker is indistinguishable from a plain CausalLM embedding model and is
+            // loaded as an embedding model (and `/rerank` will reject it). Surface that explicitly
+            // so the failure is actionable instead of silent.
+            tracing::warn!("Architecture `{arch}` is a CausalLM without `id2label`/`label2id` in `config.json`; it will be loaded as an embedding model. If this is a reranker (e.g. Qwen3-Reranker), add `id2label`/`label2id` to `config.json` (or use a `--revision` that includes them) to enable `/rerank`.");
         }
 
         if Some(text_embeddings_backend::Pool::Splade) == pooling && arch.ends_with("MaskedLM") {
