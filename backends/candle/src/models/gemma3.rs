@@ -785,6 +785,17 @@ impl Gemma3Model {
             (input_ids, position_ids, input_lengths, Some(attention_bias))
         };
 
+        let attention_bias = match attention_bias {
+            Some(attention_bias) => Some(attention_bias),
+            // Force each attention layer to add its causal or sliding-window mask,
+            // even when an equal-length batch needs no padding bias.
+            None => Some(Tensor::zeros(
+                (batch_size, self.num_attention_heads, max_length, max_length),
+                self.dtype,
+                &self.device,
+            )?),
+        };
+
         let mut hidden_states = self.embed_tokens.forward(&input_ids)?;
 
         let cos = self
