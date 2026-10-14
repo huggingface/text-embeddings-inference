@@ -112,6 +112,8 @@ fn queue_blocking_task(
             QueueCommand::Append(entry, span) => {
                 let _span = span.entered();
                 entries.push_back(*entry);
+                // The entry is counted as queued until it is either dropped by the client or
+                // handed over to the backend as part of a batch (see `record_batch_dispatched`)
                 let gauge = metrics::gauge!("te_queue_size");
                 gauge.increment(1.0);
             }
@@ -142,6 +144,8 @@ fn queue_blocking_task(
                     if entry.metadata.response_tx.is_closed() {
                         let counter = metrics::counter!("te_request_failure", "err" => "dropped");
                         counter.increment(1);
+                        let gauge = metrics::gauge!("te_queue_size");
+                        gauge.decrement(1.0);
                         continue;
                     }
 
@@ -205,11 +209,20 @@ fn queue_blocking_task(
                 histogram.record(batch_size as f64);
                 let histogram = metrics::histogram!("te_batch_next_tokens");
                 histogram.record(current_tokens as f64);
-                let gauge = metrics::gauge!("te_queue_size");
-                gauge.set(entries.len() as f64)
             }
         }
     }
+}
+
+/// Record that a batch pulled from the queue was handed over to the backend for inference.
+///
+/// `te_queue_size` tracks the number of requests waiting for inference: a request is counted from
+/// the moment it is appended to the queue until the batch it belongs to is dispatched to the
+/// backend. Batches are pulled from the queue as soon as one can be prefetched, so the requests of
+/// a prefetched batch are still waiting and must not be removed from the gauge before this point.
+pub(crate) fn record_batch_dispatched(batch_size: usize) {
+    let gauge = metrics::gauge!("te_queue_size");
+    gauge.decrement(batch_size as f64);
 }
 
 pub type NextBatch = (Vec<Metadata>, Batch);
@@ -221,4 +234,136 @@ enum QueueCommand {
         response_sender: oneshot::Sender<Option<NextBatch>>,
         span: Span,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use metrics_util::debugging::{DebugValue, DebuggingRecorder, Snapshotter};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use tokio::runtime::Runtime;
+    use tokio::sync::oneshot::Receiver;
+
+    /// Install a debugging recorder as the global metrics recorder (once per test binary) and
+    /// return its snapshotter
+    fn snapshotter() -> &'static Snapshotter {
+        static SNAPSHOTTER: OnceLock<Snapshotter> = OnceLock::new();
+        SNAPSHOTTER.get_or_init(|| {
+            let recorder = DebuggingRecorder::new();
+            let snapshotter = recorder.snapshotter();
+            recorder
+                .install()
+                .expect("failed to install the debugging metrics recorder");
+            snapshotter
+        })
+    }
+
+    /// `te_queue_size` is global to the test binary: tests reading it must not run concurrently
+    fn queue_size_lock() -> MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Current value of the `te_queue_size` gauge
+    fn queue_size() -> f64 {
+        snapshotter()
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .find(|(key, _, _, _)| key.key().name() == "te_queue_size")
+            .map(|(_, _, _, value)| match value {
+                DebugValue::Gauge(value) => value.0,
+                other => panic!("te_queue_size is not a gauge: {other:?}"),
+            })
+            .unwrap_or(0.0)
+    }
+
+    /// Appends are processed by the background queue task: wait for the gauge to reach `expected`
+    fn wait_for_queue_size(expected: usize) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let value = queue_size();
+            if value == expected as f64 {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "te_queue_size is {value}, expected {expected}"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn append(queue: &Queue, n_tokens: usize) -> Receiver<Result<InferResult, BackendError>> {
+        let (response_tx, response_rx) = oneshot::channel();
+        queue.append(Entry {
+            encoding: ValidEncoding {
+                input_ids: vec![1; n_tokens],
+                token_type_ids: vec![0; n_tokens],
+                position_ids: (0..n_tokens as u32).collect(),
+            },
+            metadata: Metadata {
+                response_tx,
+                tokenization: Duration::ZERO,
+                queue_time: Instant::now(),
+                prompt_tokens: n_tokens,
+                pooling: true,
+            },
+        });
+        response_rx
+    }
+
+    #[test]
+    fn test_queue_size_counts_batched_requests_until_dispatched() {
+        let _lock = queue_size_lock();
+        let runtime = Runtime::new().unwrap();
+        let queue = Queue::new(false, 1024, None, 16);
+
+        let _receivers: Vec<_> = (0..4).map(|_| append(&queue, 8)).collect();
+        wait_for_queue_size(4);
+
+        // The batching task pulls every queued request into a single batch as soon as it can
+        // prefetch one, but the requests are still waiting for the backend
+        let (metadata, batch) = runtime.block_on(queue.next_batch()).unwrap();
+        assert_eq!(metadata.len(), 4);
+        assert_eq!(batch.input_ids.len(), 32);
+        // The queue task processes commands in order: once this second `next_batch` returns, the
+        // metric updates of the first one have been applied
+        assert!(runtime.block_on(queue.next_batch()).is_none());
+        assert_eq!(queue_size(), 4.0);
+
+        // The requests leave the queue once the batch is handed over to the backend
+        record_batch_dispatched(metadata.len());
+        assert_eq!(queue_size(), 0.0);
+    }
+
+    #[test]
+    fn test_queue_size_accounts_for_partial_batches_and_dropped_requests() {
+        let _lock = queue_size_lock();
+        let runtime = Runtime::new().unwrap();
+        // Room for two 8 tokens requests per batch
+        let queue = Queue::new(false, 16, None, 16);
+
+        let _first = append(&queue, 8);
+        let dropped = append(&queue, 8);
+        let _second = append(&queue, 8);
+        let _third = append(&queue, 8);
+        wait_for_queue_size(4);
+
+        // The client of the second request went away before it could be batched
+        drop(dropped);
+
+        let (metadata, _) = runtime.block_on(queue.next_batch()).unwrap();
+        assert_eq!(metadata.len(), 2);
+        record_batch_dispatched(metadata.len());
+
+        // Only the third request is left in the queue
+        let (metadata, _) = runtime.block_on(queue.next_batch()).unwrap();
+        assert_eq!(metadata.len(), 1);
+        assert!(runtime.block_on(queue.next_batch()).is_none());
+        assert_eq!(queue_size(), 1.0);
+
+        record_batch_dispatched(metadata.len());
+        assert_eq!(queue_size(), 0.0);
+    }
 }

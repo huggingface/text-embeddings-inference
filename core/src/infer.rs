@@ -1,4 +1,4 @@
-use crate::queue::{Entry, Metadata, NextBatch, Queue};
+use crate::queue::{record_batch_dispatched, Entry, Metadata, NextBatch, Queue};
 use crate::tokenization::{EncodingInput, RawEncoding, Tokenization};
 use crate::TextEmbeddingsError;
 use std::sync::Arc;
@@ -546,6 +546,8 @@ async fn batching_task(queue: Queue, notify: Arc<Notify>, embed_sender: mpsc::Se
 #[instrument(skip_all)]
 async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextBatch>) {
     while let Some(batch) = embed_receiver.recv().await {
+        record_batch_dispatched(batch.0.len());
+
         match &backend.model_type {
             ModelType::Classifier => {
                 let results = backend.predict(batch.1).await;
