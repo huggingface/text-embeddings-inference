@@ -177,7 +177,7 @@ Options:
           [env: API_KEY=]
 
       --json-output
-          Outputs the logs in JSON format (useful for telemetry)
+          Outputs the logs in JSON format (useful for telemetry). With an OTLP endpoint set, each log line also includes the trace_id and span_id of its span
 
           [env: JSON_OUTPUT=]
 
