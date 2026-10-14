@@ -1,4 +1,4 @@
-use crate::layers::Linear;
+use crate::layers::{LayerNorm, Linear};
 use candle::{Result, Tensor};
 use candle_nn::VarBuilder;
 use serde::Deserialize;
@@ -12,6 +12,8 @@ pub enum DenseActivation {
     #[serde(rename = "torch.nn.modules.linear.Identity")]
     /// e.g. https://huggingface.co/NovaSearch/stella_en_400M_v5/blob/main/2_Dense/config.json
     Identity,
+    #[serde(rename = "torch.nn.modules.activation.GELU")]
+    Gelu,
 }
 
 impl DenseActivation {
@@ -19,8 +21,16 @@ impl DenseActivation {
         match self {
             Self::Tanh => x.tanh(),
             Self::Identity => Ok(x.clone()),
+            Self::Gelu => x.gelu(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum PredictionHeadModuleConfig {
+    Dense(DenseConfig),
+    LayerNorm(LayerNormConfig),
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -31,7 +41,17 @@ pub struct DenseConfig {
     activation_function: Option<DenseActivation>,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct LayerNormConfig {
+    dimension: usize,
+}
+
 pub trait DenseLayer {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
+}
+
+/// A post-pooling scoring-head module (`Dense`/`LayerNorm`) of a modular Sentence Transformers reranker.
+pub trait PredictionHeadModule {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor>;
 }
 
@@ -71,5 +91,31 @@ impl DenseLayer for Dense {
 
         let hidden_states = self.linear.forward(hidden_states)?;
         self.activation.forward(&hidden_states)
+    }
+}
+
+impl PredictionHeadModule for Dense {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        DenseLayer::forward(self, hidden_states)
+    }
+}
+
+#[derive(Debug)]
+pub struct PredictionHeadLayerNorm {
+    layer_norm: LayerNorm,
+}
+
+impl PredictionHeadLayerNorm {
+    pub fn load(vb: VarBuilder, config: &LayerNormConfig) -> Result<Self> {
+        Ok(Self {
+            layer_norm: LayerNorm::load(vb.clone(), config.dimension, 1e-5)
+                .or_else(|_| LayerNorm::load(vb.pp("norm"), config.dimension, 1e-5))?,
+        })
+    }
+}
+
+impl PredictionHeadModule for PredictionHeadLayerNorm {
+    fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        self.layer_norm.forward(hidden_states, None)
     }
 }

@@ -3,7 +3,8 @@ mod common;
 use crate::common::{sort_embeddings, SnapshotEmbeddings};
 use anyhow::Result;
 use common::{
-    batch, cosine_matcher, download_artifacts, load_tokenizer, relative_matcher, SnapshotScores,
+    batch, cosine_matcher, download_artifacts, download_modular_reranker_artifacts, load_tokenizer,
+    relative_matcher, SnapshotScores,
 };
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
@@ -235,6 +236,43 @@ fn test_modernbert_classification_mean_pooling() -> Result<()> {
     let matcher = relative_matcher();
     insta::assert_yaml_snapshot!(
         "modernbert_classification_mean_pooling",
+        predictions_single,
+        &matcher
+    );
+
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn test_modernbert_modular_reranker() -> Result<()> {
+    // Modular reranker: embedding backbone (CLS pooling per `1_Pooling/config.json`)
+    // + a post-pooling Dense -> LayerNorm -> Dense scoring head.
+    let (model_root, head_paths) =
+        download_modular_reranker_artifacts("cross-encoder/ettin-reranker-17m-v1", None)?;
+    let tokenizer = load_tokenizer(&model_root)?;
+
+    let backend = CandleBackend::new_with_post_pooling_prediction(
+        &model_root,
+        "float32".to_string(),
+        ModelType::Embedding(Pool::Cls),
+        Some(head_paths),
+    )?;
+
+    let input_single = batch(
+        vec![tokenizer
+            .encode(("What is Deep Learning?", "Deep Learning is not..."), true)
+            .unwrap()],
+        [0].to_vec(),
+        vec![],
+    );
+
+    let predictions: Vec<Vec<f32>> = backend.predict(input_single)?.into_values().collect();
+    let predictions_single = SnapshotScores::from(predictions);
+
+    let matcher = relative_matcher();
+    insta::assert_yaml_snapshot!(
+        "modernbert_modular_reranker_single",
         predictions_single,
         &matcher
     );

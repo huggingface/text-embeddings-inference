@@ -55,6 +55,8 @@ To explore the list of best performing text embeddings models, visit the
 
 Text Embeddings Inference currently supports CamemBERT, and XLM-RoBERTa Sequence Classification models with absolute positions.
 
+It also supports modular Sentence Transformers cross-encoder re-rankers whose score is produced by a post-pooling head (`Transformer -> Pooling -> Dense -> ... -> Dense`) rather than by a `*ForSequenceClassification` head, such as the ettin reranker family.
+
 Below are some examples of the currently supported models:
 
 | Task               | Model Type  | Model ID                                                                                                        |
@@ -63,6 +65,7 @@ Below are some examples of the currently supported models:
 | Re-Ranking         | XLM-RoBERTa | [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)                                         |
 | Re-Ranking         | GTE         | [Alibaba-NLP/gte-multilingual-reranker-base](https://huggingface.co/Alibaba-NLP/gte-multilingual-reranker-base) |
 | Re-Ranking         | ModernBert  | [Alibaba-NLP/gte-reranker-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-reranker-modernbert-base) |
+| Re-Ranking         | ModernBert  | [ettin reranker family](https://huggingface.co/collections/cross-encoder/ettin-rerankers) |
 | Sentiment Analysis | RoBERTa     | [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions)                     |
 
 ## Supported hardware
