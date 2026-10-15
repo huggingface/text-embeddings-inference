@@ -224,6 +224,10 @@ impl FlashDistilBertModel {
             }
         };
 
+        if pool == Pool::M3Sparse {
+            candle::bail!("`m3_sparse` is not supported for DistilBert")
+        }
+
         let splade = if pool == Pool::Splade {
             Some(DistilBertSpladeHead::load(vb.clone(), config)?)
         } else {
@@ -330,6 +334,7 @@ impl FlashDistilBertModel {
                         (outputs.sum_keepdim(0)? / (batch.max_length as f64))?
                     }
                 }
+                Pool::M3Sparse => unreachable!(),
                 Pool::Splade => {
                     // Unwrap is safe here
                     let splade_head = self.splade.as_ref().unwrap();

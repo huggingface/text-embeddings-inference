@@ -480,7 +480,7 @@ impl ModernBertModel {
     pub fn load(vb: VarBuilder, config: &ModernBertConfig, model_type: ModelType) -> Result<Self> {
         let (pool, classifier) = match model_type {
             ModelType::Classifier => {
-                let pool: Pool = config.classifier_pooling.clone().unwrap_or(Pool::Cls);
+                let pool: Pool = config.classifier_pooling.unwrap_or(Pool::Cls);
 
                 let classifier: Box<dyn ClassificationHead + Send> =
                     Box::new(ModernBertClassificationHead::load(vb.clone(), config)?);
@@ -490,6 +490,9 @@ impl ModernBertModel {
             ModelType::Embedding(pool) => {
                 if pool == Pool::Splade {
                     candle::bail!("`splade` is not supported for ModernBert")
+                }
+                if pool == Pool::M3Sparse {
+                    candle::bail!("`m3_sparse` is not supported for ModernBert")
                 }
 
                 if pool == Pool::LastToken {
@@ -743,7 +746,7 @@ impl ModernBertModel {
 
             let pooled_embeddings = match self.pool {
                 Pool::Cls => outputs.i((.., 0))?,
-                Pool::LastToken | Pool::Splade => unreachable!(),
+                Pool::LastToken | Pool::Splade | Pool::M3Sparse => unreachable!(),
                 Pool::Mean => {
                     if let Some(ref attention_mask) = attention_mask {
                         let mut attention_mask = attention_mask.clone();

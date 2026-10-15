@@ -125,10 +125,10 @@ impl Infer {
     ) -> Result<AllEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
 
-        if self.is_splade() {
+        if self.is_sparse() {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
             counter.increment(1);
-            let message = "`embed_all` is not available for SPLADE models".to_string();
+            let message = "`embed_all` is not available for sparse-pooling models".to_string();
             tracing::error!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
@@ -176,10 +176,12 @@ impl Infer {
     ) -> Result<PooledEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
 
-        if !self.is_splade() {
+        if !self.is_sparse() {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
             counter.increment(1);
-            let message = "Model is not an embedding model with SPLADE pooling".to_string();
+            let message =
+                "Model is not an embedding model with sparse (`splade` / `m3_sparse`) pooling"
+                    .to_string();
             tracing::error!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
@@ -234,11 +236,11 @@ impl Infer {
     ) -> Result<PooledEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
 
-        if self.is_splade() && normalize {
+        if self.is_sparse() && normalize {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
             counter.increment(1);
 
-            let message = "`normalize` is not available for SPLADE models".to_string();
+            let message = "`normalize` is not available for sparse-pooling models".to_string();
             tracing::error!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
@@ -502,11 +504,15 @@ impl Infer {
         matches!(self.backend.model_type, ModelType::Classifier)
     }
 
+    /// Whether the model pools into a sparse vector (SPLADE or bge-m3 `m3_sparse`), which is
+    /// what `embed_sparse` serves and what rules out `embed_all` / `normalize`.
     #[instrument(skip(self))]
-    pub fn is_splade(&self) -> bool {
+    pub fn is_sparse(&self) -> bool {
         matches!(
             self.backend.model_type,
-            ModelType::Embedding(text_embeddings_backend::Pool::Splade)
+            ModelType::Embedding(
+                text_embeddings_backend::Pool::Splade | text_embeddings_backend::Pool::M3Sparse
+            )
         )
     }
 

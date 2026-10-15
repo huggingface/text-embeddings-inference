@@ -4579,6 +4579,7 @@ dependencies = [
  "clap",
  "nohash-hasher",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
 ]
 
