@@ -26,7 +26,7 @@ use crate::models::{
     DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, Gemma3Config, Gemma3Model,
     JinaBertModel, JinaCodeBertModel, LlamaConfig, MPNetConfig, MPNetModel, MistralConfig, Model,
     ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Pplx1Config, Pplx1Model,
-    Qwen2Config, Qwen3Config, Qwen3Model,
+    Qwen2Config, Qwen3Config, Qwen3Model, SiglipConfig, SiglipTextModel,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
@@ -151,6 +151,8 @@ enum Config {
     #[allow(dead_code)]
     #[serde(alias = "llama_bidirec")]
     Llama(LlamaConfig),
+    #[serde(alias = "siglip")]
+    Siglip(SiglipConfig),
 }
 
 pub struct CandleBackend {
@@ -374,6 +376,13 @@ impl CandleBackend {
                     tracing::info!("Starting Pplx1 model on {:?}", device);
                     Ok(Box::new(Pplx1Model::load(vb, &config, model_type).s()?))
                 }
+            }
+            (Config::Siglip(config), _) => {
+                tracing::info!("Starting SigLIP model on {:?}", device);
+                Ok(Box::new(
+                    SiglipTextModel::load(vb.pp("text_model"), &config.text_config, model_type)
+                        .s()?,
+                ))
             }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
