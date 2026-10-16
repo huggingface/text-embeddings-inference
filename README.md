@@ -321,6 +321,13 @@ Options:
           [env: PROMETHEUS_PORT=]
           [default: 9000]
 
+      --warmup-tokens <WARMUP_TOKENS>
+          Control the number of tokens used for model warmup (a synthetic inference pass that can pre-allocate memory and trigger kernel compilation).
+
+          Defaults to `min(max_input_length, max_batch_tokens)` on CPU and `max_batch_tokens` on GPU. Set to `0` to skip the explicit warmup pass for fast cold-start scenarios like CPU spot instances. Positive values are ignored by HPU and ROCm backends, which use backend-specific warmup.
+
+          [env: WARMUP_TOKENS=]
+
       --cors-allow-origin <CORS_ALLOW_ORIGIN>
           Unused for gRPC servers
 
