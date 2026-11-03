@@ -13,10 +13,10 @@ FROM chef AS planner
 COPY backends backends
 COPY core core
 COPY router router
-COPY Cargo.toml ./
-COPY Cargo.lock ./
+COPY Cargo.toml Cargo.toml
+COPY Cargo.lock Cargo.lock
 
-RUN cargo chef prepare  --recipe-path recipe.json
+RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 
@@ -48,8 +48,8 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
 COPY backends backends
 COPY core core
 COPY router router
-COPY Cargo.toml ./
-COPY Cargo.lock ./
+COPY Cargo.toml Cargo.toml
+COPY Cargo.lock Cargo.lock
 
 FROM builder AS http-builder
 
