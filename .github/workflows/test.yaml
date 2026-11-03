@@ -2,47 +2,170 @@ name: Run basic tests
 
 on:
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR to test (leave empty for the selected trusted ref)
+        type: string
+      head_sha:
+        description: Exact reviewed PR head SHA (required with pr_number)
+        type: string
   push:
-    branches:
-      - "main"
-  pull_request:
+    branches: [main]
     paths:
-      - ".github/workflows/build.yaml"
-      - ".github/workflows/matrix.json"
-      - "integration-tests/**"
+      - ".github/workflows/test.yaml"
+      - "integration_tests/**"
       - "backends/**"
       - "core/**"
       - "router/**"
+      - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - "Dockerfile"
-    branches:
-      - "main"
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions: {}
 
+concurrency:
+  group: tests-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  RUSTC_WRAPPER: sccache
+
 jobs:
   tests:
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.job }}-${{ github.head_ref || github.run_id }}
-      cancel-in-progress: true
-    runs-on:
-      group: aws-highmemory-32-plus-priv
+      pull-requests: read
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c  # v1.15.2
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad  # v0.0.9
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          version: "v0.10.0"
-      - name: Compile project
-        env:
-          SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: "sccache"
-          HF_TOKEN: ${{ secrets.HF_HUB_READ_TOKEN }}
+          persist-credentials: false
+      - name: Select CPU checks
+        id: changes
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              ...context.repo, pull_number: context.issue.number, per_page: 100,
+            });
+            const paths = files.flatMap(file => [file.filename, file.previous_filename].filter(Boolean));
+            core.setOutput('rust', files.length < context.payload.pull_request.changed_files || paths.some(path =>
+              path.endsWith('.rs') || path.endsWith('Cargo.toml') || path === 'Cargo.lock' ||
+              path === 'rust-toolchain.toml' || path.startsWith('.cargo/') || path.startsWith('.github/workflows/')));
+      - if: steps.changes.outputs.rust == 'true'
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+      - if: steps.changes.outputs.rust == 'true'
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: v0.10.0
+      - name: Configure sccache
+        if: steps.changes.outputs.rust == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const {execFileSync} = require('node:child_process');
+            const {createHash} = require('node:crypto');
+            const features = execFileSync('rustc', ['--print', 'cfg', '-C', 'target-cpu=native']);
+            core.exportVariable('SCCACHE_GHA_VERSION', createHash('sha256').update(features).digest('hex').slice(0, 16));
+            core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
+            for (const key of ['ACTIONS_CACHE_URL', 'ACTIONS_RESULTS_URL', 'ACTIONS_RUNTIME_TOKEN', 'ACTIONS_CACHE_SERVICE_V2']) {
+              core.exportVariable(key, process.env[key] || '');
+            }
+      - name: Run focused CPU tests without model downloads
+        if: steps.changes.outputs.rust == 'true'
         run: |
-          sudo apt-get update && sudo apt-get install protobuf-compiler -y
-          cargo test --profile=release-debug
+          cargo test --locked -p text-embeddings-backend -F candle --lib
+          cargo test --locked -p text-embeddings-core --features text-embeddings-backend/candle,hf-hub/ureq --lib -- --skip tokenization::tests::tokenizer
+          cargo test --locked -p text-embeddings-backend-candle --lib
+      - name: Compiler cache statistics
+        if: always() && steps.changes.outputs.rust == 'true'
+        run: sccache --show-stats
+
+  approve:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      sha: ${{ steps.approve.outputs.sha }}
+      is_pr: ${{ steps.approve.outputs.is_pr }}
+    steps:
+      - id: approve
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          REQUEST_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            const {data} = await github.rest.repos.getCollaboratorPermissionLevel({
+              ...context.repo, username: process.env.REQUEST_ACTOR,
+            });
+            if (!['write', 'maintain', 'admin'].includes(data.permission)) throw new Error('Repository write permission is required.');
+            const inputs = context.payload.inputs || {};
+            let sha = context.sha;
+            if (inputs.pr_number) {
+              if (!/^[1-9][0-9]*$/.test(inputs.pr_number)) throw new Error('Invalid PR number.');
+              const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: Number(inputs.pr_number)});
+              if (pr.state !== 'open' || pr.base.ref !== 'main' ||
+                  !/^[a-f0-9]{40}$/i.test(inputs.head_sha || '') || pr.head.sha !== inputs.head_sha.toLowerCase()) {
+                throw new Error('Choose an open PR targeting main and its exact current reviewed head SHA.');
+              }
+              sha = pr.head.sha;
+            }
+            core.setOutput('sha', sha);
+            core.setOutput('is_pr', String(Boolean(inputs.pr_number)));
+
+  model-tests:
+    needs: approve
+    if: always() && !cancelled() && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && needs.approve.result == 'success'))
+    runs-on: ${{ fromJSON(needs.approve.outputs.is_pr == 'true' && '"ubuntu-latest"' || '{"group":"aws-highmemory-32-plus-priv"}') }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout selected source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.approve.outputs.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: v0.10.0
+      - uses: arduino/setup-protoc@149f6c87b92550901b26acd1632e11c3662e381f # v1
+      - name: Configure compiler cache
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          PR_VALIDATION: ${{ needs.approve.outputs.is_pr }}
+        with:
+          script: |
+            const {execFileSync} = require('node:child_process');
+            const {createHash} = require('node:crypto');
+            const features = execFileSync('rustc', ['--print', 'cfg', '-C', 'target-cpu=native']);
+            core.exportVariable('SCCACHE_GHA_VERSION', createHash('sha256').update(features).digest('hex').slice(0, 16));
+            core.exportVariable('SCCACHE_GHA_ENABLED', process.env.PR_VALIDATION === 'true' ? 'off' : 'on');
+            if (process.env.PR_VALIDATION === 'true') {
+              core.exportVariable('HF_HOME', `${process.env.RUNNER_TEMP}/tei-public-models`);
+            } else {
+              for (const key of ['ACTIONS_CACHE_URL', 'ACTIONS_RESULTS_URL', 'ACTIONS_RUNTIME_TOKEN', 'ACTIONS_CACHE_SERVICE_V2']) {
+                core.exportVariable(key, process.env[key] || '');
+              }
+            }
+      - name: Run approved PR public-model tests
+        if: needs.approve.outputs.is_pr == 'true'
+        run: cargo test --locked --profile=release-debug -p text-embeddings-backend-candle --test test_bert --test test_debertav2 --test test_qwen3
+      - name: Run trusted model suite
+        if: needs.approve.outputs.is_pr != 'true'
+        env:
+          HF_TOKEN: ${{ secrets.HF_HUB_READ_TOKEN }}
+        run: cargo test --locked --profile=release-debug
+      - name: Compiler cache statistics
+        if: always()
+        run: sccache --show-stats

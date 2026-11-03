@@ -109,3 +109,25 @@ motivated individuals from other organizations join us as maintainers with the g
 service for embedding models on production on production.
 
 If you are such an individual (or organization), please reach out to us and let's collaborate.
+
+## CI checks and maintainer-requested builds
+
+Pull requests run formatting/lint checks and focused CPU library tests. Documentation-only PRs skip Rust compilation. The image matrix and tests that download models are skipped on ordinary PR runs; GitHub's own fork-workflow approval setting still applies before any workflow can start.
+
+A maintainer with repository write access can request the expensive checks from the Actions tab or CLI after reviewing the exact PR head:
+
+```bash
+# Replace both values with the PR and the full reviewed head SHA.
+gh workflow run test.yaml --ref main -f pr_number=123 -f head_sha=FULL_HEAD_SHA
+gh workflow run build.yaml --ref main -f pr_number=123 -f head_sha=FULL_HEAD_SHA -f variants=cpu
+```
+
+For images, `variants` accepts comma-separated names from `.github/workflows/matrix.json`, or `all`. It defaults to `cpu`. Each new PR revision needs a new request; a stale SHA is rejected. PR validation never publishes images or receives registry/AWS/model-read secrets. Public-model tests use hosted runners, and manually selected PR code cannot export shared compiler or image caches.
+
+Relevant main pushes run the trusted model suite and publish images; documentation-only pushes do not rebuild images. Isolated Dockerfile changes select their matching variants. Release tags build the full image matrix and are not superseded by later runs. A non-PR manual image build is validation-only unless `publish=true` is explicitly selected on main or a release tag.
+
+The existing pinned sccache uses cache API v2 in Docker builds and GitHub runtime cache settings on runners, with incremental compilation disabled for cacheable Rust builds and native-CPU feature isolation for host compiler caches. Image layers keep per-variant HTTP/gRPC scopes. Trusted publishing uses the configured S3 cache when available; otherwise it uses GitHub's cache. Missing AWS configuration is skipped rather than failing a validation build. Cache statistics remain available even when compilation fails.
+
+Documentation changes use the pinned doc-builder workflow. Its existing bot publishes the preview URL. A separate trusted `workflow_run` job reports build/publication problems in a sticky comment and clears that failure status after a successful publication. It ignores closed PRs, ambiguous fork branches, and stale heads, and never checks out or executes the PR's code with documentation-publishing credentials. `HF_DOC_BUILD_PUSH` enables preview uploads; `COMMENT_BOT_TOKEN` is optional because the reporter can use `GITHUB_TOKEN`.
+
+These maintainer-dispatch and reporting changes become available on the default branch after this CI PR is merged. Required-check rules should use the lightweight checks; optional model/image jobs are intentionally skipped until requested.
