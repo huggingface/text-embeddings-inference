@@ -243,8 +243,12 @@ impl NomicRouter {
             let mut indices_chunks = Vec::with_capacity(nrows.div_ceil(MAX_TOPK_ROWS));
             for start in (0..nrows).step_by(MAX_TOPK_ROWS) {
                 let len = usize::min(MAX_TOPK_ROWS, nrows - start);
-                let TopKOutput { values, indices } =
-                    weights.narrow(0, start, len)?.topk(self.moe_top_k)?;
+                // `narrow` keeps the parent's start offset, which candle's CPU
+                // arg_sort ignores, so force a fresh, offset-free copy.
+                let TopKOutput { values, indices } = weights
+                    .narrow(0, start, len)?
+                    .force_contiguous()?
+                    .topk(self.moe_top_k)?;
                 values_chunks.push(values);
                 indices_chunks.push(indices);
             }
@@ -1006,5 +1010,42 @@ impl Model for NomicBertModel {
 
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chunked_router_matches_unchunked_cpu_topk() -> Result<()> {
+        let device = &Device::Cpu;
+        let router = NomicRouter {
+            layer: Linear::new(Tensor::eye(8, DType::F32, device)?, None, None),
+            moe_top_k: 2,
+            span: tracing::Span::none(),
+        };
+        for nrows in [65_535, 65_536, 131_071] {
+            let data: Vec<f32> = (0..nrows * 8)
+                .map(|i| ((i * 13 + i / 8 * 3) % 97) as f32 / 97.0)
+                .collect();
+            let input = Tensor::from_vec(data, (nrows, 8), device)?;
+            let reference = candle_nn::ops::softmax_last_dim(&input)?.topk(2)?;
+            let (values, indices) = router.forward(&input)?;
+            let actual_indices = indices.to_vec2::<u32>()?;
+            let expected_indices = reference.indices.to_vec2::<u32>()?;
+            let actual_values = values.to_vec2::<f32>()?;
+            let expected_values = reference.values.to_vec2::<f32>()?;
+            for row in 0..nrows {
+                assert_eq!(
+                    actual_indices[row], expected_indices[row],
+                    "rows={nrows}, row={row}"
+                );
+                for (actual, expected) in actual_values[row].iter().zip(&expected_values[row]) {
+                    assert!((actual - expected).abs() < 1e-6, "rows={nrows}, row={row}");
+                }
+            }
+        }
+        Ok(())
     }
 }
