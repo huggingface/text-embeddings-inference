@@ -1211,10 +1211,13 @@ impl DebertaV2Model {
             attention_mask.as_ref(),
         )?;
 
-        let encoder_attention_mask = attention_mask
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| Tensor::ones(shape, self.dtype, &self.device).unwrap());
+        // The encoder expects a (batch, seq_len) mask, from which it builds the pairwise
+        // (query, key) mask. The (batch, seq_len, 1) mask above would be taken as already
+        // expanded and only mask padded queries, so real tokens would attend to padding.
+        let encoder_attention_mask = match attention_mask.as_ref() {
+            Some(mask) => mask.squeeze(2)?,
+            None => Tensor::ones(shape, self.dtype, &self.device)?,
+        };
         let encoder_output =
             self.encoder
                 .forward(&embedding_output, &encoder_attention_mask, None, None)?;
