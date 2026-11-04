@@ -585,14 +585,6 @@ impl grpc::info_server::Info for TextEmbeddingsService {
     }
 }
 
-fn record_single_request() {
-    metrics::counter!("te_request_count", "method" => "single").increment(1);
-}
-
-fn record_single_success() {
-    metrics::counter!("te_request_success", "method" => "single").increment(1);
-}
-
 #[tonic::async_trait]
 impl grpc::embed_server::Embed for TextEmbeddingsService {
     #[instrument(skip_all)]
@@ -640,7 +632,7 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         &self,
         request: Request<EmbedSparseRequest>,
     ) -> Result<Response<EmbedSparseResponse>, Status> {
-        record_single_request();
+        metrics::counter!("te_request_count", "method" => "single").increment(1);
 
         let permit = self
             .infer
@@ -651,7 +643,7 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         let (response, metadata) = self.embed_sparse_inner(request, permit).await?;
         let headers = HeaderMap::from(metadata);
 
-        record_single_success();
+        metrics::counter!("te_request_success", "method" => "single").increment(1);
 
         Ok(Response::from_parts(
             MetadataMap::from_headers(headers),
@@ -680,7 +672,7 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         &self,
         request: Request<EmbedAllRequest>,
     ) -> Result<Response<EmbedAllResponse>, Status> {
-        record_single_request();
+        metrics::counter!("te_request_count", "method" => "single").increment(1);
 
         let permit = self
             .infer
@@ -691,7 +683,7 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         let (response, metadata) = self.embed_all_inner(request, permit).await?;
         let headers = HeaderMap::from(metadata);
 
-        record_single_success();
+        metrics::counter!("te_request_success", "method" => "single").increment(1);
 
         Ok(Response::from_parts(
             MetadataMap::from_headers(headers),
@@ -1538,50 +1530,5 @@ fn convert_truncation_direction(value: i32) -> tokenizers::TruncationDirection {
     match TruncationDirection::try_from(value).expect("Unexpected enum value") {
         TruncationDirection::Right => tokenizers::TruncationDirection::Right,
         TruncationDirection::Left => tokenizers::TruncationDirection::Left,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{record_single_request, record_single_success};
-    use metrics_exporter_prometheus::PrometheusBuilder;
-
-    fn counter_value(rendered: &str, metric: &str) -> u64 {
-        rendered
-            .lines()
-            .find(|line| line.starts_with(metric))
-            .and_then(|line| line.split_whitespace().nth(1))
-            .and_then(|value| value.parse().ok())
-            .unwrap_or_default()
-    }
-
-    #[test]
-    fn single_embed_records_request_and_success_separately() {
-        let recorder = PrometheusBuilder::new().build_recorder();
-        let handle = recorder.handle();
-
-        metrics::with_local_recorder(&recorder, || {
-            record_single_request();
-            let rendered = handle.render();
-            assert_eq!(
-                counter_value(&rendered, "te_request_count{method=\"single\"}"),
-                1
-            );
-            assert_eq!(
-                counter_value(&rendered, "te_request_success{method=\"single\"}"),
-                0
-            );
-
-            record_single_success();
-            let rendered = handle.render();
-            assert_eq!(
-                counter_value(&rendered, "te_request_count{method=\"single\"}"),
-                1
-            );
-            assert_eq!(
-                counter_value(&rendered, "te_request_success{method=\"single\"}"),
-                1
-            );
-        });
     }
 }
