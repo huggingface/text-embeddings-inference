@@ -460,19 +460,11 @@ impl Infer {
         if !raw_scores {
             // Softmax
             if response.results.len() > 1 {
-                let max = *response
-                    .results
-                    .iter()
-                    .max_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap())
-                    .unwrap();
-
-                let mut den = 0.0;
-                for v in response.results.iter_mut() {
-                    *v = (*v - max).exp();
-                    den += *v;
-                }
-                for v in response.results.iter_mut() {
-                    *v /= den;
+                if let Err(err) = softmax(&mut response.results) {
+                    let counter = metrics::counter!("te_request_failure", "err" => "inference");
+                    counter.increment(1);
+                    tracing::error!("{err}");
+                    return Err(TextEmbeddingsError::Backend(err));
                 }
             }
             // Sigmoid
@@ -630,6 +622,27 @@ async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextB
     }
 }
 
+/// In-place softmax over classification scores.
+///
+/// Returns an error if any score is not finite.
+fn softmax(scores: &mut [f32]) -> Result<(), BackendError> {
+    if scores.iter().any(|s| !s.is_finite()) {
+        return Err(BackendError::Inference("score is not finite".to_string()));
+    }
+
+    let max = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+
+    let mut den = 0.0;
+    for v in scores.iter_mut() {
+        *v = (*v - max).exp();
+        den += *v;
+    }
+    for v in scores.iter_mut() {
+        *v /= den;
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct InferMetadata {
     pub prompt_tokens: usize,
@@ -661,4 +674,43 @@ pub struct PooledEmbeddingsInferResponse {
 pub struct AllEmbeddingsInferResponse {
     pub results: Vec<Vec<f32>>,
     pub metadata: InferMetadata,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn softmax_normalizes_scores() {
+        let mut scores = vec![1.0, 2.0, 3.0];
+        softmax(&mut scores).unwrap();
+        assert!((scores.iter().sum::<f32>() - 1.0).abs() < 1e-6);
+        assert!(scores[0] < scores[1] && scores[1] < scores[2]);
+    }
+
+    #[test]
+    fn softmax_handles_large_mixed_sign_scores() {
+        for (mut scores, expected) in [
+            (vec![-100.0, 0.0], [0.0, 1.0]),
+            (vec![100.0, -200.0], [1.0, 0.0]),
+            (vec![-1000.0, -1001.0], [0.7310586, 0.26894143]),
+            (vec![1000.0, 1001.0], [0.26894143, 0.7310586]),
+        ] {
+            softmax(&mut scores).unwrap();
+            assert!(scores.iter().all(|score| score.is_finite()));
+            assert!((scores.iter().sum::<f32>() - 1.0).abs() < 1e-6);
+            for (actual, expected) in scores.iter().zip(expected) {
+                assert!((actual - expected).abs() < 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn softmax_rejects_non_finite_scores() {
+        for score in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut scores = vec![1.0, score, 3.0];
+            let err = softmax(&mut scores).unwrap_err();
+            assert!(matches!(&err, BackendError::Inference(m) if m == "score is not finite"));
+        }
+    }
 }
