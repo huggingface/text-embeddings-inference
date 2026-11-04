@@ -10,6 +10,13 @@ on:
       - doc-builder*
       - v*-release
 
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-main-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
    build:
     uses: huggingface/doc-builder/.github/workflows/build_main_documentation.yml@145b9d4f6ab65ad3af87c66773b2c43294e52446  # main

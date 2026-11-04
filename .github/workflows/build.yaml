@@ -2,113 +2,216 @@ name: Build and push docker image to registry
 
 on:
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR to validate (leave empty for the selected ref)
+        type: string
+      head_sha:
+        description: Optional expected PR head SHA (blank selects the current revision)
+        type: string
+      variants:
+        description: Comma-separated matrix names, or all
+        default: cpu
+        type: string
+      publish:
+        description: Publish images (main/release tags only; never PRs)
+        default: false
+        type: boolean
   push:
     branches:
       - "main"
     tags:
       - "v*"
+    paths:
+      - ".github/workflows/build.yaml"
+      - ".github/workflows/matrix.json"
+      - "backends/**"
+      - "core/**"
+      - "router/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "Dockerfile*"
+      - "cuda-entrypoint.sh"
+      - "cuda-all-entrypoint.sh"
   pull_request:
     paths:
       - ".github/workflows/build.yaml"
       - ".github/workflows/matrix.json"
-      - "integration-tests/**"
       - "backends/**"
       - "core/**"
       - "router/**"
+      - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - "Dockerfile*"
+      - "cuda-entrypoint.sh"
+      - "cuda-all-entrypoint.sh"
     branches:
       - "main"
 
 permissions: {}
 
+concurrency:
+  group: images-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   matrix:
+    if: github.event_name != 'pull_request'
     permissions:
       contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
+      sha: ${{ steps.set-matrix.outputs.sha }}
+      is_pr: ${{ steps.set-matrix.outputs.is_pr }}
+      publish: ${{ steps.set-matrix.outputs.publish }}
+      run: ${{ steps.set-matrix.outputs.run }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
       - id: set-matrix
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         env:
-          GITHUB_REF: ${{ github.ref }}
-        run: |
-          branchName=$(echo $GITHUB_REF | sed 's,refs/heads/,,g')
-          matrix=$(jq --arg branchName "$branchName" 'map(. | select((.runOn==$branchName) or (.runOn=="always")) )' .github/workflows/matrix.json)
-          echo "{\"include\":$(echo $matrix)}"
-          echo ::set-output name=matrix::{\"include\":$(echo $matrix)}\"
+          REQUEST_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            const inputs = context.payload.inputs || {};
+            let sha = context.sha;
+            let isPR = false;
+            let publish = context.eventName === 'push';
+            let matrix = require('./.github/workflows/matrix.json');
+            if (context.eventName === 'workflow_dispatch') {
+              const {data} = await github.rest.repos.getCollaboratorPermissionLevel({
+                ...context.repo, username: process.env.REQUEST_ACTOR,
+              });
+              if (!['write', 'maintain', 'admin'].includes(data.permission)) {
+                throw new Error('Manual builds require repository write permission.');
+              }
+              if (inputs.pr_number) {
+                if (!/^[1-9][0-9]*$/.test(inputs.pr_number)) throw new Error('Invalid PR number.');
+                const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: Number(inputs.pr_number)});
+                if (pr.state !== 'open' || pr.base.ref !== 'main' ||
+                    (inputs.head_sha && (!/^[a-f0-9]{40}$/i.test(inputs.head_sha) || pr.head.sha !== inputs.head_sha.toLowerCase()))) {
+                  throw new Error('Choose an open PR targeting main; an optional head SHA must match its current revision.');
+                }
+                sha = pr.head.sha;
+                isPR = true;
+              }
+              publish = inputs.publish === 'true';
+              if (publish && (isPR || !(context.ref === 'refs/heads/main' || context.ref.startsWith('refs/tags/v')))) {
+                throw new Error('Only main/release tags can publish; PR validation never publishes.');
+              }
+              const variants = (inputs.variants || 'cpu').split(',').map(value => value.trim());
+              if (!(variants.length === 1 && variants[0] === 'all')) {
+                if (variants.some(name => !matrix.some(item => item.name === name))) throw new Error('Unknown image variant.');
+                matrix = matrix.filter(item => variants.includes(item.name));
+              }
+            } else if (!context.ref.startsWith('refs/tags/') && !/^0+$/.test(context.payload.before || '')) {
+              const {data} = await github.rest.repos.compareCommitsWithBasehead({
+                ...context.repo, basehead: `${context.payload.before}...${sha}`,
+              });
+              const files = (data.files || []).flatMap(file => [file.filename, file.previous_filename].filter(Boolean));
+              // A capped diff must keep full coverage. Otherwise scope isolated
+              // Dockerfile changes without rebuilding every architecture/backend.
+              if (files.length > 0 && data.files.length < 300 && files.every(file => file.startsWith('Dockerfile'))) {
+                matrix = matrix.filter(item => files.includes(item.dockerfile));
+              }
+            }
+            core.setOutput('run', String(matrix.length > 0));
+            core.setOutput('matrix', JSON.stringify({include: matrix}));
+            core.setOutput('sha', sha);
+            core.setOutput('is_pr', String(isPR));
+            core.setOutput('publish', String(publish));
+            await core.summary.addHeading('Image selection').addRaw(
+              `${isPR ? 'Approved PR validation' : 'Trusted ref'} at ${sha}; variants: ${matrix.map(item => item.name).join(', ')}; publish: ${publish}.`
+            ).write();
 
   build-and-push-image:
     needs: matrix
+    if: github.event_name != 'pull_request' && needs.matrix.outputs.run == 'true'
     strategy:
+      max-parallel: 2
       matrix: ${{fromJson(needs.matrix.outputs.matrix)}}
     concurrency:
       group: ${{ github.workflow }}-${{ github.job }}-${{matrix.name}}-${{ github.head_ref || github.run_id }}
       cancel-in-progress: true
-    runs-on:
-      group: ${{ matrix.platform == 'linux/arm64' && 'aws-r8g-8xl-plus-nix' || 'aws-highmemory-32-plus-priv' }}
+    runs-on: ${{ fromJSON(needs.matrix.outputs.is_pr == 'true' && (matrix.platform == 'linux/arm64' && '"ubuntu-24.04-arm"' || '"ubuntu-latest"') || (matrix.platform == 'linux/arm64' && '{"group":"aws-r8g-8xl-plus-nix"}' || '{"group":"aws-highmemory-32-plus-priv"}')) }}
     permissions:
-      contents: write
+      contents: read
       packages: write
       # This is used to complete the identity challenge
       # with sigstore/fulcio when running outside of PRs.
       id-token: write
-      security-events: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
           submodules: true
+          ref: ${{ needs.matrix.outputs.sha }}
+          persist-credentials: false
 
       - name: Initialize Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
         with:
-          install: true
-          buildkitd-config: /tmp/buildkitd.toml
+          buildkitd-config: ${{ needs.matrix.outputs.is_pr != 'true' && '/tmp/buildkitd.toml' || '' }}
 
       - name: Configure sccache
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8
+        env:
+          SOURCE_SHA: ${{ needs.matrix.outputs.sha }}
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8.0.0
         with:
           script: |
-            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-
-      - name: Inject slug/short variables
-        uses: rlespinasse/github-slug-action@797d68864753cbceedc271349d402da4590e6302  # v4
+            core.exportVariable('GITHUB_SHA_SHORT', process.env.SOURCE_SHA.slice(0, 7));
+            for (const key of ['ACTIONS_CACHE_URL', 'ACTIONS_RESULTS_URL', 'ACTIONS_RUNTIME_TOKEN', 'ACTIONS_CACHE_SERVICE_V2']) {
+              core.exportVariable(key, process.env[key] || '');
+            }
 
       - name: Login to internal Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
+        if: needs.matrix.outputs.publish == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3.7.0
         with:
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
           registry: registry.internal.huggingface.tech
 
       - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
+        if: needs.matrix.outputs.publish == 'true'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Select cache backend
+        id: cache-backend
+        env:
+          PUBLISH: ${{ needs.matrix.outputs.publish }}
+          AWS_ROLE: ${{ needs.matrix.outputs.publish == 'true' && secrets.AWS_ROLE_GITHUB_BUILDX_CACHE || '' }}
+          AWS_BUCKET: ${{ vars.AWS_S3BUCKET_GITHUB_BUILDX_CACHE }}
+        run: |
+          if [ "$PUBLISH" = true ] && [ -n "$AWS_ROLE" ] && [ -n "$AWS_BUCKET" ]; then
+            echo 's3=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 's3=false' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: configure aws credentials
         id: aws-creds
+        if: steps.cache-backend.outputs.s3 == 'true'
         uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708  # v5.1.1
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_GITHUB_BUILDX_CACHE }}
+          role-to-assume: ${{ needs.matrix.outputs.publish == 'true' && secrets.AWS_ROLE_GITHUB_BUILDX_CACHE || '' }}
           role-duration-seconds: 7200
           aws-region: us-east-1
           output-credentials: true
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051  # v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051  # v5.10.0
         with:
           images: |
             registry.internal.huggingface.tech/api-inference/text-embeddings-inference
@@ -123,32 +226,32 @@ jobs:
 
       - name: Build and push Docker image
         id: build-and-push
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
         env:
           DOCKER_BUILD_SUMMARY: false
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ needs.matrix.outputs.publish == 'true' }}
           platforms: ${{ matrix.platform || 'linux/amd64' }}
           build-args: |
-            SCCACHE_GHA_ENABLED=${{ matrix.sccache }}
+            SCCACHE_GHA_ENABLED=${{ needs.matrix.outputs.is_pr != 'true' && matrix.sccache }}
             CUDA_COMPUTE_CAP=${{ matrix.cudaComputeCap }}
-            GIT_SHA=${{ env.GITHUB_SHA }}
+            GIT_SHA=${{ needs.matrix.outputs.sha }}
             DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
             ${{matrix.extraBuildArgs}}
           secrets: |
-            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
-            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ needs.matrix.outputs.is_pr != 'true' && env.ACTIONS_RESULTS_URL || '' }}
+            actions_runtime_token=${{ needs.matrix.outputs.is_pr != 'true' && env.ACTIONS_RUNTIME_TOKEN || '' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=s3,region=us-east-1,bucket=${{ vars.AWS_S3BUCKET_GITHUB_BUILDX_CACHE }},name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ steps.aws-creds.outputs.aws-access-key-id }},secret_access_key=${{ steps.aws-creds.outputs.aws-secret-access-key }},session_token=${{ steps.aws-creds.outputs.aws-session-token }},mode=max
-          cache-to: type=s3,region=us-east-1,bucket=${{ vars.AWS_S3BUCKET_GITHUB_BUILDX_CACHE }},name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ steps.aws-creds.outputs.aws-access-key-id }},secret_access_key=${{ steps.aws-creds.outputs.aws-secret-access-key }},session_token=${{ steps.aws-creds.outputs.aws-session-token }},mode=max
+          cache-from: ${{ steps.cache-backend.outputs.s3 == 'true' && format('type=s3,region=us-east-1,bucket={0},name=text-embeddings-inference-cache-{1}-http,access_key_id={2},secret_access_key={3},session_token={4},mode=max', vars.AWS_S3BUCKET_GITHUB_BUILDX_CACHE, matrix.name, steps.aws-creds.outputs.aws-access-key-id, steps.aws-creds.outputs.aws-secret-access-key, steps.aws-creds.outputs.aws-session-token) || format('type=gha,version=2,scope=tei-{0}-http', matrix.name) }}
+          cache-to: ${{ needs.matrix.outputs.is_pr != 'true' && (steps.cache-backend.outputs.s3 == 'true' && format('type=s3,region=us-east-1,bucket={0},name=text-embeddings-inference-cache-{1}-http,access_key_id={2},secret_access_key={3},session_token={4},mode=max', vars.AWS_S3BUCKET_GITHUB_BUILDX_CACHE, matrix.name, steps.aws-creds.outputs.aws-access-key-id, steps.aws-creds.outputs.aws-secret-access-key, steps.aws-creds.outputs.aws-session-token) || format('type=gha,version=2,scope=tei-{0}-http', matrix.name)) || '' }}
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta-grpc
         if: ${{ matrix.grpc }}
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051  # v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051  # v5.10.0
         with:
           images: |
             registry.internal.huggingface.tech/api-inference/text-embeddings-inference
@@ -164,24 +267,25 @@ jobs:
       - name: Build and push Docker image
         id: build-and-push-grpc
         if: ${{ matrix.grpc }}
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
         env:
           DOCKER_BUILD_SUMMARY: false
         with:
           context: .
           target: grpc
           file: ${{ matrix.dockerfile }}
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ needs.matrix.outputs.publish == 'true' }}
           platforms: ${{ matrix.platform || 'linux/amd64' }}
           build-args: |
-            SCCACHE_GHA_ENABLED=${{ matrix.sccache }}
+            SCCACHE_GHA_ENABLED=${{ needs.matrix.outputs.is_pr != 'true' && matrix.sccache }}
             CUDA_COMPUTE_CAP=${{ matrix.cudaComputeCap }}
-            GIT_SHA=${{ env.GITHUB_SHA }}
+            GIT_SHA=${{ needs.matrix.outputs.sha }}
             DOCKER_LABEL=sha-${{ env.GITHUB_SHA_SHORT }}
             ${{matrix.extraBuildArgs}}
           secrets: |
-            actions_results_url=${{ env.ACTIONS_RESULTS_URL }}
-            actions_runtime_token=${{ env.ACTIONS_RUNTIME_TOKEN }}
+            actions_results_url=${{ needs.matrix.outputs.is_pr != 'true' && env.ACTIONS_RESULTS_URL || '' }}
+            actions_runtime_token=${{ needs.matrix.outputs.is_pr != 'true' && env.ACTIONS_RUNTIME_TOKEN || '' }}
           tags: ${{ steps.meta-grpc.outputs.tags }}
           labels: ${{ steps.meta-grpc.outputs.labels }}
-          cache-from: type=s3,region=us-east-1,bucket=${{ vars.AWS_S3BUCKET_GITHUB_BUILDX_CACHE }},name=text-embeddings-inference-cache-${{matrix.name}},access_key_id=${{ steps.aws-creds.outputs.aws-access-key-id }},secret_access_key=${{ steps.aws-creds.outputs.aws-secret-access-key }},session_token=${{ steps.aws-creds.outputs.aws-session-token }},mode=max
+          cache-from: ${{ steps.cache-backend.outputs.s3 == 'true' && format('type=s3,region=us-east-1,bucket={0},name=text-embeddings-inference-cache-{1}-grpc,access_key_id={2},secret_access_key={3},session_token={4},mode=max', vars.AWS_S3BUCKET_GITHUB_BUILDX_CACHE, matrix.name, steps.aws-creds.outputs.aws-access-key-id, steps.aws-creds.outputs.aws-secret-access-key, steps.aws-creds.outputs.aws-session-token) || format('type=gha,version=2,scope=tei-{0}-grpc', matrix.name) }}
+          cache-to: ${{ needs.matrix.outputs.is_pr != 'true' && (steps.cache-backend.outputs.s3 == 'true' && format('type=s3,region=us-east-1,bucket={0},name=text-embeddings-inference-cache-{1}-grpc,access_key_id={2},secret_access_key={3},session_token={4},mode=max', vars.AWS_S3BUCKET_GITHUB_BUILDX_CACHE, matrix.name, steps.aws-creds.outputs.aws-access-key-id, steps.aws-creds.outputs.aws-secret-access-key, steps.aws-creds.outputs.aws-session-token) || format('type=gha,version=2,scope=tei-{0}-grpc', matrix.name)) || '' }}
