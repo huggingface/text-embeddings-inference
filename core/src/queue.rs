@@ -261,7 +261,9 @@ mod tests {
     /// `te_queue_size` is global to the test binary: tests reading it must not run concurrently
     fn queue_size_lock() -> MutexGuard<'static, ()> {
         static LOCK: Mutex<()> = Mutex::new(());
-        LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        let guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        snapshotter();
+        guard
     }
 
     /// Current value of the `te_queue_size` gauge
