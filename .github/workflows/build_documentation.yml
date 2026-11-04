@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "docs/source/**"
+      - ".github/workflows/build_documentation.yml"
     branches:
       - main
       - doc-builder*
