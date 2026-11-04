@@ -7,7 +7,7 @@ on:
         description: PR to validate (leave empty for the selected ref)
         type: string
       head_sha:
-        description: Exact reviewed PR head SHA (required with pr_number)
+        description: Optional expected PR head SHA (blank selects the current revision)
         type: string
       variants:
         description: Comma-separated matrix names, or all
@@ -95,8 +95,8 @@ jobs:
                 if (!/^[1-9][0-9]*$/.test(inputs.pr_number)) throw new Error('Invalid PR number.');
                 const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: Number(inputs.pr_number)});
                 if (pr.state !== 'open' || pr.base.ref !== 'main' ||
-                    !/^[a-f0-9]{40}$/i.test(inputs.head_sha || '') || pr.head.sha !== inputs.head_sha.toLowerCase()) {
-                  throw new Error('Choose an open PR targeting main and its exact current reviewed head SHA.');
+                    (inputs.head_sha && (!/^[a-f0-9]{40}$/i.test(inputs.head_sha) || pr.head.sha !== inputs.head_sha.toLowerCase()))) {
+                  throw new Error('Choose an open PR targeting main; an optional head SHA must match its current revision.');
                 }
                 sha = pr.head.sha;
                 isPR = true;
