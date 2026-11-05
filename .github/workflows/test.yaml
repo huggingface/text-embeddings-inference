@@ -7,7 +7,7 @@ on:
         description: PR number (blank runs on main)
         type: string
       tests:
-        description: related, all, or comma-separated CPU targets such as test_qwen3
+        description: related, all, or CPU targets such as test_qwen3,test_http_rerank
         default: related
         type: string
   push:
@@ -60,6 +60,7 @@ jobs:
             core.setOutput('rust', files.length < context.payload.pull_request.changed_files || paths.some(path =>
               path.endsWith('.rs') || path.endsWith('Cargo.toml') || path === 'Cargo.lock' ||
               path === 'rust-toolchain.toml' || path.startsWith('.cargo/') || path.startsWith('.github/workflows/')));
+            core.setOutput('router', files.length < context.payload.pull_request.changed_files || paths.some(path => path.startsWith('router/')));
       - if: steps.changes.outputs.rust == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
@@ -87,6 +88,9 @@ jobs:
           cargo test --locked -p text-embeddings-backend -F candle --lib
           cargo test --locked -p text-embeddings-core --features text-embeddings-backend/candle,hf-hub/ureq --lib -- --skip tokenization::tests::tokenizer
           cargo test --locked -p text-embeddings-backend-candle --lib
+      - name: Run router unit tests without model downloads
+        if: steps.changes.outputs.rust == 'true' && steps.changes.outputs.router == 'true'
+        run: cargo test --locked -p text-embeddings-router --lib
       - name: Compiler cache statistics
         if: always() && steps.changes.outputs.rust == 'true'
         run: sccache --show-stats
@@ -140,8 +144,10 @@ jobs:
         with:
           script: |
             const fs = require('node:fs');
+            const httpTests = ['test_http_embed', 'test_http_rerank']
+              .filter(name => fs.existsSync(`router/tests/${name}.rs`));
             const available = fs.readdirSync('backends/candle/tests')
-              .filter(name => /^test_[a-z0-9_]+\.rs$/.test(name)).map(name => name.slice(0, -3));
+              .filter(name => /^test_[a-z0-9_]+\.rs$/.test(name)).map(name => name.slice(0, -3)).concat(httpTests);
             const requested = context.eventName === 'workflow_dispatch' ? context.payload.inputs.tests || 'related' : 'related';
             let selected;
             if (requested !== 'related') {
@@ -170,8 +176,10 @@ jobs:
               selected = paths.flatMap(path => {
                 const model = path.match(/^backends\/candle\/src\/models\/([a-z0-9_]+)\.rs$/);
                 const test = path.match(/^backends\/candle\/tests\/(test_[a-z0-9_]+)\.rs$/);
-                const snapshot = path.match(/^backends\/candle\/tests\/snapshots\/(test_[a-z0-9_]+?)__/);
-                const name = model ? `test_${model[1]}` : (test || snapshot)?.[1];
+                const snapshot = path.match(/^(?:backends\/candle|router)\/tests\/snapshots\/(test_[a-z0-9_]+?)__/);
+                const http = path.match(/^router\/tests\/(test_http_[a-z0-9_]+)\.rs$/);
+                if (['router/src/http/server.rs', 'router/src/http/types.rs', 'router/tests/common.rs'].includes(path)) return httpTests;
+                const name = model ? `test_${model[1]}` : (test || snapshot || http)?.[1];
                 return name && available.includes(name) ? [name] : [];
               });
             }
@@ -184,7 +192,7 @@ jobs:
               `Revision: ${process.env.SOURCE_SHA}.\n\n` +
               `Selected CPU targets: ${runnable.join(', ') || 'none'}.\n\n` +
               `Require GPU hardware or gated-model credentials: ${manual.join(', ') || 'none'}.\n\n` +
-              `Selection follows model/test filenames and snapshots. Shared code has no counterpart: use [Run workflow](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/workflows/test.yaml) with a PR number and tests=all or named targets. External PRs use the existing Approve workflows to run button; drafts wait until ready for review.`
+              `Selection follows model/test filenames, HTTP handlers/types, and snapshots. Other shared code has no counterpart: use [Run workflow](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/workflows/test.yaml) with a PR number and tests=all or named targets. External PRs use the existing Approve workflows to run button; drafts wait until ready for review.`
             ).write();
 
   model-tests:
@@ -234,12 +242,21 @@ jobs:
         run: |
           if [ -z "$HF_TOKEN" ]; then unset HF_TOKEN; fi
           mapfile -t targets < <(jq -r '.[]' <<< "$MODEL_TESTS")
-          args=()
+          candle_args=()
+          http_args=()
           for target in "${targets[@]}"; do
             [[ "$target" =~ ^test_[a-z0-9_]+$ ]] || exit 1
-            args+=(--test "$target")
+            case "$target" in
+              test_http_embed|test_http_rerank) http_args+=(--test "$target") ;;
+              *) candle_args+=(--test "$target") ;;
+            esac
           done
-          cargo test --locked --profile=release-debug -p text-embeddings-backend-candle "${args[@]}"
+          if ((${#candle_args[@]})); then
+            cargo test --locked --profile=release-debug -p text-embeddings-backend-candle "${candle_args[@]}"
+          fi
+          if ((${#http_args[@]})); then
+            cargo test --locked --profile=release-debug -p text-embeddings-router "${http_args[@]}"
+          fi
       - name: Compiler cache statistics
         if: always()
         run: sccache --show-stats
