@@ -83,7 +83,7 @@ jobs:
         if: steps.changes.outputs.rust == 'true'
         run: |
           cargo test --locked -p text-embeddings-backend -F candle --lib
-          cargo test --locked -p text-embeddings-core --features text-embeddings-backend/candle,hf-hub/ureq --lib -- --skip tokenization::tests::tokenizer
+          cargo test --locked -p text-embeddings-core --features text-embeddings-backend/candle --lib -- --skip tokenization::tests::tokenizer
           cargo test --locked -p text-embeddings-backend-candle --lib
       - name: Compiler cache statistics
         if: always() && steps.changes.outputs.rust == 'true'
