@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use std::{env, fs, io, thread};
-use text_embeddings_backend_core::{BackendError, Pool};
+use text_embeddings_backend_core::{BackendError, OtlpProtocol, Pool};
 
 #[derive(Debug)]
 pub(crate) struct BackendProcess {
@@ -22,6 +22,7 @@ impl BackendProcess {
         uds_path: &str,
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
+        otlp_protocol: OtlpProtocol,
         pool: Pool,
     ) -> Result<Self, BackendError> {
         // Get UDS path
@@ -61,6 +62,9 @@ impl BackendProcess {
 
         python_server_args.push("--otlp-service-name".to_owned());
         python_server_args.push(otlp_service_name);
+
+        python_server_args.push("--otlp-protocol".to_owned());
+        python_server_args.push(otlp_protocol.to_string());
 
         // Copy current process env
         let envs: Vec<(OsString, OsString)> = env::vars_os().collect();

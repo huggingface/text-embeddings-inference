@@ -13,7 +13,7 @@ use tracing::{instrument, Span};
 
 use text_embeddings_backend_core::{Backend as CoreBackend, Predictions};
 pub use text_embeddings_backend_core::{
-    BackendError, Batch, Embedding, Embeddings, ModelType, Pool,
+    BackendError, Batch, Embedding, Embeddings, ModelType, OtlpProtocol, Pool,
 };
 
 mod dtype;
@@ -98,6 +98,7 @@ impl Backend {
         uds_path: String,
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
+        otlp_protocol: OtlpProtocol,
     ) -> Result<Self, BackendError> {
         let (backend_sender, backend_receiver) = mpsc::channel(8);
 
@@ -110,6 +111,7 @@ impl Backend {
             uds_path,
             otlp_endpoint,
             otlp_service_name,
+            otlp_protocol,
         )
         .await?;
         let padded_model = backend.is_padded();
@@ -451,6 +453,7 @@ async fn init_backend(
     uds_path: String,
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
+    otlp_protocol: OtlpProtocol,
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     let mut backend_start_failed = false;
     let api_repo = api_repo.map(Arc::new);
@@ -584,6 +587,7 @@ async fn init_backend(
                     uds_path,
                     otlp_endpoint,
                     otlp_service_name,
+                    otlp_protocol,
                 )
             })
             .join()
@@ -818,7 +822,6 @@ async fn download_onnx(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
 #[cfg(feature = "candle")]
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 enum ModuleType {
-    // NOTE: Sentence Transformers v6 moved the modules, hence the aliases
     #[serde(rename = "sentence_transformers.models.Dense")]
     #[serde(alias = "sentence_transformers.base.modules.dense.Dense")]
     Dense,
@@ -976,6 +979,60 @@ mod tests {
     use super::*;
     use std::sync::mpsc as std_mpsc;
     use tokio::sync::mpsc::UnboundedSender;
+
+    #[cfg(feature = "candle")]
+    #[test]
+    fn sentence_transformers_module_names_are_compatible() {
+        for (names, expected) in [
+            (
+                vec![
+                    "sentence_transformers.models.Dense",
+                    "sentence_transformers.base.modules.dense.Dense",
+                ],
+                ModuleType::Dense,
+            ),
+            (
+                vec![
+                    "sentence_transformers.models.Normalize",
+                    "sentence_transformers.base.modules.normalize.Normalize",
+                    "sentence_transformers.sentence_transformer.modules.normalize.Normalize",
+                ],
+                ModuleType::Normalize,
+            ),
+            (
+                vec![
+                    "sentence_transformers.models.Pooling",
+                    "sentence_transformers.sentence_transformer.modules.pooling.Pooling",
+                ],
+                ModuleType::Pooling,
+            ),
+            (
+                vec![
+                    "sentence_transformers.models.Transformer",
+                    "sentence_transformers.base.modules.transformer.Transformer",
+                ],
+                ModuleType::Transformer,
+            ),
+        ] {
+            for name in names {
+                let config: ModuleConfig = serde_json::from_value(serde_json::json!({
+                    "idx": 2, "name": "2", "path": "2_Dense", "type": name
+                }))
+                .unwrap();
+                assert_eq!(config.module_type, expected);
+                assert_eq!(config.path, "2_Dense");
+            }
+        }
+    }
+
+    #[cfg(feature = "candle")]
+    #[test]
+    fn unsupported_sentence_transformers_modules_are_rejected() {
+        let module = serde_json::json!({
+            "idx": 2, "name": "2", "path": "2_Unknown", "type": "sentence_transformers.models.Unknown"
+        });
+        assert!(serde_json::from_value::<ModuleConfig>(module).is_err());
+    }
 
     /// Backend that blocks in `embed` and `predict` until the `release` channel is closed
     struct BlockedBackend {

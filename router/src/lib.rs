@@ -26,7 +26,7 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use text_embeddings_backend::{DType, Pool};
+use text_embeddings_backend::{DType, OtlpProtocol, Pool};
 use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
@@ -68,6 +68,7 @@ pub async fn run(
     api_key: Option<String>,
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
+    otlp_protocol: OtlpProtocol,
     prometheus_port: u16,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
@@ -225,7 +226,6 @@ pub async fn run(
         },
     };
 
-    // NOTE: Sentence Transformers v6 configs may not define `max_seq_length`
     let base_input_length = match st_config.and_then(|config| config.max_seq_length) {
         Some(max_seq_length) => max_seq_length,
         None => {
@@ -311,6 +311,7 @@ pub async fn run(
         uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_string()),
         otlp_endpoint.clone(),
         otlp_service_name.clone(),
+        otlp_protocol,
     )
     .await
     .context("Could not create backend")?;
@@ -512,14 +513,12 @@ pub struct TextConfig {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PoolConfig {
-    // NOTE: Legacy format, with one boolean flag per pooling mode
     #[serde(default)]
     pooling_mode_cls_token: bool,
     #[serde(default)]
     pooling_mode_mean_tokens: bool,
     #[serde(default)]
     pooling_mode_lasttoken: bool,
-    // NOTE: Sentence Transformers v6 format, with a single `pooling_mode` string
     #[serde(default)]
     pooling_mode: Option<String>,
 }
@@ -765,5 +764,68 @@ impl From<ResponseMetadata> for HeaderMap {
                 .unwrap(),
         );
         headers
+    }
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn legacy_pooling_modes_are_preserved() {
+        for (field, expected) in [
+            ("pooling_mode_cls_token", Pool::Cls),
+            ("pooling_mode_mean_tokens", Pool::Mean),
+            ("pooling_mode_lasttoken", Pool::LastToken),
+        ] {
+            let mut value =
+                json!({"pooling_mode_cls_token": false, "pooling_mode_mean_tokens": false});
+            value[field] = json!(true);
+            let config: PoolConfig = serde_json::from_value(value).unwrap();
+            assert_eq!(Pool::try_from(config).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn current_pooling_modes_are_supported() {
+        for (mode, expected) in [
+            ("cls", Pool::Cls),
+            ("mean", Pool::Mean),
+            ("lasttoken", Pool::LastToken),
+        ] {
+            let config: PoolConfig = serde_json::from_value(json!({"pooling_mode": mode})).unwrap();
+            assert_eq!(Pool::try_from(config).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn unsupported_or_missing_pooling_modes_are_rejected() {
+        for value in [
+            json!({}),
+            json!({"pooling_mode": "max"}),
+            json!({"pooling_mode": "unknown"}),
+        ] {
+            let config: PoolConfig = serde_json::from_value(value).unwrap();
+            assert!(Pool::try_from(config).is_err());
+        }
+    }
+
+    #[test]
+    fn legacy_pooling_flags_keep_their_precedence() {
+        let config: PoolConfig = serde_json::from_value(json!({
+            "pooling_mode_cls_token": true, "pooling_mode_mean_tokens": true, "pooling_mode": "lasttoken"
+        })).unwrap();
+        assert_eq!(Pool::try_from(config).unwrap(), Pool::Cls);
+    }
+
+    #[test]
+    fn sentence_transformers_length_can_be_omitted() {
+        let legacy: STConfig = serde_json::from_value(json!({"max_seq_length": 256})).unwrap();
+        assert_eq!(legacy.max_seq_length, Some(256));
+        for value in [json!({}), json!({"max_seq_length": null})] {
+            let config: STConfig = serde_json::from_value(value).unwrap();
+            assert_eq!(config.max_seq_length, None);
+        }
     }
 }

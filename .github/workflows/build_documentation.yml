@@ -4,10 +4,18 @@ on:
   push:
     paths:
       - "docs/source/**"
+      - ".github/workflows/build_documentation.yml"
     branches:
       - main
       - doc-builder*
       - v*-release
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-main-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
    build:

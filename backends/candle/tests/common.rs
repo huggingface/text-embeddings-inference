@@ -107,12 +107,17 @@ pub fn sort_embeddings(embeddings: Embeddings) -> (Vec<Vec<f32>>, Vec<Vec<f32>>)
 #[derive(Deserialize, PartialEq)]
 enum ModuleType {
     #[serde(rename = "sentence_transformers.models.Dense")]
+    #[serde(alias = "sentence_transformers.base.modules.dense.Dense")]
     Dense,
     #[serde(rename = "sentence_transformers.models.Normalize")]
+    #[serde(alias = "sentence_transformers.base.modules.normalize.Normalize")]
+    #[serde(alias = "sentence_transformers.sentence_transformer.modules.normalize.Normalize")]
     Normalize,
     #[serde(rename = "sentence_transformers.models.Pooling")]
+    #[serde(alias = "sentence_transformers.sentence_transformer.modules.pooling.Pooling")]
     Pooling,
     #[serde(rename = "sentence_transformers.models.Transformer")]
+    #[serde(alias = "sentence_transformers.base.modules.transformer.Transformer")]
     Transformer,
 }
 
