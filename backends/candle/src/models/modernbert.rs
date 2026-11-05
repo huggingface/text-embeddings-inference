@@ -228,7 +228,7 @@ impl ModernBertAttention {
                         &query_layer,
                         Some(attention_mask.as_ref()),
                         Some(self.softmax_scale as f32),
-                        None,
+                        Some(1.0),
                         None,
                         None,
                     )?;
@@ -822,5 +822,67 @@ impl Model for ModernBertModel {
                 classifier.forward(&pooled_embeddings)
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "cuda"))]
+mod cuda_attention_mask_tests {
+    use super::*;
+
+    #[test]
+    fn cuda_attention_preserves_padding_and_local_masks() -> Result<()> {
+        let cuda = Device::new_cuda(0)?;
+        assert!(get_cublas_lt_wrapper().is_some());
+        let run = |device: &Device, mask: &[f32]| -> Result<Tensor> {
+            let identity = Tensor::eye(8, DType::F32, device)?;
+            // Zero queries/keys and symmetric values isolate mask semantics from TF32 rounding.
+            let zero = Tensor::zeros((8, 8), DType::F32, device)?;
+            let attention = ModernBertAttention {
+                wqkv: Linear::new(Tensor::cat(&[&zero, &zero, &identity], 0)?, None, None),
+                wo: Linear::new(identity, None, None),
+                num_attention_heads: 2,
+                attention_head_size: 4,
+                softmax_scale: 0.5,
+                span: tracing::Span::none(),
+            };
+            let input = Tensor::from_slice(
+                &[
+                    -1.0f32, 2.0, -3.0, 4.0, -0.5, 0.25, -0.75, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                    0.0, 0.0, 1.0, -2.0, 3.0, -4.0, 0.5, -0.25, 0.75, -1.5,
+                ],
+                (1, 3, 8),
+                device,
+            )?;
+            let mask = Tensor::from_slice(mask, (1, 2, 3, 3), device)?;
+            let original = mask.flatten_all()?.to_vec1::<f32>()?;
+            let rotary = (
+                Tensor::ones((1, 1, 3, 4), DType::F32, device)?,
+                Tensor::zeros((1, 1, 3, 4), DType::F32, device)?,
+            );
+            let result = attention.forward(&input, &mask, &rotary)?;
+            assert_eq!(original, mask.flatten_all()?.to_vec1::<f32>()?);
+            Ok(result)
+        };
+        for (name, one_head) in [
+            (
+                "padding",
+                [0.0, 0.0, -10000.0, 0.0, 0.0, -10000.0, 0.0, 0.0, -10000.0],
+            ),
+            (
+                "local",
+                [0.0, 0.0, -10000.0, 0.0, 0.0, 0.0, -10000.0, 0.0, 0.0],
+            ),
+        ] {
+            let mask = [one_head, one_head].concat();
+            let expected = run(&Device::Cpu, &mask)?.to_device(&cuda)?;
+            let actual = run(&cuda, &mask)?;
+            let error = (&actual - &expected)?
+                .abs()?
+                .max_all()?
+                .to_scalar::<f32>()?;
+            println!("{name} attention maximum error: {error}");
+            assert!(error < 1e-5, "{name} attention disagrees with CPU: {error}");
+        }
+        Ok(())
     }
 }
