@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use text_embeddings_backend::DType;
+use text_embeddings_backend::{DType, OtlpProtocol};
 use text_embeddings_router::run;
 use tokio::time::Instant;
 
@@ -69,6 +69,7 @@ pub async fn start_server(model_id: String, revision: Option<String>, dtype: DTy
             None,
             None,
             "text-embeddings-inference.server".to_owned(),
+            OtlpProtocol::Grpc,
             9000,
             None,
         )
