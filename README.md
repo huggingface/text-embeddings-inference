@@ -268,6 +268,15 @@ Options:
           [env: PORT=]
           [default: 3000]
 
+      --root-path <ROOT_PATH>
+          Root path to mount all HTTP routes under.
+
+          For example, `--root-path jinaai/jina-embeddings-v2-base-en` serves the OpenAI-compatible embeddings route at `/jinaai/jina-embeddings-v2-base-en/v1/embeddings`.
+
+          Unused for gRPC servers.
+
+          [env: ROOT_PATH=]
+
       --uds-path <UDS_PATH>
           The name of the unix socket some text-embeddings-inference backends will use as they communicate internally with gRPC
 
