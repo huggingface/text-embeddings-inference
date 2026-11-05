@@ -1,3 +1,5 @@
+#![cfg(feature = "http")]
+
 mod common;
 
 use crate::common::start_server_with_ports;
@@ -23,12 +25,11 @@ pub struct SnapshotRank {
 
 #[tokio::test]
 #[serial_test::serial]
-#[cfg(feature = "http")]
 async fn test_rerank() -> Result<()> {
     let port = 8091;
     start_server_with_ports(
         "cross-encoder/ms-marco-MiniLM-L2-v2".to_string(),
-        None,
+        Some("1b5cd67b15209f24824c50370e0397743aa9b787".to_string()),
         DType::Float32,
         port,
         9001,
@@ -46,7 +47,7 @@ async fn test_rerank() -> Result<()> {
 
     let client = reqwest::Client::new();
     let res = client
-        .post(format!("http://0.0.0.0:{port}/rerank"))
+        .post(format!("http://127.0.0.1:{port}/rerank"))
         .json(&request)
         .send()
         .await?
