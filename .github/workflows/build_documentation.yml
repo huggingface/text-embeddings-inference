@@ -4,19 +4,27 @@ on:
   push:
     paths:
       - "docs/source/**"
+      - ".github/workflows/build_documentation.yml"
     branches:
       - main
       - doc-builder*
       - v*-release
 
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-main-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
    build:
-    uses: huggingface/doc-builder/.github/workflows/build_main_documentation.yml@90b4ee2c10b81b5c1a6367c4e6fc9e2fb510a7e3  # main
+    uses: huggingface/doc-builder/.github/workflows/build_main_documentation.yml@145b9d4f6ab65ad3af87c66773b2c43294e52446  # main
     with:
       commit_sha: ${{ github.sha }}
       package: text-embeddings-inference
       additional_args: --not_python_module
-      languages: en
+      path_to_docs: text-embeddings-inference/docs/source/en/
     secrets:
       token: ${{ secrets.HUGGINGFACE_PUSH }}
       hf_token: ${{ secrets.HF_DOC_BUILD_PUSH }}

@@ -174,16 +174,14 @@ async fn predict(
 
     let (response, metadata) = match req.inputs {
         PredictInput::Single(inputs) => {
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_count", "method" => "single").increment(1);
 
             let compute_chars = inputs.count_chars();
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let (prompt_tokens, tokenization, queue, inference, predictions) =
                 predict_inner(inputs, truncate, infer.0, info.0, Some(permit)).await?;
 
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_success", "method" => "single").increment(1);
 
             (
                 PredictResponse::Single(predictions),
