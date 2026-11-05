@@ -45,12 +45,12 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Select CPU checks
         id: changes
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const files = await github.paginate(github.rest.pulls.listFiles, {
@@ -61,14 +61,16 @@ jobs:
               path.endsWith('.rs') || path.endsWith('Cargo.toml') || path === 'Cargo.lock' ||
               path === 'rust-toolchain.toml' || path.startsWith('.cargo/') || path.startsWith('.github/workflows/')));
       - if: steps.changes.outputs.rust == 'true'
-        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          rustflags: "-D warnings"
       - if: steps.changes.outputs.rust == 'true'
-        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.10.0
       - name: Configure sccache
         if: steps.changes.outputs.rust == 'true'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const {execFileSync} = require('node:child_process');
@@ -101,7 +103,7 @@ jobs:
       tests: ${{ steps.select.outputs.tests }}
     steps:
       - id: source
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           REQUEST_ACTOR: ${{ github.triggering_actor }}
         with:
@@ -124,13 +126,13 @@ jobs:
             core.setOutput('sha', pr ? pr.head.sha : context.sha);
             core.setOutput('is_pr', String(Boolean(pr)));
             core.setOutput('pr', pr ? pr.number : '');
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ steps.source.outputs.sha }}
           persist-credentials: false
       - name: Select counterpart model tests
         id: select
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           PR_NUMBER: ${{ steps.source.outputs.pr }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
@@ -194,17 +196,21 @@ jobs:
       contents: read
     steps:
       - name: Checkout selected source
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.select-model-tests.outputs.sha || github.sha }}
           persist-credentials: false
-      - uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c # v1.15.2
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          rustflags: "-D warnings"
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.10.0
-      - uses: arduino/setup-protoc@149f6c87b92550901b26acd1632e11c3662e381f # v1.3.0
+      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "3.x"
       - name: Configure compiler cache
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           PR_VALIDATION: ${{ needs.select-model-tests.outputs.is_pr }}
         with:
