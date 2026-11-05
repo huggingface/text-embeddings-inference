@@ -58,21 +58,22 @@ curl http://localhost:8080/v1/embeddings \
 ## Option B: Build from source inside the TEI ROCm image
 
 If you want to modify TEI and rebuild it, use the official TEI ROCm image
-(`ghcr.io/huggingface/text-embeddings-inference:rocm-latest`) as your base environment instead of AMD's
+(the pinned image below) as your base environment instead of AMD's
 `rocm/pytorch` image. It already ships the exact ROCm build of PyTorch, `flash-attn`, the compute kernels, and
 the installed Python backend that TEI expects, so you skip the PyTorch/dependency setup entirely and avoid
 version-mismatch issues — you only rebuild the parts you change.
 
 ## Step 1: Start the container
 
-Mount your checkout and override the entrypoint to get a shell:
+From the repository root of your checkout, mount it and override the entrypoint to get a shell.
+The image digest pins the `rocm-latest` build used here; choose a matching image when working with a different TEI revision:
 
 ```shell
 docker run -it --device=/dev/kfd --device=/dev/dri/renderD128 \
   --group-add video --ipc=host --shm-size 8g \
-  -v $PWD:/workspace -w /workspace \
+  -v "$PWD:/workspace" -w /workspace \
   --entrypoint bash \
-  ghcr.io/huggingface/text-embeddings-inference:rocm-latest
+  ghcr.io/huggingface/text-embeddings-inference@sha256:9b3f24f8740d4c3fa656666e07a383a50a9e4f3273d3856980841cd8d45e727f
 ```
 
 PyTorch (ROCm), `flash-attn`, the compute kernels, and the `text-embeddings-server` Python backend are already
@@ -84,6 +85,9 @@ rebuilding after you edit the source.
 ```shell
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
+
+# Required by the router's protobuf build step.
+apt-get update && apt-get install -y protobuf-compiler pkg-config libssl-dev
 ```
 
 ## Step 3: Rebuild the Rust router from your source
@@ -95,12 +99,17 @@ cargo build --release \
     --bin text-embeddings-router
 ```
 
-> If you also changed the Python backend, reinstall it in editable mode from your mounted checkout:
-> ```shell
-> pip install --no-deps -e backends/python/server
-> ```
-> The protobuf stubs are already generated in the image; regenerate them only for a fresh checkout with
-> `cd backends/python/server && make gen-server`.
+If you also changed the Python backend, generate protobuf stubs in the mounted checkout before
+reinstalling it in editable mode. The image's installed package does not populate a fresh checkout's
+ignored `text_embeddings_server/pb` directory. The subshell keeps the remaining commands at the repository root.
+
+```shell
+(
+  cd backends/python/server
+  make gen-server
+  pip install --no-deps -e .
+)
+```
 
 ## Step 4: Launch your build
 
