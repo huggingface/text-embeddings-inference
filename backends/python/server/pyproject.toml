@@ -24,6 +24,10 @@ sentence-transformers = "^3.3.1"
 
 [tool.poetry.extras]
 
+# Compute kernels pulled from the Hub. Revisions are pinned in `kernels.lock`
+[tool.kernels.dependencies]
+"kernels-community/triton-layer-norm" = "==0.1.0"
+
 [tool.poetry.group.dev.dependencies]
 grpcio-tools = "^1.51.1"
 pytest = "^7.3.0"
