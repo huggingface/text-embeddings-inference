@@ -152,6 +152,9 @@ curl 127.0.0.1:8080/predict \
     -H 'Content-Type: application/json'
 ```
 
+For multiclass predictions with `raw_scores: false`, non-finite model scores
+(NaN or infinity) produce an inference error instead of softmax probabilities.
+
 ## Batching
 
 You can send multiple inputs in a batch. For example, for embeddings:

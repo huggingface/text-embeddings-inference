@@ -3,14 +3,90 @@ name: Upload PR Documentation
 on:
   workflow_run:
     workflows: ["Build PR Documentation"]
-    types:
-      - completed
+    types: [completed]
+
+permissions: {}
+
+concurrency:
+  group: docs-report-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
 
 jobs:
+  context:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    outputs:
+      pr: ${{ steps.context.outputs.pr }}
+      publish: ${{ steps.context.outputs.publish }}
+      reason: ${{ steps.context.outputs.reason }}
+    steps:
+      - id: context
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          HAS_DOCS_TOKEN: ${{ secrets.HF_DOC_BUILD_PUSH != '' }}
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            if (run.event !== 'pull_request' || run.path !== '.github/workflows/build_pr_documentation.yml') return;
+            let candidates = run.pull_requests || [];
+            if (!candidates.length && run.head_repository) {
+              const prs = await github.paginate(github.rest.pulls.list, {
+                ...context.repo, state: 'all', head: `${run.head_repository.owner.login}:${run.head_branch}`, per_page: 100,
+              });
+              candidates = prs.filter(pr => pr.head.repo?.full_name === run.head_repository.full_name && pr.head.ref === run.head_branch);
+            }
+            if (candidates.length !== 1) return;
+            const {data: pr} = await github.rest.pulls.get({...context.repo, pull_number: candidates[0].number});
+            if (pr.state !== 'open' || pr.head.sha !== run.head_sha) return;
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              ...context.repo, run_id: run.id, per_page: 100,
+            });
+            const artifact = artifacts.some(item => item.name === 'doc-build-artifact' && !item.expired);
+            const publish = run.conclusion === 'success' && artifact && process.env.HAS_DOCS_TOKEN === 'true';
+            core.setOutput('pr', pr.number);
+            core.setOutput('publish', String(publish));
+            core.setOutput('reason', !artifact ? 'no current documentation artifact' : 'HF_DOC_BUILD_PUSH is not configured');
+
   build:
-    uses: huggingface/doc-builder/.github/workflows/upload_pr_documentation.yml@9ad2de8582b56c017cb530c1165116d40433f1c6  # main
+    needs: context
+    if: needs.context.outputs.publish == 'true'
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    uses: huggingface/doc-builder/.github/workflows/upload_pr_documentation.yml@145b9d4f6ab65ad3af87c66773b2c43294e52446 # main
     with:
       package_name: text-embeddings-inference
     secrets:
       hf_token: ${{ secrets.HF_DOC_BUILD_PUSH }}
-      comment_bot_token: ${{ secrets.COMMENT_BOT_TOKEN }}
+      comment_bot_token: ${{ secrets.COMMENT_BOT_TOKEN || github.token }}
+
+  report:
+    needs: [context, build]
+    if: always() && needs.context.outputs.pr != ''
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ needs.context.outputs.pr }}
+          PUBLISH_REASON: ${{ needs.context.outputs.reason }}
+          PUBLISH_RESULT: ${{ needs.build.result }}
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const marker = '<!-- tei-docs-status -->';
+            const status = process.env.PUBLISH_RESULT === 'success' ? 'Documentation preview published successfully.' :
+              run.conclusion !== 'success' ? `Documentation build: **${run.conclusion}**.` :
+              process.env.PUBLISH_RESULT === 'failure' ? 'Documentation built, but preview publication failed.' :
+                `Documentation built; preview publication skipped: ${process.env.PUBLISH_REASON}.`;
+            const body = `${marker}\n${status} [View workflow results](${run.html_url}).`;
+            const issue_number = Number(process.env.PR_NUMBER);
+            const comments = await github.paginate(github.rest.issues.listComments, {...context.repo, issue_number, per_page: 100});
+            const previous = comments.find(comment => comment.user.login === 'github-actions[bot]' && comment.body.includes(marker));
+            if (previous) await github.rest.issues.updateComment({...context.repo, comment_id: previous.id, body});
+            else if (process.env.PUBLISH_RESULT !== 'success') await github.rest.issues.createComment({...context.repo, issue_number, body});
