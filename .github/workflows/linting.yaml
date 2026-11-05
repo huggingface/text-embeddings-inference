@@ -13,56 +13,87 @@ jobs:
   run_tests:
     permissions:
       contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
 
     env:
       SCCACHE_GHA_ENABLED: "on"
-      RUSTC_WRAPPER: /usr/local/bin/sccache
-      SCCACHE: 0.10.0
+      CARGO_INCREMENTAL: "0"
+      RUSTC_WRAPPER: sccache
 
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - name: Select Rust checks
+        id: changes
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              ...context.repo, pull_number: context.issue.number, per_page: 100,
+            });
+            const paths = files.flatMap(file => [file.filename, file.previous_filename].filter(Boolean));
+            core.setOutput('ci', paths.some(path => path.startsWith('.github/workflows/')));
+            core.setOutput('rust', files.length < context.payload.pull_request.changed_files || paths.some(path =>
+              path.endsWith('.rs') || path.endsWith('Cargo.toml') || path === 'Cargo.lock' ||
+              path === 'rust-toolchain.toml' || path.startsWith('.cargo/') ||
+              path === '.pre-commit-config.yaml' || path.startsWith('.github/workflows/')));
       - name: Install Rust
-        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f  # v2.0.0
+        if: steps.changes.outputs.rust == 'true'
+        uses: actions-rust-lang/setup-rust-toolchain@1780873c7b576612439a134613cc4cc74ce5538c  # v1.15.2
         with:
           components: rustfmt, clippy
       - name: Install Protoc
-        uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b  # v1
+        if: steps.changes.outputs.rust == 'true'
+        uses: arduino/setup-protoc@149f6c87b92550901b26acd1632e11c3662e381f  # v1.3.0
       - name: Clean unused files
+        if: steps.changes.outputs.rust == 'true'
         run: |
           sudo rm -rf /usr/local/lib/android # will release about 10 GB if you don't need Android
           sudo rm -rf /usr/share/dotnet # will release about 20GB if you don't need .NET
-      - name: Install sccache
-        run: |
-          curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sccache-v$SCCACHE-x86_64-unknown-linux-musl.tar.gz | tar -xzv --strip-components=1 -C /usr/local/bin sccache-v$SCCACHE-x86_64-unknown-linux-musl/sccache
-          chmod +x /usr/local/bin/sccache
+      - if: steps.changes.outputs.rust == 'true'
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: v0.10.0
       - name: configure sccache
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        if: steps.changes.outputs.rust == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd  # v8.0.0
         with:
           script: |
-            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
-            core.exportVariable('SCCACHE_GHA_CACHE_TO', 'sccache-${{runner.os}}-${{github.ref_name}}');
-            core.exportVariable('SCCACHE_GHA_CACHE_FROM', 'sccache-${{runner.os}}-main,sccache-${{runner.os}}-');
+            const {execFileSync} = require('node:child_process');
+            const {createHash} = require('node:crypto');
+            // Native CPU builds must not share objects across incompatible hosts.
+            const features = execFileSync('rustc', ['--print', 'cfg', '-C', 'target-cpu=native']);
+            core.exportVariable('SCCACHE_GHA_VERSION', createHash('sha256').update(features).digest('hex').slice(0, 16));
+            for (const key of ['ACTIONS_CACHE_URL', 'ACTIONS_RESULTS_URL', 'ACTIONS_RUNTIME_TOKEN', 'ACTIONS_CACHE_SERVICE_V2']) {
+              core.exportVariable(key, process.env[key] || '');
+            }
       - name: cargo registry cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v5
+        if: steps.changes.outputs.rust == 'true'
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5.0.4
         with:
-          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.toml') }}-${{ github.sha }}
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
-            cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.toml') }}-
-            cargo-${{ runner.os }}-
+            cargo-${{ runner.os }}-${{ runner.arch }}-
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-      - name: Build
-        run: |
-          cargo build
-          cargo build -F candle -F grpc --no-default-features
+      - name: Check gRPC
+        if: steps.changes.outputs.rust == 'true'
+        run: cargo check --locked -F candle -F grpc --no-default-features
       - name: Pre-commit checks
+        env:
+          SKIP: ${{ steps.changes.outputs.rust != 'true' && 'fmt,cargo-check,clippy' || '' }}
         run: |
           pip install pre-commit
-          pre-commit install
           pre-commit run --all-files
-      - name: sccache stats
+      - name: Validate changed workflows
+        if: steps.changes.outputs.ci == 'true'
         run: |
-          /usr/local/bin/sccache --show-stats
+          curl -fsSLo /tmp/actionlint.tar.gz https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
+          echo '023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757  /tmp/actionlint.tar.gz' | sha256sum --check
+          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+          /tmp/actionlint -color
+      - name: sccache stats
+        if: always() && steps.changes.outputs.rust == 'true'
+        run: |
+          sccache --show-stats

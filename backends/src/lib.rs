@@ -419,7 +419,8 @@ impl Backend {
         let (sender, receiver) = oneshot::channel();
 
         self.backend_sender
-            .try_send(BackendCommand::Embed(batch, Span::current(), sender))
+            .send(BackendCommand::Embed(batch, Span::current(), sender))
+            .await
             .expect("No backend receiver. This is a bug.");
         receiver.await.expect(
             "Backend blocking task dropped the sender without send a response. This is a bug.",
@@ -431,7 +432,8 @@ impl Backend {
         let (sender, receiver) = oneshot::channel();
 
         self.backend_sender
-            .try_send(BackendCommand::Predict(batch, Span::current(), sender))
+            .send(BackendCommand::Predict(batch, Span::current(), sender))
+            .await
             .expect("No backend receiver. This is a bug.");
         receiver.await.expect(
             "Backend blocking task dropped the sender without send a response. This is a bug.",
@@ -961,4 +963,122 @@ async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBu
     }
 
     Ok(config_path.parent().unwrap().to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc as std_mpsc;
+    use tokio::sync::mpsc::UnboundedSender;
+
+    /// Backend that blocks in `embed` and `predict` until the `release` channel is closed
+    struct BlockedBackend {
+        started: UnboundedSender<()>,
+        release: std_mpsc::Receiver<()>,
+    }
+
+    impl CoreBackend for BlockedBackend {
+        fn health(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+
+        fn is_padded(&self) -> bool {
+            false
+        }
+
+        fn embed(&self, _batch: Batch) -> Result<Embeddings, BackendError> {
+            let _ = self.started.send(());
+            let _ = self.release.recv();
+            Ok(Embeddings::default())
+        }
+
+        fn predict(&self, _batch: Batch) -> Result<Predictions, BackendError> {
+            let _ = self.started.send(());
+            let _ = self.release.recv();
+            Ok(Predictions::default())
+        }
+    }
+
+    fn test_backend(backend: impl CoreBackend + Send + 'static) -> Backend {
+        let (backend_sender, backend_receiver) = mpsc::channel(8);
+        let (health_sender, health_receiver) = watch::channel(true);
+        Backend {
+            backend_sender,
+            health_receiver,
+            _backend_thread: Arc::new(BackendThread::new(
+                Box::new(backend),
+                backend_receiver,
+                health_sender,
+            )),
+            padded_model: false,
+            max_batch_size: None,
+            model_type: ModelType::Embedding(Pool::Cls),
+        }
+    }
+
+    fn test_batch() -> Batch {
+        Batch {
+            input_ids: vec![0],
+            token_type_ids: vec![0],
+            position_ids: vec![0],
+            cumulative_seq_lengths: vec![0, 1],
+            max_length: 1,
+            pooled_indices: vec![0],
+            raw_indices: vec![],
+        }
+    }
+
+    /// Health checks queued behind a busy backend thread fill the backend channel. `embed` and
+    /// `predict` must then wait for room in the channel instead of panicking with `Full(..)`.
+    #[tokio::test]
+    async fn embed_and_predict_wait_when_backend_channel_is_full() {
+        let (started_sender, mut started_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (release_sender, release_receiver) = std_mpsc::channel::<()>();
+        let backend = test_backend(BlockedBackend {
+            started: started_sender,
+            release: release_receiver,
+        });
+
+        // Keep the backend thread busy with a first forward pass
+        let first = tokio::spawn({
+            let backend = backend.clone();
+            async move { backend.embed(test_batch()).await.map(|_| ()) }
+        });
+        started_receiver.recv().await.unwrap();
+
+        // Queue more health checks than the channel can hold
+        let mut pending = Vec::new();
+        for _ in 0..16 {
+            let backend = backend.clone();
+            pending.push(tokio::spawn(async move { backend.health().await }));
+        }
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while backend.backend_sender.capacity() > 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("backend channel did not fill up");
+
+        let embed = tokio::spawn({
+            let backend = backend.clone();
+            async move { backend.embed(test_batch()).await.map(|_| ()) }
+        });
+        let predict = tokio::spawn({
+            let backend = backend.clone();
+            async move { backend.predict(test_batch()).await.map(|_| ()) }
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!embed.is_finished(), "embed gave up on a full channel");
+        assert!(!predict.is_finished(), "predict gave up on a full channel");
+
+        // Unblock the backend thread: everything queued must now complete
+        drop(release_sender);
+        first.await.unwrap().unwrap();
+        for health in pending {
+            health.await.unwrap().unwrap();
+        }
+        embed.await.unwrap().unwrap();
+        predict.await.unwrap().unwrap();
+    }
 }
