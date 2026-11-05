@@ -1,7 +1,10 @@
-use super::{otlp_exporter, OtlpProtocol};
+use super::{otlp_exporter, JsonWithTraceIds, OtlpProtocol};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Response, Server};
-use opentelemetry::trace::{Span, SpanId, TraceId, Tracer, TracerProvider};
+use opentelemetry::trace::{
+    Span, SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, Tracer, TracerProvider,
+};
+use opentelemetry::Context;
 use opentelemetry::KeyValue;
 use opentelemetry_proto::tonic::collector::trace::v1::{
     trace_service_server::{TraceService, TraceServiceServer},
@@ -12,12 +15,15 @@ use opentelemetry_sdk::{trace, Resource};
 use prost::Message;
 use std::collections::BTreeMap;
 use std::convert::Infallible;
+use std::io;
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tokio_rustls::{rustls, TlsAcceptor};
 use tokio_stream::wrappers::TcpListenerStream;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
+use tracing_subscriber::layer::SubscriberExt;
 
 const TRACE_ID: [u8; 16] = [0x12; 16];
 const SPAN_ID: [u8; 8] = [0x34; 8];
@@ -402,4 +408,99 @@ async fn check_grpc(case: &str) {
     assert_export(&message);
     shutdown.send(()).unwrap();
     server.await.unwrap().unwrap();
+}
+
+#[derive(Clone, Default)]
+struct Buffer(Arc<Mutex<Vec<u8>>>);
+
+impl io::Write for Buffer {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Runs `f` with the JSON and OpenTelemetry layers and returns the parsed log records
+fn capture_logs(f: impl FnOnce()) -> Vec<serde_json::Value> {
+    let buffer = Buffer::default();
+    let writer = buffer.clone();
+    // The tracer only keeps a weak reference to its provider, so the provider must
+    // live until the end of the test or every generated id is zero
+    let provider = opentelemetry_sdk::trace::TracerProvider::builder().build();
+    let tracer = provider.tracer("test");
+    let subscriber = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .flatten_event(true)
+                .map_event_format(JsonWithTraceIds)
+                .with_writer(move || writer.clone()),
+        )
+        .with(tracing_opentelemetry::layer().with_tracer(tracer));
+
+    tracing::subscriber::with_default(subscriber, f);
+
+    let output = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
+    output
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+#[test]
+fn json_logs_have_ids_of_current_span() {
+    let mut expected = None;
+    let logs = capture_logs(|| {
+        let span = tracing::info_span!("request");
+        let _guard = span.enter();
+        tracing::info!("inside span");
+        let cx = span.context();
+        let span_context = cx.span().span_context().clone();
+        expected = Some((
+            span_context.trace_id().to_string(),
+            span_context.span_id().to_string(),
+        ));
+    });
+    let (trace_id, span_id) = expected.unwrap();
+    assert_ne!(trace_id, TraceId::INVALID.to_string());
+    assert_ne!(span_id, SpanId::INVALID.to_string());
+
+    assert_eq!(logs.len(), 1);
+    assert_eq!(logs[0]["message"], "inside span");
+    assert_eq!(logs[0]["trace_id"], trace_id.as_str());
+    assert_eq!(logs[0]["span_id"], span_id.as_str());
+}
+
+#[test]
+fn json_logs_use_trace_id_of_remote_parent() {
+    let remote = SpanContext::new(
+        TraceId::from_hex("4bf92f3577b34da6a3ce929d0e0e4736").unwrap(),
+        SpanId::from_hex("00f067aa0ba902b7").unwrap(),
+        TraceFlags::SAMPLED,
+        true,
+        Default::default(),
+    );
+    let logs = capture_logs(|| {
+        let span = tracing::info_span!("request");
+        span.set_parent(Context::new().with_remote_span_context(remote));
+        let _guard = span.enter();
+        tracing::info!("inside span");
+    });
+
+    assert_eq!(logs[0]["trace_id"], "4bf92f3577b34da6a3ce929d0e0e4736");
+    let span_id = logs[0]["span_id"].as_str().unwrap();
+    assert_ne!(span_id, "00f067aa0ba902b7");
+    assert_ne!(span_id, SpanId::INVALID.to_string());
+}
+
+#[test]
+fn json_logs_outside_span_have_no_ids() {
+    let logs = capture_logs(|| tracing::info!("no span"));
+
+    assert_eq!(logs[0]["message"], "no span");
+    assert!(logs[0].get("trace_id").is_none());
+    assert!(logs[0].get("span_id").is_none());
 }
