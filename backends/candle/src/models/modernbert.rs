@@ -80,7 +80,7 @@ pub struct ModernBertMLP {
     wi: Linear,
     gate: Option<Linear>,
     wo: Linear,
-    activation: Option<HiddenAct>,
+    activation: HiddenAct,
     intermediate_size: usize,
     span: tracing::Span,
 }
@@ -98,16 +98,16 @@ impl ModernBertMLP {
             .get((config.intermediate_size * 2, config.hidden_size), "weight")?;
         let wi_bias = vb.pp("Wi").get(config.intermediate_size * 2, "bias").ok();
 
-        // Split the CUDA GELU projection to use cuBLASLt's fused GELU epilogue.
-        // Keep CPU, Metal, and non-GELU paths on the original full-width projection.
-        let (wi, gate, activation) = if should_split_wi(vb.device(), &config.hidden_activation) {
+        // Split the CUDA GELU projection, but keep GELU separate to preserve the
+        // original FP16 rounding. CPU, Metal, and non-GELU paths stay unsplit.
+        let (wi, gate) = if should_split_wi(vb.device(), &config.hidden_activation) {
             let wi = Linear::new(
                 wi_weight.narrow(0, 0, config.intermediate_size)?,
                 wi_bias
                     .as_ref()
                     .map(|bias| bias.narrow(0, 0, config.intermediate_size))
                     .transpose()?,
-                Some(HiddenAct::Gelu),
+                None,
             );
             let gate = Linear::new(
                 wi_weight.narrow(0, config.intermediate_size, config.intermediate_size)?,
@@ -117,13 +117,9 @@ impl ModernBertMLP {
                     .transpose()?,
                 None,
             );
-            (wi, Some(gate), None)
+            (wi, Some(gate))
         } else {
-            (
-                Linear::new(wi_weight, wi_bias, None),
-                None,
-                Some(config.hidden_activation.clone()),
-            )
+            (Linear::new(wi_weight, wi_bias, None), None)
         };
 
         let wo_weight = vb
@@ -137,7 +133,7 @@ impl ModernBertMLP {
             wi,
             gate,
             wo,
-            activation,
+            activation: config.hidden_activation.clone(),
             intermediate_size: config.intermediate_size,
             span: tracing::span!(tracing::Level::TRACE, "mlp"),
         })
@@ -146,28 +142,20 @@ impl ModernBertMLP {
     pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let hidden_states = if let Some(gate) = &self.gate {
-            let input = self.wi.forward(hidden_states)?;
-            let gate = gate.forward(hidden_states)?;
-
-            self.wo.forward(&(&input * &gate)?)?
+        let (input, gate) = if let Some(gate) = &self.gate {
+            (
+                self.wi.forward(hidden_states)?,
+                gate.forward(hidden_states)?,
+            )
         } else {
             let hidden_states = self.wi.forward(hidden_states)?;
-
-            let input = hidden_states.narrow(D::Minus1, 0, self.intermediate_size)?;
-            let gate =
-                hidden_states.narrow(D::Minus1, self.intermediate_size, self.intermediate_size)?;
-
-            let input = if let Some(activation) = &self.activation {
-                activation.forward(&input)
-            } else {
-                Ok(input)
-            };
-
-            self.wo.forward(&(input? * gate)?)?
+            (
+                hidden_states.narrow(D::Minus1, 0, self.intermediate_size)?,
+                hidden_states.narrow(D::Minus1, self.intermediate_size, self.intermediate_size)?,
+            )
         };
-
-        Ok(hidden_states)
+        let input = self.activation.forward(&input)?;
+        self.wo.forward(&(input * gate)?)
     }
 }
 
@@ -921,7 +909,7 @@ mod tests {
         // The Wi split is a CUDA optimization. CPU must keep the original
         // full-width projection followed by the separate GELU path.
         assert!(mlp.gate.is_none());
-        assert_eq!(mlp.activation, Some(HiddenAct::Gelu));
+        assert_eq!(mlp.activation, HiddenAct::Gelu);
         Ok(())
     }
 
@@ -943,15 +931,15 @@ mod tests {
             wi: Linear::new(wi_weight.clone(), None, None),
             gate: None,
             wo: Linear::new(wo_weight.clone(), None, None),
-            activation: Some(HiddenAct::Gelu),
+            activation: HiddenAct::Gelu,
             intermediate_size: 2,
             span: tracing::span!(tracing::Level::TRACE, "mlp"),
         };
         let split = ModernBertMLP {
-            wi: Linear::new(wi_weight.narrow(0, 0, 2)?, None, Some(HiddenAct::Gelu)),
+            wi: Linear::new(wi_weight.narrow(0, 0, 2)?, None, None),
             gate: Some(Linear::new(wi_weight.narrow(0, 2, 2)?, None, None)),
             wo: Linear::new(wo_weight, None, None),
-            activation: None,
+            activation: HiddenAct::Gelu,
             intermediate_size: 2,
             span: tracing::span!(tracing::Level::TRACE, "mlp"),
         };
