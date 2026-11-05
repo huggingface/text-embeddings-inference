@@ -1633,6 +1633,8 @@ pub async fn run(
     cors_allow_origin: Option<Vec<String>>,
     root_path: Option<String>,
 ) -> Result<(), anyhow::Error> {
+    let root_path = normalize_root_path(root_path.as_deref())?;
+
     // OpenAPI documentation
     #[derive(OpenApi)]
     #[openapi(
@@ -1738,7 +1740,7 @@ pub async fn run(
         .allow_origin(allow_origin);
 
     // Define VertextApiDoc conditionally only if the "google" feature is enabled
-    let doc = {
+    let mut doc = {
         // avoid `mut` if possible
         #[cfg(feature = "google")]
         {
@@ -1757,6 +1759,17 @@ pub async fn run(
         #[cfg(not(feature = "google"))]
         ApiDoc::openapi()
     };
+
+    if let Some(root_path) = &root_path {
+        doc.servers = Some(vec![utoipa::openapi::Server::new(root_path)]);
+    }
+    let schema_url = format!(
+        "{}/api-doc/openapi.json",
+        root_path.as_deref().unwrap_or("")
+    );
+    let swagger_ui = SwaggerUi::new("/docs")
+        .url("/api-doc/openapi.json", doc)
+        .config(utoipa_swagger_ui::Config::new([schema_url]));
 
     let mut routes = Router::new()
         // Base routes
@@ -1859,7 +1872,7 @@ pub async fn run(
     }
 
     let app = Router::new()
-        .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", doc))
+        .merge(swagger_ui)
         .merge(routes)
         .merge(public_routes)
         .layer(Extension(infer))
@@ -1872,10 +1885,29 @@ pub async fn run(
         .layer(DefaultBodyLimit::max(payload_limit))
         .layer(cors_layer);
 
-    let app = match normalize_root_path(root_path.as_deref())? {
+    let app = match root_path {
         Some(root_path) => {
             tracing::info!("Serving HTTP routes under root path: {root_path}");
-            Router::new().nest(&root_path, app)
+            let docs_redirect = HeaderValue::from_str(&format!("{root_path}/docs/"))?;
+            Router::new()
+                .nest(&root_path, app)
+                .layer(axum::middleware::map_response(
+                    move |mut response: axum::response::Response| {
+                        let docs_redirect = docs_redirect.clone();
+                        async move {
+                            if response
+                                .headers()
+                                .get(http::header::LOCATION)
+                                .is_some_and(|location| location == "/docs/")
+                            {
+                                response
+                                    .headers_mut()
+                                    .insert(http::header::LOCATION, docs_redirect);
+                            }
+                            response
+                        }
+                    },
+                ))
         }
         None => app,
     };
@@ -1902,12 +1934,16 @@ fn normalize_root_path(root_path: Option<&str>) -> Result<Option<String>, anyhow
     };
 
     let root_path = root_path.trim();
-    if root_path.is_empty() || root_path == "/" {
+    if root_path.trim_matches('/').is_empty() {
         return Ok(None);
     }
 
     if root_path.contains('?') || root_path.contains('#') {
         anyhow::bail!("`--root-path` must be a path and cannot contain `?` or `#`");
+    }
+
+    if root_path.contains('*') || root_path.split('/').any(|segment| segment.starts_with(':')) {
+        anyhow::bail!("`--root-path` must be a literal path without route captures or wildcards");
     }
 
     let root_path = format!("/{}", root_path.trim_matches('/'));
@@ -1969,6 +2005,7 @@ mod tests {
         assert_eq!(normalize_root_path(Some("")).unwrap(), None);
         assert_eq!(normalize_root_path(Some("   ")).unwrap(), None);
         assert_eq!(normalize_root_path(Some("/")).unwrap(), None);
+        assert_eq!(normalize_root_path(Some("///")).unwrap(), None);
     }
 
     #[test]
@@ -1987,5 +2024,11 @@ mod tests {
     fn normalize_root_path_rejects_query_and_fragment() {
         assert!(normalize_root_path(Some("/foo?bar")).is_err());
         assert!(normalize_root_path(Some("/foo#bar")).is_err());
+    }
+
+    #[test]
+    fn normalize_root_path_rejects_route_patterns() {
+        assert!(normalize_root_path(Some("/:model")).is_err());
+        assert!(normalize_root_path(Some("/models/*rest")).is_err());
     }
 }
