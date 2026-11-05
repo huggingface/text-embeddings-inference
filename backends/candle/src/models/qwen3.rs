@@ -602,13 +602,7 @@ impl Qwen3Model {
         let attention_bias = if self.use_bidirectional_attention {
             attention_bias
         } else {
-            // Causal models MUST always apply the causal mask, even when the batch
-            // needs no padding (all sequences equal length => `attention_bias` is
-            // `None`). Previously the causal mask was only applied when padding was
-            // present, so an equal-length multi-sequence batch silently ran
-            // *bidirectional* attention and produced embeddings inconsistent with
-            // single-sequence (always-causal) inference. Build a zero bias to mask
-            // onto when none exists, mirroring the `batch_size == 1` path above.
+            // Equal-length batches have no padding bias but still need a causal mask.
             let attn_bias = match attention_bias {
                 Some(attn_bias) => attn_bias,
                 None => Tensor::zeros(

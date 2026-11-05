@@ -124,7 +124,7 @@ fn single(ids: &[u32]) -> Batch {
 
 #[test]
 #[serial_test::serial]
-fn test_qwen3_equal_length_batch_matches_single() -> Result<()> {
+fn test_qwen3_batch_matches_single() -> Result<()> {
     let dir = std::env::temp_dir().join(format!("tei_qwen3_rand_{}", std::process::id()));
     std::fs::create_dir_all(&dir)?;
     let res = run(&dir);
@@ -149,39 +149,40 @@ fn run(dir: &std::path::Path) -> Result<()> {
     assert_eq!(a.len(), b.len(), "sequences must be equal length");
 
     let single_a = pooled(&backend.embed(single(&a))?, 0);
-    let single_b = pooled(&backend.embed(single(&b))?, 0);
-
-    let pair = Batch {
-        input_ids: [a.clone(), b.clone()].concat(),
-        token_type_ids: vec![0; a.len() + b.len()],
-        position_ids: [
-            (0..a.len() as u32).collect::<Vec<_>>(),
-            (0..b.len() as u32).collect::<Vec<_>>(),
-        ]
-        .concat(),
-        cumulative_seq_lengths: vec![0, a.len() as u32, (a.len() + b.len()) as u32],
-        max_length: a.len() as u32,
-        pooled_indices: vec![0, 1],
-        raw_indices: vec![],
-    };
-    let pair_emb = backend.embed(pair)?;
-    let pair_a = pooled(&pair_emb, 0);
-    let pair_b = pooled(&pair_emb, 1);
-
-    let cos_a = cosine(&pair_a, &single_a);
-    let cos_b = cosine(&pair_b, &single_b);
-    eprintln!("equal-length batch vs single: cos_a={cos_a:.6}, cos_b={cos_b:.6}");
-
-    // A causal model must give the same embedding for a text whether it is embedded
-    // alone or in an equal-length batch. Without the causal mask the equal-length
-    // batch runs bidirectional attention and these cosines collapse well below 1.0.
-    assert!(
-        cos_a > 0.99,
-        "equal-length batch[0] diverged from single inference (cos={cos_a}); causal mask skipped for no-padding batch?"
-    );
-    assert!(
-        cos_b > 0.99,
-        "equal-length batch[1] diverged from single inference (cos={cos_b}); causal mask skipped for no-padding batch?"
-    );
+    for b in [&b[..], &b[..5]] {
+        let single_b = pooled(&backend.embed(single(b))?, 0);
+        let pair = Batch {
+            input_ids: [a.as_slice(), b].concat(),
+            token_type_ids: vec![0; a.len() + b.len()],
+            position_ids: [
+                (0..a.len() as u32).collect::<Vec<_>>(),
+                (0..b.len() as u32).collect::<Vec<_>>(),
+            ]
+            .concat(),
+            cumulative_seq_lengths: vec![0, a.len() as u32, (a.len() + b.len()) as u32],
+            max_length: a.len() as u32,
+            pooled_indices: vec![0, 1],
+            raw_indices: vec![],
+        };
+        let pair_emb = backend.embed(pair)?;
+        for (index, expected) in [(0, &single_a), (1, &single_b)] {
+            let actual = pooled(&pair_emb, index);
+            assert_eq!(actual.len(), expected.len());
+            assert!(actual.iter().chain(expected).all(|value| value.is_finite()));
+            let similarity = cosine(&actual, expected);
+            assert!(
+                similarity > 0.9999,
+                "batch[{index}], length={}: cosine={similarity}",
+                b.len()
+            );
+            for (actual, expected) in actual.iter().zip(expected) {
+                assert!(
+                    (actual - expected).abs() <= 1e-4 * (1.0 + expected.abs()),
+                    "batch[{index}], length={}: actual={actual}, expected={expected}",
+                    b.len()
+                );
+            }
+        }
+    }
     Ok(())
 }
