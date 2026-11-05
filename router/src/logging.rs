@@ -1,62 +1,53 @@
-use opentelemetry::trace::TraceContextExt;
-use opentelemetry::{global, KeyValue};
-use opentelemetry_otlp::WithExportConfig;
+use opentelemetry::{global, trace::TraceError, KeyValue};
+use opentelemetry_otlp::{Protocol, SpanExporterBuilder, WithExportConfig};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::Sampler;
 use opentelemetry_sdk::{trace, Resource};
-use std::fmt;
-use tracing::{Event, Subscriber};
-use tracing_opentelemetry::OtelData;
-use tracing_subscriber::fmt::format::{Format, Json, Writer};
-use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
+use text_embeddings_backend::OtlpProtocol;
 use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 
-/// JSON event formatter that adds the OpenTelemetry `trace_id` and `span_id` of the
-/// current span to each record, so log lines can be matched with their exported trace.
-/// Records outside of a span, or without the OpenTelemetry layer, are left unchanged.
-struct JsonWithTraceIds(Format<Json>);
-
-impl<S, N> FormatEvent<S, N> for JsonWithTraceIds
-where
-    S: Subscriber + for<'a> LookupSpan<'a>,
-    N: for<'a> FormatFields<'a> + 'static,
-{
-    fn format_event(
-        &self,
-        ctx: &FmtContext<'_, S, N>,
-        mut writer: Writer<'_>,
-        event: &Event<'_>,
-    ) -> fmt::Result {
-        let ids = ctx.event_scope().and_then(|mut scope| {
-            let span = scope.next()?;
-            let extensions = span.extensions();
-            let otel = extensions.get::<OtelData>()?;
-            // Same rule the exporter uses: a parent context (e.g. from a `traceparent`
-            // header) owns the trace id, otherwise the span started a new trace
-            let trace_id = if otel.parent_cx.has_active_span() {
-                otel.parent_cx.span().span_context().trace_id()
-            } else {
-                otel.builder.trace_id?
+fn otlp_exporter(
+    endpoint: &str,
+    protocol: OtlpProtocol,
+) -> Result<SpanExporterBuilder, TraceError> {
+    match protocol {
+        OtlpProtocol::Grpc => Ok(opentelemetry_otlp::new_exporter()
+            .tonic()
+            .with_endpoint(endpoint)
+            .into()),
+        OtlpProtocol::HttpProto => {
+            let invalid_endpoint = || {
+                TraceError::from(
+                    "Invalid OTLP HTTP endpoint: expected an HTTP(S) URL without a fragment",
+                )
             };
-            Some((trace_id, otel.builder.span_id?))
-        });
-
-        let Some((trace_id, span_id)) = ids else {
-            return self.0.format_event(ctx, writer, event);
-        };
-
-        let mut line = String::new();
-        self.0.format_event(ctx, Writer::new(&mut line), event)?;
-        // The JSON formatter writes one object per line, so the ids go before the closing brace
-        match line.trim_end().strip_suffix('}') {
-            Some(record) => writeln!(
-                writer,
-                "{record},\"trace_id\":\"{trace_id}\",\"span_id\":\"{span_id}\"}}"
-            ),
-            None => writer.write_str(&line),
+            let uri = endpoint
+                .parse::<::http::Uri>()
+                .map_err(|_| invalid_endpoint())?;
+            if uri.authority().is_none() {
+                return Err(invalid_endpoint());
+            }
+            let mut url = reqwest::Url::parse(endpoint).map_err(|_| invalid_endpoint())?;
+            if !matches!(url.scheme(), "http" | "https")
+                || url.host_str().is_none()
+                || url.fragment().is_some()
+            {
+                return Err(invalid_endpoint());
+            }
+            let path = url.path().trim_end_matches('/');
+            let trace_path = if path.ends_with("/v1/traces") {
+                path.to_owned()
+            } else {
+                format!("{path}/v1/traces")
+            };
+            url.set_path(&trace_path);
+            Ok(opentelemetry_otlp::new_exporter()
+                .http()
+                .with_protocol(Protocol::HttpBinary)
+                .with_endpoint(url.as_str())
+                .into())
         }
     }
 }
@@ -126,6 +117,7 @@ pub mod http {
 pub fn init_logging(
     otlp_endpoint: Option<&String>,
     otlp_service_name: String,
+    otlp_protocol: OtlpProtocol,
     json_output: bool,
     disable_spans: bool,
 ) -> bool {
@@ -142,7 +134,6 @@ pub fn init_logging(
             .flatten_event(true)
             .with_current_span(!disable_spans)
             .with_span_list(!disable_spans)
-            .map_event_format(JsonWithTraceIds)
             .boxed(),
         false => fmt_layer.boxed(),
     };
@@ -150,31 +141,33 @@ pub fn init_logging(
 
     // OpenTelemetry tracing layer
     let mut global_tracer = false;
+    let mut initialization_error = None;
     if let Some(otlp_endpoint) = otlp_endpoint {
         global::set_text_map_propagator(TraceContextPropagator::new());
 
-        let tracer = opentelemetry_otlp::new_pipeline()
-            .tracing()
-            .with_exporter(
-                opentelemetry_otlp::new_exporter()
-                    .tonic()
-                    .with_endpoint(otlp_endpoint),
-            )
-            .with_trace_config(
-                trace::config()
-                    .with_resource(Resource::new(vec![KeyValue::new(
-                        "service.name",
-                        otlp_service_name,
-                    )]))
-                    .with_sampler(Sampler::AlwaysOn),
-            )
-            .install_batch(opentelemetry_sdk::runtime::Tokio);
+        let trace_config = trace::config()
+            .with_resource(Resource::new(vec![KeyValue::new(
+                "service.name",
+                otlp_service_name,
+            )]))
+            .with_sampler(Sampler::AlwaysOn);
 
-        if let Ok(tracer) = tracer {
-            layers.push(tracing_opentelemetry::layer().with_tracer(tracer).boxed());
-            init_tracing_opentelemetry::init_propagator().unwrap();
-            global_tracer = true;
-        };
+        let tracer = otlp_exporter(otlp_endpoint, otlp_protocol).and_then(|exporter| {
+            opentelemetry_otlp::new_pipeline()
+                .tracing()
+                .with_exporter(exporter)
+                .with_trace_config(trace_config)
+                .install_batch(opentelemetry_sdk::runtime::Tokio)
+        });
+
+        match tracer {
+            Ok(tracer) => {
+                layers.push(tracing_opentelemetry::layer().with_tracer(tracer).boxed());
+                init_tracing_opentelemetry::init_propagator().unwrap();
+                global_tracer = true;
+            }
+            Err(error) => initialization_error = Some(error),
+        }
     }
 
     // Filter events with LOG_LEVEL
@@ -185,110 +178,11 @@ pub fn init_logging(
         .with(env_filter)
         .with(layers)
         .init();
+    if let Some(error) = initialization_error {
+        tracing::error!(%error, "Could not initialize OTLP tracing");
+    }
     global_tracer
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use opentelemetry::trace::{SpanContext, SpanId, TraceFlags, TraceId, TracerProvider as _};
-    use opentelemetry::Context;
-    use std::io;
-    use std::sync::{Arc, Mutex};
-    use tracing_opentelemetry::OpenTelemetrySpanExt;
-
-    #[derive(Clone, Default)]
-    struct Buffer(Arc<Mutex<Vec<u8>>>);
-
-    impl io::Write for Buffer {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.0.lock().unwrap().write(buf)
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    /// Runs `f` with the JSON and OpenTelemetry layers and returns the parsed log records
-    fn capture_logs(f: impl FnOnce()) -> Vec<serde_json::Value> {
-        let buffer = Buffer::default();
-        let writer = buffer.clone();
-        // The tracer only keeps a weak reference to its provider, so the provider must
-        // live until the end of the test or every generated id is zero
-        let provider = opentelemetry_sdk::trace::TracerProvider::builder().build();
-        let tracer = provider.tracer("test");
-        let subscriber = tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .json()
-                    .flatten_event(true)
-                    .map_event_format(JsonWithTraceIds)
-                    .with_writer(move || writer.clone()),
-            )
-            .with(tracing_opentelemetry::layer().with_tracer(tracer));
-
-        tracing::subscriber::with_default(subscriber, f);
-
-        let output = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
-        output
-            .lines()
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect()
-    }
-
-    #[test]
-    fn json_logs_have_ids_of_current_span() {
-        let mut expected = None;
-        let logs = capture_logs(|| {
-            let span = tracing::info_span!("request");
-            let _guard = span.enter();
-            tracing::info!("inside span");
-            let cx = span.context();
-            let span_context = cx.span().span_context().clone();
-            expected = Some((
-                span_context.trace_id().to_string(),
-                span_context.span_id().to_string(),
-            ));
-        });
-        let (trace_id, span_id) = expected.unwrap();
-        assert_ne!(trace_id, TraceId::INVALID.to_string());
-        assert_ne!(span_id, SpanId::INVALID.to_string());
-
-        assert_eq!(logs.len(), 1);
-        assert_eq!(logs[0]["message"], "inside span");
-        assert_eq!(logs[0]["trace_id"], trace_id.as_str());
-        assert_eq!(logs[0]["span_id"], span_id.as_str());
-    }
-
-    #[test]
-    fn json_logs_use_trace_id_of_remote_parent() {
-        let remote = SpanContext::new(
-            TraceId::from_hex("4bf92f3577b34da6a3ce929d0e0e4736").unwrap(),
-            SpanId::from_hex("00f067aa0ba902b7").unwrap(),
-            TraceFlags::SAMPLED,
-            true,
-            Default::default(),
-        );
-        let logs = capture_logs(|| {
-            let span = tracing::info_span!("request");
-            span.set_parent(Context::new().with_remote_span_context(remote));
-            let _guard = span.enter();
-            tracing::info!("inside span");
-        });
-
-        assert_eq!(logs[0]["trace_id"], "4bf92f3577b34da6a3ce929d0e0e4736");
-        let span_id = logs[0]["span_id"].as_str().unwrap();
-        assert_ne!(span_id, "00f067aa0ba902b7");
-        assert_ne!(span_id, SpanId::INVALID.to_string());
-    }
-
-    #[test]
-    fn json_logs_outside_span_have_no_ids() {
-        let logs = capture_logs(|| tracing::info!("no span"));
-
-        assert_eq!(logs[0]["message"], "no span");
-        assert!(logs[0].get("trace_id").is_none());
-        assert!(logs[0].get("span_id").is_none());
-    }
-}
+mod tests;

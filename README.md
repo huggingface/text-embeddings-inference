@@ -305,7 +305,7 @@ Options:
           [env: DISABLE_SPANS=]
 
       --otlp-endpoint <OTLP_ENDPOINT>
-          The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC. e.g. `http://localhost:4317`
+          The endpoint for OpenTelemetry traces. Use `http://localhost:4317` for gRPC or `http://localhost:4318` for HTTP. With `http-proto`, `/v1/traces` is appended to the endpoint path unless already present
 
           [env: OTLP_ENDPOINT=]
 
@@ -314,6 +314,13 @@ Options:
 
           [env: OTLP_SERVICE_NAME=]
           [default: text-embeddings-inference.server]
+
+      --otlp-protocol <OTLP_PROTOCOL>
+          The protocol used to export OTLP traces: gRPC or HTTP with protobuf encoding
+
+          [env: OTLP_PROTOCOL=]
+          [default: grpc]
+          [possible values: grpc, http-proto]
 
       --prometheus-port <PROMETHEUS_PORT>
           The Prometheus port to listen on
@@ -473,7 +480,32 @@ curl 127.0.0.1:8080/embed_sparse \
 ### Distributed Tracing
 
 `text-embeddings-inference` is instrumented with distributed tracing using OpenTelemetry. You can use this feature
-by setting the address to an OTLP collector with the `--otlp-endpoint` argument.
+by setting the address to an OTLP collector with the `--otlp-endpoint` argument (or `OTLP_ENDPOINT`).
+The default protocol is gRPC. To export OTLP over HTTP with protobuf encoding, use
+`--otlp-protocol http-proto` (or `OTLP_PROTOCOL=http-proto`):
+
+```shell
+text-embeddings-router \
+  --model-id BAAI/bge-small-en-v1.5 \
+  --otlp-endpoint http://localhost:4318 \
+  --otlp-protocol http-proto
+```
+
+For HTTP, `--otlp-endpoint` accepts a base URL: `/v1/traces` is appended while preserving any path prefix.
+For example, `https://collector.example.com/otel` exports to
+`https://collector.example.com/otel/v1/traces`. A full endpoint already ending in `/v1/traces`
+is also accepted. The router's HTTPS exporter uses the system's trusted root certificates.
+
+For HTTP exports, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` takes priority (a full URL used unchanged),
+followed by `OTEL_EXPORTER_OTLP_ENDPOINT` (a base URL with `/v1/traces` appended), then
+`--otlp-endpoint` / `OTLP_ENDPOINT`. This order applies to both the router and Python backend.
+`--otlp-endpoint` or `OTLP_ENDPOINT` is still required to enable tracing.
+
+Both protocols support authentication and custom headers through `OTEL_EXPORTER_OTLP_HEADERS`
+(comma-separated `key=value` pairs). Use percent-encoded values, for example
+`OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer%20token"`.
+`OTEL_EXPORTER_OTLP_TRACES_HEADERS`, when set, replaces the general header list for trace exports.
+These settings also apply to tracing in the Python backend.
 
 ### gRPC
 
