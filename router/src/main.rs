@@ -3,7 +3,7 @@ use clap::Parser;
 use opentelemetry::global;
 use veil::Redact;
 
-use text_embeddings_backend::DType;
+use text_embeddings_backend::{DType, OtlpProtocol};
 
 #[cfg(not(target_os = "linux"))]
 #[global_allocator]
@@ -151,6 +151,15 @@ struct Args {
     #[clap(default_value = "3000", long, short, env)]
     port: u16,
 
+    /// Root path to mount all HTTP routes under.
+    ///
+    /// For example, `--root-path jinaai/jina-embeddings-v2-base-en` serves the
+    /// OpenAI-compatible embeddings route at `/jinaai/jina-embeddings-v2-base-en/v1/embeddings`.
+    ///
+    /// Unused for gRPC servers.
+    #[clap(long, env)]
+    root_path: Option<String>,
+
     /// The name of the unix socket some text-embeddings-inference backends will use as they
     /// communicate internally with gRPC.
     #[clap(default_value = "/tmp/text-embeddings-inference-server", long, env)]
@@ -173,7 +182,8 @@ struct Args {
     #[clap(long, env)]
     api_key: Option<String>,
 
-    /// Outputs the logs in JSON format (useful for telemetry)
+    /// Outputs the logs in JSON format (useful for telemetry).
+    /// With an OTLP endpoint set, each log line also includes the trace_id and span_id of its span
     #[clap(long, env)]
     json_output: bool,
 
@@ -181,8 +191,9 @@ struct Args {
     #[clap(long, env)]
     disable_spans: bool,
 
-    /// The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC.
-    /// e.g. `http://localhost:4317`
+    /// The endpoint for OpenTelemetry traces. Use `http://localhost:4317` for gRPC or
+    /// `http://localhost:4318` for HTTP. With `http-proto`, `/v1/traces` is appended to the
+    /// endpoint path unless already present
     #[clap(long, env)]
     otlp_endpoint: Option<String>,
 
@@ -190,6 +201,10 @@ struct Args {
     /// e.g. `text-embeddings-inference.server`
     #[clap(default_value = "text-embeddings-inference.server", long, env)]
     otlp_service_name: String,
+
+    /// The protocol used to export OTLP traces: gRPC or HTTP with protobuf encoding
+    #[clap(default_value = "grpc", long, env, value_enum)]
+    otlp_protocol: OtlpProtocol,
 
     /// The Prometheus port to listen on.
     #[clap(default_value = "9000", long, env)]
@@ -209,6 +224,7 @@ async fn main() -> Result<()> {
     let global_tracer = text_embeddings_router::init_logging(
         args.otlp_endpoint.as_ref(),
         args.otlp_service_name.clone(),
+        args.otlp_protocol,
         args.json_output,
         args.disable_spans,
     );
@@ -258,12 +274,14 @@ async fn main() -> Result<()> {
         token,
         Some(args.hostname),
         args.port,
+        args.root_path,
         Some(args.uds_path),
         args.huggingface_hub_cache,
         args.payload_limit,
         args.api_key,
         args.otlp_endpoint,
         args.otlp_service_name,
+        args.otlp_protocol,
         args.prometheus_port,
         args.cors_allow_origin,
     )

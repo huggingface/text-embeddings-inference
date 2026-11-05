@@ -43,7 +43,7 @@ length of 512 tokens:
     - [Apple Silicon (Homebrew)](#apple-silicon-homebrew)
 - [Docker Build](#docker-build)
     - [ARM64 / aarch64](#arm64--aarch64)
-- [AMD Instinct GPUs (ROCm)](#amd-instinct-gpus-rocm-experimental)
+- [AMD Instinct GPUs (ROCm)](#amd-instinct-gpus-rocm)
 - [Examples](#examples)
 
 Text Embeddings Inference (TEI) is a toolkit for deploying and serving open source text embeddings and sequence
@@ -268,6 +268,15 @@ Options:
           [env: PORT=]
           [default: 3000]
 
+      --root-path <ROOT_PATH>
+          Root path to mount all HTTP routes under.
+
+          For example, `--root-path jinaai/jina-embeddings-v2-base-en` serves the OpenAI-compatible embeddings route at `/jinaai/jina-embeddings-v2-base-en/v1/embeddings`.
+
+          Unused for gRPC servers.
+
+          [env: ROOT_PATH=]
+
       --uds-path <UDS_PATH>
           The name of the unix socket some text-embeddings-inference backends will use as they communicate internally with gRPC
 
@@ -295,7 +304,7 @@ Options:
           [env: API_KEY=]
 
       --json-output
-          Outputs the logs in JSON format (useful for telemetry)
+          Outputs the logs in JSON format (useful for telemetry). With an OTLP endpoint set, each log line also includes the trace_id and span_id of its span
 
           [env: JSON_OUTPUT=]
 
@@ -305,7 +314,7 @@ Options:
           [env: DISABLE_SPANS=]
 
       --otlp-endpoint <OTLP_ENDPOINT>
-          The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC. e.g. `http://localhost:4317`
+          The endpoint for OpenTelemetry traces. Use `http://localhost:4317` for gRPC or `http://localhost:4318` for HTTP. With `http-proto`, `/v1/traces` is appended to the endpoint path unless already present
 
           [env: OTLP_ENDPOINT=]
 
@@ -314,6 +323,13 @@ Options:
 
           [env: OTLP_SERVICE_NAME=]
           [default: text-embeddings-inference.server]
+
+      --otlp-protocol <OTLP_PROTOCOL>
+          The protocol used to export OTLP traces: gRPC or HTTP with protobuf encoding
+
+          [env: OTLP_PROTOCOL=]
+          [default: grpc]
+          [possible values: grpc, http-proto]
 
       --prometheus-port <PROMETHEUS_PORT>
           The Prometheus port to listen on
@@ -473,7 +489,32 @@ curl 127.0.0.1:8080/embed_sparse \
 ### Distributed Tracing
 
 `text-embeddings-inference` is instrumented with distributed tracing using OpenTelemetry. You can use this feature
-by setting the address to an OTLP collector with the `--otlp-endpoint` argument.
+by setting the address to an OTLP collector with the `--otlp-endpoint` argument (or `OTLP_ENDPOINT`).
+The default protocol is gRPC. To export OTLP over HTTP with protobuf encoding, use
+`--otlp-protocol http-proto` (or `OTLP_PROTOCOL=http-proto`):
+
+```shell
+text-embeddings-router \
+  --model-id BAAI/bge-small-en-v1.5 \
+  --otlp-endpoint http://localhost:4318 \
+  --otlp-protocol http-proto
+```
+
+For HTTP, `--otlp-endpoint` accepts a base URL: `/v1/traces` is appended while preserving any path prefix.
+For example, `https://collector.example.com/otel` exports to
+`https://collector.example.com/otel/v1/traces`. A full endpoint already ending in `/v1/traces`
+is also accepted. The router's HTTPS exporter uses the system's trusted root certificates.
+
+For HTTP exports, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` takes priority (a full URL used unchanged),
+followed by `OTEL_EXPORTER_OTLP_ENDPOINT` (a base URL with `/v1/traces` appended), then
+`--otlp-endpoint` / `OTLP_ENDPOINT`. This order applies to both the router and Python backend.
+`--otlp-endpoint` or `OTLP_ENDPOINT` is still required to enable tracing.
+
+Both protocols support authentication and custom headers through `OTEL_EXPORTER_OTLP_HEADERS`
+(comma-separated `key=value` pairs). Use percent-encoded values, for example
+`OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer%20token"`.
+`OTEL_EXPORTER_OTLP_TRACES_HEADERS`, when set, replaces the general header list for trace exports.
+These settings also apply to tracing in the Python backend.
 
 ### gRPC
 
@@ -646,9 +687,24 @@ docker build . -f Dockerfile-cuda \
   --platform linux/arm64
 ```
 
-## AMD Instinct GPUs (ROCm) — experimental
+## AMD Instinct GPUs (ROCm)
 
-TEI has experimental support for AMD Instinct GPUs (MI200, MI300 series) via ROCm. You can use the `rocm/pytorch:latest` Docker image or a bare-metal ROCm installation. TEI will auto-detect the GPU at startup.
+TEI supports AMD Instinct GPUs (MI200, MI300 series) via ROCm.
+
+```shell
+model=BAAI/bge-base-en-v1.5
+volume=$PWD/data
+
+docker run \
+  --device /dev/kfd --device /dev/dri \
+  --group-add video \
+  --ipc=host \
+  -p 8080:80 \
+  -v $volume:/data \
+  --pull always \
+  ghcr.io/huggingface/text-embeddings-inference:rocm-latest \
+  --model-id $model --dtype bfloat16
+```
 
 For full setup instructions, see the **[AMD Instinct GPU guide](https://huggingface.co/docs/text-embeddings-inference/amd_gpu)**.
 

@@ -16,77 +16,81 @@ rendered properly in your Markdown viewer.
 
 # Using TEI on AMD Instinct GPUs (ROCm)
 
-> [!WARNING]
-> AMD ROCm support is **experimental**. Only AMD Instinct GPUs (MI200, MI300 series) are tested.
-
-Text Embeddings Inference can run on AMD Instinct GPUs using [ROCm](https://rocm.docs.amd.com/). The implementation uses PyTorch's built-in `scaled_dot_product_attention` as the attention backend.
+Text Embeddings Inference supports AMD Instinct GPUs (MI200, MI300 series) using [ROCm](https://rocm.docs.amd.com/).
 
 ## Prerequisites
 
-- AMD Instinct GPU (MI200, MI300 series) with ROCm 6.x drivers on the host
-- Either a working ROCm PyTorch installation, **or** the `rocm/pytorch:latest` Docker image (recommended)
+- AMD Instinct GPU (MI200, MI300 series) with ROCm drivers on the host
+
+## Option A: Docker (recommended)
+
+The easiest way to run TEI on AMD GPUs is with the pre-built Docker image:
+
+```shell
+model=BAAI/bge-base-en-v1.5
+volume=$PWD/data  # share a volume to avoid re-downloading weights
+
+docker run \
+  --device /dev/kfd --device /dev/dri/renderD128 \
+  --group-add video \
+  --ipc=host \
+  -p 8080:80 \
+  -v $volume:/data \
+  --pull always \
+  ghcr.io/huggingface/text-embeddings-inference:rocm-latest \
+  --model-id $model --dtype bfloat16
+```
+
+Then test it:
+
+```shell
+curl http://localhost:8080/v1/embeddings \
+    -H 'Content-Type: application/json' \
+    -d '{
+      "input": "What is Deep Learning?",
+      "model": "text-embeddings-inference",
+      "encoding_format": "float"
+    }'
+```
 
 ---
 
-The recommended way to get started is to use AMD's official ROCm PyTorch image, which ships with PyTorch and ROCm pre-installed. Alternatively, you can install ROCm PyTorch directly on the host with `pip install torch --index-url https://download.pytorch.org/whl/rocm6.2` and skip Step 1.
+## Option B: Build from source inside the TEI ROCm image
+
+If you want to modify TEI and rebuild it, use the official TEI ROCm image
+(the pinned image below) as your base environment instead of AMD's
+`rocm/pytorch` image. It already ships the exact ROCm build of PyTorch, `flash-attn`, the compute kernels, and
+the installed Python backend that TEI expects, so you skip the PyTorch/dependency setup entirely and avoid
+version-mismatch issues — you only rebuild the parts you change.
 
 ## Step 1: Start the container
 
+From the repository root of your checkout, mount it and override the entrypoint to get a shell.
+The image digest pins the `rocm-latest` build used here; choose a matching image when working with a different TEI revision:
+
 ```shell
-docker run -it --device=/dev/kfd --device=/dev/dri \
-  --group-add video --shm-size 8g \
-  -v $PWD:/workspace \
-  rocm/pytorch:latest bash
+docker run -it --device=/dev/kfd --device=/dev/dri/renderD128 \
+  --group-add video --ipc=host --shm-size 8g \
+  -v "$PWD:/workspace" -w /workspace \
+  --entrypoint bash \
+  ghcr.io/huggingface/text-embeddings-inference@sha256:9b3f24f8740d4c3fa656666e07a383a50a9e4f3273d3856980841cd8d45e727f
 ```
 
-Inside the container, clone the TEI repository (or mount it via `-v`) and run the remaining steps from the repo root.
+PyTorch (ROCm), `flash-attn`, the compute kernels, and the `text-embeddings-server` Python backend are already
+installed in this image, and a prebuilt `text-embeddings-router` is on the `PATH`. The steps below only cover
+rebuilding after you edit the source.
 
-## Step 2: Install Rust
+## Step 2: Install Rust (only needed to rebuild the router)
 
 ```shell
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 source "$HOME/.cargo/env"
+
+# Required by the router's protobuf build step.
+apt-get update && apt-get install -y protobuf-compiler pkg-config libssl-dev
 ```
 
-## Step 3: Install Python dependencies
-
-PyTorch is already provided by the container image, so install the remaining dependencies without pulling a new torch:
-
-```shell
-pip install --no-deps -r backends/python/server/requirements-amd.txt
-pip install safetensors opentelemetry-api opentelemetry-sdk \
-    opentelemetry-exporter-otlp-proto-grpc grpcio-reflection \
-    grpc-interceptor einops packaging
-```
-
-## Step 4: Generate protobuf stubs
-
-```shell
-pip install grpcio-tools==1.62.2 mypy-protobuf==3.6.0 types-protobuf
-
-mkdir -p backends/python/server/text_embeddings_server/pb
-
-python -m grpc_tools.protoc \
-    -I backends/proto \
-    --python_out=backends/python/server/text_embeddings_server/pb \
-    --grpc_python_out=backends/python/server/text_embeddings_server/pb \
-    --mypy_out=backends/python/server/text_embeddings_server/pb \
-    backends/proto/embed.proto
-
-# Fix relative imports in generated files
-find backends/python/server/text_embeddings_server/pb/ -name "*.py" \
-    -exec sed -i 's/^\(import.*pb2\)/from . \1/g' {} \;
-
-touch backends/python/server/text_embeddings_server/pb/__init__.py
-```
-
-## Step 5: Install the Python server package
-
-```shell
-pip install -e backends/python/server
-```
-
-## Step 6: Build the Rust router
+## Step 3: Rebuild the Rust router from your source
 
 ```shell
 cargo build --release \
@@ -95,7 +99,19 @@ cargo build --release \
     --bin text-embeddings-router
 ```
 
-## Step 7: Launch TEI
+If you also changed the Python backend, generate protobuf stubs in the mounted checkout before
+reinstalling it in editable mode. The image's installed package does not populate a fresh checkout's
+ignored `text_embeddings_server/pb` directory. The subshell keeps the remaining commands at the repository root.
+
+```shell
+(
+  cd backends/python/server
+  make gen-server
+  pip install --no-deps -e .
+)
+```
+
+## Step 4: Launch your build
 
 ```shell
 model=BAAI/bge-base-en-v1.5
@@ -106,10 +122,13 @@ model=BAAI/bge-base-en-v1.5
 Once the server is ready, you can test it with a simple embed request:
 
 ```shell
-curl http://localhost:8080/embed \
-    -X POST \
+curl http://localhost:8080/v1/embeddings \
     -H 'Content-Type: application/json' \
-    -d '{"inputs": "What is Deep Learning?"}'
+    -d '{
+      "input": "What is Deep Learning?",
+      "model": "text-embeddings-inference",
+      "encoding_format": "float"
+    }'
 ```
 
 ## Verifying GPU detection
