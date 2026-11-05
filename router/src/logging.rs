@@ -1,10 +1,17 @@
+use opentelemetry::trace::TraceContextExt;
 use opentelemetry::{global, trace::TraceError, KeyValue};
 use opentelemetry_otlp::{Protocol, SpanExporterBuilder, WithExportConfig};
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::Sampler;
 use opentelemetry_sdk::{trace, Resource};
+use std::fmt;
 use text_embeddings_backend::OtlpProtocol;
+use tracing::{Event, Subscriber};
+use tracing_opentelemetry::OtelData;
+use tracing_subscriber::fmt::format::{Format, Json, Writer};
+use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
 use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 
@@ -48,6 +55,53 @@ fn otlp_exporter(
                 .with_protocol(Protocol::HttpBinary)
                 .with_endpoint(url.as_str())
                 .into())
+        }
+    }
+}
+
+/// JSON event formatter that adds the OpenTelemetry `trace_id` and `span_id` of the
+/// current span to each record, so log lines can be matched with their exported trace.
+/// Records outside of a span, or without the OpenTelemetry layer, are left unchanged.
+struct JsonWithTraceIds(Format<Json>);
+
+impl<S, N> FormatEvent<S, N> for JsonWithTraceIds
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        ctx: &FmtContext<'_, S, N>,
+        mut writer: Writer<'_>,
+        event: &Event<'_>,
+    ) -> fmt::Result {
+        let ids = ctx.event_scope().and_then(|mut scope| {
+            let span = scope.next()?;
+            let extensions = span.extensions();
+            let otel = extensions.get::<OtelData>()?;
+            // Same rule the exporter uses: a parent context (e.g. from a `traceparent`
+            // header) owns the trace id, otherwise the span started a new trace
+            let trace_id = if otel.parent_cx.has_active_span() {
+                otel.parent_cx.span().span_context().trace_id()
+            } else {
+                otel.builder.trace_id?
+            };
+            Some((trace_id, otel.builder.span_id?))
+        });
+
+        let Some((trace_id, span_id)) = ids else {
+            return self.0.format_event(ctx, writer, event);
+        };
+
+        let mut line = String::new();
+        self.0.format_event(ctx, Writer::new(&mut line), event)?;
+        // The JSON formatter writes one object per line, so the ids go before the closing brace
+        match line.trim_end().strip_suffix('}') {
+            Some(record) => writeln!(
+                writer,
+                "{record},\"trace_id\":\"{trace_id}\",\"span_id\":\"{span_id}\"}}"
+            ),
+            None => writer.write_str(&line),
         }
     }
 }
@@ -134,6 +188,7 @@ pub fn init_logging(
             .flatten_event(true)
             .with_current_span(!disable_spans)
             .with_span_list(!disable_spans)
+            .map_event_format(JsonWithTraceIds)
             .boxed(),
         false => fmt_layer.boxed(),
     };
