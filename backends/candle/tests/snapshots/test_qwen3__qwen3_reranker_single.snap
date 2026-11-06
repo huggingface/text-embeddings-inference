@@ -1,0 +1,5 @@
+---
+source: backends/candle/tests/test_qwen3.rs
+expression: predictions_single
+---
+- - -0.8051996
