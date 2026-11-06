@@ -37,7 +37,7 @@ pub(crate) fn prometheus_builer(
     let batch_size_matcher = Matcher::Full(String::from("te_batch_next_size"));
     let batch_size_buckets: Vec<f64> = (1..=32)
         .map(|x| x as f64)
-        .chain((7..13).map(|x| 2.0_f64.powi(x)))
+        .chain((6..13).map(|x| 2.0_f64.powi(x)))
         .collect();
 
     // Batch tokens buckets: half-steps up to 32k, then powers of 2
@@ -57,4 +57,43 @@ pub(crate) fn prometheus_builer(
         .set_buckets_for_metric(input_length_matcher, &input_length_buckets)?
         .set_buckets_for_metric(batch_size_matcher, &batch_size_buckets)?
         .set_buckets_for_metric(batch_tokens_matcher, &batch_tokens_buckets)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn histogram_boundaries_preserve_existing_buckets() {
+        let recorder = prometheus_builer("127.0.0.1:0".parse().unwrap(), 0, 32768)
+            .unwrap()
+            .build_recorder();
+        metrics::with_local_recorder(&recorder, || {
+            metrics::histogram!("te_batch_next_size").record(3.0);
+            metrics::histogram!("te_batch_next_tokens").record(1536.0);
+            metrics::histogram!("te_request_input_length").record(768.0);
+        });
+        let rendered = recorder.handle().render();
+        for (name, highest_power, added_boundary) in [
+            ("te_batch_next_size", 12, 3.0),
+            ("te_batch_next_tokens", 20, 1536.0),
+            ("te_request_input_length", 15, 768.0),
+        ] {
+            let prefix = format!("{name}_bucket{{le=\"");
+            let boundaries: Vec<f64> = rendered
+                .lines()
+                .filter_map(|line| line.strip_prefix(&prefix))
+                .map(|line| line.split('"').next().unwrap().parse().unwrap())
+                .filter(|value: &f64| value.is_finite())
+                .collect();
+            assert!(boundaries.windows(2).all(|pair| pair[0] < pair[1]));
+            for power in 0..=highest_power {
+                assert!(boundaries.contains(&2.0_f64.powi(power)), "{name}: {power}");
+            }
+            assert!(boundaries.contains(&added_boundary));
+            if name == "te_request_input_length" {
+                assert!(boundaries.iter().all(|value| *value <= 32768.0));
+            }
+        }
+    }
 }
