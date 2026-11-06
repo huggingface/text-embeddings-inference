@@ -9,6 +9,14 @@ pub struct RMSNorm {
 }
 
 impl RMSNorm {
+    pub fn new(weight: Tensor, epsilon: f32) -> Self {
+        Self {
+            weight,
+            epsilon,
+            span: tracing::span!(tracing::Level::TRACE, "rms-norm"),
+        }
+    }
+
     pub fn load(vb: VarBuilder, hidden_size: usize, epsilon: f32) -> Result<Self> {
         Ok(Self {
             weight: vb

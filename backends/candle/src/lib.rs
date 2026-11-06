@@ -23,16 +23,16 @@ use crate::compute_cap::{
 };
 use crate::models::{
     BertConfig, BertModel, DebertaV2Config, DebertaV2Model, Dense, DenseConfig, DenseLayer,
-    DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, Gemma3Config, Gemma3Model,
-    JinaBertModel, JinaCodeBertModel, LlamaConfig, MPNetConfig, MPNetModel, MistralConfig, Model,
-    ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Pplx1Config, Pplx1Model,
-    Qwen2Config, Qwen3Config, Qwen3Model,
+    DistilBertConfig, DistilBertModel, EmbeddingGemma2Config, EmbeddingGemma2Model, GTEConfig,
+    GTEModel, Gemma3Config, Gemma3Model, JinaBertModel, JinaCodeBertModel, LlamaConfig,
+    MPNetConfig, MPNetModel, MistralConfig, Model, ModernBertConfig, ModernBertModel,
+    NomicBertModel, NomicConfig, Pplx1Config, Pplx1Model, Qwen2Config, Qwen3Config, Qwen3Model,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
-    FlashBertModel, FlashDistilBertModel, FlashGTEModel, FlashJinaBertModel,
-    FlashJinaCodeBertModel, FlashMistralModel, FlashModernBertModel, FlashNomicBertModel,
-    FlashQwen2Model, FlashQwen3Model,
+    FlashBertModel, FlashDistilBertModel, FlashEmbeddingGemma2Model, FlashGTEModel,
+    FlashJinaBertModel, FlashJinaCodeBertModel, FlashMistralModel, FlashModernBertModel,
+    FlashNomicBertModel, FlashQwen2Model, FlashQwen3Model,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -129,6 +129,8 @@ enum Config {
     Camembert(BertConfig),
     #[serde(rename(deserialize = "distilbert"))]
     DistilBert(DistilBertConfig),
+    #[serde(rename(deserialize = "embedding_gemma2"))]
+    EmbeddingGemma2(EmbeddingGemma2Config),
     #[serde(rename(deserialize = "gemma3_text"))]
     Gemma3(Gemma3Config),
     #[serde(alias = "new")]
@@ -319,6 +321,18 @@ impl CandleBackend {
                     DistilBertModel::load(vb, &config, model_type).s()?,
                 ))
             }
+            (Config::EmbeddingGemma2(config), Device::Cpu | Device::Metal(_)) => {
+                if !matches!(dtype, DType::F32 | DType::F16) {
+                    Err(BackendError::Start(
+                        "EmbeddingGemma2 is only supported in fp32 or fp16 precision".to_string(),
+                    ))
+                } else {
+                    tracing::info!("Starting EmbeddingGemma2 model on {:?}", device);
+                    Ok(Box::new(
+                        EmbeddingGemma2Model::load(vb, &config, model_type).s()?,
+                    ))
+                }
+            }
             (Config::Gemma3(config), Device::Cpu | Device::Metal(_)) => {
                 // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on Metal
                 if dtype != DType::F32 {
@@ -448,6 +462,24 @@ impl CandleBackend {
                     tracing::info!("Starting DistilBertModel model on {:?}", device);
                     Ok(Box::new(
                         DistilBertModel::load(vb, &config, model_type).s()?,
+                    ))
+                }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::EmbeddingGemma2(config), Device::Cuda(_)) => {
+                if !matches!(dtype, DType::F32 | DType::F16) {
+                    Err(BackendError::Start(
+                        "EmbeddingGemma2 is only supported in fp32 or fp16 precision".to_string(),
+                    ))
+                } else if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V2]) {
+                    tracing::info!("Starting FlashEmbeddingGemma2 model on {:?}", device);
+                    Ok(Box::new(
+                        FlashEmbeddingGemma2Model::load(vb, &config, model_type).s()?,
+                    ))
+                } else {
+                    tracing::info!("Starting EmbeddingGemma2 model on {:?}", device);
+                    Ok(Box::new(
+                        EmbeddingGemma2Model::load(vb, &config, model_type).s()?,
                     ))
                 }
             }
