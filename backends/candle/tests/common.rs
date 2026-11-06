@@ -119,6 +119,8 @@ enum ModuleType {
     #[serde(rename = "sentence_transformers.models.Transformer")]
     #[serde(alias = "sentence_transformers.base.modules.transformer.Transformer")]
     Transformer,
+    #[serde(rename = "sentence_transformers.models.StaticEmbedding")]
+    StaticEmbedding,
 }
 
 #[derive(Deserialize)]
@@ -159,7 +161,11 @@ pub fn download_artifacts(
     };
 
     api_repo.get("config.json")?;
-    api_repo.get("tokenizer.json")?;
+
+    match api_repo.get("tokenizer.json") {
+        Ok(path) => path,
+        Err(_) => api_repo.get("0_StaticEmbedding/tokenizer.json")?,
+    };
 
     let model_files = match download_safetensors(&api_repo) {
         Ok(p) => p,
@@ -209,6 +215,17 @@ fn download_safetensors(api: &ApiRepo) -> Result<Vec<PathBuf>, ApiError> {
         Ok(p) => return Ok(vec![p]),
         Err(err) => tracing::warn!("Could not download `model.safetensors`: {}", err),
     };
+    if let Ok(path) = api.get("model.safetensors") {
+        return Ok(vec![path]);
+    }
+
+    tracing::warn!("Could not download `model.safetensors`");
+    tracing::info!("Downloading `0_StaticEmbedding/model.safetensors`");
+    if let Ok(path) = api.get("0_StaticEmbedding/model.safetensors") {
+        return Ok(vec![path]);
+    }
+
+    tracing::warn!("Could not download `model.safetensors`");
 
     // Sharded weights
     // Download and parse index file
@@ -286,7 +303,16 @@ pub fn cosine_matcher() -> YamlMatcher<SnapshotEmbeddings> {
 pub fn load_tokenizer(model_root: &Path) -> Result<Tokenizer> {
     // Load tokenizer
     let tokenizer_path = model_root.join("tokenizer.json");
-    let mut tokenizer = Tokenizer::from_file(tokenizer_path).expect("tokenizer.json not found");
+    let mut tokenizer = match Tokenizer::from_file(&tokenizer_path) {
+        Ok(t) => t,
+        Err(e) if e.to_string().contains("No such file") || e.to_string().contains("not found") => {
+            let fallback_path = model_root.join("0_StaticEmbedding").join("tokenizer.json");
+            Tokenizer::from_file(&fallback_path)
+                .expect("0_StaticEmbedding/tokenizer.json not found.")
+        }
+        Err(_) => anyhow::bail!("text-embeddings-inference only supports fast tokenizers"),
+    };
+
     // See https://github.com/huggingface/tokenizers/pull/1357
     if let Some(pre_tokenizer) = tokenizer.get_pre_tokenizer() {
         if let PreTokenizerWrapper::Metaspace(m) = pre_tokenizer {
