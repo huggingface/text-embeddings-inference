@@ -19,10 +19,12 @@ rendered properly in your Markdown viewer.
 You can install `text-embeddings-inference` locally to run it on your own machine. Here are the step-by-step instructions for installation:
 
 ## Step 0: Clone the repository
+
 We need the source code of the `text-embeddings-inference` repo to install it later. Clone it with:
 
 ```shell
-git clone git@github.com:huggingface/text-embeddings-inference.git
+git clone https://github.com/huggingface/text-embeddings-inference.git
+cd text-embeddings-inference
 ```
 
 ## Step 1: Install Rust
@@ -49,6 +51,17 @@ cargo install --path router -F mkl
 ```shell
 cargo install --path router -F metal
 ```
+
+Source builds use native CPU optimizations by default. Build on the machine that will run TEI,
+or on a CPU with compatible instruction sets. To disable the repository's native CPU flags
+when building for other CPUs of the same target architecture, prefix the install command with
+`RUSTFLAGS=''`. For example, with the ONNX CPU backend.
+
+```shell
+RUSTFLAGS='' cargo install --path router -F ort
+```
+
+This does not cross-compile the application or change the requirements of prebuilt backend libraries.
 
 ## Step 3: Launch Text Embeddings Inference
 
