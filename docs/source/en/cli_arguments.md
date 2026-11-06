@@ -214,10 +214,11 @@ Options:
           [possible values: grpc, http-proto]
 
       --prometheus-port <PROMETHEUS_PORT>
-          The Prometheus port to listen on
+          The HTTP port for Prometheus metrics.
+
+          HTTP servers share the API port by default. Set a different port to serve metrics separately and remove `/metrics` from the API port. gRPC servers default to 9000.
 
           [env: PROMETHEUS_PORT=]
-          [default: 9000]
 
       --cors-allow-origin <CORS_ALLOW_ORIGIN>
           Unused for gRPC servers
