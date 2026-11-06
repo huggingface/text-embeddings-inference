@@ -26,7 +26,7 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use text_embeddings_backend::{DType, Pool};
+use text_embeddings_backend::{DType, OtlpProtocol, Pool};
 use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
@@ -39,6 +39,9 @@ use tracing::Span;
 
 pub use logging::init_logging;
 
+const USER_AGENT_NAME: &str = "text-embeddings-inference";
+const USER_AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Create entrypoint
 #[allow(clippy::too_many_arguments)]
 pub async fn run(
@@ -46,6 +49,7 @@ pub async fn run(
     revision: Option<String>,
     tokenization_workers: Option<usize>,
     dtype: Option<DType>,
+    served_model_name: String,
     pooling: Option<text_embeddings_backend::Pool>,
     max_concurrent_requests: usize,
     max_batch_tokens: usize,
@@ -54,15 +58,18 @@ pub async fn run(
     auto_truncate: bool,
     default_prompt: Option<String>,
     default_prompt_name: Option<String>,
+    dense_path: Option<String>,
     hf_token: Option<String>,
     hostname: Option<String>,
     port: u16,
+    root_path: Option<String>,
     uds_path: Option<String>,
     huggingface_hub_cache: Option<String>,
     payload_limit: usize,
     api_key: Option<String>,
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
+    otlp_protocol: OtlpProtocol,
     prometheus_port: u16,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
@@ -73,10 +80,16 @@ pub async fn run(
     } else {
         let mut builder = ApiBuilder::from_env()
             .with_progress(false)
-            .with_token(hf_token);
+            .with_user_agent(USER_AGENT_NAME, USER_AGENT_VERSION);
 
         if let Some(cache_dir) = huggingface_hub_cache {
             builder = builder.with_cache_dir(cache_dir.into());
+        }
+
+        // NOTE: Only set the `token` if it's not None, otherwise leave it as default so that the
+        // token from the cache location is pulled instead, if exists
+        if hf_token.is_some() {
+            builder = builder.with_token(hf_token);
         }
 
         if let Ok(origin) = std::env::var("HF_HUB_USER_AGENT_ORIGIN") {
@@ -140,9 +153,16 @@ pub async fn run(
         "tokenizer.json not found. text-embeddings-inference only supports fast tokenizers",
     );
     tokenizer.with_padding(None);
-    // Qwen2 updates the post processor manually instead of into the tokenizer.json...
+    // Old Qwen2  repos updates the post processor manually instead of into the tokenizer.json.
+    // Newer ones (https://huggingface.co/jinaai/jina-code-embeddings-0.5b/tree/main) have it in the tokenizer.json. This is to support both cases.
     // https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct/blob/main/tokenization_qwen.py#L246
-    if config.model_type == "qwen2" {
+    if config.model_type == "qwen2"
+        && config
+            .auto_map
+            .as_ref()
+            .is_some_and(|m| m.get("AutoModel") == Some(&"modeling_qwen.Qwen2Model".to_string()))
+    {
+        tracing::warn!("Model is detected as a Qwen2 model with remote code. Adding a post processor manually as the tokenizer.json does not contain a post processor.");
         let template = TemplateProcessing::builder()
             .try_single("$A:0 <|endoftext|>:0")
             .unwrap()
@@ -168,7 +188,7 @@ pub async fn run(
         || &config.model_type == "camembert"
         || &config.model_type == "roberta"
     {
-        config.pad_token_id + 1
+        config.pad_token_id.unwrap_or(0) + 1
     } else {
         0
     };
@@ -183,16 +203,41 @@ pub async fn run(
             break;
         }
     }
-    let max_input_length = match st_config {
-        Some(config) => config.max_seq_length,
+
+    let max_position_embeddings = match config.max_position_embeddings {
+        Some(max_position_embeddings) => max_position_embeddings,
+        None => match config.max_trained_positions {
+            Some(max_trained_positions) => max_trained_positions,
+            None => anyhow::bail!("At least any of `max_position_embeddings` or `max_trained_positions` (only applies for NomicBERT), in that order of priority, should be defined in `config.json`."),
+        },
+    };
+
+    let base_input_length = match st_config.and_then(|config| config.max_seq_length) {
+        Some(max_seq_length) => max_seq_length,
         None => {
-            tracing::warn!("Could not find a Sentence Transformers config");
-            config.max_position_embeddings - position_offset
+            tracing::warn!("Could not find `max_seq_length` in a Sentence Transformers config");
+            max_position_embeddings - position_offset
         }
+    };
+
+    let max_input_length = if base_input_length > max_batch_tokens {
+        if !auto_truncate {
+            anyhow::bail!(
+                "The maximum input length is `{base_input_length}` which exceeds `--max-batch-tokens={max_batch_tokens}`. Either increase `--max-batch-tokens` to at least `{base_input_length}`, or set `--auto-truncate true` so that regardless the maximum input length, those are truncated to `{max_batch_tokens}` tokens."
+            );
+        }
+        tracing::warn!(
+            "The maximum input length is `{base_input_length}` which exceeds `--max-batch-tokens={max_batch_tokens}`. Input sequences will be truncated to `{max_batch_tokens}` tokens, as `--auto-truncate` is either not provided (defaults to true) or provided as true. To avoid truncation, increase `--max-batch-tokens` to at least `{base_input_length}` and set `--auto-truncate false`."
+        );
+        max_batch_tokens
+    } else {
+        base_input_length
     };
     tracing::info!("Maximum number of tokens per request: {max_input_length}");
 
-    let tokenization_workers = tokenization_workers.unwrap_or_else(num_cpus::get);
+    // fall-back to num_cpus - 1 to leave some CPU for the backend, and at most 64 workers.
+    let tokenization_workers =
+        tokenization_workers.unwrap_or_else(|| (num_cpus::get() - 1).clamp(1, 64));
 
     // Try to load new ST Config
     let mut new_st_config: Option<NewSTConfig> = None;
@@ -228,8 +273,14 @@ pub async fn run(
         prompts,
     );
 
-    // Get dtype
-    let dtype = dtype.unwrap_or_default();
+    // NOTE: `gemma3_text` won't support Float16 but only Float32, given that with `candle-cuda`
+    // feature, the default `Dtype::Float16` this overrides that to prevent issues when running a
+    // `gemma3_text` model without specifying a `--dtype`
+    let dtype = if dtype.is_none() && config.model_type == "gemma3_text" {
+        DType::Float32
+    } else {
+        dtype.unwrap_or_default()
+    };
 
     // Create backend
     tracing::info!("Starting model backend");
@@ -238,9 +289,11 @@ pub async fn run(
         api_repo,
         dtype.clone(),
         backend_model_type,
+        dense_path,
         uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_string()),
         otlp_endpoint.clone(),
         otlp_service_name.clone(),
+        otlp_protocol,
     )
     .await
     .context("Could not create backend")?;
@@ -251,7 +304,12 @@ pub async fn run(
 
     tracing::info!("Warming up model");
     backend
-        .warmup(max_input_length, max_batch_tokens, max_batch_requests)
+        .warmup(
+            max_input_length,
+            max_batch_tokens,
+            max_batch_requests,
+            backend.padded_model,
+        )
         .await
         .context("Model backend is not healthy")?;
 
@@ -279,6 +337,7 @@ pub async fn run(
         model_id,
         model_sha: revision,
         model_dtype: dtype.to_string(),
+        served_model_name,
         model_type,
         max_concurrent_requests,
         max_input_length,
@@ -334,15 +393,17 @@ pub async fn run(
             payload_limit,
             api_key,
             cors_allow_origin,
+            root_path,
         )
         .await
     }
 
     #[cfg(feature = "grpc")]
     {
-        // cors_allow_origin and payload_limit are not used for gRPC servers
+        // cors_allow_origin, payload_limit and root_path are not used for gRPC servers
         let _ = cors_allow_origin;
         let _ = payload_limit;
+        let _ = root_path;
         grpc::server::run(infer, info, addr, prom_builder, api_key).await
     }
 }
@@ -405,6 +466,7 @@ fn get_backend_model_type(
             }
         }
     };
+
     Ok(text_embeddings_backend::ModelType::Embedding(pool))
 }
 
@@ -412,20 +474,29 @@ fn get_backend_model_type(
 pub struct ModelConfig {
     pub architectures: Vec<String>,
     pub model_type: String,
-    #[serde(alias = "n_positions")]
-    pub max_position_embeddings: usize,
+    // NOTE: `max_trained_positions` is specific for NomicBERT when it required custom code, but
+    // since Transformers v5 it's no longer required, and it now defines `max_position_embeddings`
+    // in the `config.json` instead. Not included as an `alias` since both can be present at the
+    // same time, see https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/blob/e9b6763023c676ca8431644204f50c2b100d9aab/config.json#L33-L34
+    pub max_trained_positions: Option<usize>,
+    pub max_position_embeddings: Option<usize>,
     #[serde(default)]
-    pub pad_token_id: usize,
+    pub pad_token_id: Option<usize>,
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
+    pub auto_map: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PoolConfig {
+    #[serde(default)]
     pooling_mode_cls_token: bool,
+    #[serde(default)]
     pooling_mode_mean_tokens: bool,
     #[serde(default)]
     pooling_mode_lasttoken: bool,
+    #[serde(default)]
+    pooling_mode: Option<String>,
 }
 
 impl TryFrom<PoolConfig> for Pool {
@@ -441,13 +512,19 @@ impl TryFrom<PoolConfig> for Pool {
         if config.pooling_mode_lasttoken {
             return Ok(Pool::LastToken);
         }
+        match config.pooling_mode.as_deref() {
+            Some("cls") => return Ok(Pool::Cls),
+            Some("mean") => return Ok(Pool::Mean),
+            Some("lasttoken") => return Ok(Pool::LastToken),
+            _ => {}
+        }
         Err(anyhow!("Pooling config {config:?} is not supported"))
     }
 }
 
 #[derive(Debug, Deserialize)]
 pub struct STConfig {
-    pub max_seq_length: usize,
+    pub max_seq_length: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -493,6 +570,8 @@ pub struct Info {
     pub model_sha: Option<String>,
     #[cfg_attr(feature = "http", schema(example = "float16"))]
     pub model_dtype: String,
+    #[cfg_attr(feature = "http", schema(example = "thenlper/gte-base"))]
+    pub served_model_name: String,
     pub model_type: ModelType,
     /// Router Parameters
     #[cfg_attr(feature = "http", schema(example = "128"))]
@@ -543,6 +622,7 @@ impl From<TextEmbeddingsError> for ErrorResponse {
         let error_type = match err {
             TextEmbeddingsError::Tokenizer(_) => ErrorType::Tokenizer,
             TextEmbeddingsError::Validation(_) => ErrorType::Validation,
+            TextEmbeddingsError::Empty(_) => ErrorType::Empty,
             TextEmbeddingsError::Overloaded(_) => ErrorType::Overloaded,
             TextEmbeddingsError::Backend(_) => ErrorType::Backend,
         };
@@ -660,5 +740,68 @@ impl From<ResponseMetadata> for HeaderMap {
                 .unwrap(),
         );
         headers
+    }
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn legacy_pooling_modes_are_preserved() {
+        for (field, expected) in [
+            ("pooling_mode_cls_token", Pool::Cls),
+            ("pooling_mode_mean_tokens", Pool::Mean),
+            ("pooling_mode_lasttoken", Pool::LastToken),
+        ] {
+            let mut value =
+                json!({"pooling_mode_cls_token": false, "pooling_mode_mean_tokens": false});
+            value[field] = json!(true);
+            let config: PoolConfig = serde_json::from_value(value).unwrap();
+            assert_eq!(Pool::try_from(config).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn current_pooling_modes_are_supported() {
+        for (mode, expected) in [
+            ("cls", Pool::Cls),
+            ("mean", Pool::Mean),
+            ("lasttoken", Pool::LastToken),
+        ] {
+            let config: PoolConfig = serde_json::from_value(json!({"pooling_mode": mode})).unwrap();
+            assert_eq!(Pool::try_from(config).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn unsupported_or_missing_pooling_modes_are_rejected() {
+        for value in [
+            json!({}),
+            json!({"pooling_mode": "max"}),
+            json!({"pooling_mode": "unknown"}),
+        ] {
+            let config: PoolConfig = serde_json::from_value(value).unwrap();
+            assert!(Pool::try_from(config).is_err());
+        }
+    }
+
+    #[test]
+    fn legacy_pooling_flags_keep_their_precedence() {
+        let config: PoolConfig = serde_json::from_value(json!({
+            "pooling_mode_cls_token": true, "pooling_mode_mean_tokens": true, "pooling_mode": "lasttoken"
+        })).unwrap();
+        assert_eq!(Pool::try_from(config).unwrap(), Pool::Cls);
+    }
+
+    #[test]
+    fn sentence_transformers_length_can_be_omitted() {
+        let legacy: STConfig = serde_json::from_value(json!({"max_seq_length": 256})).unwrap();
+        assert_eq!(legacy.max_seq_length, Some(256));
+        for value in [json!({}), json!({"max_seq_length": null})] {
+            let config: STConfig = serde_json::from_value(value).unwrap();
+            assert_eq!(config.max_seq_length, None);
+        }
     }
 }

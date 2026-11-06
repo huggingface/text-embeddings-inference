@@ -6,21 +6,6 @@ mod flash_attn;
 mod layers;
 mod models;
 
-#[cfg(feature = "cuda")]
-use crate::compute_cap::{
-    compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
-};
-use crate::models::{
-    BertConfig, BertModel, DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, JinaBertModel,
-    JinaCodeBertModel, MPNetConfig, MPNetModel, MistralConfig, Model, ModernBertConfig,
-    ModernBertModel, NomicBertModel, NomicConfig, Qwen2Config, Qwen3Config, Qwen3Model,
-};
-#[cfg(feature = "cuda")]
-use crate::models::{
-    FlashBertModel, FlashDistilBertModel, FlashGTEModel, FlashJinaBertModel,
-    FlashJinaCodeBertModel, FlashMistralModel, FlashModernBertModel, FlashNomicBertModel,
-    FlashQwen2Model, FlashQwen3Model,
-};
 use anyhow::Context;
 use candle::{DType, Device};
 use candle_nn::VarBuilder;
@@ -31,6 +16,56 @@ use std::path::Path;
 use text_embeddings_backend_core::{
     Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Predictions,
 };
+
+#[cfg(feature = "cuda")]
+use crate::compute_cap::{
+    compatible_compute_cap, get_compile_compute_cap, get_runtime_compute_cap,
+};
+use crate::models::{
+    BertConfig, BertModel, DebertaV2Config, DebertaV2Model, Dense, DenseConfig, DenseLayer,
+    DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, Gemma3Config, Gemma3Model,
+    JinaBertModel, JinaCodeBertModel, LlamaConfig, MPNetConfig, MPNetModel, MistralConfig, Model,
+    ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Pplx1Config, Pplx1Model,
+    Qwen2Config, Qwen3Config, Qwen3Model,
+};
+#[cfg(feature = "cuda")]
+use crate::models::{
+    FlashBertModel, FlashDistilBertModel, FlashGTEModel, FlashJinaBertModel,
+    FlashJinaCodeBertModel, FlashMistralModel, FlashModernBertModel, FlashNomicBertModel,
+    FlashQwen2Model, FlashQwen3Model,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FlashAttn {
+    V1,
+    V2,
+}
+
+#[allow(unused)]
+fn use_flash_attn(supported: &[FlashAttn]) -> bool {
+    #[cfg(not(feature = "cuda"))]
+    {
+        tracing::warn!("Flash Attention is not supported on CPU yet");
+        false
+    }
+    #[cfg(feature = "cuda")]
+    {
+        if std::env::var("USE_FLASH_ATTENTION")
+            .unwrap_or_else(|_| "True".to_string())
+            .to_lowercase()
+            != "true"
+        {
+            false
+        } else {
+            supported.iter().any(|v| match v {
+                FlashAttn::V1 => cfg!(feature = "flash-attn-v1"),
+                FlashAttn::V2 => {
+                    cfg!(feature = "flash-attn") && get_runtime_compute_cap().is_ok_and(|x| x >= 80)
+                }
+            })
+        }
+    }
+}
 
 /// This enum is needed to be able to differentiate between jina models that also use
 /// the `bert` model type and valid Bert models.
@@ -90,30 +125,38 @@ impl<'de> Deserialize<'de> for BertConfigWrapper {
 #[serde(tag = "model_type", rename_all = "kebab-case")]
 enum Config {
     Bert(BertConfigWrapper),
-    XlmRoberta(BertConfig),
+    DebertaV2(DebertaV2Config),
     Camembert(BertConfig),
-    Roberta(BertConfig),
     #[serde(rename(deserialize = "distilbert"))]
     DistilBert(DistilBertConfig),
-    #[serde(rename(deserialize = "nomic_bert"))]
-    NomicBert(NomicConfig),
-    #[allow(dead_code)]
-    Mistral(MistralConfig),
+    #[serde(rename(deserialize = "gemma3_text"))]
+    Gemma3(Gemma3Config),
     #[serde(alias = "new")]
     Gte(GTEConfig),
-    #[allow(dead_code)]
-    Qwen2(Qwen2Config),
-    #[allow(dead_code)]
-    Qwen3(Qwen3Config),
     #[serde(rename = "mpnet")]
     MPNet(MPNetConfig),
+    #[allow(dead_code)] // NOTE: As it's only used when `cuda` feature is enabled
+    Mistral(MistralConfig),
     #[serde(rename(deserialize = "modernbert"))]
     ModernBert(ModernBertConfig),
+    #[serde(rename(deserialize = "nomic_bert"))]
+    NomicBert(NomicConfig),
+    #[allow(dead_code)] // NOTE: As it's only used when `cuda` feature is enabled
+    Qwen2(Qwen2Config),
+    Qwen3(Qwen3Config),
+    #[serde(rename(deserialize = "bidirectional_pplx_qwen3"))]
+    Pplx1(Pplx1Config),
+    Roberta(BertConfig),
+    XlmRoberta(BertConfig),
+    #[allow(dead_code)]
+    #[serde(alias = "llama_bidirec")]
+    Llama(LlamaConfig),
 }
 
 pub struct CandleBackend {
     device: Device,
     model: Box<dyn Model + Send>,
+    dense_layers: Vec<Box<dyn DenseLayer + Send>>,
 }
 
 impl CandleBackend {
@@ -121,6 +164,7 @@ impl CandleBackend {
         model_path: &Path,
         dtype: String,
         model_type: ModelType,
+        dense_paths: Option<Vec<String>>,
     ) -> Result<Self, BackendError> {
         // Default files
         let default_safetensors = model_path.join("model.safetensors");
@@ -174,7 +218,19 @@ impl CandleBackend {
         let config: String = std::fs::read_to_string(model_path.join("config.json"))
             .context("Unable to read config file")
             .map_err(|err| BackendError::Start(format!("{err:?}")))?;
-        let config: Config = serde_json::from_str(&config)
+
+        let config_value: serde_json::Value = serde_json::from_str(&config)
+            .context("Unable to parse config.json")
+            .map_err(|err| BackendError::Start(format!("{err:?}")))?;
+
+        if let Some(hidden_act) = config_value.get("hidden_act").and_then(|v| v.as_str()) {
+            if hidden_act == "gelu" {
+                // NOTE: https://github.com/huggingface/text-embeddings-inference/pull/753
+                tracing::warn!("The `config.json` contains `hidden_act=gelu` and GeLU + tanh approximation will be used instead of exact GeLU (aka. GeLU erf), which might lead to subtle differences with Transformers or Sentence Transformers outputs which use exact GeLU when `hidden_act=gelu`, unless specified otherwise. GeLU + tanh is more efficient and more consistent across devices (e.g., cuBLASLt comes with fused GeLU + tanh), and will have negligible impact on the inference quality.");
+            }
+        }
+
+        let config: Config = serde_json::from_value(config_value)
             .context("Model is not supported")
             .map_err(|err| BackendError::Start(format!("{err:?}")))?;
 
@@ -244,8 +300,12 @@ impl CandleBackend {
                     Ok(Box::new(BertModel::load(vb, &config, model_type).s()?))
                 }
             },
+            (Config::DebertaV2(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting DebertaV2 model on {:?}", device);
+                Ok(Box::new(DebertaV2Model::load(vb, &config, model_type).s()?))
+            }
             (
-                Config::XlmRoberta(config) | Config::Camembert(config) | Config::Roberta(config),
+                Config::Camembert(config) | Config::Roberta(config) | Config::XlmRoberta(config),
                 Device::Cpu | Device::Metal(_),
             ) => {
                 tracing::info!("Starting Bert model on {:?}", device);
@@ -259,17 +319,42 @@ impl CandleBackend {
                     DistilBertModel::load(vb, &config, model_type).s()?,
                 ))
             }
-            (Config::NomicBert(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting NomicBert model on {:?}", device);
-                Ok(Box::new(NomicBertModel::load(vb, &config, model_type).s()?))
+            (Config::Gemma3(config), Device::Cpu | Device::Metal(_)) => {
+                // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on Metal
+                if dtype != DType::F32 {
+                    Err(BackendError::Start(
+                        "Gemma3 is only supported in fp32 precision".to_string(),
+                    ))
+                } else {
+                    tracing::info!("Starting Gemma3 model on {:?}", device);
+                    Ok(Box::new(Gemma3Model::load(vb, &config, model_type).s()?))
+                }
             }
+            (Config::Gte(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting GTE model on {:?}", device);
+                Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
+            }
+            (Config::MPNet(config), _) => {
+                tracing::info!("Starting MPNet model on {:?}", device);
+                Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
+            }
+            (Config::Llama(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
+                "Llama is only supported on Cuda devices in fp16 with flash attention enabled"
+                    .to_string(),
+            )),
             (Config::Mistral(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
                 "Mistral is only supported on Cuda devices in fp16 with flash attention enabled"
                     .to_string(),
             )),
-            (Config::Gte(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting GTE model on {:?}", device);
-                Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
+            (Config::ModernBert(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting ModernBert model on {:?}", device);
+                Ok(Box::new(
+                    ModernBertModel::load(vb, &config, model_type).s()?,
+                ))
+            }
+            (Config::NomicBert(config), Device::Cpu | Device::Metal(_)) => {
+                tracing::info!("Starting NomicBert model on {:?}", device);
+                Ok(Box::new(NomicBertModel::load(vb, &config, model_type).s()?))
             }
             (Config::Qwen2(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
                 "Qwen2 is only supported on Cuda devices in fp16 with flash attention enabled"
@@ -279,24 +364,20 @@ impl CandleBackend {
                 tracing::info!("Starting Qwen3 model on {:?}", device);
                 Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
             }
-            (Config::MPNet(config), _) => {
-                tracing::info!("Starting MPNet model on {:?}", device);
-                Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
-            }
-            (Config::ModernBert(config), Device::Cpu | Device::Metal(_)) => {
-                tracing::info!("Starting ModernBert model on {:?}", device);
-                Ok(Box::new(
-                    ModernBertModel::load(vb, &config, model_type).s()?,
-                ))
+            (Config::Pplx1(config), Device::Cpu | Device::Metal(_)) => {
+                // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on Metal
+                if dtype != DType::F32 {
+                    Err(BackendError::Start(
+                        "Pplx1 is only supported in fp32 precision".to_string(),
+                    ))
+                } else {
+                    tracing::info!("Starting Pplx1 model on {:?}", device);
+                    Ok(Box::new(Pplx1Model::load(vb, &config, model_type).s()?))
+                }
             }
             #[cfg(feature = "cuda")]
             (Config::Bert(config), Device::Cuda(_)) => {
-                if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    && dtype == DType::F16
-                    // Allow disabling because of flash attention v1 precision problems
-                    // See: https://github.com/huggingface/text-embeddings-inference/issues/37
-                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
-                {
+                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2]) {
                     match config {
                         BertConfigWrapper::JinaBert(config) => {
                             tracing::info!("Starting FlashJinaBert model on {:?}", device);
@@ -336,15 +417,10 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (
-                Config::XlmRoberta(config) | Config::Camembert(config) | Config::Roberta(config),
+                Config::Camembert(config) | Config::Roberta(config) | Config::XlmRoberta(config),
                 Device::Cuda(_),
             ) => {
-                if cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                    && dtype == DType::F16
-                    // Allow disabling because of flash attention v1 precision problems
-                    // See: https://github.com/huggingface/text-embeddings-inference/issues/37
-                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
-                {
+                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2]) {
                     tracing::info!("Starting FlashBert model on {:?}", device);
                     Ok(Box::new(
                         FlashBertModel::load_roberta(vb, &config, model_type).s()?,
@@ -357,13 +433,59 @@ impl CandleBackend {
                 }
             }
             #[cfg(feature = "cuda")]
+            (Config::DebertaV2(config), Device::Cuda(_)) => {
+                tracing::info!("Starting DebertaV2 model on {:?}", device);
+                Ok(Box::new(DebertaV2Model::load(vb, &config, model_type).s()?))
+            }
+            #[cfg(feature = "cuda")]
+            (Config::DistilBert(config), Device::Cuda(_)) => {
+                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V2]) {
+                    tracing::info!("Starting FlashDistilBert model on {:?}", device);
+                    Ok(Box::new(
+                        FlashDistilBertModel::load(vb, &config, model_type).s()?,
+                    ))
+                } else {
+                    tracing::info!("Starting DistilBertModel model on {:?}", device);
+                    Ok(Box::new(
+                        DistilBertModel::load(vb, &config, model_type).s()?,
+                    ))
+                }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::Gemma3(config), Device::Cuda(_)) => {
+                // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on CUDA
+                if dtype != DType::F32 {
+                    Err(BackendError::Start(
+                        "Gemma3 is only supported in fp32 precision".to_string(),
+                    ))
+                } else {
+                    tracing::info!("Starting Gemma3 model on {:?}", device);
+                    Ok(Box::new(Gemma3Model::load(vb, &config, model_type).s()?))
+                }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::Gte(config), Device::Cuda(_)) => {
+                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2]) {
+                    tracing::info!("Starting FlashGTE model on {:?}", device);
+                    Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))
+                } else {
+                    tracing::info!("Starting GTE model on {:?}", device);
+                    Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
+                }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::Mistral(config), Device::Cuda(_)) => {
+                if !(dtype == DType::F16 && use_flash_attn(&[FlashAttn::V2])) {
+                    return Err(BackendError::Start("Mistral is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
+                }
+                tracing::info!("Starting FlashMistral model on {:?}", device);
+                Ok(Box::new(
+                    FlashMistralModel::load(vb, &config, model_type).s()?,
+                ))
+            }
+            #[cfg(feature = "cuda")]
             (Config::ModernBert(config), Device::Cuda(_)) => {
-                if cfg!(feature = "flash-attn")
-                    && dtype == DType::F16
-                    // Allow disabling because of flash attention v1 precision problems
-                    // See: https://github.com/huggingface/text-embeddings-inference/issues/37
-                    && &std::env::var("USE_FLASH_ATTENTION").unwrap_or("True".to_string()).to_lowercase() == "true"
-                {
+                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V2]) {
                     tracing::info!("Starting FlashModernBert model on {:?}", device);
                     Ok(Box::new(
                         FlashModernBertModel::load(vb, &config, model_type).s()?,
@@ -378,34 +500,8 @@ impl CandleBackend {
                 }
             }
             #[cfg(feature = "cuda")]
-            (Config::DistilBert(config), Device::Cuda(_)) => {
-                if cfg!(feature = "flash-attn")
-                    && dtype == DType::F16
-                    && &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        == "true"
-                {
-                    tracing::info!("Starting FlashDistilBert model on {:?}", device);
-                    Ok(Box::new(
-                        FlashDistilBertModel::load(vb, &config, model_type).s()?,
-                    ))
-                } else {
-                    tracing::info!("Starting DistilBertModel model on {:?}", device);
-                    Ok(Box::new(
-                        DistilBertModel::load(vb, &config, model_type).s()?,
-                    ))
-                }
-            }
-            #[cfg(feature = "cuda")]
             (Config::NomicBert(config), Device::Cuda(_)) => {
-                if cfg!(feature = "flash-attn")
-                    && dtype == DType::F16
-                    && &std::env::var("USE_FLASH_ATTENTION")
-                        .unwrap_or("True".to_string())
-                        .to_lowercase()
-                        == "true"
-                {
+                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V2]) {
                     tracing::info!("Starting FlashNomicBert model on {:?}", device);
                     Ok(Box::new(
                         FlashNomicBertModel::load(vb, &config, model_type).s()?,
@@ -416,35 +512,8 @@ impl CandleBackend {
                 }
             }
             #[cfg(feature = "cuda")]
-            (Config::Mistral(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
-                    || !cfg!(feature = "flash-attn")
-                    || get_runtime_compute_cap().unwrap() < 80
-                {
-                    return Err(BackendError::Start("Mistral is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
-                }
-                tracing::info!("Starting FlashMistral model on {:?}", device);
-                Ok(Box::new(
-                    FlashMistralModel::load(vb, &config, model_type).s()?,
-                ))
-            }
-            #[cfg(feature = "cuda")]
-            (Config::Gte(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
-                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                {
-                    tracing::info!("Starting GTE model on {:?}", device);
-                    Ok(Box::new(GTEModel::load(vb, &config, model_type).s()?))
-                } else {
-                    tracing::info!("Starting FlashGTE model on {:?}", device);
-                    Ok(Box::new(FlashGTEModel::load(vb, &config, model_type).s()?))
-                }
-            }
-            #[cfg(feature = "cuda")]
             (Config::Qwen2(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
-                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                {
+                if !(dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2])) {
                     return Err(BackendError::Start("Qwen2 is only supported on Cuda devices in fp16 with flash attention v2 enabled".to_string()));
                 }
                 tracing::info!("Starting FlashQwen2 model on {:?}", device);
@@ -454,23 +523,115 @@ impl CandleBackend {
             }
             #[cfg(feature = "cuda")]
             (Config::Qwen3(config), Device::Cuda(_)) => {
-                if dtype != DType::F16
-                    || !cfg!(any(feature = "flash-attn", feature = "flash-attn-v1"))
-                {
-                    tracing::info!("Starting Qwen3 model on {:?}", device);
-                    Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
-                } else {
+                if dtype == DType::F16 && use_flash_attn(&[FlashAttn::V1, FlashAttn::V2]) {
                     tracing::info!("Starting FlashQwen3 model on {:?}", device);
                     Ok(Box::new(
                         FlashQwen3Model::load(vb, &config, model_type).s()?,
                     ))
+                } else {
+                    tracing::info!("Starting Qwen3 model on {:?}", device);
+                    Ok(Box::new(Qwen3Model::load(vb, &config, model_type).s()?))
                 }
             }
+            #[cfg(feature = "cuda")]
+            (Config::Pplx1(config), Device::Cuda(_)) => {
+                // TODO(alvarobartt): Enable Flash Attention with BF16 once supported on CUDA
+                if dtype != DType::F32 {
+                    Err(BackendError::Start(
+                        "Pplx1 is only supported in fp32 precision".to_string(),
+                    ))
+                } else {
+                    tracing::info!("Starting Pplx1 model on {:?}", device);
+                    Ok(Box::new(Pplx1Model::load(vb, &config, model_type).s()?))
+                }
+            }
+            #[cfg(feature = "cuda")]
+            (Config::Llama(config), Device::Cuda(_)) => match config.rope_scaling {
+                Some(_) => Err(BackendError::Start(
+                    "Rope scaling is not supported for FlashLlama yet".to_string(),
+                )),
+                None => {
+                    let config = MistralConfig {
+                        vocab_size: config.vocab_size,
+                        hidden_size: config.hidden_size,
+                        intermediate_size: config.intermediate_size,
+                        num_hidden_layers: config.num_hidden_layers,
+                        num_attention_heads: config.num_attention_heads,
+                        num_key_value_heads: config.num_key_value_heads,
+                        hidden_act: config.hidden_act,
+                        max_position_embeddings: config.max_position_embeddings,
+                        initializer_range: config.initializer_range,
+                        rms_norm_eps: config.rms_norm_eps,
+                        model_type: config.model_type.clone(),
+                        rope_theta: config.rope_theta,
+                        rope_parameters: config.rope_parameters,
+                        sliding_window: config.sliding_window,
+                        rope_scaling: config.rope_scaling,
+                        use_bidirectional_attention: config.use_bidirectional_attention,
+                    };
+                    Ok(Box::new(
+                        FlashMistralModel::load(vb, &config, model_type).s()?,
+                    ))
+                }
+            },
         };
+
+        let mut dense_layers = Vec::new();
+        if let Some(dense_paths) = dense_paths {
+            if !dense_paths.is_empty() {
+                tracing::info!("Loading Dense module/s from path/s: {dense_paths:?}");
+
+                for dense_path in dense_paths.iter() {
+                    let dense_safetensors =
+                        model_path.join(format!("{dense_path}/model.safetensors"));
+                    let dense_pytorch = model_path.join(format!("{dense_path}/pytorch_model.bin"));
+
+                    if dense_safetensors.exists() || dense_pytorch.exists() {
+                        let dense_config_path =
+                            model_path.join(format!("{dense_path}/config.json"));
+
+                        let dense_config_str = std::fs::read_to_string(&dense_config_path)
+                            .map_err(|err| {
+                                BackendError::Start(format!(
+                                    "Unable to read `{dense_path}/config.json` file: {err:?}",
+                                ))
+                            })?;
+                        let dense_config: DenseConfig = serde_json::from_str(&dense_config_str)
+                            .map_err(|err| {
+                                BackendError::Start(format!(
+                                    "Unable to parse `{dense_path}/config.json`: {err:?}",
+                                ))
+                            })?;
+
+                        let dense_vb = if dense_safetensors.exists() {
+                            unsafe {
+                                VarBuilder::from_mmaped_safetensors(
+                                    &[dense_safetensors],
+                                    dtype,
+                                    &device,
+                                )
+                            }
+                            .s()?
+                        } else {
+                            VarBuilder::from_pth(&dense_pytorch, dtype, &device).s()?
+                        };
+
+                        let dense_layer = Box::new(Dense::load(dense_vb, &dense_config).s()?)
+                            as Box<dyn DenseLayer + Send>;
+                        dense_layers.push(dense_layer);
+
+                        tracing::info!("Loaded Dense module from path: {dense_path}");
+                    } else {
+                        tracing::warn!("Dense module files not found for path: {dense_path}",);
+                    }
+                }
+            }
+        }
 
         Ok(Self {
             device,
             model: model?,
+            dense_layers,
         })
     }
 }
@@ -507,6 +668,17 @@ impl Backend for CandleBackend {
         // Run forward
         let (pooled_embeddings, raw_embeddings) = self.model.embed(batch).e()?;
 
+        // Apply Dense layers sequentially if available
+        let pooled_embeddings = match pooled_embeddings {
+            None => None,
+            Some(mut pooled_embeddings) => {
+                for dense in &self.dense_layers {
+                    pooled_embeddings = dense.forward(&pooled_embeddings).e()?;
+                }
+                Some(pooled_embeddings)
+            }
+        };
+
         // Device => Host data transfer
         let pooled_embeddings = match pooled_embeddings {
             None => vec![],
@@ -540,6 +712,7 @@ impl Backend for CandleBackend {
         let batch_size = batch.len();
 
         let results = self.model.predict(batch).e()?;
+
         let results = results.to_dtype(DType::F32).e()?.to_vec2().e()?;
 
         let mut predictions =

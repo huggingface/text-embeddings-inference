@@ -2,42 +2,262 @@ name: Run basic tests
 
 on:
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: PR number (blank runs on main)
+        type: string
+      tests:
+        description: related, all, or CPU targets such as test_qwen3,test_http_rerank
+        default: related
+        type: string
   push:
-    branches:
-      - 'main'
-  pull_request:
+    branches: [main]
     paths:
-      - ".github/workflows/build.yaml"
-      - ".github/workflows/matrix.json"
-      - "integration-tests/**"
+      - ".github/workflows/test.yaml"
+      - "integration_tests/**"
       - "backends/**"
       - "core/**"
       - "router/**"
+      - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - "Dockerfile"
-    branches:
-      - 'main'
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+
+permissions: {}
+
+concurrency:
+  group: tests-${{ inputs.pr_number || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  RUSTC_WRAPPER: sccache
 
 jobs:
   tests:
-    concurrency:
-      group: ${{ github.workflow }}-${{ github.job }}-${{ github.head_ref || github.run_id }}
-      cancel-in-progress: true
-    runs-on:
-      group: aws-highmemory-32-plus-priv
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          version: "v0.10.0"
-      - name: Compile project
-        env:
-          SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: "sccache"
+          persist-credentials: false
+      - name: Select CPU checks
+        id: changes
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              ...context.repo, pull_number: context.issue.number, per_page: 100,
+            });
+            const paths = files.flatMap(file => [file.filename, file.previous_filename].filter(Boolean));
+            core.setOutput('rust', files.length < context.payload.pull_request.changed_files || paths.some(path =>
+              path.endsWith('.rs') || path.endsWith('Cargo.toml') || path === 'Cargo.lock' ||
+              path === 'rust-toolchain.toml' || path.startsWith('.cargo/') || path.startsWith('.github/workflows/')));
+            core.setOutput('router', files.length < context.payload.pull_request.changed_files || paths.some(path => path.startsWith('router/')));
+      - if: steps.changes.outputs.rust == 'true'
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          rustflags: "-D warnings"
+      - if: steps.changes.outputs.rust == 'true'
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.10.0
+      - name: Configure sccache
+        if: steps.changes.outputs.rust == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const {execFileSync} = require('node:child_process');
+            const {createHash} = require('node:crypto');
+            const features = execFileSync('rustc', ['--print', 'cfg', '-C', 'target-cpu=native']);
+            core.exportVariable('SCCACHE_GHA_VERSION', createHash('sha256').update(features).digest('hex').slice(0, 16));
+            core.exportVariable('SCCACHE_GHA_ENABLED', 'on');
+            for (const key of ['ACTIONS_CACHE_URL', 'ACTIONS_RESULTS_URL', 'ACTIONS_RUNTIME_TOKEN', 'ACTIONS_CACHE_SERVICE_V2']) {
+              core.exportVariable(key, process.env[key] || '');
+            }
+      - name: Run focused CPU tests without model downloads
+        if: steps.changes.outputs.rust == 'true'
         run: |
-          sudo apt-get update && sudo apt-get install protobuf-compiler -y
-          cargo test --profile=release-debug
+          cargo test --locked -p text-embeddings-backend -F candle --lib
+          cargo test --locked -p text-embeddings-core --features text-embeddings-backend/candle,hf-hub/ureq --lib -- --skip tokenization::tests::tokenizer
+          cargo test --locked -p text-embeddings-backend-candle --lib
+      - name: Run router unit tests without model downloads
+        if: steps.changes.outputs.rust == 'true' && steps.changes.outputs.router == 'true'
+        run: cargo test --locked -p text-embeddings-router --lib
+      - name: Compiler cache statistics
+        if: always() && steps.changes.outputs.rust == 'true'
+        run: sccache --show-stats
+
+  select-model-tests:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      is_pr: ${{ steps.source.outputs.is_pr }}
+      tests: ${{ steps.select.outputs.tests }}
+    steps:
+      - id: source
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          REQUEST_ACTOR: ${{ github.triggering_actor }}
+        with:
+          script: |
+            const inputs = context.payload.inputs || {};
+            let pr = context.payload.pull_request;
+            if (context.eventName === 'workflow_dispatch') {
+              const {data} = await github.rest.repos.getCollaboratorPermissionLevel({
+                ...context.repo, username: process.env.REQUEST_ACTOR,
+              });
+              if (!['write', 'maintain', 'admin'].includes(data.permission)) throw new Error('Repository write permission is required.');
+              if (inputs.pr_number) {
+                if (!/^[1-9][0-9]*$/.test(inputs.pr_number)) throw new Error('Invalid PR number.');
+                ({data: pr} = await github.rest.pulls.get({...context.repo, pull_number: Number(inputs.pr_number)}));
+                if (pr.state !== 'open' || pr.base.ref !== 'main') throw new Error('Choose an open PR targeting main.');
+              } else if (context.ref !== 'refs/heads/main') {
+                throw new Error('Choose main or provide a PR number.');
+              }
+            }
+            core.setOutput('sha', pr ? pr.head.sha : context.sha);
+            core.setOutput('is_pr', String(Boolean(pr)));
+            core.setOutput('pr', pr ? pr.number : '');
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          persist-credentials: false
+      - name: Select counterpart model tests
+        id: select
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ steps.source.outputs.pr }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          HAS_MODEL_TOKEN: ${{ steps.source.outputs.is_pr != 'true' && secrets.HF_HUB_READ_TOKEN != '' }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const httpTests = ['test_http_embed', 'test_http_rerank']
+              .filter(name => fs.existsSync(`router/tests/${name}.rs`));
+            const available = fs.readdirSync('backends/candle/tests')
+              .filter(name => /^test_[a-z0-9_]+\.rs$/.test(name)).map(name => name.slice(0, -3)).concat(httpTests);
+            const requested = context.eventName === 'workflow_dispatch' ? context.payload.inputs.tests || 'related' : 'related';
+            let selected;
+            if (requested !== 'related') {
+              selected = requested === 'all' ? available : requested.split(',').map(name => name.trim());
+              if (selected.some(name => !available.includes(name))) throw new Error('Unknown model test target.');
+            } else if (context.eventName === 'workflow_dispatch' && !process.env.PR_NUMBER) {
+              selected = available;
+            } else {
+              let files;
+              if (process.env.PR_NUMBER) {
+                files = await github.paginate(github.rest.pulls.listFiles, {
+                  ...context.repo, pull_number: Number(process.env.PR_NUMBER), per_page: 100,
+                });
+                if (files.length >= 3000) throw new Error('File list is capped; run manually with tests=all.');
+              } else {
+                if (!context.payload.before || /^0+$/.test(context.payload.before)) {
+                  throw new Error('No comparison base; run manually with tests=all.');
+                }
+                const {data} = await github.rest.repos.compareCommitsWithBasehead({
+                  ...context.repo, basehead: `${context.payload.before}...${context.sha}`,
+                });
+                if ((data.files || []).length >= 300) throw new Error('File list is capped; run manually with tests=all.');
+                files = data.files || [];
+              }
+              const paths = files.flatMap(file => [file.filename, file.previous_filename].filter(Boolean));
+              selected = paths.flatMap(path => {
+                const model = path.match(/^backends\/candle\/src\/models\/([a-z0-9_]+)\.rs$/);
+                const test = path.match(/^backends\/candle\/tests\/(test_[a-z0-9_]+)\.rs$/);
+                const snapshot = path.match(/^(?:backends\/candle|router)\/tests\/snapshots\/(test_[a-z0-9_]+?)__/);
+                const http = path.match(/^router\/tests\/(test_http_[a-z0-9_]+)\.rs$/);
+                if (['router/src/http/server.rs', 'router/src/http/types.rs', 'router/tests/common.rs'].includes(path)) return httpTests;
+                const name = model ? `test_${model[1]}` : (test || snapshot || http)?.[1];
+                return name && available.includes(name) ? [name] : [];
+              });
+            }
+            selected = [...new Set(selected)].sort();
+            const manual = selected.filter(name => name.startsWith('test_flash_') ||
+              (name === 'test_gemma3' && process.env.HAS_MODEL_TOKEN !== 'true'));
+            const runnable = selected.filter(name => !manual.includes(name));
+            core.setOutput('tests', JSON.stringify(runnable));
+            await core.summary.addHeading('Model tests').addRaw(
+              `Revision: ${process.env.SOURCE_SHA}.\n\n` +
+              `Selected CPU targets: ${runnable.join(', ') || 'none'}.\n\n` +
+              `Require GPU hardware or gated-model credentials: ${manual.join(', ') || 'none'}.\n\n` +
+              `Selection follows model/test filenames, HTTP handlers/types, and snapshots. Other shared code has no counterpart: use [Run workflow](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/workflows/test.yaml) with a PR number and tests=all or named targets. External PRs use the existing Approve workflows to run button; drafts wait until ready for review.`
+            ).write();
+
+  model-tests:
+    needs: select-model-tests
+    if: needs.select-model-tests.outputs.tests != '[]' && needs.select-model-tests.outputs.tests != ''
+    runs-on: ${{ fromJSON(needs.select-model-tests.outputs.is_pr == 'true' && '"ubuntu-latest"' || '{"group":"aws-highmemory-32-plus-priv"}') }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout selected source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.select-model-tests.outputs.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          rustflags: "-D warnings"
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.10.0
+      - uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
+        with:
+          version: "3.x"
+          repo-token: ${{ github.token }}
+      - name: Configure compiler cache
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_VALIDATION: ${{ needs.select-model-tests.outputs.is_pr }}
+        with:
+          script: |
+            const {execFileSync} = require('node:child_process');
+            const {createHash} = require('node:crypto');
+            const features = execFileSync('rustc', ['--print', 'cfg', '-C', 'target-cpu=native']);
+            core.exportVariable('SCCACHE_GHA_VERSION', createHash('sha256').update(features).digest('hex').slice(0, 16));
+            core.exportVariable('SCCACHE_GHA_ENABLED', process.env.PR_VALIDATION === 'true' ? 'off' : 'on');
+            if (process.env.PR_VALIDATION === 'true') {
+              core.exportVariable('HF_HOME', `${process.env.RUNNER_TEMP}/tei-public-models`);
+            } else {
+              for (const key of ['ACTIONS_CACHE_URL', 'ACTIONS_RESULTS_URL', 'ACTIONS_RUNTIME_TOKEN', 'ACTIONS_CACHE_SERVICE_V2']) {
+                core.exportVariable(key, process.env[key] || '');
+              }
+            }
+      - name: Run selected model tests
+        env:
+          MODEL_TESTS: ${{ needs.select-model-tests.outputs.tests }}
+          HF_TOKEN: ${{ needs.select-model-tests.outputs.is_pr != 'true' && secrets.HF_HUB_READ_TOKEN || '' }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then unset HF_TOKEN; fi
+          mapfile -t targets < <(jq -r '.[]' <<< "$MODEL_TESTS")
+          candle_args=()
+          http_args=()
+          for target in "${targets[@]}"; do
+            [[ "$target" =~ ^test_[a-z0-9_]+$ ]] || exit 1
+            case "$target" in
+              test_http_embed|test_http_rerank) http_args+=(--test "$target") ;;
+              *) candle_args+=(--test "$target") ;;
+            esac
+          done
+          if ((${#candle_args[@]})); then
+            cargo test --locked --profile=release-debug -p text-embeddings-backend-candle "${candle_args[@]}"
+          fi
+          if ((${#http_args[@]})); then
+            cargo test --locked --profile=release-debug -p text-embeddings-router "${http_args[@]}"
+          fi
+      - name: Compiler cache statistics
+        if: always()
+        run: sccache --show-stats

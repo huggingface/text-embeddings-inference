@@ -1,8 +1,9 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1.85-bookworm AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.92-bookworm AS chef
 WORKDIR /usr/src
 
 ENV SCCACHE=0.10.0
 ENV RUSTC_WRAPPER=/usr/local/bin/sccache
+ENV ACTIONS_CACHE_SERVICE_V2=true CARGO_INCREMENTAL=0
 
 # Donwload, configure sccache
 RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sccache-v$SCCACHE-x86_64-unknown-linux-musl.tar.gz | tar -xzv --strip-components=1 -C /usr/local/bin sccache-v$SCCACHE-x86_64-unknown-linux-musl/sccache && \
@@ -43,7 +44,7 @@ COPY --from=planner /usr/src/recipe.json recipe.json
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    cargo chef cook --release --features ort,candle,mkl --no-default-features --recipe-path recipe.json && sccache -s
+    cargo chef cook --release --features ort,candle,mkl,static-linking --no-default-features --recipe-path recipe.json && sccache -s
 
 COPY backends backends
 COPY core core
@@ -55,7 +56,7 @@ FROM builder AS http-builder
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    cargo build --release --bin text-embeddings-router --features ort,candle,mkl,http --no-default-features && sccache -s
+    cargo build --release --bin text-embeddings-router --features ort,candle,mkl,static-linking,http --no-default-features && sccache -s
 
 FROM builder AS grpc-builder
 
@@ -69,7 +70,7 @@ COPY proto proto
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    cargo build --release --bin text-embeddings-router --features ort,candle,mkl,grpc --no-default-features && sccache -s
+    cargo build --release --bin text-embeddings-router --features ort,candle,mkl,static-linking,grpc --no-default-features && sccache -s
 
 FROM debian:bookworm-slim AS base
 
@@ -109,15 +110,6 @@ CMD ["--json-output"]
 FROM base AS http
 
 COPY --from=http-builder /usr/src/target/release/text-embeddings-router /usr/local/bin/text-embeddings-router
-
-# Amazon SageMaker compatible image
-FROM http AS sagemaker
-COPY --chmod=775 sagemaker-entrypoint.sh entrypoint.sh
-
-ENTRYPOINT ["./entrypoint.sh"]
-
-# Default image
-FROM http
 
 ENTRYPOINT ["text-embeddings-router"]
 CMD ["--json-output"]

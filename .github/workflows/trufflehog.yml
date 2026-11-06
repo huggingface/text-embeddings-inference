@@ -3,13 +3,41 @@ on:
 
 name: Secret Leaks
 
+permissions: {}
+
 jobs:
   trufflehog:
+    if: github.event.deleted != true
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-    - name: Secret Scanning
-      uses: trufflesecurity/trufflehog@main
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Select scan range
+        id: range
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          base="$PUSH_BEFORE_SHA"
+          if [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            base="$(git merge-base HEAD "origin/$DEFAULT_BRANCH")"
+          elif [[ "$base" =~ ^0+$ ]]; then
+            base=""
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          if [ "$base" = "$(git rev-parse HEAD)" ]; then
+            echo "scan=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "scan=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Secret Scanning
+        if: steps.range.outputs.scan == 'true'
+        uses: trufflesecurity/trufflehog@b2b0a92070f206ab7b5a1105d82a7f2f48d92341 # v3.99.0
+        with:
+          base: ${{ steps.range.outputs.base }}
+          head: ${{ github.sha }}
+          extra_args: --results=verified,unknown --exclude-detectors=postgres

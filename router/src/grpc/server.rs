@@ -90,7 +90,9 @@ impl TextEmbeddingsService {
                 request.truncate,
                 truncation_direction,
                 request.prompt_name,
-                request.normalize,
+                // In proto3, the default is false; default to true if normalize is not specified
+                request.normalize.unwrap_or(true),
+                request.dimensions.map(|v| v as usize),
                 permit,
             )
             .await
@@ -630,8 +632,7 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         &self,
         request: Request<EmbedSparseRequest>,
     ) -> Result<Response<EmbedSparseResponse>, Status> {
-        let counter = metrics::counter!("te_request_count", "method" => "single");
-        counter.increment(1);
+        metrics::counter!("te_request_count", "method" => "single").increment(1);
 
         let permit = self
             .infer
@@ -642,8 +643,7 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         let (response, metadata) = self.embed_sparse_inner(request, permit).await?;
         let headers = HeaderMap::from(metadata);
 
-        let counter = metrics::counter!("te_request_count", "method" => "single");
-        counter.increment(1);
+        metrics::counter!("te_request_success", "method" => "single").increment(1);
 
         Ok(Response::from_parts(
             MetadataMap::from_headers(headers),
@@ -672,8 +672,7 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         &self,
         request: Request<EmbedAllRequest>,
     ) -> Result<Response<EmbedAllResponse>, Status> {
-        let counter = metrics::counter!("te_request_count", "method" => "single");
-        counter.increment(1);
+        metrics::counter!("te_request_count", "method" => "single").increment(1);
 
         let permit = self
             .infer
@@ -684,8 +683,7 @@ impl grpc::embed_server::Embed for TextEmbeddingsService {
         let (response, metadata) = self.embed_all_inner(request, permit).await?;
         let headers = HeaderMap::from(metadata);
 
-        let counter = metrics::counter!("te_request_count", "method" => "single");
-        counter.increment(1);
+        metrics::counter!("te_request_success", "method" => "single").increment(1);
 
         Ok(Response::from_parts(
             MetadataMap::from_headers(headers),

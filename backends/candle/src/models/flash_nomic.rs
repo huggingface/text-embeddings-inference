@@ -1,5 +1,5 @@
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{get_cos_sin, get_inv_freqs, LayerNorm, Linear};
+use crate::layers::{get_cos_sin, get_inv_freqs, index_select, LayerNorm, Linear};
 use crate::models::nomic::{NomicBertEmbeddings, NomicMLP};
 use crate::models::{Model, NomicConfig};
 use candle::{DType, Device, IndexOp, Result, Tensor, D};
@@ -196,7 +196,7 @@ pub struct FlashNomicBertModel {
     pool: Pool,
     pub device: Device,
 
-    max_trained_positions: u32,
+    max_position_embeddings: u32,
     rotary_cache: (Tensor, Tensor),
     scaled_rotary_cache: Option<(Tensor, Tensor)>,
 
@@ -233,14 +233,17 @@ impl FlashNomicBertModel {
         let embeddings = NomicBertEmbeddings::load(vb.clone(), config)?;
         let encoder = NomicBertEncoder::load(vb.pp("encoder"), config)?;
 
+        let max_position_embeddings = config
+            .max_position_embeddings
+            .unwrap_or(config.max_trained_positions.unwrap_or(2048));
+
         let rotary_dim = encoder.layers[0].attention.attention_head_size;
         let inv_freqs = get_inv_freqs(rotary_dim, config.rotary_emb_base, vb.device(), None)?;
         let rotary_cache = get_cos_sin(config.n_positions, &inv_freqs, vb.dtype(), false)?;
 
         let scaled_rotary_cache = if let Some(scaling_factor) = config.rotary_scaling_factor {
             let new_base = (config.rotary_emb_base
-                * ((scaling_factor * config.n_positions as f32
-                    / config.max_trained_positions as f32)
+                * ((scaling_factor * config.n_positions as f32 / max_position_embeddings as f32)
                     - (scaling_factor - 1.0)))
                 .powi((rotary_dim as f32 / (rotary_dim as f32 - 2.0)) as i32);
             let inv_freqs = get_inv_freqs(rotary_dim, new_base, vb.device(), None)?;
@@ -258,7 +261,7 @@ impl FlashNomicBertModel {
             embeddings,
             encoder,
             pool,
-            max_trained_positions: config.max_trained_positions as u32,
+            max_position_embeddings: max_position_embeddings as u32,
             rotary_cache,
             scaled_rotary_cache,
             device: vb.device().clone(),
@@ -283,24 +286,22 @@ impl FlashNomicBertModel {
         )?;
 
         let (cos, sin) = if self.scaled_rotary_cache.is_some()
-            && batch.max_length > self.max_trained_positions
+            && batch.max_length > self.max_position_embeddings
         {
-            let cos = self
-                .scaled_rotary_cache
-                .as_ref()
-                .unwrap()
-                .0
-                .index_select(&position_ids, 0)?;
-            let sin = self
-                .scaled_rotary_cache
-                .as_ref()
-                .unwrap()
-                .1
-                .index_select(&position_ids, 0)?;
+            let cos = index_select(
+                &self.scaled_rotary_cache.as_ref().unwrap().0,
+                &position_ids,
+                0,
+            )?;
+            let sin = index_select(
+                &self.scaled_rotary_cache.as_ref().unwrap().1,
+                &position_ids,
+                0,
+            )?;
             (cos, sin)
         } else {
-            let cos = self.rotary_cache.0.index_select(&position_ids, 0)?;
-            let sin = self.rotary_cache.1.index_select(&position_ids, 0)?;
+            let cos = index_select(&self.rotary_cache.0, &position_ids, 0)?;
+            let sin = index_select(&self.rotary_cache.1, &position_ids, 0)?;
             (cos, sin)
         };
 
@@ -343,11 +344,11 @@ impl FlashNomicBertModel {
                             )?;
 
                             // Only select indices that requires pooling
-                            indices = indices.index_select(&pooled_indices, 0)?
+                            indices = index_select(&indices, &pooled_indices, 0)?
                         }
 
                         // Select tokens
-                        Some(outputs.index_select(&indices, 0)?)
+                        Some(index_select(&outputs, &indices, 0)?)
                     } else {
                         Some(
                             match self.pool {

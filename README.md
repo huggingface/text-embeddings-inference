@@ -11,7 +11,7 @@
 
 A blazing fast inference solution for text embeddings models.
 
-Benchmark for [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5) on an Nvidia A10 with a sequence
+Benchmark for [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5) on an NVIDIA A10 with a sequence
 length of 512 tokens:
 
 <p>
@@ -40,8 +40,10 @@ length of 512 tokens:
     - [Distributed Tracing](#distributed-tracing)
     - [gRPC](#grpc)
 - [Local Install](#local-install)
+    - [Apple Silicon (Homebrew)](#apple-silicon-homebrew)
 - [Docker Build](#docker-build)
-    - [Apple M1/M2 Arm](#apple-m1m2-arm64-architectures)
+    - [ARM64 / aarch64](#arm64--aarch64)
+- [AMD Instinct GPUs (ROCm)](#amd-instinct-gpus-rocm)
 - [Examples](#examples)
 
 Text Embeddings Inference (TEI) is a toolkit for deploying and serving open source text embeddings and sequence
@@ -66,29 +68,32 @@ Ember, GTE and E5. TEI implements many features such as:
 #### Text Embeddings
 
 Text Embeddings Inference currently supports Nomic, BERT, CamemBERT, XLM-RoBERTa models with absolute positions, JinaBERT
-model with Alibi positions and Mistral, Alibaba GTE, Qwen2 models with Rope positions, MPNet, ModernBERT, and Qwen3.
+model with Alibi positions and Mistral, Alibaba GTE, Qwen2 models with Rope positions, MPNet, ModernBERT, Qwen3, and Gemma3.
 
 Below are some examples of the currently supported models:
 
-| MTEB Rank | Model Size          | Model Type  | Model ID                                                                                         |
-|-----------|---------------------|-------------|--------------------------------------------------------------------------------------------------|
-| 2         | 8B (Very Expensive) | Qwen3       | [Qwen/Qwen3-Embedding-8B](https://hf.co/Qwen/Qwen3-Embedding-8B)                                 |
-| 4         | 0.6B                | Qwen3       | [Qwen/Qwen3-Embedding-0.6B](https://hf.co/Qwen/Qwen3-Embedding-0.6B)                             |
-| 6         | 7B (Very Expensive) | Qwen2       | [Alibaba-NLP/gte-Qwen2-7B-instruct](https://hf.co/Alibaba-NLP/gte-Qwen2-7B-instruct)             |
-| 7         | 0.5B                | XLM-RoBERTa | [intfloat/multilingual-e5-large-instruct](https://hf.co/intfloat/multilingual-e5-large-instruct) |
-| 14        | 1.5B (Expensive)    | Qwen2       | [Alibaba-NLP/gte-Qwen2-1.5B-instruct](https://hf.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct)         |
-| 17        | 7B (Very Expensive) | Mistral     | [Salesforce/SFR-Embedding-2_R](https://hf.co/Salesforce/SFR-Embedding-2_R)                       |
-| 34        | 0.5B                | XLM-RoBERTa | [Snowflake/snowflake-arctic-embed-l-v2.0](https://hf.co/Snowflake/snowflake-arctic-embed-l-v2.0) |
-| 40        | 0.3B                | Alibaba GTE | [Snowflake/snowflake-arctic-embed-m-v2.0](https://hf.co/Snowflake/snowflake-arctic-embed-m-v2.0) |
-| 51        | 0.3B                | Bert        | [WhereIsAI/UAE-Large-V1](https://hf.co/WhereIsAI/UAE-Large-V1)                                   |
-| N/A       | 0.4B                | Alibaba GTE | [Alibaba-NLP/gte-large-en-v1.5](https://hf.co/Alibaba-NLP/gte-large-en-v1.5)                     |
-| N/A       | 0.4B                | ModernBERT  | [answerdotai/ModernBERT-large](https://hf.co/answerdotai/ModernBERT-large)                       |
-| N/A       | 0.3B                | NomicBert   | [nomic-ai/nomic-embed-text-v2-moe](https://hf.co/nomic-ai/nomic-embed-text-v2-moe)               |
-| N/A       | 0.1B                | NomicBert   | [nomic-ai/nomic-embed-text-v1](https://hf.co/nomic-ai/nomic-embed-text-v1)                       |
-| N/A       | 0.1B                | NomicBert   | [nomic-ai/nomic-embed-text-v1.5](https://hf.co/nomic-ai/nomic-embed-text-v1.5)                   |
-| N/A       | 0.1B                | JinaBERT    | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)             |
-| N/A       | 0.1B                | JinaBERT    | [jinaai/jina-embeddings-v2-base-code](https://hf.co/jinaai/jina-embeddings-v2-base-code)         |
-| N/A       | 0.1B                | MPNet       | [sentence-transformers/all-mpnet-base-v2](https://hf.co/sentence-transformers/all-mpnet-base-v2) |
+| MTEB Rank | Model Size             | Model Type     | Model ID                                                                                         |
+|-----------|------------------------|----------------|--------------------------------------------------------------------------------------------------|
+| 2         | 7.57B (Very Expensive) | Qwen3          | [Qwen/Qwen3-Embedding-8B](https://hf.co/Qwen/Qwen3-Embedding-8B)                                 |
+| 3         | 4.02B (Very Expensive) | Qwen3          | [Qwen/Qwen3-Embedding-4B](https://hf.co/Qwen/Qwen3-Embedding-4B)                                 |
+| 4         | 509M                   | Qwen3          | [Qwen/Qwen3-Embedding-0.6B](https://hf.co/Qwen/Qwen3-Embedding-0.6B)                             |
+| 6         | 7.61B (Very Expensive) | Qwen2          | [Alibaba-NLP/gte-Qwen2-7B-instruct](https://hf.co/Alibaba-NLP/gte-Qwen2-7B-instruct)             |
+| 7         | 560M                   | XLM-RoBERTa    | [intfloat/multilingual-e5-large-instruct](https://hf.co/intfloat/multilingual-e5-large-instruct) |
+| 8         | 308M                   | Gemma3         | [google/embeddinggemma-300m](https://hf.co/google/embeddinggemma-300m) (gated)                   |
+| 15        | 1.78B (Expensive)      | Qwen2          | [Alibaba-NLP/gte-Qwen2-1.5B-instruct](https://hf.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct)         |
+| 18        | 7.11B (Very Expensive) | Mistral        | [Salesforce/SFR-Embedding-2_R](https://hf.co/Salesforce/SFR-Embedding-2_R)                       |
+| 35        | 568M                   | XLM-RoBERTa    | [Snowflake/snowflake-arctic-embed-l-v2.0](https://hf.co/Snowflake/snowflake-arctic-embed-l-v2.0) |
+| 41        | 305M                   | Alibaba GTE    | [Snowflake/snowflake-arctic-embed-m-v2.0](https://hf.co/Snowflake/snowflake-arctic-embed-m-v2.0) |
+| 52        | 335M                   | BERT           | [WhereIsAI/UAE-Large-V1](https://hf.co/WhereIsAI/UAE-Large-V1)                                   |
+| 58        | 137M                   | NomicBERT      | [nomic-ai/nomic-embed-text-v1](https://hf.co/nomic-ai/nomic-embed-text-v1)                       |
+| 79        | 137M                   | NomicBERT      | [nomic-ai/nomic-embed-text-v1.5](https://hf.co/nomic-ai/nomic-embed-text-v1.5)                   |
+| 103       | 109M                   | MPNet          | [sentence-transformers/all-mpnet-base-v2](https://hf.co/sentence-transformers/all-mpnet-base-v2) |
+| N/A       | 475M-A305M             | NomicBERT      | [nomic-ai/nomic-embed-text-v2-moe](https://hf.co/nomic-ai/nomic-embed-text-v2-moe)               |
+| N/A       | 434M                   | Alibaba GTE    | [Alibaba-NLP/gte-large-en-v1.5](https://hf.co/Alibaba-NLP/gte-large-en-v1.5)                     |
+| N/A       | 396M                   | ModernBERT     | [answerdotai/ModernBERT-large](https://hf.co/answerdotai/ModernBERT-large)                       |
+| N/A       | 340M                   | Qwen3          | [voyageai/voyage-4-nano](https://hf.co/voyageai/voyage-4-nano)                                   |
+| N/A       | 137M                   | JinaBERT       | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)             |
+| N/A       | 137M                   | JinaBERT       | [jinaai/jina-embeddings-v2-base-code](https://hf.co/jinaai/jina-embeddings-v2-base-code)         |
 
 To explore the list of best performing text embeddings models, visit the
 [Massive Text Embedding Benchmark (MTEB) Leaderboard](https://huggingface.co/spaces/mteb/leaderboard).
@@ -113,7 +118,7 @@ Below are some examples of the currently supported models:
 model=Qwen/Qwen3-Embedding-0.6B
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 --model-id $model
 ```
 
 And then you can make requests like
@@ -135,14 +140,15 @@ To see all options to serve your models:
 $ text-embeddings-router --help
 Text Embedding Webserver
 
-Usage: text-embeddings-router [OPTIONS]
+Usage: text-embeddings-router [OPTIONS] --model-id <MODEL_ID>
 
 Options:
       --model-id <MODEL_ID>
-          The name of the model to load. Can be a MODEL_ID as listed on <https://hf.co/models> like `BAAI/bge-large-en-v1.5`. Or it can be a local directory containing the necessary files as saved by `save_pretrained(...)` methods of transformers
+          The Hugging Face model ID, can be any model listed on <https://huggingface.co/models> with the `text-embeddings-inference` tag (meaning it's compatible with Text Embeddings Inference).
+
+          Alternatively, the specified ID can also be a path to a local directory containing the necessary model files saved by the `save_pretrained(...)` methods of either Transformers or Sentence Transformers.
 
           [env: MODEL_ID=]
-          [default: BAAI/bge-large-en-v1.5]
 
       --revision <REVISION>
           The actual revision of the model if you're referring to a model on the hub. You can use a specific commit id or a branch like `refs/pr/2`
@@ -159,6 +165,11 @@ Options:
 
           [env: DTYPE=]
           [possible values: float16, float32]
+
+      --served-model-name <SERVED_MODEL_NAME>
+          The name of the model that is being served. If not specified, defaults to `--model-id`. It is only used for the OpenAI-compatible endpoints via HTTP
+
+          [env: SERVED_MODEL_NAME=]
 
       --pooling <POOLING>
           Optionally control the pooling method for embedding models.
@@ -205,7 +216,7 @@ Options:
           [default: 32]
 
       --auto-truncate
-          Automatically truncate inputs that are longer than the maximum supported size
+          Control automatic truncation of inputs that exceed the model's maximum supported size. Defaults to `true` (truncation enabled). Set to `false` to disable truncation; when disabled and the model's maximum input length exceeds `--max-batch-tokens`, the server will refuse to start with an error instead of silently truncating sequences.
 
           Unused for gRPC servers
 
@@ -231,8 +242,17 @@ Options:
 
           [env: DEFAULT_PROMPT=]
 
+      --dense-path <DENSE_PATH>
+          Optionally, define the path to the Dense module required for some embedding models.
+
+          Some embedding models require an extra `Dense` module which contains a single Linear layer and an activation function. By default, those `Dense` modules are stored under the `2_Dense` directory, but there might be cases where different `Dense` modules are provided, to convert the pooled embeddings into different dimensions, available as `2_Dense_<dims>` e.g. https://huggingface.co/NovaSearch/stella_en_400M_v5.
+
+          Note that this argument is optional, only required to be set if there is no `modules.json` file or when you want to override a single Dense module path, only when running with the `candle` backend.
+
+          [env: DENSE_PATH=]
+
       --hf-token <HF_TOKEN>
-          Your Hugging Face Hub token
+          Your Hugging Face Hub token. If neither `--hf-token` nor `HF_TOKEN` are set, the token will be read from the `$HF_HOME/token` path, if it exists. This ensures access to private or gated models, and allows for a more permissive rate limiting
 
           [env: HF_TOKEN=]
 
@@ -247,6 +267,15 @@ Options:
 
           [env: PORT=]
           [default: 3000]
+
+      --root-path <ROOT_PATH>
+          Root path to mount all HTTP routes under.
+
+          For example, `--root-path jinaai/jina-embeddings-v2-base-en` serves the OpenAI-compatible embeddings route at `/jinaai/jina-embeddings-v2-base-en/v1/embeddings`.
+
+          Unused for gRPC servers.
+
+          [env: ROOT_PATH=]
 
       --uds-path <UDS_PATH>
           The name of the unix socket some text-embeddings-inference backends will use as they communicate internally with gRPC
@@ -275,15 +304,17 @@ Options:
           [env: API_KEY=]
 
       --json-output
-          Outputs the logs in JSON format (useful for telemetry)
+          Outputs the logs in JSON format (useful for telemetry). With an OTLP endpoint set, each log line also includes the trace_id and span_id of its span
 
           [env: JSON_OUTPUT=]
 
       --disable-spans
+          Whether or not to include the log trace through spans
+
           [env: DISABLE_SPANS=]
 
       --otlp-endpoint <OTLP_ENDPOINT>
-          The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC. e.g. `http://localhost:4317`
+          The endpoint for OpenTelemetry traces. Use `http://localhost:4317` for gRPC or `http://localhost:4318` for HTTP. With `http-proto`, `/v1/traces` is appended to the endpoint path unless already present
 
           [env: OTLP_ENDPOINT=]
 
@@ -292,6 +323,13 @@ Options:
 
           [env: OTLP_SERVICE_NAME=]
           [default: text-embeddings-inference.server]
+
+      --otlp-protocol <OTLP_PROTOCOL>
+          The protocol used to export OTLP traces: gRPC or HTTP with protobuf encoding
+
+          [env: OTLP_PROTOCOL=]
+          [default: grpc]
+          [possible values: grpc, http-proto]
 
       --prometheus-port <PROMETHEUS_PORT>
           The Prometheus port to listen on
@@ -304,10 +342,10 @@ Options:
 
           [env: CORS_ALLOW_ORIGIN=]
 
-      -h, --help
+  -h, --help
           Print help (see a summary with '-h')
 
-      -V, --version
+  -V, --version
           Print version
 ```
 
@@ -315,15 +353,19 @@ Options:
 
 Text Embeddings Inference ships with multiple Docker images that you can use to target a specific backend:
 
-| Architecture                        | Image                                                                   |
-|-------------------------------------|-------------------------------------------------------------------------|
-| CPU                                 | ghcr.io/huggingface/text-embeddings-inference:cpu-1.7                   |
-| Volta                               | NOT SUPPORTED                                                           |
-| Turing (T4, RTX 2000 series, ...)   | ghcr.io/huggingface/text-embeddings-inference:turing-1.7 (experimental) |
-| Ampere 80 (A100, A30)               | ghcr.io/huggingface/text-embeddings-inference:1.7                       |
-| Ampere 86 (A10, A40, ...)           | ghcr.io/huggingface/text-embeddings-inference:86-1.7                    |
-| Ada Lovelace (RTX 4000 series, ...) | ghcr.io/huggingface/text-embeddings-inference:89-1.7                    |
-| Hopper (H100)                       | ghcr.io/huggingface/text-embeddings-inference:hopper-1.7 (experimental) |
+| Architecture                           | Platform | Image                                                                   |
+|----------------------------------------|----------|-------------------------------------------------------------------------|
+| CPU                                    | x86_64   | ghcr.io/huggingface/text-embeddings-inference:cpu-1.9                   |
+| CPU                                    | aarch64  | ghcr.io/huggingface/text-embeddings-inference:cpu-arm64-1.9             |
+| Volta                                  | x86_64   | NOT SUPPORTED                                                           |
+| Turing (T4, RTX 2000 series, ...)      | x86_64   | ghcr.io/huggingface/text-embeddings-inference:turing-1.9 (experimental) |
+| Ampere 8.0 (A100, A30)                 | x86_64   | ghcr.io/huggingface/text-embeddings-inference:1.9                       |
+| Ampere 8.6 (A10, A40, ...)             | x86_64   | ghcr.io/huggingface/text-embeddings-inference:86-1.9                    |
+| Ada Lovelace (RTX 4000 series, ...)    | x86_64   | ghcr.io/huggingface/text-embeddings-inference:89-1.9                    |
+| Hopper (H100)                          | x86_64   | ghcr.io/huggingface/text-embeddings-inference:hopper-1.9                |
+| Blackwell 10.0 (B200, GB200, ...)      | x86_64   | ghcr.io/huggingface/text-embeddings-inference:100-1.9 (experimental)    |
+| Blackwell 12.0 (GeForce RTX 50X0, ...) | x86_64   | ghcr.io/huggingface/text-embeddings-inference:120-1.9 (experimental)    |
+| Blackwell 12.1 (DGX Spark GB10, ...)   | multi    | ghcr.io/huggingface/text-embeddings-inference:121-1.9 (experimental)    |
 
 **Warning**: Flash Attention is turned off by default for the Turing image as it suffers from precision issues.
 You can turn Flash Attention v1 ON by using the `USE_FLASH_ATTENTION=True` environment variable.
@@ -342,17 +384,17 @@ You have the option to utilize the `HF_TOKEN` environment variable for configuri
 For example:
 
 1. Go to https://huggingface.co/settings/tokens
-2. Copy your cli READ token
-3. Export `HF_TOKEN=<your cli READ token>`
+2. Copy your CLI READ token
+3. Export `HF_TOKEN=<your CLI READ token>`
 
 or with Docker:
 
 ```shell
 model=<your private model>
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
-token=<your cli READ token>
+token=<your CLI READ token>
 
-docker run --gpus all -e HF_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id $model
+docker run --gpus all -e HF_TOKEN=$token -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 --model-id $model
 ```
 
 ### Air gapped deployment
@@ -375,7 +417,7 @@ git clone https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
 volume=$PWD
 
 # Mount the models directory inside the container with a volume and set the model ID
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id /data/Qwen3-Embedding-0.6B
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 --model-id /data/Qwen3-Embedding-0.6B
 ```
 
 ### Using Re-rankers models
@@ -392,7 +434,7 @@ downstream performance.
 model=BAAI/bge-reranker-large
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 --model-id $model
 ```
 
 And then you can rank the similarity between a query and a list of texts with:
@@ -412,7 +454,7 @@ You can also use classic Sequence Classification models like `SamLowe/roberta-ba
 model=SamLowe/roberta-base-go_emotions
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 --model-id $model
 ```
 
 Once you have deployed the model you can use the `predict` endpoint to get the emotions most associated with an input:
@@ -432,7 +474,7 @@ You can choose to activate SPLADE pooling for Bert and Distilbert MaskedLM archi
 model=naver/efficient-splade-VI-BT-large-query
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7 --model-id $model --pooling splade
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:cuda-1.9 --model-id $model --pooling splade
 ```
 
 Once you have deployed the model you can use the `/embed_sparse` endpoint to get the sparse embedding:
@@ -447,7 +489,32 @@ curl 127.0.0.1:8080/embed_sparse \
 ### Distributed Tracing
 
 `text-embeddings-inference` is instrumented with distributed tracing using OpenTelemetry. You can use this feature
-by setting the address to an OTLP collector with the `--otlp-endpoint` argument.
+by setting the address to an OTLP collector with the `--otlp-endpoint` argument (or `OTLP_ENDPOINT`).
+The default protocol is gRPC. To export OTLP over HTTP with protobuf encoding, use
+`--otlp-protocol http-proto` (or `OTLP_PROTOCOL=http-proto`):
+
+```shell
+text-embeddings-router \
+  --model-id BAAI/bge-small-en-v1.5 \
+  --otlp-endpoint http://localhost:4318 \
+  --otlp-protocol http-proto
+```
+
+For HTTP, `--otlp-endpoint` accepts a base URL: `/v1/traces` is appended while preserving any path prefix.
+For example, `https://collector.example.com/otel` exports to
+`https://collector.example.com/otel/v1/traces`. A full endpoint already ending in `/v1/traces`
+is also accepted. The router's HTTPS exporter uses the system's trusted root certificates.
+
+For HTTP exports, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` takes priority (a full URL used unchanged),
+followed by `OTEL_EXPORTER_OTLP_ENDPOINT` (a base URL with `/v1/traces` appended), then
+`--otlp-endpoint` / `OTLP_ENDPOINT`. This order applies to both the router and Python backend.
+`--otlp-endpoint` or `OTLP_ENDPOINT` is still required to enable tracing.
+
+Both protocols support authentication and custom headers through `OTEL_EXPORTER_OTLP_HEADERS`
+(comma-separated `key=value` pairs). Use percent-encoded values, for example
+`OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer%20token"`.
+`OTEL_EXPORTER_OTLP_TRACES_HEADERS`, when set, replaces the general header list for trace exports.
+These settings also apply to tracing in the Python backend.
 
 ### gRPC
 
@@ -461,7 +528,7 @@ You can use the gRPC API by adding the `-grpc` tag to any TEI Docker image. For 
 model=Qwen/Qwen3-Embedding-0.6B
 volume=$PWD/data # share a volume with the Docker container to avoid downloading weights every run
 
-docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:1.7-grpc --model-id $model
+docker run --gpus all -p 8080:80 -v $volume:/data --pull always ghcr.io/huggingface/text-embeddings-inference:cuda-1.9-grpc --model-id $model
 ```
 
 ```shell
@@ -469,6 +536,22 @@ grpcurl -d '{"inputs": "What is Deep Learning"}' -plaintext 0.0.0.0:8080 tei.v1.
 ```
 
 ## Local install
+
+### Apple Silicon (Homebrew)
+
+On Apple Silicon (M1/M2/M3/M4), you can install a prebuilt binary via Homebrew:
+
+```shell
+brew install text-embeddings-inference
+```
+
+Then launch Text Embeddings Inference with Metal acceleration:
+
+```shell
+model=Qwen/Qwen3-Embedding-0.6B
+
+text-embeddings-router --model-id $model --port 8080
+```
 
 ### CPU
 
@@ -509,27 +592,24 @@ sudo apt-get install libssl-dev gcc -y
 
 GPUs with CUDA compute capabilities < 7.5 are not supported (V100, Titan V, GTX 1000 series, ...).
 
-Make sure you have CUDA and the nvidia drivers installed. NVIDIA drivers on your device need to be compatible with CUDA
-version 12.2 or higher.
-You also need to add the nvidia binaries to your path:
+Make sure you have CUDA and the NVIDIA drivers installed. NVIDIA drivers on your device need to be compatible with CUDA
+version 12.2 or higher. You also need to add the NVIDIA binaries to your path:
 
 ```shell
 export PATH=$PATH:/usr/local/cuda/bin
 ```
 
-Then run:
+Then run the following (might take a while as it needs to compile the CUDA kernels):
 
 ```shell
-# This can take a while as we need to compile a lot of cuda kernels
-
 # On Turing GPUs (T4, RTX 2000 series ... )
-cargo install --path router -F candle-cuda-turing -F http --no-default-features
+cargo install --path router -F candle-cuda-turing
 
-# On Ampere and Hopper
-cargo install --path router -F candle-cuda -F http --no-default-features
+# On Ampere, Ada Lovelace, Hopper and Blackwell
+cargo install --path router -F candle-cuda
 ```
 
-You can now launch Text Embeddings Inference on GPU with:
+You can now launch Text Embeddings Inference on GPU as follows:
 
 ```shell
 model=Qwen/Qwen3-Embedding-0.6B
@@ -537,18 +617,16 @@ model=Qwen/Qwen3-Embedding-0.6B
 text-embeddings-router --model-id $model --port 8080
 ```
 
-## Docker build
+## Docker
 
-You can build the CPU container with:
+You can build the CPU container with Docker as:
 
 ```shell
-docker build .
+docker build -f Dockerfile .
 ```
 
 To build the CUDA containers, you need to know the compute cap of the GPU you will be using
-at runtime.
-
-Then you can build the container with:
+at runtime, to build the image accordingly:
 
 ```shell
 # Get submodule dependencies
@@ -557,32 +635,78 @@ git submodule update --init
 # Example for Turing (T4, RTX 2000 series, ...)
 runtime_compute_cap=75
 
-# Example for A100
+# Example for Ampere (A100, ...)
 runtime_compute_cap=80
 
-# Example for A10
+# Example for Ampere (A10, ...)
 runtime_compute_cap=86
 
 # Example for Ada Lovelace (RTX 4000 series, ...)
 runtime_compute_cap=89
 
-# Example for H100
+# Example for Hopper (H100, ...)
 runtime_compute_cap=90
+
+# Example for Blackwell (B200, GB200, ...)
+runtime_compute_cap=100
+
+# Example for Blackwell (GeForce RTX 50X0, RTX PRO 6000, ...)
+runtime_compute_cap=120
+
+# Example for Blackwell GB10 (DGX Spark)
+runtime_compute_cap=121
 
 docker build . -f Dockerfile-cuda --build-arg CUDA_COMPUTE_CAP=$runtime_compute_cap
 ```
 
-### Apple M1/M2 arm64 architectures
+### ARM64 / aarch64
 
-#### DISCLAIMER
+#### CPU-only (Apple Silicon, Ampere, Graviton)
 
-As explained here [MPS-Ready, ARM64 Docker Image](https://github.com/pytorch/pytorch/issues/81224), Metal / MPS is not
-supported via Docker. As such inference will be CPU bound and most likely pretty slow when using this docker image on an
-M1/M2 ARM CPU.
+For ARM64 hosts without NVIDIA GPUs, use the CPU Dockerfile. Inference runs on CPU cores
+only (no Metal/MPS support via Docker).
 
+```shell
+docker build . -f Dockerfile-arm64 --platform=linux/arm64
 ```
-docker build . -f Dockerfile --platform=linux/arm64
+
+#### CUDA on ARM64 (DGX Spark, Jetson)
+
+For ARM64 hosts with NVIDIA GPUs, build `Dockerfile-cuda` with the appropriate compute
+capability and `--platform linux/arm64`:
+
+```shell
+# DGX Spark (GB10, sm_121)
+docker build . -f Dockerfile-cuda \
+  --build-arg CUDA_COMPUTE_CAP=121 \
+  --platform linux/arm64
+
+# Future ARM64 + Blackwell devices (sm_120)
+docker build . -f Dockerfile-cuda \
+  --build-arg CUDA_COMPUTE_CAP=120 \
+  --platform linux/arm64
 ```
+
+## AMD Instinct GPUs (ROCm)
+
+TEI supports AMD Instinct GPUs (MI200, MI300 series) via ROCm.
+
+```shell
+model=BAAI/bge-base-en-v1.5
+volume=$PWD/data
+
+docker run \
+  --device /dev/kfd --device /dev/dri \
+  --group-add video \
+  --ipc=host \
+  -p 8080:80 \
+  -v $volume:/data \
+  --pull always \
+  ghcr.io/huggingface/text-embeddings-inference:rocm-latest \
+  --model-id $model --dtype bfloat16
+```
+
+For full setup instructions, see the **[AMD Instinct GPU guide](https://huggingface.co/docs/text-embeddings-inference/amd_gpu)**.
 
 ## Examples
 

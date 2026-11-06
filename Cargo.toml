@@ -22,7 +22,7 @@ default-members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.7.3"
+version = "1.9.4"
 edition = "2021"
 authors = ["Olivier Dehaene", "Nicolas Patry", "Alvaro Bartolome"]
 homepage = "https://github.com/huggingface/text-embeddings-inference"
@@ -31,7 +31,7 @@ homepage = "https://github.com/huggingface/text-embeddings-inference"
 anyhow = "1.0.75"
 clap = { version = "4.1", features = ["derive", "env"] }
 hf-hub = { version = "0.4", features = ["tokio"], default-features = false }
-metrics = "0.23"
+metrics = "0.23.1"
 nohash-hasher = "0.2"
 num_cpus = "1.16.0"
 tokenizers = { version = "0.21.0", default-features = false, features = ["onig", "esaxx_fast"] }
@@ -42,14 +42,15 @@ serde_json = "1.0"
 thiserror = "1.0"
 rand = "0.9"
 serial_test = "2.0.0"
-cudarc = { version = "0.13" , features =["cuda-12020"], default-features = false}
-intel-mkl-src = { version = "0.8"}
+cudarc = { version = "0.13", features =["cuda-12020"], default-features = false }
+intel-mkl-src = { version = "0.8", default-features = false }
 candle = { version = "0.8", package = "candle-core" }
-candle-nn = { version = "0.8"  }
+candle-nn = { version = "0.8" }
 candle-transformers = { version = "0.8" }
 candle-flash-attn = { version = "0.8" }
-candle-cublaslt= { version = "0.0.1" }
+candle-cublaslt = { version = "0.0.1" }
 candle-layer-norm = { version = "0.0.1" }
+candle-index-select-cu =  { version = "0.0.1", features = ["cuda-11"], default-features = false }
 candle-rotary = { version = "0.0.1" }
 candle-flash-attn-v1 = { version = "0.0.1" }
 half = { version = "2.3.1", features = ["num-traits"] }

@@ -15,13 +15,14 @@ use text_embeddings_backend_core::{Backend, ModelType, Pool};
     any(feature = "flash-attn", feature = "flash-attn-v1")
 ))]
 fn test_flash_mini() -> Result<()> {
-    let model_root = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None)?;
+    let (model_root, _) = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
         &model_root,
         "float16".to_string(),
         ModelType::Embedding(Pool::Mean),
+        None,
     )?;
 
     let input_batch = batch(
@@ -79,13 +80,14 @@ fn test_flash_mini() -> Result<()> {
     any(feature = "flash-attn", feature = "flash-attn-v1")
 ))]
 fn test_flash_mini_pooled_raw() -> Result<()> {
-    let model_root = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None)?;
+    let (model_root, _) = download_artifacts("sentence-transformers/all-MiniLM-L6-v2", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
     let backend = CandleBackend::new(
         &model_root,
         "float16".to_string(),
         ModelType::Embedding(Pool::Cls),
+        None,
     )?;
 
     let input_batch = batch(
@@ -153,10 +155,15 @@ fn test_flash_mini_pooled_raw() -> Result<()> {
     any(feature = "flash-attn", feature = "flash-attn-v1")
 ))]
 fn test_flash_emotions() -> Result<()> {
-    let model_root = download_artifacts("SamLowe/roberta-base-go_emotions", None)?;
+    let (model_root, _) = download_artifacts("SamLowe/roberta-base-go_emotions", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
-    let backend = CandleBackend::new(&model_root, "float16".to_string(), ModelType::Classifier)?;
+    let backend = CandleBackend::new(
+        &model_root,
+        "float16".to_string(),
+        ModelType::Classifier,
+        None,
+    )?;
 
     let input_batch = batch(
         vec![
@@ -207,10 +214,16 @@ fn test_flash_emotions() -> Result<()> {
     any(feature = "flash-attn", feature = "flash-attn-v1")
 ))]
 fn test_flash_bert_classification() -> Result<()> {
-    let model_root = download_artifacts("ibm-research/re2g-reranker-nq", Some("refs/pr/3"))?;
+    let (model_root, _) =
+        download_artifacts("ibm-research/re2g-reranker-nq", Some("refs/pr/3"), None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 
-    let backend = CandleBackend::new(&model_root, "float16".to_string(), ModelType::Classifier)?;
+    let backend = CandleBackend::new(
+        &model_root,
+        "float16".to_string(),
+        ModelType::Classifier,
+        None,
+    )?;
 
     let input_single = batch(
         vec![tokenizer

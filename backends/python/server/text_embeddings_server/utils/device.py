@@ -45,9 +45,14 @@ def is_hpu() -> bool:
     is_hpu_available = True
     try:
         subprocess.run(["hl-smi"], capture_output=True, check=True)
-    except:
+    except Exception:
         is_hpu_available = False
     return is_hpu_available
+
+
+def is_rocm() -> bool:
+    """Return True when running on an AMD ROCm GPU (torch built with HIP)."""
+    return torch.cuda.is_available() and torch.version.hip is not None
 
 
 def use_ipex() -> bool:
@@ -59,6 +64,8 @@ def get_device():
     device = torch.device("cpu")
     if torch.cuda.is_available():
         device = torch.device("cuda")
+        if is_rocm():
+            logger.info(f"ROCm / HIP version: {torch.version.hip}")
     elif is_hpu():
         import habana_frameworks.torch.core as htcore
 

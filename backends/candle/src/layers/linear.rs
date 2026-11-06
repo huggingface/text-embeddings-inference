@@ -5,10 +5,15 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize, PartialEq, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum HiddenAct {
+    // NOTE: `GeluErf` is excluded due to incompatibility with cuBLASLt, as only GeLU + tanh
+    // approximation is implemented due to efficiency, so GeLU is standardized to tanh approx. with
+    // slight numerical deviation from GeLU erf (neglible on inference quality)
+    #[serde(alias = "gelu_new", alias = "gelu_pytorch_tanh")]
     Gelu,
     Relu,
     Silu,
     Swiglu,
+    Tanh,
 }
 
 impl HiddenAct {
@@ -18,6 +23,7 @@ impl HiddenAct {
             Self::Relu => x.relu(),
             Self::Silu => x.silu(),
             Self::Swiglu => candle_nn::ops::swiglu(x),
+            Self::Tanh => x.tanh(),
         }
     }
 }
@@ -68,21 +74,26 @@ impl Linear {
                 ),
             }
         } else {
-            let w = match x.dims() {
-                &[bsize, _, _] => self.weight.broadcast_left(bsize)?.t()?,
-                _ => self.weight.t()?,
+            let (x, w) = match x.dims() {
+                &[bsize, _, _] => (x, self.weight.broadcast_left(bsize)?.t()?),
+                // Metal devices require contiguous tensors for 2D matrix multiplication apparently
+                _ if matches!(x.device(), Device::Metal(_)) => (&x.contiguous()?, self.weight.t()?),
+                _ => (x, self.weight.t()?),
             };
             let x = x.matmul(&w)?;
+
             let x = match &self.bias {
                 None => Ok(x),
                 Some(bias) => x.broadcast_add(bias),
             }?;
+
             if let Some(act) = &self.act {
                 match act {
                     HiddenAct::Gelu => x.gelu(),
                     HiddenAct::Relu => x.relu(),
                     HiddenAct::Silu => x.silu(),
                     HiddenAct::Swiglu => candle_nn::ops::swiglu(&x),
+                    HiddenAct::Tanh => x.tanh(),
                 }
             } else {
                 Ok(x)

@@ -6,7 +6,7 @@ use grpc_metadata::InjectTelemetryContext;
 use tonic::transport::{Channel, Uri};
 use tracing::instrument;
 
-/// Text Generation Inference gRPC client
+/// Text Embeddings Inference gRPC client
 #[derive(Debug, Clone)]
 pub struct Client {
     stub: EmbeddingServiceClient<Channel>,

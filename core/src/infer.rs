@@ -1,4 +1,4 @@
-use crate::queue::{Entry, Metadata, NextBatch, Queue};
+use crate::queue::{record_batch_dispatched, Entry, Metadata, NextBatch, Queue};
 use crate::tokenization::{EncodingInput, RawEncoding, Tokenization};
 use crate::TextEmbeddingsError;
 use std::sync::Arc;
@@ -151,20 +151,16 @@ impl Infer {
             panic!("unexpected enum variant")
         };
 
-        // Timings
         let total_time = start_time.elapsed();
 
-        // Metrics
-        let counter = metrics::counter!("te_embed_success");
-        counter.increment(1);
-        let histogram = metrics::histogram!("te_embed_duration");
-        histogram.record(total_time.as_secs_f64());
-        let histogram = metrics::histogram!("te_embed_tokenization_duration");
-        histogram.record(response.metadata.tokenization.as_secs_f64());
-        let histogram = metrics::histogram!("te_embed_queue_duration");
-        histogram.record(response.metadata.queue.as_secs_f64());
-        let histogram = metrics::histogram!("te_embed_inference_duration");
-        histogram.record(response.metadata.inference.as_secs_f64());
+        metrics::counter!("te_embed_success").increment(1);
+        metrics::histogram!("te_embed_duration").record(total_time.as_secs_f64());
+        metrics::histogram!("te_embed_tokenization_duration")
+            .record(response.metadata.tokenization.as_secs_f64());
+        metrics::histogram!("te_embed_queue_duration")
+            .record(response.metadata.queue.as_secs_f64());
+        metrics::histogram!("te_embed_inference_duration")
+            .record(response.metadata.inference.as_secs_f64());
 
         Ok(response)
     }
@@ -224,6 +220,7 @@ impl Infer {
         Ok(response)
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self, inputs, permit))]
     pub async fn embed_pooled<I: Into<EncodingInput> + std::fmt::Debug>(
         &self,
@@ -232,6 +229,7 @@ impl Infer {
         truncation_direction: TruncationDirection,
         prompt_name: Option<String>,
         normalize: bool,
+        dimensions: Option<usize>,
         permit: OwnedSemaphorePermit,
     ) -> Result<PooledEmbeddingsInferResponse, TextEmbeddingsError> {
         let start_time = Instant::now();
@@ -239,11 +237,21 @@ impl Infer {
         if self.is_splade() && normalize {
             let counter = metrics::counter!("te_request_failure", "err" => "model_type");
             counter.increment(1);
+
             let message = "`normalize` is not available for SPLADE models".to_string();
             tracing::error!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
             )));
+        }
+
+        if let Some(dimensions) = dimensions {
+            if dimensions == 0 {
+                metrics::counter!("te_request_failure", "err" => "validation").increment(1);
+                let message = "`dimensions` should be positive".to_string();
+                tracing::error!("{message}");
+                return Err(TextEmbeddingsError::Validation(message));
+            }
         }
 
         let results = self
@@ -261,6 +269,21 @@ impl Infer {
         let InferResult::PooledEmbedding(mut response) = results else {
             panic!("unexpected enum variant")
         };
+
+        if let Some(mrl_dimensions) = dimensions {
+            if mrl_dimensions > response.results.len() {
+                metrics::counter!("te_request_failure", "err" => "validation").increment(1);
+
+                let message =
+                    "`dimensions` should be smaller than the maximum embedding dimension."
+                        .to_string();
+                tracing::error!("{message}");
+
+                return Err(TextEmbeddingsError::Validation(message));
+            }
+
+            response.results.truncate(mrl_dimensions);
+        }
 
         if normalize {
             // Normalize embedding
@@ -435,19 +458,11 @@ impl Infer {
         if !raw_scores {
             // Softmax
             if response.results.len() > 1 {
-                let max = *response
-                    .results
-                    .iter()
-                    .max_by(|x, y| x.abs().partial_cmp(&y.abs()).unwrap())
-                    .unwrap();
-
-                let mut den = 0.0;
-                for v in response.results.iter_mut() {
-                    *v = (*v - max).exp();
-                    den += *v;
-                }
-                for v in response.results.iter_mut() {
-                    *v /= den;
+                if let Err(err) = softmax(&mut response.results) {
+                    let counter = metrics::counter!("te_request_failure", "err" => "inference");
+                    counter.increment(1);
+                    tracing::error!("{err}");
+                    return Err(TextEmbeddingsError::Backend(err));
                 }
             }
             // Sigmoid
@@ -523,12 +538,14 @@ async fn batching_task(queue: Queue, notify: Arc<Notify>, embed_sender: mpsc::Se
 #[instrument(skip_all)]
 async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextBatch>) {
     while let Some(batch) = embed_receiver.recv().await {
+        record_batch_dispatched(batch.0.len());
+
         match &backend.model_type {
             ModelType::Classifier => {
                 let results = backend.predict(batch.1).await;
 
-                // Handle sending responses in another thread to avoid starving the backend
-                std::thread::spawn(move || match results {
+                // Handle sending responses in a blocking task to avoid starving the backend
+                tokio::task::spawn_blocking(move || match results {
                     Ok((mut predictions, inference_duration)) => {
                         batch.0.into_iter().enumerate().for_each(|(i, m)| {
                             let infer_metadata = InferMetadata {
@@ -558,8 +575,8 @@ async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextB
             ModelType::Embedding(_) => {
                 let results = backend.embed(batch.1).await;
 
-                // Handle sending responses in another thread to avoid starving the backend
-                std::thread::spawn(move || match results {
+                // Handle sending responses in a blocking task to avoid starving the backend
+                tokio::task::spawn_blocking(move || match results {
                     Ok((mut embeddings, inference_duration)) => {
                         batch.0.into_iter().enumerate().for_each(|(i, m)| {
                             let metadata = InferMetadata {
@@ -601,6 +618,27 @@ async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextB
     }
 }
 
+/// In-place softmax over classification scores.
+///
+/// Returns an error if any score is not finite.
+fn softmax(scores: &mut [f32]) -> Result<(), BackendError> {
+    if scores.iter().any(|s| !s.is_finite()) {
+        return Err(BackendError::Inference("score is not finite".to_string()));
+    }
+
+    let max = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+
+    let mut den = 0.0;
+    for v in scores.iter_mut() {
+        *v = (*v - max).exp();
+        den += *v;
+    }
+    for v in scores.iter_mut() {
+        *v /= den;
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct InferMetadata {
     pub prompt_tokens: usize,
@@ -632,4 +670,43 @@ pub struct PooledEmbeddingsInferResponse {
 pub struct AllEmbeddingsInferResponse {
     pub results: Vec<Vec<f32>>,
     pub metadata: InferMetadata,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn softmax_normalizes_scores() {
+        let mut scores = vec![1.0, 2.0, 3.0];
+        softmax(&mut scores).unwrap();
+        assert!((scores.iter().sum::<f32>() - 1.0).abs() < 1e-6);
+        assert!(scores[0] < scores[1] && scores[1] < scores[2]);
+    }
+
+    #[test]
+    fn softmax_handles_large_mixed_sign_scores() {
+        for (mut scores, expected) in [
+            (vec![-100.0, 0.0], [0.0, 1.0]),
+            (vec![100.0, -200.0], [1.0, 0.0]),
+            (vec![-1000.0, -1001.0], [0.7310586, 0.26894143]),
+            (vec![1000.0, 1001.0], [0.26894143, 0.7310586]),
+        ] {
+            softmax(&mut scores).unwrap();
+            assert!(scores.iter().all(|score| score.is_finite()));
+            assert!((scores.iter().sum::<f32>() - 1.0).abs() < 1e-6);
+            for (actual, expected) in scores.iter().zip(expected) {
+                assert!((actual - expected).abs() < 1e-6);
+            }
+        }
+    }
+
+    #[test]
+    fn softmax_rejects_non_finite_scores() {
+        for score in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut scores = vec![1.0, score, 3.0];
+            let err = softmax(&mut scores).unwrap_err();
+            assert!(matches!(&err, BackendError::Inference(m) if m == "score is not finite"));
+        }
+    }
 }

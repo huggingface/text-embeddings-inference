@@ -1,8 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
 use opentelemetry::global;
-use text_embeddings_backend::DType;
 use veil::Redact;
+
+use text_embeddings_backend::{DType, OtlpProtocol};
 
 #[cfg(not(target_os = "linux"))]
 #[global_allocator]
@@ -12,12 +13,14 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[derive(Parser, Redact)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    /// The name of the model to load.
-    /// Can be a MODEL_ID as listed on <https://hf.co/models> like
-    /// `BAAI/bge-large-en-v1.5`.
-    /// Or it can be a local directory containing the necessary files
-    /// as saved by `save_pretrained(...)` methods of transformers
-    #[clap(default_value = "BAAI/bge-large-en-v1.5", long, env)]
+    /// The Hugging Face model ID, can be any model listed on <https://huggingface.co/models> with
+    /// the `text-embeddings-inference` tag (meaning it's compatible with Text Embeddings
+    /// Inference).
+    ///
+    /// Alternatively, the specified ID can also be a path to a local directory containing the
+    /// necessary model files saved by the `save_pretrained(...)` methods of either Transformers or
+    /// Sentence Transformers.
+    #[clap(long, env)]
     #[redact(partial)]
     model_id: String,
 
@@ -35,6 +38,11 @@ struct Args {
     /// The dtype to be forced upon the model.
     #[clap(long, env, value_enum)]
     dtype: Option<DType>,
+
+    /// The name of the model that is being served. If not specified, defaults to `--model-id`. It
+    /// is only used for the OpenAI-compatible endpoints via HTTP.
+    #[clap(long, env)]
+    served_model_name: Option<String>,
 
     /// Optionally control the pooling method for embedding models.
     ///
@@ -73,10 +81,13 @@ struct Args {
     #[clap(default_value = "32", long, env)]
     max_client_batch_size: usize,
 
-    /// Automatically truncate inputs that are longer than the maximum supported size
+    /// Control automatic truncation of inputs that exceed the model's maximum supported size.
+    /// Defaults to `true` (truncation enabled). Set to `false` to disable truncation; when
+    /// disabled and the model's maximum input length exceeds `--max-batch-tokens`, the server
+    /// will refuse to start with an error instead of silently truncating sequences.
     ///
     /// Unused for gRPC servers
-    #[clap(long, env)]
+    #[clap(long, env, default_value = "true", num_args = 0..=1, default_missing_value = "true")]
     auto_truncate: bool,
 
     /// The name of the prompt that should be used by default for encoding. If not set, no prompt
@@ -106,12 +117,28 @@ struct Args {
     #[clap(long, env, conflicts_with = "default_prompt_name")]
     default_prompt: Option<String>,
 
+    /// Optionally, define the path to the Dense module required for some embedding models.
+    ///
+    /// Some embedding models require an extra `Dense` module which contains a single Linear layer
+    /// and an activation function. By default, those `Dense` modules are stored under the `2_Dense`
+    /// directory, but there might be cases where different `Dense` modules are provided, to
+    /// convert the pooled embeddings into different dimensions, available as `2_Dense_<dims>` e.g.
+    /// https://huggingface.co/NovaSearch/stella_en_400M_v5.
+    ///
+    /// Note that this argument is optional, only required to be set if there is no `modules.json`
+    /// file or when you want to override a single Dense module path, only when running with the
+    /// `candle` backend.
+    #[clap(long, env)]
+    dense_path: Option<String>,
+
     /// [DEPRECATED IN FAVOR OF `--hf-token`] Your Hugging Face Hub token
     #[clap(long, env, hide = true)]
     #[redact(partial)]
     hf_api_token: Option<String>,
 
-    /// Your Hugging Face Hub token
+    /// Your Hugging Face Hub token. If neither `--hf-token` nor `HF_TOKEN` are set, the token
+    /// will be read from the `$HF_HOME/token` path, if it exists. This ensures access to private
+    /// or gated models, and allows for a more permissive rate limiting.
     #[clap(long, env, conflicts_with = "hf_api_token")]
     #[redact(partial)]
     hf_token: Option<String>,
@@ -123,6 +150,15 @@ struct Args {
     /// The port to listen on.
     #[clap(default_value = "3000", long, short, env)]
     port: u16,
+
+    /// Root path to mount all HTTP routes under.
+    ///
+    /// For example, `--root-path jinaai/jina-embeddings-v2-base-en` serves the
+    /// OpenAI-compatible embeddings route at `/jinaai/jina-embeddings-v2-base-en/v1/embeddings`.
+    ///
+    /// Unused for gRPC servers.
+    #[clap(long, env)]
+    root_path: Option<String>,
 
     /// The name of the unix socket some text-embeddings-inference backends will use as they
     /// communicate internally with gRPC.
@@ -146,16 +182,18 @@ struct Args {
     #[clap(long, env)]
     api_key: Option<String>,
 
-    /// Outputs the logs in JSON format (useful for telemetry)
+    /// Outputs the logs in JSON format (useful for telemetry).
+    /// With an OTLP endpoint set, each log line also includes the trace_id and span_id of its span
     #[clap(long, env)]
     json_output: bool,
 
-    // Whether or not to include the log trace through spans
+    /// Whether or not to include the log trace through spans
     #[clap(long, env)]
     disable_spans: bool,
 
-    /// The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC.
-    /// e.g. `http://localhost:4317`
+    /// The endpoint for OpenTelemetry traces. Use `http://localhost:4317` for gRPC or
+    /// `http://localhost:4318` for HTTP. With `http-proto`, `/v1/traces` is appended to the
+    /// endpoint path unless already present
     #[clap(long, env)]
     otlp_endpoint: Option<String>,
 
@@ -163,6 +201,10 @@ struct Args {
     /// e.g. `text-embeddings-inference.server`
     #[clap(default_value = "text-embeddings-inference.server", long, env)]
     otlp_service_name: String,
+
+    /// The protocol used to export OTLP traces: gRPC or HTTP with protobuf encoding
+    #[clap(default_value = "grpc", long, env, value_enum)]
+    otlp_protocol: OtlpProtocol,
 
     /// The Prometheus port to listen on.
     #[clap(default_value = "9000", long, env)]
@@ -182,6 +224,7 @@ async fn main() -> Result<()> {
     let global_tracer = text_embeddings_router::init_logging(
         args.otlp_endpoint.as_ref(),
         args.otlp_service_name.clone(),
+        args.otlp_protocol,
         args.json_output,
         args.disable_spans,
     );
@@ -209,11 +252,16 @@ async fn main() -> Result<()> {
     }
     let token = args.hf_token.or(args.hf_api_token);
 
+    let served_model_name = args
+        .served_model_name
+        .unwrap_or_else(|| args.model_id.clone());
+
     text_embeddings_router::run(
         args.model_id,
         args.revision,
         args.tokenization_workers,
         args.dtype,
+        served_model_name,
         args.pooling,
         args.max_concurrent_requests,
         args.max_batch_tokens,
@@ -222,15 +270,18 @@ async fn main() -> Result<()> {
         args.auto_truncate,
         args.default_prompt,
         args.default_prompt_name,
+        args.dense_path,
         token,
         Some(args.hostname),
         args.port,
+        args.root_path,
         Some(args.uds_path),
         args.huggingface_hub_cache,
         args.payload_limit,
         args.api_key,
         args.otlp_endpoint,
         args.otlp_service_name,
+        args.otlp_protocol,
         args.prometheus_port,
         args.cors_allow_origin,
     )

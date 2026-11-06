@@ -1,6 +1,6 @@
 use crate::alibi::alibi_head_slopes;
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{HiddenAct, LayerNorm, Linear};
+use crate::layers::{index_select, HiddenAct, LayerNorm, Linear};
 use crate::models::bert::PositionEmbeddingType;
 use crate::models::jina::JinaEmbeddings;
 use crate::models::{BertConfig, Model};
@@ -395,11 +395,11 @@ impl FlashJinaCodeBertModel {
                             )?;
 
                             // Only select indices that requires pooling
-                            indices = indices.index_select(&pooled_indices, 0)?
+                            indices = index_select(&indices, &pooled_indices, 0)?
                         }
 
                         // Select tokens
-                        Some(outputs.index_select(&indices, 0)?)
+                        Some(index_select(&outputs, &indices, 0)?)
                     } else {
                         Some(
                             match self.pool {
@@ -466,7 +466,7 @@ impl FlashJinaCodeBertModel {
                     Tensor::from_vec(final_indices, final_indices_length, &self.device)?;
 
                 // Select the tokens with final indices
-                Some(outputs.index_select(&final_indices, 0)?)
+                Some(index_select(&outputs, &final_indices, 0)?)
             } else {
                 Some(outputs)
             }

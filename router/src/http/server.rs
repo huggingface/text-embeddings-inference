@@ -121,7 +121,7 @@ async fn predict(
                               info: Info,
                               permit: Option<OwnedSemaphorePermit>| async move {
         let permit = match permit {
-            None => infer.acquire_permit().await,
+            None => infer.try_acquire_permit().map_err(ErrorResponse::from)?,
             Some(permit) => permit,
         };
 
@@ -174,16 +174,14 @@ async fn predict(
 
     let (response, metadata) = match req.inputs {
         PredictInput::Single(inputs) => {
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_count", "method" => "single").increment(1);
 
             let compute_chars = inputs.count_chars();
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let (prompt_tokens, tokenization, queue, inference, predictions) =
                 predict_inner(inputs, truncate, infer.0, info.0, Some(permit)).await?;
 
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_success", "method" => "single").increment(1);
 
             (
                 PredictResponse::Single(predictions),
@@ -347,7 +345,7 @@ async fn rerank(
 
     // Closure for rerank
     let rerank_inner = move |query: String, text: String, truncate: bool, infer: Infer| async move {
-        let permit = infer.acquire_permit().await;
+        let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
 
         let response = infer
             .predict(
@@ -544,6 +542,7 @@ async fn similarity(
         truncation_direction: parameters.truncation_direction,
         prompt_name: parameters.prompt_name,
         normalize: false,
+        dimensions: None,
     };
 
     // Get embeddings
@@ -611,6 +610,7 @@ async fn embed(
                     req.truncation_direction.into(),
                     req.prompt_name,
                     req.normalize,
+                    req.dimensions,
                     permit,
                 )
                 .await
@@ -670,8 +670,12 @@ async fn embed(
 
                 let local_infer = infer.clone();
                 let prompt_name = req.prompt_name.clone();
+
+                let permit = local_infer
+                    .try_acquire_permit()
+                    .map_err(ErrorResponse::from)?;
+
                 futures.push(async move {
-                    let permit = local_infer.acquire_permit().await;
                     local_infer
                         .embed_pooled(
                             input,
@@ -679,6 +683,7 @@ async fn embed(
                             req.truncation_direction.into(),
                             prompt_name,
                             req.normalize,
+                            req.dimensions,
                             permit,
                         )
                         .await
@@ -852,8 +857,12 @@ async fn embed_sparse(
 
                 let local_infer = infer.clone();
                 let prompt_name = req.prompt_name.clone();
+
+                let permit = local_infer
+                    .try_acquire_permit()
+                    .map_err(ErrorResponse::from)?;
+
                 futures.push(async move {
-                    let permit = local_infer.acquire_permit().await;
                     let response = local_infer
                         .embed_sparse(
                             input,
@@ -1026,8 +1035,12 @@ async fn embed_all(
 
                 let local_infer = infer.clone();
                 let prompt_name = req.prompt_name.clone();
+
+                let permit = local_infer
+                    .try_acquire_permit()
+                    .map_err(ErrorResponse::from)?;
+
                 futures.push(async move {
-                    let permit = local_infer.acquire_permit().await;
                     local_infer
                         .embed_all(
                             input,
@@ -1138,6 +1151,18 @@ async fn openai_embed(
         span.set_parent(context);
     }
 
+    // NOTE: Validation of `model` won't fail for the time being given that Text Embeddings
+    // Inference can only serve a single model at a time so no need for the `model` parameter to
+    // differentiate one model from the other, but we at least raise a warning.
+    if let Some(requested_model) = &req.model {
+        if requested_model != &info.served_model_name {
+            tracing::warn!(
+                "The provided `model={}` has not been found, the `model` parameter should be provided either empty or with `model={}` instead.",
+                requested_model, info.served_model_name
+            );
+        }
+    }
+
     let start_time = Instant::now();
 
     let truncate = info.auto_truncate;
@@ -1156,6 +1181,7 @@ async fn openai_embed(
                     tokenizers::TruncationDirection::Right,
                     None,
                     true,
+                    req.dimensions,
                     permit,
                 )
                 .await
@@ -1219,8 +1245,12 @@ async fn openai_embed(
                 compute_chars += input.count_chars();
 
                 let local_infer = infer.clone();
+
+                let permit = local_infer
+                    .try_acquire_permit()
+                    .map_err(ErrorResponse::from)?;
+
                 futures.push(async move {
-                    let permit = local_infer.acquire_permit().await;
                     local_infer
                         .embed_pooled(
                             input,
@@ -1228,6 +1258,7 @@ async fn openai_embed(
                             tokenizers::TruncationDirection::Right,
                             None,
                             true,
+                            req.dimensions,
                             permit,
                         )
                         .await
@@ -1287,7 +1318,7 @@ async fn openai_embed(
     let response = OpenAICompatResponse {
         object: "list",
         data: embeddings,
-        model: info.model_id.clone(),
+        model: info.served_model_name.clone(),
         usage: OpenAICompatUsage {
             prompt_tokens: compute_tokens,
             total_tokens: compute_tokens,
@@ -1591,6 +1622,7 @@ async fn metrics(prom_handle: Extension<PrometheusHandle>) -> String {
 }
 
 /// Serving method
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     infer: Infer,
     info: Info,
@@ -1599,7 +1631,10 @@ pub async fn run(
     payload_limit: usize,
     api_key: Option<String>,
     cors_allow_origin: Option<Vec<String>>,
+    root_path: Option<String>,
 ) -> Result<(), anyhow::Error> {
+    let root_path = normalize_root_path(root_path.as_deref())?;
+
     // OpenAPI documentation
     #[derive(OpenApi)]
     #[openapi(
@@ -1706,7 +1741,7 @@ pub async fn run(
         .allow_origin(allow_origin);
 
     // Define VertextApiDoc conditionally only if the "google" feature is enabled
-    let doc = {
+    let mut doc = {
         // avoid `mut` if possible
         #[cfg(feature = "google")]
         {
@@ -1725,6 +1760,17 @@ pub async fn run(
         #[cfg(not(feature = "google"))]
         ApiDoc::openapi()
     };
+
+    if let Some(root_path) = &root_path {
+        doc.servers = Some(vec![utoipa::openapi::Server::new(root_path)]);
+    }
+    let schema_url = format!(
+        "{}/api-doc/openapi.json",
+        root_path.as_deref().unwrap_or("")
+    );
+    let swagger_ui = SwaggerUi::new("/docs")
+        .url("/api-doc/openapi.json", doc)
+        .config(utoipa_swagger_ui::Config::new([schema_url]));
 
     let mut routes = Router::new()
         // Base routes
@@ -1827,7 +1873,7 @@ pub async fn run(
     }
 
     let app = Router::new()
-        .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", doc))
+        .merge(swagger_ui)
         .merge(routes)
         .merge(public_routes)
         .layer(Extension(infer))
@@ -1839,6 +1885,33 @@ pub async fn run(
         ))
         .layer(DefaultBodyLimit::max(payload_limit))
         .layer(cors_layer);
+
+    let app = match root_path {
+        Some(root_path) => {
+            tracing::info!("Serving HTTP routes under root path: {root_path}");
+            let docs_redirect = HeaderValue::from_str(&format!("{root_path}/docs/"))?;
+            Router::new()
+                .nest(&root_path, app)
+                .layer(axum::middleware::map_response(
+                    move |mut response: axum::response::Response| {
+                        let docs_redirect = docs_redirect.clone();
+                        async move {
+                            if response
+                                .headers()
+                                .get(http::header::LOCATION)
+                                .is_some_and(|location| location == "/docs/")
+                            {
+                                response
+                                    .headers_mut()
+                                    .insert(http::header::LOCATION, docs_redirect);
+                            }
+                            response
+                        }
+                    },
+                ))
+        }
+        None => app,
+    };
 
     // Run server
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -1856,6 +1929,28 @@ pub async fn run(
     Ok(())
 }
 
+fn normalize_root_path(root_path: Option<&str>) -> Result<Option<String>, anyhow::Error> {
+    let Some(root_path) = root_path else {
+        return Ok(None);
+    };
+
+    let root_path = root_path.trim();
+    if root_path.trim_matches('/').is_empty() {
+        return Ok(None);
+    }
+
+    if root_path.contains('?') || root_path.contains('#') {
+        anyhow::bail!("`--root-path` must be a path and cannot contain `?` or `#`");
+    }
+
+    if root_path.contains('*') || root_path.split('/').any(|segment| segment.starts_with(':')) {
+        anyhow::bail!("`--root-path` must be a literal path without route captures or wildcards");
+    }
+
+    let root_path = format!("/{}", root_path.trim_matches('/'));
+    Ok(Some(root_path))
+}
+
 impl From<&ErrorType> for StatusCode {
     fn from(value: &ErrorType) -> Self {
         match value {
@@ -1863,7 +1958,7 @@ impl From<&ErrorType> for StatusCode {
             ErrorType::Backend => StatusCode::FAILED_DEPENDENCY,
             ErrorType::Overloaded => StatusCode::TOO_MANY_REQUESTS,
             ErrorType::Tokenizer => StatusCode::UNPROCESSABLE_ENTITY,
-            ErrorType::Validation => StatusCode::PAYLOAD_TOO_LARGE,
+            ErrorType::Validation => StatusCode::UNPROCESSABLE_ENTITY,
             ErrorType::Empty => StatusCode::BAD_REQUEST,
         }
     }
@@ -1898,5 +1993,43 @@ impl From<serde_json::Error> for ErrorResponse {
             error: err.to_string(),
             error_type: ErrorType::Validation,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_root_path;
+
+    #[test]
+    fn normalize_root_path_ignores_empty_and_root() {
+        assert_eq!(normalize_root_path(None).unwrap(), None);
+        assert_eq!(normalize_root_path(Some("")).unwrap(), None);
+        assert_eq!(normalize_root_path(Some("   ")).unwrap(), None);
+        assert_eq!(normalize_root_path(Some("/")).unwrap(), None);
+        assert_eq!(normalize_root_path(Some("///")).unwrap(), None);
+    }
+
+    #[test]
+    fn normalize_root_path_adds_leading_slash_and_trims_trailing_slashes() {
+        assert_eq!(
+            normalize_root_path(Some("jinaai/jina-embeddings-v2-base-en")).unwrap(),
+            Some("/jinaai/jina-embeddings-v2-base-en".to_string())
+        );
+        assert_eq!(
+            normalize_root_path(Some("/jinaai/jina-embeddings-v2-base-en/")).unwrap(),
+            Some("/jinaai/jina-embeddings-v2-base-en".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_root_path_rejects_query_and_fragment() {
+        assert!(normalize_root_path(Some("/foo?bar")).is_err());
+        assert!(normalize_root_path(Some("/foo#bar")).is_err());
+    }
+
+    #[test]
+    fn normalize_root_path_rejects_route_patterns() {
+        assert!(normalize_root_path(Some("/:model")).is_err());
+        assert!(normalize_root_path(Some("/models/*rest")).is_err());
     }
 }

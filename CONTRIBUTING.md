@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 -->
 
-# Contribute to text-embeddings-inference
+# Contribute to Text Embeddings Inference (TEI)
 
 Everyone is welcome to contribute, and we value everybody's contribution. Code
 contributions are not the only way to help the community. Answering questions, helping
@@ -31,7 +31,7 @@ However you choose to contribute, please be mindful and respect our
 
 ## Ways to contribute
 
-There are several ways you can contribute to text-embeddings-inference.
+There are several ways you can contribute to Text Embeddings Inference (TEI).
 
 * Fix outstanding issues with the existing code.
 * Submit issues related to bugs or desired new features.
@@ -52,7 +52,7 @@ feedback.
 
 ### Did you find a bug?
 
-The text-embeddings-inference library is robust and reliable thanks to users who report the problems they encounter.
+The Text Embeddings Inference (TEI) solution is robust and reliable thanks to users who report the problems they encounter.
 
 Before you report an issue, we would really appreciate it if you could **make sure the bug was not
 already reported** (use the search bar on GitHub under Issues). Your issue should also be related to bugs in the
@@ -68,7 +68,7 @@ we can quickly resolve it:
 
 ### Do you want a new feature?
 
-If there is a new feature you'd like to see in text-embeddings-inference, please open an issue and describe:
+If there is a new feature you'd like to see in Text Embeddings Inference (TEI), please open an issue and describe:
 
 1. What is the *motivation* behind this feature? Is it related to a problem or frustration with the library? Is it
    a feature related to something you need for a project? Is it something you worked on and think it could benefit
@@ -94,7 +94,7 @@ New models are constantly released and if you want to implement a new model, ple
 * Link to the implementation if it is open-sourced.
 * Link to the model weights if they are available.
 
-If you are willing to contribute the model yourself, let us know so we can help you add it to text-embeddings-inference!
+If you are willing to contribute the model yourself, let us know so we can help you add it to Text Embeddings Inference (TEI)!
 
 ## Do you want to add documentation?
 
@@ -104,8 +104,33 @@ happy to make the changes or help you make a contribution if you're interested!
 
 ## I want to become a maintainer of the project. How do I get there?
 
-TGI is a project led and managed by Hugging Face as it powers our internal services. However, we are happy to have
-motivated individuals from other organizations join us as maintainers with the goal of making TGI the best inference
-service.
+Text Embeddings Inference (TEI) is a project led and managed by Hugging Face as it powers our internal services. However, we are happy to have
+motivated individuals from other organizations join us as maintainers with the goal of making TEI the best inference
+service for embedding models on production on production.
 
 If you are such an individual (or organization), please reach out to us and let's collaborate.
+
+## CI checks and maintainer-requested builds
+
+Pull requests run formatting/lint checks and focused CPU library tests. Documentation-only PRs skip Rust compilation. Non-draft PRs also run the CPU model tests whose filenames match changed model implementations, test files, or snapshots. For example, changes to `backends/candle/src/models/qwen3.rs`, `backends/candle/tests/test_qwen3.rs`, or its snapshots select `test_qwen3`. The same selection applies to main pushes. Draft PRs wait until marked ready for review.
+
+The repository already requires approval for workflows from all external contributors. Review the PR, then click **Approve workflows to run** in its checks panel; matching model tests run with the other checks. **Re-run jobs** repeats checks for that revision. No branch SHA is needed.
+
+For shared code without a matching model test, or to request wider coverage, open **Actions → Run basic tests → Run workflow**, select `main`, enter the PR number, and choose `related`, `all`, or comma-separated targets such as `test_bert,test_qwen3` in `tests`. Leaving the PR number blank runs against main. The workflow resolves and records the selected revision automatically. Changed and renamed files are considered; no counterpart means the model job is skipped. CUDA-only targets are listed in the summary but require a separate GPU runtime setup. Gated Gemma tests run only on trusted refs with the model-read token configured; PR jobs never receive it.
+
+Image builds remain manual on PRs. Open **Actions → Build and push docker image to registry → Run workflow**, enter the PR number and desired variants. The current PR revision is selected automatically; the optional `head_sha` field can enforce a particular revision. `variants` accepts comma-separated names from `.github/workflows/matrix.json`, or `all`, and defaults to `cpu`.
+
+```bash
+gh workflow run test.yaml --ref main -f pr_number=123 -f tests=related
+gh workflow run build.yaml --ref main -f pr_number=123 -f variants=cpu
+```
+
+Manual requests require repository write access. Each request checks out the resolved revision; a new PR commit needs its own checks. PR validation uses hosted runners and never publishes images, receives registry/AWS/model-read secrets, or exports shared compiler/image caches.
+
+Relevant main pushes publish images; documentation-only pushes do not rebuild images. Isolated Dockerfile changes select their matching variants. Release tags build the full image matrix and are not superseded by later runs. A non-PR manual image build is validation-only unless `publish=true` is explicitly selected on main or a release tag.
+
+The existing pinned sccache uses cache API v2 in Docker builds and GitHub runtime cache settings on runners, with incremental compilation disabled for cacheable Rust builds and native-CPU feature isolation for host compiler caches. Image layers keep per-variant HTTP/gRPC scopes. Trusted publishing uses the configured S3 cache when available; otherwise it uses GitHub's cache. Missing AWS configuration is skipped rather than failing a validation build. Cache statistics remain available even when compilation fails.
+
+Documentation changes use the pinned doc-builder workflow. Its existing bot publishes the preview URL. A separate trusted `workflow_run` job reports build/publication problems in a sticky comment and clears that failure status after a successful publication. It ignores closed PRs, ambiguous fork branches, and stale heads, and never checks out or executes the PR's code with documentation-publishing credentials. `HF_DOC_BUILD_PUSH` enables preview uploads; `COMMENT_BOT_TOKEN` is optional because the reporter can use `GITHUB_TOKEN`.
+
+These maintainer-dispatch and reporting changes become available on the default branch after this CI PR is merged. Required-check rules should use the lightweight checks; model jobs without runnable counterparts and ordinary PR image jobs are intentionally skipped.

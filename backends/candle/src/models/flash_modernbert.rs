@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::flash_attn::flash_attn_varlen;
-use crate::layers::{get_cos_sin, get_inv_freqs, LayerNormNoBias, Linear};
+use crate::layers::{get_cos_sin, get_inv_freqs, index_select, LayerNormNoBias, Linear};
 use crate::models::modernbert::{
     ClassificationHead, ModernBertClassificationHead, ModernBertConfig, ModernBertEmbeddings,
     ModernBertMLP,
@@ -343,8 +343,8 @@ impl FlashModernBertModel {
         for use_local_attention in [true, false] {
             let (cos, sin) = &self.rotary_cache[&use_local_attention];
 
-            let cos = cos.index_select(&position_ids, 0)?;
-            let sin = sin.index_select(&position_ids, 0)?;
+            let cos = index_select(&cos, &position_ids, 0)?;
+            let sin = index_select(&sin, &position_ids, 0)?;
 
             rotary_cache.insert(use_local_attention, (cos, sin));
         }
@@ -378,10 +378,10 @@ impl FlashModernBertModel {
                                 &self.device,
                             )?;
 
-                            indices = indices.index_select(&pooled_indices, 0)?
+                            indices = index_select(&indices, &pooled_indices, 0)?
                         }
 
-                        Some(outputs.index_select(&indices, 0)?)
+                        Some(index_select(&outputs, &indices, 0)?)
                     } else {
                         Some(
                             match self.pool {
@@ -441,7 +441,7 @@ impl FlashModernBertModel {
                 let final_indices =
                     Tensor::from_vec(final_indices, final_indices_length, &self.device)?;
 
-                Some(outputs.index_select(&final_indices, 0)?)
+                Some(index_select(&outputs, &final_indices, 0)?)
             } else {
                 Some(outputs)
             }
