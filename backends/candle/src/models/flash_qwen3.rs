@@ -1,9 +1,11 @@
 use crate::flash_attn::flash_attn_varlen;
 use crate::layers::{get_cos_sin, get_inv_freqs, index_select, HiddenAct, Linear, RMSNorm};
 use crate::models::{Model, Qwen3Config};
+
 use candle::{DType, Device, IndexOp, Result, Tensor};
 use candle_nn::{Embedding, Module, VarBuilder};
 use candle_rotary::apply_rotary_inplace;
+
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 struct Qwen3Attention {
@@ -20,6 +22,7 @@ struct Qwen3Attention {
     attention_head_size: usize,
 
     softmax_scale: f32,
+    use_bidirectional_attention: bool,
 
     span: tracing::Span,
 }
@@ -98,6 +101,7 @@ impl Qwen3Attention {
             num_key_value_heads,
             attention_head_size,
             softmax_scale,
+            use_bidirectional_attention: config.use_bidirectional_attention.unwrap_or(false),
             span: tracing::span!(tracing::Level::TRACE, "attention"),
         })
     }
@@ -158,7 +162,8 @@ impl Qwen3Attention {
             max_s,
             max_s,
             self.softmax_scale,
-            true,
+            // NOTE: When `use_bidirectional_attention=true` then that implies that `causal=false`
+            !self.use_bidirectional_attention,
             None,
             None,
         )?;
@@ -285,6 +290,7 @@ pub struct FlashQwen3Model {
     embeddings: Embedding,
     layers: Vec<Qwen3Layer>,
     norm: RMSNorm,
+    projection: Option<Linear>,
     cos_cache: Tensor,
     sin_cache: Tensor,
     pool: Pool,
@@ -313,27 +319,55 @@ impl FlashQwen3Model {
 
         // The Qwen3-Reranker models contain the `model` key
         // https://huggingface.co/collections/Qwen/qwen3-reranker-6841b22d0192d7ade9cdefea
-        let vb = if vb.contains_tensor("model.embed_tokens.weight") {
-            vb.pp("model")
+        let model_prefix = if vb.contains_tensor("model.embed_tokens.weight") {
+            "model."
         } else {
-            vb
+            ""
         };
 
         let embeddings = Embedding::new(
-            vb.pp("embed_tokens")
+            vb.pp(format!("{model_prefix}embed_tokens"))
                 .get((config.vocab_size, config.hidden_size), "weight")?,
             config.hidden_size,
         );
 
         let layers = (0..config.num_hidden_layers)
-            .map(|index| Qwen3Layer::load(vb.pp(format!("layers.{index}")), config))
+            .map(|index| Qwen3Layer::load(vb.pp(format!("{model_prefix}layers.{index}")), config))
             .collect::<Result<Vec<_>>>()?;
 
-        let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
+        let norm = RMSNorm::load(
+            vb.pp(format!("{model_prefix}norm")),
+            config.hidden_size,
+            config.rms_norm_eps,
+        )?;
+
+        let projection = if let Some(num_labels) = config.num_labels {
+            if vb.contains_tensor("linear.weight") {
+                let projection_weight =
+                    vb.get((num_labels, config.hidden_size), "linear.weight")?;
+                Some(Linear::new(projection_weight, None, None))
+            } else {
+                tracing::warn!(
+                    "num_labels is set but linear.weight not found, skipping projection layer"
+                );
+                None
+            }
+        } else {
+            None
+        };
+
+        // NOTE: https://github.com/huggingface/transformers/pull/39847
+        let rope_theta = match config.rope_theta {
+            Some(rope_theta) => rope_theta,
+            None => match &config.rope_parameters {
+                Some(rope_parameters) => rope_parameters.rope_theta,
+                None => candle::bail!("Neither `rope_theta` nor `rope_parameters.rope_theta` are defined in the `config.json`"),
+            },
+        };
 
         let inv_freqs = get_inv_freqs(
             layers[0].attention.attention_head_size,
-            config.rope_theta,
+            rope_theta,
             vb.device(),
             None,
         )?;
@@ -348,6 +382,7 @@ impl FlashQwen3Model {
             embeddings,
             layers,
             norm,
+            projection,
             cos_cache,
             sin_cache,
             pool,
@@ -391,6 +426,13 @@ impl FlashQwen3Model {
         }
 
         let (outputs, _) = self.norm.forward(&hidden_states, residual.as_ref())?;
+
+        // NOTE: `projection` required by https://huggingface.co/voyageai/voyage-4-nano
+        let outputs = if let Some(ref projection) = self.projection {
+            projection.forward(&outputs)?
+        } else {
+            outputs
+        };
 
         let has_pooling_requests = !batch.pooled_indices.is_empty();
         let has_raw_requests = !batch.raw_indices.is_empty();

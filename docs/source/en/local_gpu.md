@@ -39,7 +39,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ## Step 3: Install necessary packages
 
-This step  can take a while as we need to compile a lot of CUDA kernels.
+This step can take a while as we need to compile a lot of CUDA kernels.
 
 ### For Turing GPUs (T4, RTX 2000 series ... )
 
@@ -47,7 +47,7 @@ This step  can take a while as we need to compile a lot of CUDA kernels.
 cargo install --path router -F candle-cuda-turing
 ```
 
-### For Ampere and Hopper
+### For Ampere, Ada Lovelace, Hopper, and Blackwell
 
 ```shell
 cargo install --path router -F candle-cuda

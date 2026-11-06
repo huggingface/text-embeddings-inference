@@ -18,8 +18,13 @@ pub struct NomicConfig {
     pub mlp_fc1_bias: bool,
     pub mlp_fc2_bias: bool,
     pub rotary_scaling_factor: Option<f32>,
-    #[serde(default = "default_max_trained_positions")]
-    pub max_trained_positions: usize,
+
+    // NOTE: `max_trained_positions` is specific for NomicBERT when it required custom code, but
+    // since Transformers v5 it's no longer required, and it now defines `max_position_embeddings`
+    // in the `config.json` instead. Not included as an `alias` since both can be present at the
+    // same time, see https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/blob/e9b6763023c676ca8431644204f50c2b100d9aab/config.json#L33-L34
+    pub max_trained_positions: Option<usize>,
+    pub max_position_embeddings: Option<usize>,
 
     pub moe_every_n_layers: Option<usize>,
     pub moe_normalize_expert_weights: Option<bool>,
@@ -37,10 +42,6 @@ pub struct NomicConfig {
     pub vocab_size: usize,
     pub type_vocab_size: usize,
     pub layer_norm_epsilon: f32,
-}
-
-fn default_max_trained_positions() -> usize {
-    2048
 }
 
 impl NomicConfig {
@@ -231,7 +232,34 @@ impl NomicRouter {
         let weights = self.layer.forward(&weights)?.to_dtype(DType::F32)?;
         let weights = candle_nn::ops::softmax_last_dim(&weights)?;
 
-        let TopKOutput { values, indices } = weights.topk(self.moe_top_k)?;
+        // candle's CUDA arg_sort kernel (used by `topk`) is launched with one
+        // grid.y block per row and gridDim.y is capped at 65535, so `topk` on
+        // more than 65535 rows fails with CUDA_ERROR_INVALID_VALUE. Chunk the
+        // routing weights to stay under the limit.
+        const MAX_TOPK_ROWS: usize = 65535;
+        let nrows = weights.dim(0)?;
+        let (values, indices) = if nrows > MAX_TOPK_ROWS {
+            let mut values_chunks = Vec::with_capacity(nrows.div_ceil(MAX_TOPK_ROWS));
+            let mut indices_chunks = Vec::with_capacity(nrows.div_ceil(MAX_TOPK_ROWS));
+            for start in (0..nrows).step_by(MAX_TOPK_ROWS) {
+                let len = usize::min(MAX_TOPK_ROWS, nrows - start);
+                // `narrow` keeps the parent's start offset, which candle's CPU
+                // arg_sort ignores, so force a fresh, offset-free copy.
+                let TopKOutput { values, indices } = weights
+                    .narrow(0, start, len)?
+                    .force_contiguous()?
+                    .topk(self.moe_top_k)?;
+                values_chunks.push(values);
+                indices_chunks.push(indices);
+            }
+            (
+                Tensor::cat(&values_chunks, 0)?,
+                Tensor::cat(&indices_chunks, 0)?,
+            )
+        } else {
+            let TopKOutput { values, indices } = weights.topk(self.moe_top_k)?;
+            (values, indices)
+        };
 
         let values = values.to_dtype(hidden_states.dtype())?;
 
@@ -668,7 +696,7 @@ pub struct NomicBertModel {
     dtype: DType,
 
     rotary_dim: usize,
-    max_trained_positions: u32,
+    max_position_embeddings: u32,
     rotary_cache: (Tensor, Tensor),
     scaled_rotary_cache: Option<(Tensor, Tensor)>,
 
@@ -702,6 +730,10 @@ impl NomicBertModel {
         let embeddings = NomicBertEmbeddings::load(vb.clone(), config)?;
         let encoder = NomicBertEncoder::load(vb.pp("encoder"), config)?;
 
+        let max_position_embeddings = config
+            .max_position_embeddings
+            .unwrap_or(config.max_trained_positions.unwrap_or(2048));
+
         let rotary_dim = encoder.layers[0].attention.attention_head_size;
         let inv_freqs_tensor =
             get_inv_freqs(rotary_dim, config.rotary_emb_base, vb.device(), None)?;
@@ -709,8 +741,7 @@ impl NomicBertModel {
 
         let scaled_rotary_cache = if let Some(scaling_factor) = config.rotary_scaling_factor {
             let new_base = (config.rotary_emb_base
-                * ((scaling_factor * config.n_positions as f32
-                    / config.max_trained_positions as f32)
+                * ((scaling_factor * config.n_positions as f32 / max_position_embeddings as f32)
                     - (scaling_factor - 1.0)))
                 .powi((rotary_dim as f32 / (rotary_dim as f32 - 2.0)) as i32);
             let inv_freqs_tensor = get_inv_freqs(rotary_dim, new_base, vb.device(), None)?;
@@ -729,7 +760,7 @@ impl NomicBertModel {
             encoder,
             pool,
             rotary_dim,
-            max_trained_positions: config.max_trained_positions as u32,
+            max_position_embeddings: max_position_embeddings as u32,
             rotary_cache,
             scaled_rotary_cache,
             num_attention_heads: config.n_head,
@@ -855,7 +886,7 @@ impl NomicBertModel {
             Tensor::from_vec(input_lengths, (batch_size, 1), &self.device)?.to_dtype(self.dtype)?;
 
         let (cos, sin) = if self.scaled_rotary_cache.is_some()
-            && batch.max_length > self.max_trained_positions
+            && batch.max_length > self.max_position_embeddings
         {
             let cos = self
                 .scaled_rotary_cache
@@ -979,5 +1010,42 @@ impl Model for NomicBertModel {
 
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chunked_router_matches_unchunked_cpu_topk() -> Result<()> {
+        let device = &Device::Cpu;
+        let router = NomicRouter {
+            layer: Linear::new(Tensor::eye(8, DType::F32, device)?, None, None),
+            moe_top_k: 2,
+            span: tracing::Span::none(),
+        };
+        for nrows in [65_535, 65_536, 131_071] {
+            let data: Vec<f32> = (0..nrows * 8)
+                .map(|i| ((i * 13 + i / 8 * 3) % 97) as f32 / 97.0)
+                .collect();
+            let input = Tensor::from_vec(data, (nrows, 8), device)?;
+            let reference = candle_nn::ops::softmax_last_dim(&input)?.topk(2)?;
+            let (values, indices) = router.forward(&input)?;
+            let actual_indices = indices.to_vec2::<u32>()?;
+            let expected_indices = reference.indices.to_vec2::<u32>()?;
+            let actual_values = values.to_vec2::<f32>()?;
+            let expected_values = reference.values.to_vec2::<f32>()?;
+            for row in 0..nrows {
+                assert_eq!(
+                    actual_indices[row], expected_indices[row],
+                    "rows={nrows}, row={row}"
+                );
+                for (actual, expected) in actual_values[row].iter().zip(&expected_values[row]) {
+                    assert!((actual - expected).abs() < 1e-6, "rows={nrows}, row={row}");
+                }
+            }
+        }
+        Ok(())
     }
 }

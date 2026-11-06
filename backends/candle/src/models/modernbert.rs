@@ -78,10 +78,17 @@ impl ModernBertEmbeddings {
 
 pub struct ModernBertMLP {
     wi: Linear,
+    gate: Option<Linear>,
     wo: Linear,
-    activation: Option<HiddenAct>,
+    activation: HiddenAct,
     intermediate_size: usize,
     span: tracing::Span,
+}
+
+fn should_split_wi(device: &Device, activation: &HiddenAct) -> bool {
+    matches!(device, Device::Cuda(_))
+        && matches!(activation, HiddenAct::Gelu)
+        && get_cublas_lt_wrapper().is_some()
 }
 
 impl ModernBertMLP {
@@ -90,7 +97,30 @@ impl ModernBertMLP {
             .pp("Wi")
             .get((config.intermediate_size * 2, config.hidden_size), "weight")?;
         let wi_bias = vb.pp("Wi").get(config.intermediate_size * 2, "bias").ok();
-        let wi = Linear::new(wi_weight, wi_bias, None);
+
+        // Split the CUDA GELU projection, but keep GELU separate to preserve the
+        // original FP16 rounding. CPU, Metal, and non-GELU paths stay unsplit.
+        let (wi, gate) = if should_split_wi(vb.device(), &config.hidden_activation) {
+            let wi = Linear::new(
+                wi_weight.narrow(0, 0, config.intermediate_size)?,
+                wi_bias
+                    .as_ref()
+                    .map(|bias| bias.narrow(0, 0, config.intermediate_size))
+                    .transpose()?,
+                None,
+            );
+            let gate = Linear::new(
+                wi_weight.narrow(0, config.intermediate_size, config.intermediate_size)?,
+                wi_bias
+                    .as_ref()
+                    .map(|bias| bias.narrow(0, config.intermediate_size, config.intermediate_size))
+                    .transpose()?,
+                None,
+            );
+            (wi, Some(gate))
+        } else {
+            (Linear::new(wi_weight, wi_bias, None), None)
+        };
 
         let wo_weight = vb
             .pp("Wo")
@@ -99,12 +129,11 @@ impl ModernBertMLP {
 
         let wo = Linear::new(wo_weight, wo_bias, None);
 
-        let activation = Some(config.hidden_activation.clone());
-
         Ok(Self {
             wi,
+            gate,
             wo,
-            activation,
+            activation: config.hidden_activation.clone(),
             intermediate_size: config.intermediate_size,
             span: tracing::span!(tracing::Level::TRACE, "mlp"),
         })
@@ -113,21 +142,20 @@ impl ModernBertMLP {
     pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let _enter = self.span.enter();
 
-        let hidden_states = self.wi.forward(hidden_states)?;
-
-        let input = hidden_states.narrow(D::Minus1, 0, self.intermediate_size)?;
-        let gate =
-            hidden_states.narrow(D::Minus1, self.intermediate_size, self.intermediate_size)?;
-
-        let input = if let Some(activation) = &self.activation {
-            activation.forward(&input)
+        let (input, gate) = if let Some(gate) = &self.gate {
+            (
+                self.wi.forward(hidden_states)?,
+                gate.forward(hidden_states)?,
+            )
         } else {
-            Ok(input)
+            let hidden_states = self.wi.forward(hidden_states)?;
+            (
+                hidden_states.narrow(D::Minus1, 0, self.intermediate_size)?,
+                hidden_states.narrow(D::Minus1, self.intermediate_size, self.intermediate_size)?,
+            )
         };
-
-        let hidden_states = self.wo.forward(&(input * gate)?)?;
-
-        Ok(hidden_states)
+        let input = self.activation.forward(&input)?;
+        self.wo.forward(&(input * gate)?)
     }
 }
 
@@ -228,7 +256,7 @@ impl ModernBertAttention {
                         &query_layer,
                         Some(attention_mask.as_ref()),
                         Some(self.softmax_scale as f32),
-                        None,
+                        Some(1.0),
                         None,
                         None,
                     )?;
@@ -822,5 +850,170 @@ impl Model for ModernBertModel {
                 classifier.forward(&pooled_embeddings)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Only hidden_size, intermediate_size, and hidden_activation affect the MLP
+    // path. The remaining fields are valid values needed to build the config.
+    fn cpu_test_config() -> ModernBertConfig {
+        ModernBertConfig {
+            vocab_size: 1,
+            hidden_size: 2,
+            intermediate_size: 2,
+            num_hidden_layers: 1,
+            num_attention_heads: 1,
+            hidden_activation: HiddenAct::Gelu,
+            max_position_embeddings: 2,
+            initializer_range: 0.02,
+            initializer_cutoff_factor: 3.0,
+            norm_eps: 1e-5,
+            norm_bias: false,
+            pad_token_id: 0,
+            eos_token_id: 0,
+            bos_token_id: 0,
+            cls_token_id: 0,
+            sep_token_id: 0,
+            global_rope_theta: 10_000.0,
+            attention_bias: false,
+            attention_dropout: 0.0,
+            global_attn_every_n_layers: 1,
+            local_attention: 128,
+            local_rope_theta: 10_000.0,
+            embedding_dropout: None,
+            mlp_bias: None,
+            mlp_dropout: None,
+            decoder_bias: None,
+            classifier_pooling: None,
+            classifier_dropout: None,
+            classifier_bias: None,
+            classifier_activation: HiddenAct::Gelu,
+            deterministic_flash_attn: None,
+            sparse_prediction: None,
+            sparse_pred_ignore_index: None,
+            reference_compile: None,
+            num_labels: None,
+        }
+    }
+
+    #[test]
+    fn cpu_modernbert_uses_unsplit_gelu_projection() -> Result<()> {
+        let mlp = ModernBertMLP::load(
+            VarBuilder::zeros(DType::F32, &Device::Cpu),
+            &cpu_test_config(),
+        )?;
+
+        // The Wi split is a CUDA optimization. CPU must keep the original
+        // full-width projection followed by the separate GELU path.
+        assert!(mlp.gate.is_none());
+        assert_eq!(mlp.activation, HiddenAct::Gelu);
+        Ok(())
+    }
+
+    #[test]
+    fn modernbert_split_mlp_matches_unsplit_mlp() -> Result<()> {
+        let device = Device::Cpu;
+        let wi_weight = Tensor::from_slice(
+            &[
+                0.2f32, -0.3, 0.4, 0.5, // GELU projection
+                -0.6, 0.7, 0.8, -0.9, // gate projection
+            ],
+            (4, 2),
+            &device,
+        )?;
+        let wo_weight = Tensor::from_slice(&[1.0f32, 0.0, 0.0, 1.0], (2, 2), &device)?;
+        let hidden_states = Tensor::from_slice(&[0.1f32, -0.2, 0.3, 0.4], (2, 2), &device)?;
+
+        let unsplit = ModernBertMLP {
+            wi: Linear::new(wi_weight.clone(), None, None),
+            gate: None,
+            wo: Linear::new(wo_weight.clone(), None, None),
+            activation: HiddenAct::Gelu,
+            intermediate_size: 2,
+            span: tracing::span!(tracing::Level::TRACE, "mlp"),
+        };
+        let split = ModernBertMLP {
+            wi: Linear::new(wi_weight.narrow(0, 0, 2)?, None, None),
+            gate: Some(Linear::new(wi_weight.narrow(0, 2, 2)?, None, None)),
+            wo: Linear::new(wo_weight, None, None),
+            activation: HiddenAct::Gelu,
+            intermediate_size: 2,
+            span: tracing::span!(tracing::Level::TRACE, "mlp"),
+        };
+
+        let expected = unsplit.forward(&hidden_states)?.to_vec2::<f32>()?;
+        let actual = split.forward(&hidden_states)?.to_vec2::<f32>()?;
+
+        for (expected_row, actual_row) in expected.iter().zip(actual.iter()) {
+            for (expected, actual) in expected_row.iter().zip(actual_row.iter()) {
+                assert!((expected - actual).abs() < 1e-6);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "cuda"))]
+mod cuda_attention_mask_tests {
+    use super::*;
+
+    #[test]
+    fn cuda_attention_preserves_padding_and_local_masks() -> Result<()> {
+        let cuda = Device::new_cuda(0)?;
+        assert!(get_cublas_lt_wrapper().is_some());
+        let run = |device: &Device, mask: &[f32]| -> Result<Tensor> {
+            let identity = Tensor::eye(8, DType::F32, device)?;
+            // Zero queries/keys and symmetric values isolate mask semantics from TF32 rounding.
+            let zero = Tensor::zeros((8, 8), DType::F32, device)?;
+            let attention = ModernBertAttention {
+                wqkv: Linear::new(Tensor::cat(&[&zero, &zero, &identity], 0)?, None, None),
+                wo: Linear::new(identity, None, None),
+                num_attention_heads: 2,
+                attention_head_size: 4,
+                softmax_scale: 0.5,
+                span: tracing::Span::none(),
+            };
+            let input = Tensor::from_slice(
+                &[
+                    -1.0f32, 2.0, -3.0, 4.0, -0.5, 0.25, -0.75, 1.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                    0.0, 0.0, 1.0, -2.0, 3.0, -4.0, 0.5, -0.25, 0.75, -1.5,
+                ],
+                (1, 3, 8),
+                device,
+            )?;
+            let mask = Tensor::from_slice(mask, (1, 2, 3, 3), device)?;
+            let original = mask.flatten_all()?.to_vec1::<f32>()?;
+            let rotary = (
+                Tensor::ones((1, 1, 3, 4), DType::F32, device)?,
+                Tensor::zeros((1, 1, 3, 4), DType::F32, device)?,
+            );
+            let result = attention.forward(&input, &mask, &rotary)?;
+            assert_eq!(original, mask.flatten_all()?.to_vec1::<f32>()?);
+            Ok(result)
+        };
+        for (name, one_head) in [
+            (
+                "padding",
+                [0.0, 0.0, -10000.0, 0.0, 0.0, -10000.0, 0.0, 0.0, -10000.0],
+            ),
+            (
+                "local",
+                [0.0, 0.0, -10000.0, 0.0, 0.0, 0.0, -10000.0, 0.0, 0.0],
+            ),
+        ] {
+            let mask = [one_head, one_head].concat();
+            let expected = run(&Device::Cpu, &mask)?.to_device(&cuda)?;
+            let actual = run(&cuda, &mask)?;
+            let error = (&actual - &expected)?
+                .abs()?
+                .max_all()?
+                .to_scalar::<f32>()?;
+            println!("{name} attention maximum error: {error}");
+            assert!(error < 1e-5, "{name} attention disagrees with CPU: {error}");
+        }
+        Ok(())
     }
 }

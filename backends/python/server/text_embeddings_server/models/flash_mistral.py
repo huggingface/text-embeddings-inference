@@ -10,9 +10,13 @@ from transformers.models.mistral import MistralConfig
 from opentelemetry import trace
 from text_embeddings_server.models import Model
 from text_embeddings_server.models.types import FlashBatch, Embedding, PaddedBatch
-from text_embeddings_server.utils.flash_attn import attention
+from text_embeddings_server.utils.flash_attn import attention, ROCM_HAS_FA_VARLEN
+from text_embeddings_server.utils.device import is_rocm
+from text_embeddings_server.utils.kernels import get_triton_layer_norm
 
 tracer = trace.get_tracer(__name__)
+
+_triton_layer_norm = get_triton_layer_norm()
 
 
 def rotate_half(x):
@@ -91,6 +95,13 @@ class MistralRMSNorm:
                 hidden_states, self.weight, self.variance_epsilon
             )
             return hidden_states
+        elif _triton_layer_norm is not None and hidden_states.is_cuda:
+            return _triton_layer_norm.rms_norm_fn(
+                hidden_states,
+                self.weight,
+                bias=None,
+                eps=self.variance_epsilon,
+            )
         else:
             input_dtype = hidden_states.dtype
             hidden_states = hidden_states.to(torch.float32)
@@ -385,13 +396,17 @@ class FlashMistral(Model):
         self.device = device
         self.dtype = dtype
         self.hidden_size = config.hidden_size
+        self._is_rocm = is_rocm()
 
         super(FlashMistral, self).__init__(model=model, dtype=dtype, device=device)
 
     @property
     def batch_type(self) -> Union[FlashBatch, PaddedBatch]:
-        # for hpu devices, we use PaddedBatch as we do not have real varlen fwd yet
-        return FlashBatch if self.device.type != "hpu" else PaddedBatch
+        if self.device.type == "hpu":
+            return PaddedBatch
+        if self._is_rocm and not ROCM_HAS_FA_VARLEN:
+            return PaddedBatch
+        return FlashBatch
 
     @tracer.start_as_current_span("embed")
     def embed(self, batch: Union[FlashBatch, PaddedBatch]) -> List[Embedding]:

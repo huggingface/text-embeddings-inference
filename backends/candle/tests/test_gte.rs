@@ -164,11 +164,7 @@ fn test_gte_classification() -> Result<()> {
         vec![],
     );
 
-    let predictions: Vec<Vec<f32>> = backend
-        .predict(input_single)?
-        .into_iter()
-        .map(|(_, v)| v)
-        .collect();
+    let predictions: Vec<Vec<f32>> = backend.predict(input_single)?.into_values().collect();
     let predictions_single = SnapshotScores::from(predictions);
 
     let matcher = relative_matcher();

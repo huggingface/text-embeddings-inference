@@ -300,12 +300,14 @@ fn tokenize_input(
     let input_chars = inputs.count_chars();
     let limit = max_input_length * MAX_CHAR_MULTIPLIER;
     if input_chars > limit {
-        if truncate_params.is_none() {
-            return Err(TextEmbeddingsError::Validation(format!(
-                "`inputs` must have less than {limit} characters. Given: {input_chars}"
-            )));
+        match truncate_params.as_ref() {
+            None => {
+                return Err(TextEmbeddingsError::Validation(format!(
+                    "`inputs` must have less than {limit} characters. Given: {input_chars}"
+                )));
+            }
+            Some(truncate_params) => inputs.apply_limit(limit, truncate_params.direction),
         }
-        inputs.apply_limit(limit);
     }
 
     let encoding = match inputs {
@@ -442,10 +444,21 @@ impl EncodingInput {
         }
     }
 
-    fn apply_limit(&mut self, limit: usize) {
-        let truncate_string = |s: &mut String, limit: usize| {
-            if s.is_char_boundary(limit) {
-                s.truncate(limit)
+    /// Keep at most `limit` characters, on the side kept by `direction`
+    fn apply_limit(&mut self, limit: usize, direction: TruncationDirection) {
+        let truncate_string = |s: &mut String, limit: usize| match direction {
+            TruncationDirection::Right => {
+                if let Some((end, _)) = s.char_indices().nth(limit) {
+                    s.truncate(end);
+                }
+            }
+            TruncationDirection::Left => {
+                let num_chars = s.chars().count();
+                if num_chars > limit {
+                    if let Some((start, _)) = s.char_indices().nth(num_chars - limit) {
+                        s.drain(..start);
+                    }
+                }
             }
         };
 
@@ -535,6 +548,71 @@ pub fn into_tokens(encoding: tokenizers::Encoding, input: &str) -> Vec<SimpleTok
 mod tests {
     use super::*;
     use hf_hub::api::sync::ApiBuilder;
+    use tokenizers::models::wordlevel::WordLevel;
+    use tokenizers::pre_tokenizers::whitespace::Whitespace;
+
+    #[test]
+    fn apply_limit_keeps_truncation_side() {
+        let mut input = EncodingInput::Single("ééabcdé".to_string());
+        input.apply_limit(3, TruncationDirection::Right);
+        assert!(matches!(input, EncodingInput::Single(s) if s == "ééa"));
+
+        let mut input = EncodingInput::Single("ééabcdé".to_string());
+        input.apply_limit(3, TruncationDirection::Left);
+        assert!(matches!(input, EncodingInput::Single(s) if s == "cdé"));
+
+        let mut input = EncodingInput::Dual("abcdé".to_string(), "éabcd".to_string());
+        input.apply_limit(4, TruncationDirection::Left);
+        assert!(matches!(input, EncodingInput::Dual(s1, s2) if s1 == "dé" && s2 == "cd"));
+    }
+
+    #[test]
+    fn left_truncation_of_long_input_keeps_the_end() {
+        let vocab = [
+            ("a".to_string(), 0),
+            ("b".to_string(), 1),
+            ("[UNK]".to_string(), 2),
+        ];
+        let model = WordLevel::builder()
+            .vocab(vocab.into_iter().collect())
+            .unk_token("[UNK]".to_string())
+            .build()
+            .unwrap();
+        let mut tokenizer = Tokenizer::new(model);
+        tokenizer.with_pre_tokenizer(Some(Whitespace {}));
+
+        // Longer than `max_input_length * MAX_CHAR_MULTIPLIER` characters, so the
+        // input is cut before tokenization
+        let max_input_length = 4;
+        let text = format!(
+            "{}b b b b",
+            "a ".repeat(max_input_length * MAX_CHAR_MULTIPLIER)
+        );
+
+        let encode = |direction, tokenizer: &mut Tokenizer| {
+            encode_input(
+                text.clone().into(),
+                true,
+                direction,
+                max_input_length,
+                0,
+                None,
+                None,
+                None,
+                tokenizer,
+            )
+            .unwrap()
+            .input_ids
+        };
+        assert_eq!(
+            encode(TruncationDirection::Right, &mut tokenizer),
+            vec![0; 4]
+        );
+        assert_eq!(
+            encode(TruncationDirection::Left, &mut tokenizer),
+            vec![1; 4]
+        );
+    }
 
     #[test]
     fn tokenizer() {
@@ -564,7 +642,7 @@ mod tests {
             ]
         );
 
-        let tokens = into_tokens(encoded, &string);
+        let tokens = into_tokens(encoded, string);
         assert_eq!(
             tokens,
             vec![

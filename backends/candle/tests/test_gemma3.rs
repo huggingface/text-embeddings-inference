@@ -1,14 +1,25 @@
-mod common;
-
-use crate::common::{sort_embeddings, SnapshotEmbeddings};
 use anyhow::Result;
-use common::{batch, cosine_matcher, download_artifacts, load_tokenizer};
+
 use text_embeddings_backend_candle::CandleBackend;
 use text_embeddings_backend_core::{Backend, ModelType, Pool};
+
+mod common;
+use crate::common::{
+    batch, cosine_matcher, download_artifacts, load_tokenizer, sort_embeddings, SnapshotEmbeddings,
+};
 
 #[test]
 #[serial_test::serial]
 fn test_gemma3() -> Result<()> {
+    // NOTE: Given that `google/embeddinggemma-300m` is a gated model, this test requires the
+    // `HF_TOKEN` environment variable to be set
+    if std::env::var("HF_TOKEN").is_err()
+        || std::env::var("HF_TOKEN").is_ok_and(|token| token.is_empty())
+    {
+        tracing::info!("Skipping `test_gemma3` because `HF_TOKEN` is either not set or set empty.");
+        return Ok(());
+    }
+
     let (model_root, dense_paths) = download_artifacts("google/embeddinggemma-300m", None, None)?;
     let tokenizer = load_tokenizer(&model_root)?;
 

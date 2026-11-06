@@ -1,9 +1,10 @@
 import os
 
 import torch
+import torch.nn.functional as F
 from loguru import logger
 
-from text_embeddings_server.utils.device import is_hpu, use_ipex
+from text_embeddings_server.utils.device import is_hpu, is_rocm, use_ipex
 
 if os.getenv("USE_FLASH_ATTENTION", "").lower() == "false":
     raise ImportError("`USE_FLASH_ATTENTION` is false.")
@@ -12,10 +13,24 @@ HAS_FLASH_ATTN = False
 HAS_FLASH_ATTN_V2 = False
 
 is_hpu = is_hpu()
+is_rocm = is_rocm()
 use_ipex = use_ipex()
 
 if use_ipex or is_hpu:
     HAS_FLASH_ATTN_V2 = True
+elif is_rocm:
+    HAS_FLASH_ATTN_V2 = True
+
+    try:
+        from flash_attn import flash_attn_varlen_func as _fa_varlen_func
+        ROCM_HAS_FA_VARLEN = True
+        logger.info("ROCm: flash_attn found, using flash_attn_varlen_func")
+    except ImportError:
+        ROCM_HAS_FA_VARLEN = False
+        logger.warning(
+            "ROCm: flash_attn not found, falling back to SDPA. "
+            "Install flash-attn for better performance."
+        )
 else:
     if not torch.cuda.is_available():
         raise ImportError("CUDA is not available")
@@ -58,6 +73,33 @@ else:
         HAS_FLASH_ATTN = True
 
 
+def rocm_attn(
+    q,
+    k,
+    v,
+    out,
+    attn_mask,
+    softmax_scale,
+    is_causal=False,
+):
+    # q/k/v arrive as [bs, seq_len, heads, head_dim] (PaddedBatch layout)
+    q = q.transpose(1, 2)
+    k = k.transpose(1, 2)
+    v = v.transpose(1, 2)
+    result = F.scaled_dot_product_attention(
+        q,
+        k,
+        v,
+        attn_mask=attn_mask,
+        dropout_p=0.0,
+        is_causal=is_causal,
+        scale=softmax_scale,
+    )
+    result = result.transpose(1, 2)
+    out.copy_(result)
+    return out
+
+
 def hpu_attn(
     q,
     k,
@@ -90,62 +132,75 @@ def hpu_attn(
 def attention(
     q, k, v, out, cu_seqlens, max_s, softmax_scale, is_causal=False, attn_mask=None
 ):
-    if HAS_FLASH_ATTN_V2:
-        if use_ipex:
-            import intel_extension_for_pytorch as ipex
+    if use_ipex and HAS_FLASH_ATTN_V2:
+        import intel_extension_for_pytorch as ipex
 
-            return ipex.llm.functional.varlen_attention(
-                q.contiguous() if q.device.type == "xpu" else q,
-                k.contiguous() if k.device.type == "xpu" else k,
-                v.contiguous() if v.device.type == "xpu" else v,
-                out,
-                cu_seqlens,
-                cu_seqlens,
-                None,
-                max_s,
-                max_s,
-                0,
-                softmax_scale,
-                zero_tensors=False,
-                is_causal=False,
-                return_softmax=False,
-                gen_=None,
+        return ipex.llm.functional.varlen_attention(
+            q.contiguous() if q.device.type == "xpu" else q,
+            k.contiguous() if k.device.type == "xpu" else k,
+            v.contiguous() if v.device.type == "xpu" else v,
+            out,
+            cu_seqlens,
+            cu_seqlens,
+            None,
+            max_s,
+            max_s,
+            0,
+            softmax_scale,
+            zero_tensors=False,
+            is_causal=False,
+            return_softmax=False,
+            gen_=None,
+        )
+
+    if is_rocm:
+        if ROCM_HAS_FA_VARLEN:
+            result = _fa_varlen_func(
+                q, k, v,
+                cu_seqlens, cu_seqlens,
+                max_s, max_s,
+                causal=is_causal,
+                softmax_scale=softmax_scale,
             )
-
-        elif is_hpu:
-            return hpu_attn(
-                q,
-                k,
-                v,
-                out,
-                attn_mask,
-                cu_seqlens,
-                cu_seqlens,
-                max_s,
-                max_s,
-                softmax_scale,
-                is_causal,
-            )
-
+            out.copy_(result)
+            return out
         else:
-            return flash_attn_2_cuda.varlen_fwd(
-                q,
-                k,
-                v,
-                out,
-                cu_seqlens,
-                cu_seqlens,
-                max_s,
-                max_s,
-                0.0,
-                softmax_scale,
-                False,
-                is_causal,
-                -1,
-                -1,
-                False,
-                None,
-            )
+            return rocm_attn(q, k, v, out, attn_mask, softmax_scale, is_causal)
+
+    if is_hpu:
+        return hpu_attn(
+            q,
+            k,
+            v,
+            out,
+            attn_mask,
+            cu_seqlens,
+            cu_seqlens,
+            max_s,
+            max_s,
+            softmax_scale,
+            is_causal,
+        )
+
+    if HAS_FLASH_ATTN_V2:
+        return flash_attn_2_cuda.varlen_fwd(
+            q,
+            k,
+            v,
+            out,
+            cu_seqlens,
+            cu_seqlens,
+            max_s,
+            max_s,
+            0.0,
+            softmax_scale,
+            False,
+            is_causal,
+            -1,
+            -1,
+            False,
+            None,
+        )
 
     if HAS_FLASH_ATTN:
         return flash_attn_cuda.fwd(

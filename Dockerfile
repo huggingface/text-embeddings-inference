@@ -1,8 +1,9 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1.85-bookworm AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.92-bookworm AS chef
 WORKDIR /usr/src
 
 ENV SCCACHE=0.10.0
 ENV RUSTC_WRAPPER=/usr/local/bin/sccache
+ENV ACTIONS_CACHE_SERVICE_V2=true CARGO_INCREMENTAL=0
 
 # Donwload, configure sccache
 RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sccache-v$SCCACHE-x86_64-unknown-linux-musl.tar.gz | tar -xzv --strip-components=1 -C /usr/local/bin sccache-v$SCCACHE-x86_64-unknown-linux-musl/sccache && \
