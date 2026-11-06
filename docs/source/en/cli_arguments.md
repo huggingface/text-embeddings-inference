@@ -98,7 +98,7 @@ Options:
           [default: 32]
 
       --auto-truncate
-          Automatically truncate inputs that are longer than the maximum supported size
+          Control automatic truncation of inputs that exceed the model's maximum supported size. Defaults to `true` (truncation enabled). Set to `false` to disable truncation; when disabled and the model's maximum input length exceeds `--max-batch-tokens`, the server will refuse to start with an error instead of silently truncating sequences.
 
           Unused for gRPC servers
 
@@ -134,7 +134,7 @@ Options:
           [env: DENSE_PATH=]
 
       --hf-token <HF_TOKEN>
-          Your Hugging Face Hub token. If neither `--hf-token` nor `HF_TOKEN` is set, the token will be read from the `$HF_HOME/token` path, if it exists. This ensures access to private or gated models, and allows for a more permissive rate limiting
+          Your Hugging Face Hub token. If neither `--hf-token` nor `HF_TOKEN` are set, the token will be read from the `$HF_HOME/token` path, if it exists. This ensures access to private or gated models, and allows for a more permissive rate limiting
 
           [env: HF_TOKEN=]
 
@@ -149,6 +149,15 @@ Options:
 
           [env: PORT=]
           [default: 3000]
+
+      --root-path <ROOT_PATH>
+          Root path to mount all HTTP routes under.
+
+          For example, `--root-path jinaai/jina-embeddings-v2-base-en` serves the OpenAI-compatible embeddings route at `/jinaai/jina-embeddings-v2-base-en/v1/embeddings`.
+
+          Unused for gRPC servers.
+
+          [env: ROOT_PATH=]
 
       --uds-path <UDS_PATH>
           The name of the unix socket some text-embeddings-inference backends will use as they communicate internally with gRPC
@@ -177,7 +186,7 @@ Options:
           [env: API_KEY=]
 
       --json-output
-          Outputs the logs in JSON format (useful for telemetry)
+          Outputs the logs in JSON format (useful for telemetry). With an OTLP endpoint set, each log line also includes the trace_id and span_id of its span
 
           [env: JSON_OUTPUT=]
 
@@ -187,7 +196,7 @@ Options:
           [env: DISABLE_SPANS=]
 
       --otlp-endpoint <OTLP_ENDPOINT>
-          The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC. e.g. `http://localhost:4317`
+          The endpoint for OpenTelemetry traces. Use `http://localhost:4317` for gRPC or `http://localhost:4318` for HTTP. With `http-proto`, `/v1/traces` is appended to the endpoint path unless already present
 
           [env: OTLP_ENDPOINT=]
 
@@ -196,6 +205,13 @@ Options:
 
           [env: OTLP_SERVICE_NAME=]
           [default: text-embeddings-inference.server]
+
+      --otlp-protocol <OTLP_PROTOCOL>
+          The protocol used to export OTLP traces: gRPC or HTTP with protobuf encoding
+
+          [env: OTLP_PROTOCOL=]
+          [default: grpc]
+          [possible values: grpc, http-proto]
 
       --prometheus-port <PROMETHEUS_PORT>
           The Prometheus port to listen on
@@ -214,3 +230,35 @@ Options:
   -V, --version
           Print version
 ```
+
+## Exporting traces over HTTP
+
+Use `--otlp-protocol http-proto` (or `OTLP_PROTOCOL=http-proto`) to export traces to an
+OTLP/HTTP collector. The default remains `grpc`:
+
+```bash
+text-embeddings-router \
+  --model-id BAAI/bge-small-en-v1.5 \
+  --otlp-endpoint http://localhost:4318 \
+  --otlp-protocol http-proto
+```
+
+`--otlp-endpoint` (or `OTLP_ENDPOINT`) accepts a base URL. For HTTP, `/v1/traces` is appended
+while preserving any path prefix: `https://collector.example.com/otel` becomes
+`https://collector.example.com/otel/v1/traces`. An endpoint already ending in `/v1/traces`
+is accepted without adding the suffix again. The router's HTTPS exporter uses the system's trusted root certificates.
+
+For HTTP exports, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` takes priority (a full URL used unchanged),
+followed by `OTEL_EXPORTER_OTLP_ENDPOINT` (a base URL with `/v1/traces` appended), then
+`--otlp-endpoint` / `OTLP_ENDPOINT`. This order applies to both the router and Python backend.
+`--otlp-endpoint` or `OTLP_ENDPOINT` is still required to enable tracing.
+
+For either protocol, set `OTEL_EXPORTER_OTLP_HEADERS` to comma-separated `key=value` pairs
+for authentication or other custom headers. Percent-encode header values, for example:
+
+```bash
+export OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer%20token"
+```
+
+If `OTEL_EXPORTER_OTLP_TRACES_HEADERS` is set, it replaces `OTEL_EXPORTER_OTLP_HEADERS`
+for trace exports. The protocol, endpoint handling, and header settings also apply to the Python backend.

@@ -65,6 +65,7 @@ pub(crate) fn flash_attn_varlen(
         || runtime_compute_cap == 90
         || runtime_compute_cap == 100
         || runtime_compute_cap == 120
+        || runtime_compute_cap == 121
     {
         #[cfg(feature = "flash-attn")]
         {

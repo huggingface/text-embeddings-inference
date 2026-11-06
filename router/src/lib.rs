@@ -26,7 +26,7 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use text_embeddings_backend::{DType, Pool};
+use text_embeddings_backend::{DType, OtlpProtocol, Pool};
 use text_embeddings_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
@@ -38,6 +38,9 @@ use tokenizers::{PostProcessorWrapper, Tokenizer};
 use tracing::Span;
 
 pub use logging::init_logging;
+
+const USER_AGENT_NAME: &str = "text-embeddings-inference";
+const USER_AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Create entrypoint
 #[allow(clippy::too_many_arguments)]
@@ -59,12 +62,14 @@ pub async fn run(
     hf_token: Option<String>,
     hostname: Option<String>,
     port: u16,
+    root_path: Option<String>,
     uds_path: Option<String>,
     huggingface_hub_cache: Option<String>,
     payload_limit: usize,
     api_key: Option<String>,
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
+    otlp_protocol: OtlpProtocol,
     prometheus_port: u16,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
@@ -73,7 +78,9 @@ pub async fn run(
         // Using a local model
         (model_id_path.to_path_buf(), None)
     } else {
-        let mut builder = ApiBuilder::from_env().with_progress(false);
+        let mut builder = ApiBuilder::from_env()
+            .with_progress(false)
+            .with_user_agent(USER_AGENT_NAME, USER_AGENT_VERSION);
 
         if let Some(cache_dir) = huggingface_hub_cache {
             builder = builder.with_cache_dir(cache_dir.into());
@@ -181,7 +188,7 @@ pub async fn run(
         || &config.model_type == "camembert"
         || &config.model_type == "roberta"
     {
-        config.pad_token_id + 1
+        config.pad_token_id.unwrap_or(0) + 1
     } else {
         0
     };
@@ -197,34 +204,35 @@ pub async fn run(
         }
     }
 
-    let base_input_length = match st_config {
-        Some(config) => config.max_seq_length,
+    let max_position_embeddings = match config.max_position_embeddings {
+        Some(max_position_embeddings) => max_position_embeddings,
+        None => match config.max_trained_positions {
+            Some(max_trained_positions) => max_trained_positions,
+            None => anyhow::bail!("At least any of `max_position_embeddings` or `max_trained_positions` (only applies for NomicBERT), in that order of priority, should be defined in `config.json`."),
+        },
+    };
+
+    let base_input_length = match st_config.and_then(|config| config.max_seq_length) {
+        Some(max_seq_length) => max_seq_length,
         None => {
-            tracing::warn!("Could not find a Sentence Transformers config");
-            config.max_position_embeddings - position_offset
+            tracing::warn!("Could not find `max_seq_length` in a Sentence Transformers config");
+            max_position_embeddings - position_offset
         }
     };
 
-    // Raise an error when max_input_length is bigger than max_batch tokens to prevent an infinite loop in the queue
     let max_input_length = if base_input_length > max_batch_tokens {
         if !auto_truncate {
             anyhow::bail!(
-                "`--max-batch-tokens` cannot be lower than the model `max_input_length` ({} < {}) when `--auto-truncate` is disabled, add the `--auto-truncate` flag to truncate the input sequences to match the `--max-batch-tokens`.",
-                base_input_length,
-                max_batch_tokens
+                "The maximum input length is `{base_input_length}` which exceeds `--max-batch-tokens={max_batch_tokens}`. Either increase `--max-batch-tokens` to at least `{base_input_length}`, or set `--auto-truncate true` so that regardless the maximum input length, those are truncated to `{max_batch_tokens}` tokens."
             );
         }
         tracing::warn!(
-            "The input sequences will be truncated to {} tokens even if the model `max_input_length` is greater than the provided `--max-batch-tokens` ({} > {}), as `--auto-truncate` is enabled.",
-            max_batch_tokens,
-            base_input_length,
-            max_batch_tokens
+            "The maximum input length is `{base_input_length}` which exceeds `--max-batch-tokens={max_batch_tokens}`. Input sequences will be truncated to `{max_batch_tokens}` tokens, as `--auto-truncate` is either not provided (defaults to true) or provided as true. To avoid truncation, increase `--max-batch-tokens` to at least `{base_input_length}` and set `--auto-truncate false`."
         );
         max_batch_tokens
     } else {
         base_input_length
     };
-
     tracing::info!("Maximum number of tokens per request: {max_input_length}");
 
     // fall-back to num_cpus - 1 to leave some CPU for the backend, and at most 64 workers.
@@ -285,6 +293,7 @@ pub async fn run(
         uds_path.unwrap_or("/tmp/text-embeddings-inference-server".to_string()),
         otlp_endpoint.clone(),
         otlp_service_name.clone(),
+        otlp_protocol,
     )
     .await
     .context("Could not create backend")?;
@@ -384,15 +393,17 @@ pub async fn run(
             payload_limit,
             api_key,
             cors_allow_origin,
+            root_path,
         )
         .await
     }
 
     #[cfg(feature = "grpc")]
     {
-        // cors_allow_origin and payload_limit are not used for gRPC servers
+        // cors_allow_origin, payload_limit and root_path are not used for gRPC servers
         let _ = cors_allow_origin;
         let _ = payload_limit;
+        let _ = root_path;
         grpc::server::run(infer, info, addr, prom_builder, api_key).await
     }
 }
@@ -463,10 +474,14 @@ fn get_backend_model_type(
 pub struct ModelConfig {
     pub architectures: Vec<String>,
     pub model_type: String,
-    #[serde(alias = "n_positions")]
-    pub max_position_embeddings: usize,
+    // NOTE: `max_trained_positions` is specific for NomicBERT when it required custom code, but
+    // since Transformers v5 it's no longer required, and it now defines `max_position_embeddings`
+    // in the `config.json` instead. Not included as an `alias` since both can be present at the
+    // same time, see https://huggingface.co/nomic-ai/nomic-embed-text-v1.5/blob/e9b6763023c676ca8431644204f50c2b100d9aab/config.json#L33-L34
+    pub max_trained_positions: Option<usize>,
+    pub max_position_embeddings: Option<usize>,
     #[serde(default)]
-    pub pad_token_id: usize,
+    pub pad_token_id: Option<usize>,
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
     pub auto_map: Option<HashMap<String, String>>,
@@ -474,10 +489,14 @@ pub struct ModelConfig {
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct PoolConfig {
+    #[serde(default)]
     pooling_mode_cls_token: bool,
+    #[serde(default)]
     pooling_mode_mean_tokens: bool,
     #[serde(default)]
     pooling_mode_lasttoken: bool,
+    #[serde(default)]
+    pooling_mode: Option<String>,
 }
 
 impl TryFrom<PoolConfig> for Pool {
@@ -493,13 +512,19 @@ impl TryFrom<PoolConfig> for Pool {
         if config.pooling_mode_lasttoken {
             return Ok(Pool::LastToken);
         }
+        match config.pooling_mode.as_deref() {
+            Some("cls") => return Ok(Pool::Cls),
+            Some("mean") => return Ok(Pool::Mean),
+            Some("lasttoken") => return Ok(Pool::LastToken),
+            _ => {}
+        }
         Err(anyhow!("Pooling config {config:?} is not supported"))
     }
 }
 
 #[derive(Debug, Deserialize)]
 pub struct STConfig {
-    pub max_seq_length: usize,
+    pub max_seq_length: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -715,5 +740,68 @@ impl From<ResponseMetadata> for HeaderMap {
                 .unwrap(),
         );
         headers
+    }
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn legacy_pooling_modes_are_preserved() {
+        for (field, expected) in [
+            ("pooling_mode_cls_token", Pool::Cls),
+            ("pooling_mode_mean_tokens", Pool::Mean),
+            ("pooling_mode_lasttoken", Pool::LastToken),
+        ] {
+            let mut value =
+                json!({"pooling_mode_cls_token": false, "pooling_mode_mean_tokens": false});
+            value[field] = json!(true);
+            let config: PoolConfig = serde_json::from_value(value).unwrap();
+            assert_eq!(Pool::try_from(config).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn current_pooling_modes_are_supported() {
+        for (mode, expected) in [
+            ("cls", Pool::Cls),
+            ("mean", Pool::Mean),
+            ("lasttoken", Pool::LastToken),
+        ] {
+            let config: PoolConfig = serde_json::from_value(json!({"pooling_mode": mode})).unwrap();
+            assert_eq!(Pool::try_from(config).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn unsupported_or_missing_pooling_modes_are_rejected() {
+        for value in [
+            json!({}),
+            json!({"pooling_mode": "max"}),
+            json!({"pooling_mode": "unknown"}),
+        ] {
+            let config: PoolConfig = serde_json::from_value(value).unwrap();
+            assert!(Pool::try_from(config).is_err());
+        }
+    }
+
+    #[test]
+    fn legacy_pooling_flags_keep_their_precedence() {
+        let config: PoolConfig = serde_json::from_value(json!({
+            "pooling_mode_cls_token": true, "pooling_mode_mean_tokens": true, "pooling_mode": "lasttoken"
+        })).unwrap();
+        assert_eq!(Pool::try_from(config).unwrap(), Pool::Cls);
+    }
+
+    #[test]
+    fn sentence_transformers_length_can_be_omitted() {
+        let legacy: STConfig = serde_json::from_value(json!({"max_seq_length": 256})).unwrap();
+        assert_eq!(legacy.max_seq_length, Some(256));
+        for value in [json!({}), json!({"max_seq_length": null})] {
+            let config: STConfig = serde_json::from_value(value).unwrap();
+            assert_eq!(config.max_seq_length, None);
+        }
     }
 }

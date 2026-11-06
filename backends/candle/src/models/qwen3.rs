@@ -1,10 +1,13 @@
 use crate::layers::{
     apply_rotary, get_cos_sin, get_cublas_lt_wrapper, get_inv_freqs, HiddenAct, Linear, RMSNorm,
+    RopeParameters,
 };
 use crate::models::Model;
+
 use candle::{DType, Device, IndexOp, Result, Tensor, D};
 use candle_nn::{Embedding, Module, VarBuilder};
 use serde::Deserialize;
+
 use text_embeddings_backend_core::{Batch, ModelType, Pool};
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -20,7 +23,8 @@ pub struct Qwen3Config {
     pub hidden_act: HiddenAct,
     pub max_position_embeddings: usize,
     pub rms_norm_eps: f32,
-    pub rope_theta: f32,
+    pub rope_theta: Option<f32>,
+    pub rope_parameters: Option<RopeParameters>,
     pub sliding_window: Option<usize>,
     pub use_sliding_window: bool,
     pub eos_token_id: usize,
@@ -392,6 +396,7 @@ pub struct Qwen3Model {
     pool: Pool,
     num_attention_heads: usize,
     pad_token_id: u32,
+
     use_bidirectional_attention: bool,
 
     dtype: DType,
@@ -448,13 +453,20 @@ impl Qwen3Model {
             None
         };
 
-        let use_bidirectional_attention = config.use_bidirectional_attention.unwrap_or(false);
-
         let rotary_dim = config
             .head_dim
             .unwrap_or(config.hidden_size / config.num_attention_heads);
 
-        let inv_freqs = get_inv_freqs(rotary_dim, config.rope_theta, vb.device(), None)?;
+        // NOTE: https://github.com/huggingface/transformers/pull/39847
+        let rope_theta = match config.rope_theta {
+            Some(rope_theta) => rope_theta,
+            None => match &config.rope_parameters {
+                Some(rope_parameters) => rope_parameters.rope_theta,
+                None => candle::bail!("Neither `rope_theta` nor `rope_parameters.rope_theta` are defined in the `config.json`"),
+            },
+        };
+
+        let inv_freqs = get_inv_freqs(rotary_dim, rope_theta, vb.device(), None)?;
 
         let rotary_cache =
             get_cos_sin(config.max_position_embeddings, &inv_freqs, vb.dtype(), true)?;
@@ -469,7 +481,7 @@ impl Qwen3Model {
             pool,
             pad_token_id: config.eos_token_id as u32,
             num_attention_heads: config.num_attention_heads,
-            use_bidirectional_attention,
+            use_bidirectional_attention: config.use_bidirectional_attention.unwrap_or(false),
             dtype: vb.dtype(),
             device: vb.device().clone(),
             span: tracing::span!(tracing::Level::TRACE, "model"),
@@ -477,7 +489,7 @@ impl Qwen3Model {
     }
 
     fn get_causal_attention_bias(&self, attention_bias: Tensor) -> Result<Tensor> {
-        let (bs, dim, seq_len, _) = attention_bias.dims4()?;
+        let (bs, _, _, seq_len) = attention_bias.dims4()?;
 
         let mask: Vec<u8> = (0..seq_len)
             .flat_map(|i| (0..seq_len).map(move |j| (j > i) as u8))
@@ -485,22 +497,22 @@ impl Qwen3Model {
 
         let device = attention_bias.device();
         let causal_mask = Tensor::from_slice(&mask, (seq_len, seq_len), device)?;
-        let causal_mask = causal_mask.expand(&[bs, dim, seq_len, seq_len])?;
 
         let min_value = match self.dtype {
             DType::F32 => f32::MIN,
             _ => -65504.0, // f16 minimum value
         };
 
+        // NOTE: The causal mask is built once as `(seq_len, seq_len)` and broadcast over the batch
+        // and heads, so that the returned bias is the only full-size tensor allocated here
         let negatives =
-            Tensor::full(min_value, attention_bias.shape(), device)?.to_dtype(self.dtype)?;
-        let zeros = Tensor::zeros_like(&attention_bias)?.to_dtype(self.dtype)?;
+            Tensor::full(min_value, (seq_len, seq_len), device)?.to_dtype(self.dtype)?;
+        let zeros = Tensor::zeros((seq_len, seq_len), self.dtype, device)?;
+        let causal_mask = causal_mask.where_cond(&negatives, &zeros)?;
 
-        let causal_mask = causal_mask
-            .where_cond(&negatives, &zeros)?
-            .to_device(device)?;
-
-        attention_bias.broadcast_add(&causal_mask)
+        attention_bias
+            .broadcast_as((bs, self.num_attention_heads, seq_len, seq_len))?
+            .broadcast_add(&causal_mask)
     }
 
     pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
@@ -553,10 +565,6 @@ impl Qwen3Model {
                 let attention_bias =
                     Tensor::from_vec(attention_bias, (batch_size, 1, 1, max_length), &self.device)?
                         .to_dtype(self.dtype)?;
-                // Broadcast once instead of at every layer
-                let attention_bias = attention_bias
-                    .broadcast_as((batch_size, self.num_attention_heads, max_length, max_length))?
-                    .contiguous()?;
                 Some(attention_bias)
             } else {
                 None
@@ -578,21 +586,34 @@ impl Qwen3Model {
 
             let seq_len = batch.input_ids.len();
             // Create attention bias for causal masking even for single sequences
-            let attention_bias = Tensor::zeros(
-                (1, self.num_attention_heads, seq_len, seq_len),
-                self.dtype,
-                &self.device,
-            )?;
+            let attention_bias = Tensor::zeros((1, 1, 1, seq_len), self.dtype, &self.device)?;
 
             (input_ids, position_ids, input_lengths, Some(attention_bias))
         };
 
+        // NOTE: Up to here the attention bias has shape `(batch_size, 1, 1, max_length)`, and it's
+        // only expanded to `(batch_size, num_heads, max_length, max_length)` below
         let attention_bias = if self.use_bidirectional_attention {
+            // Broadcast once instead of at every layer
             attention_bias
-        } else if let Some(attn_bias) = attention_bias {
-            Some(self.get_causal_attention_bias(attn_bias)?)
+                .map(|attn_bias| {
+                    attn_bias
+                        .broadcast_as((
+                            batch_size,
+                            self.num_attention_heads,
+                            max_length,
+                            max_length,
+                        ))?
+                        .contiguous()
+                })
+                .transpose()?
         } else {
-            None
+            // Equal-length batches have no padding bias but still need a causal mask.
+            let attn_bias = match attention_bias {
+                Some(attn_bias) => attn_bias,
+                None => Tensor::zeros((batch_size, 1, 1, max_length), self.dtype, &self.device)?,
+            };
+            Some(self.get_causal_attention_bias(attn_bias)?)
         };
 
         let mut hidden_states = self.embeddings.forward(&input_ids)?;

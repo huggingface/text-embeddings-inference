@@ -13,7 +13,7 @@ use tracing::{instrument, Span};
 
 use text_embeddings_backend_core::{Backend as CoreBackend, Predictions};
 pub use text_embeddings_backend_core::{
-    BackendError, Batch, Embedding, Embeddings, ModelType, Pool,
+    BackendError, Batch, Embedding, Embeddings, ModelType, OtlpProtocol, Pool,
 };
 
 mod dtype;
@@ -68,6 +68,13 @@ fn is_hpu() -> bool {
     }
 }
 
+fn is_rocm() -> bool {
+    match Command::new("rocm-smi").output() {
+        Ok(output) => output.status.success(),
+        Err(_) => false,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Backend {
     /// Channel to communicate with the background thread
@@ -91,6 +98,7 @@ impl Backend {
         uds_path: String,
         otlp_endpoint: Option<String>,
         otlp_service_name: String,
+        otlp_protocol: OtlpProtocol,
     ) -> Result<Self, BackendError> {
         let (backend_sender, backend_receiver) = mpsc::channel(8);
 
@@ -103,6 +111,7 @@ impl Backend {
             uds_path,
             otlp_endpoint,
             otlp_service_name,
+            otlp_protocol,
         )
         .await?;
         let padded_model = backend.is_padded();
@@ -135,7 +144,7 @@ impl Backend {
                 .map_or(default, |value| value.parse::<usize>().unwrap())
         };
         let seq_bucket_size: usize = read_env_var("PAD_SEQUENCE_TO_MULTIPLE_OF", 128);
-        let max_warmup_length: usize = read_env_var("MAX_WARMUP_SEQUENCE_LENGTH", 1024);
+        let max_warmup_length: usize = read_env_var("MAX_WARMUP_SEQUENCE_LENGTH", max_input_length);
         let seq_len_exp_base: usize = read_env_var("SEQ_LEN_EXPONENT_BASE", 2);
         let max_batch_size = max_bs.unwrap_or_else(|| read_env_var("MAX_WARMUP_BATCH_SIZE", 8));
 
@@ -178,6 +187,70 @@ impl Backend {
                 ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
             }?;
             tracing::info!("finish warmup for batch: {}, length: {}", shape.0, shape.1);
+        }
+        Ok(())
+    }
+
+    #[instrument(skip(self))]
+    pub async fn warmup_rocm(
+        &self,
+        mut max_input_length: usize,
+        max_token: usize,
+        max_bs: Option<usize>,
+    ) -> Result<(), BackendError> {
+        let read_env_var = |key: &str, default: usize| -> usize {
+            env::var(key)
+                .ok()
+                .map_or(default, |value| value.parse::<usize>().unwrap())
+        };
+        let seq_bucket_size: usize = read_env_var("PAD_SEQUENCE_TO_MULTIPLE_OF", 128);
+        let max_warmup_length: usize = read_env_var("MAX_WARMUP_SEQUENCE_LENGTH", max_input_length);
+        let seq_len_exp_base: usize = read_env_var("SEQ_LEN_EXPONENT_BASE", 2);
+        let max_batch_size = max_bs.unwrap_or_else(|| read_env_var("MAX_WARMUP_BATCH_SIZE", 8));
+
+        let mut batch_sizes: Vec<usize> = powers_of_two(max_batch_size);
+        if let Some(&last) = batch_sizes.last() {
+            if last < max_batch_size {
+                batch_sizes.push(max_batch_size);
+            }
+        }
+        if max_warmup_length > max_input_length {
+            return Err(BackendError::Start(
+                format!("max_warmup_length ({max_warmup_length}) exceeds model's max_input_length ({max_input_length}), you can modify this value adding `-e MAX_WARMUP_SEQUENCE_LENGTH=<new_warmup_length>` to your Docker run command")
+            ));
+        }
+        if seq_bucket_size > max_warmup_length {
+            return Err(BackendError::Start(
+                format!("PAD_SEQUENCE_TO_MULTIPLE_OF ({seq_bucket_size}) exceeds model's max warmup length ({max_warmup_length}), you can modify these values adding `-e PAD_SEQUENCE_TO_MULTIPLE_OF=<new_value>` or `-e MAX_WARMUP_SEQUENCE_LENGTH=<new_value> to your Docker run command`")
+            ));
+        }
+
+        max_input_length = std::cmp::min(max_input_length, max_warmup_length);
+        let mut seq_lengths: Vec<usize> =
+            generate_bucket_sizes(seq_bucket_size, max_input_length, seq_len_exp_base);
+        if let Some(&last) = seq_lengths.last() {
+            if last < max_input_length {
+                seq_lengths.push(max_input_length);
+            }
+        }
+
+        let mut shapes: Vec<(u32, u32)> = Vec::with_capacity(batch_sizes.len() * seq_lengths.len());
+        for batch_size in &batch_sizes {
+            for seq_length in &seq_lengths {
+                shapes.push((*batch_size as u32, *seq_length as u32));
+            }
+        }
+        for shape in shapes.iter() {
+            let batch = self.create_warmup_batch(*shape, max_token as u32, seq_bucket_size as u32);
+            match &self.model_type {
+                ModelType::Classifier => self.predict(batch).await.map(|_| ()),
+                ModelType::Embedding(_) => self.embed(batch).await.map(|_| ()),
+            }?;
+            tracing::info!(
+                "finish rocm warmup for batch: {}, length: {}",
+                shape.0,
+                shape.1
+            );
         }
         Ok(())
     }
@@ -238,6 +311,12 @@ impl Backend {
         if is_hpu() {
             return self
                 .warmup_hpu(max_input_length, max_batch_tokens, max_batch_requests)
+                .await;
+        }
+
+        if is_rocm() {
+            return self
+                .warmup_rocm(max_input_length, max_batch_tokens, max_batch_requests)
                 .await;
         }
 
@@ -342,7 +421,8 @@ impl Backend {
         let (sender, receiver) = oneshot::channel();
 
         self.backend_sender
-            .try_send(BackendCommand::Embed(batch, Span::current(), sender))
+            .send(BackendCommand::Embed(batch, Span::current(), sender))
+            .await
             .expect("No backend receiver. This is a bug.");
         receiver.await.expect(
             "Backend blocking task dropped the sender without send a response. This is a bug.",
@@ -354,7 +434,8 @@ impl Backend {
         let (sender, receiver) = oneshot::channel();
 
         self.backend_sender
-            .try_send(BackendCommand::Predict(batch, Span::current(), sender))
+            .send(BackendCommand::Predict(batch, Span::current(), sender))
+            .await
             .expect("No backend receiver. This is a bug.");
         receiver.await.expect(
             "Backend blocking task dropped the sender without send a response. This is a bug.",
@@ -372,6 +453,7 @@ async fn init_backend(
     uds_path: String,
     otlp_endpoint: Option<String>,
     otlp_service_name: String,
+    otlp_protocol: OtlpProtocol,
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     let mut backend_start_failed = false;
     let api_repo = api_repo.map(Arc::new);
@@ -505,6 +587,7 @@ async fn init_backend(
                     uds_path,
                     otlp_endpoint,
                     otlp_service_name,
+                    otlp_protocol,
                 )
             })
             .join()
@@ -740,12 +823,17 @@ async fn download_onnx(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 enum ModuleType {
     #[serde(rename = "sentence_transformers.models.Dense")]
+    #[serde(alias = "sentence_transformers.base.modules.dense.Dense")]
     Dense,
     #[serde(rename = "sentence_transformers.models.Normalize")]
+    #[serde(alias = "sentence_transformers.base.modules.normalize.Normalize")]
+    #[serde(alias = "sentence_transformers.sentence_transformer.modules.normalize.Normalize")]
     Normalize,
     #[serde(rename = "sentence_transformers.models.Pooling")]
+    #[serde(alias = "sentence_transformers.sentence_transformer.modules.pooling.Pooling")]
     Pooling,
     #[serde(rename = "sentence_transformers.models.Transformer")]
+    #[serde(alias = "sentence_transformers.base.modules.transformer.Transformer")]
     Transformer,
 }
 
@@ -884,4 +972,176 @@ async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBu
     }
 
     Ok(config_path.parent().unwrap().to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc as std_mpsc;
+    use tokio::sync::mpsc::UnboundedSender;
+
+    #[cfg(feature = "candle")]
+    #[test]
+    fn sentence_transformers_module_names_are_compatible() {
+        for (names, expected) in [
+            (
+                vec![
+                    "sentence_transformers.models.Dense",
+                    "sentence_transformers.base.modules.dense.Dense",
+                ],
+                ModuleType::Dense,
+            ),
+            (
+                vec![
+                    "sentence_transformers.models.Normalize",
+                    "sentence_transformers.base.modules.normalize.Normalize",
+                    "sentence_transformers.sentence_transformer.modules.normalize.Normalize",
+                ],
+                ModuleType::Normalize,
+            ),
+            (
+                vec![
+                    "sentence_transformers.models.Pooling",
+                    "sentence_transformers.sentence_transformer.modules.pooling.Pooling",
+                ],
+                ModuleType::Pooling,
+            ),
+            (
+                vec![
+                    "sentence_transformers.models.Transformer",
+                    "sentence_transformers.base.modules.transformer.Transformer",
+                ],
+                ModuleType::Transformer,
+            ),
+        ] {
+            for name in names {
+                let config: ModuleConfig = serde_json::from_value(serde_json::json!({
+                    "idx": 2, "name": "2", "path": "2_Dense", "type": name
+                }))
+                .unwrap();
+                assert_eq!(config.module_type, expected);
+                assert_eq!(config.path, "2_Dense");
+            }
+        }
+    }
+
+    #[cfg(feature = "candle")]
+    #[test]
+    fn unsupported_sentence_transformers_modules_are_rejected() {
+        let module = serde_json::json!({
+            "idx": 2, "name": "2", "path": "2_Unknown", "type": "sentence_transformers.models.Unknown"
+        });
+        assert!(serde_json::from_value::<ModuleConfig>(module).is_err());
+    }
+
+    /// Backend that blocks in `embed` and `predict` until the `release` channel is closed
+    struct BlockedBackend {
+        started: UnboundedSender<()>,
+        release: std_mpsc::Receiver<()>,
+    }
+
+    impl CoreBackend for BlockedBackend {
+        fn health(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+
+        fn is_padded(&self) -> bool {
+            false
+        }
+
+        fn embed(&self, _batch: Batch) -> Result<Embeddings, BackendError> {
+            let _ = self.started.send(());
+            let _ = self.release.recv();
+            Ok(Embeddings::default())
+        }
+
+        fn predict(&self, _batch: Batch) -> Result<Predictions, BackendError> {
+            let _ = self.started.send(());
+            let _ = self.release.recv();
+            Ok(Predictions::default())
+        }
+    }
+
+    fn test_backend(backend: impl CoreBackend + Send + 'static) -> Backend {
+        let (backend_sender, backend_receiver) = mpsc::channel(8);
+        let (health_sender, health_receiver) = watch::channel(true);
+        Backend {
+            backend_sender,
+            health_receiver,
+            _backend_thread: Arc::new(BackendThread::new(
+                Box::new(backend),
+                backend_receiver,
+                health_sender,
+            )),
+            padded_model: false,
+            max_batch_size: None,
+            model_type: ModelType::Embedding(Pool::Cls),
+        }
+    }
+
+    fn test_batch() -> Batch {
+        Batch {
+            input_ids: vec![0],
+            token_type_ids: vec![0],
+            position_ids: vec![0],
+            cumulative_seq_lengths: vec![0, 1],
+            max_length: 1,
+            pooled_indices: vec![0],
+            raw_indices: vec![],
+        }
+    }
+
+    /// Health checks queued behind a busy backend thread fill the backend channel. `embed` and
+    /// `predict` must then wait for room in the channel instead of panicking with `Full(..)`.
+    #[tokio::test]
+    async fn embed_and_predict_wait_when_backend_channel_is_full() {
+        let (started_sender, mut started_receiver) = tokio::sync::mpsc::unbounded_channel();
+        let (release_sender, release_receiver) = std_mpsc::channel::<()>();
+        let backend = test_backend(BlockedBackend {
+            started: started_sender,
+            release: release_receiver,
+        });
+
+        // Keep the backend thread busy with a first forward pass
+        let first = tokio::spawn({
+            let backend = backend.clone();
+            async move { backend.embed(test_batch()).await.map(|_| ()) }
+        });
+        started_receiver.recv().await.unwrap();
+
+        // Queue more health checks than the channel can hold
+        let mut pending = Vec::new();
+        for _ in 0..16 {
+            let backend = backend.clone();
+            pending.push(tokio::spawn(async move { backend.health().await }));
+        }
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while backend.backend_sender.capacity() > 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("backend channel did not fill up");
+
+        let embed = tokio::spawn({
+            let backend = backend.clone();
+            async move { backend.embed(test_batch()).await.map(|_| ()) }
+        });
+        let predict = tokio::spawn({
+            let backend = backend.clone();
+            async move { backend.predict(test_batch()).await.map(|_| ()) }
+        });
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!embed.is_finished(), "embed gave up on a full channel");
+        assert!(!predict.is_finished(), "predict gave up on a full channel");
+
+        // Unblock the backend thread: everything queued must now complete
+        drop(release_sender);
+        first.await.unwrap().unwrap();
+        for health in pending {
+            health.await.unwrap().unwrap();
+        }
+        embed.await.unwrap().unwrap();
+        predict.await.unwrap().unwrap();
+    }
 }

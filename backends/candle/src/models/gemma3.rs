@@ -1,5 +1,6 @@
 use crate::layers::{
     apply_rotary, get_cos_sin, get_cublas_lt_wrapper, get_inv_freqs, HiddenAct, Linear,
+    RopeParameters,
 };
 use crate::models::Model;
 
@@ -23,10 +24,12 @@ pub struct Gemma3Config {
     pub query_pre_attn_scalar: usize,
     pub rms_norm_eps: f32,
     pub rope_local_base_freq: f32,
-    pub rope_theta: f32,
+    pub rope_theta: Option<f32>,
+    pub rope_parameters: Option<RopeParameters>,
     pub sliding_window: Option<usize>,
-    #[serde(rename(deserialize = "_sliding_window_pattern"))]
+    #[serde(rename = "_sliding_window_pattern")]
     pub sliding_window_pattern: usize,
+    pub use_bidirectional_attention: bool,
     pub vocab_size: usize,
 }
 
@@ -146,6 +149,7 @@ struct Gemma3Attention {
     scaling: f64,
 
     sliding_window: Option<usize>,
+    use_bidirectional_attention: bool,
 
     span: tracing::Span,
 }
@@ -224,6 +228,7 @@ impl Gemma3Attention {
                 num_key_value_heads,
                 scaling,
                 sliding_window: None,
+                use_bidirectional_attention: config.use_bidirectional_attention,
                 span: tracing::span!(tracing::Level::TRACE, "full_attention"),
             }),
             Gemma3AttentionType::SlidingAttention => Ok(Self {
@@ -236,13 +241,14 @@ impl Gemma3Attention {
                 num_key_value_heads,
                 scaling,
                 sliding_window: config.sliding_window,
+                use_bidirectional_attention: config.use_bidirectional_attention,
                 span: tracing::span!(tracing::Level::TRACE, "sliding_attention"),
             }),
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn create_causal_mask(
+    fn create_attention_mask(
         &self,
         batch_size: usize,
         dim: usize,
@@ -250,28 +256,35 @@ impl Gemma3Attention {
         device: &Device,
         dtype: DType,
         sliding_window: Option<usize>,
+        use_bidirectional_attention: bool,
     ) -> Result<Tensor> {
         let min_value = match dtype {
             DType::F32 => f32::MIN,
             _ => -65504.0, // f16 minimum value
         };
 
-        let mask: Vec<u8> = if let Some(window_size) = sliding_window {
-            // Bi-directional sliding window mask, meaning a token can attend to any
-            // other token if their absolute distance is within half the sliding window size
-            let half_window = window_size / 2;
-            (0..seq_len)
-                .flat_map(|i| {
-                    (0..seq_len).map(move |j| {
-                        let distance = i.abs_diff(j);
-                        (distance <= half_window) as u8
-                    })
+        let mask: Vec<u8> = (0..seq_len)
+            .flat_map(|i| {
+                (0..seq_len).map(move |j| {
+                    let value = if use_bidirectional_attention {
+                        if let Some(window_size) = sliding_window {
+                            // Bi-directional sliding window mask, meaning a token can attend to any
+                            // other token if their absolute distance is within half the sliding window size
+                            let half_window = window_size / 2;
+                            i.abs_diff(j) <= half_window
+                        } else {
+                            true
+                        }
+                    } else if let Some(window_size) = sliding_window {
+                        j <= i && i - j < window_size
+                    } else {
+                        j <= i
+                    };
+
+                    value as u8
                 })
-                .collect()
-        } else {
-            // Full attention mask, meaning a token can attend to all tokens
-            vec![1u8; seq_len * seq_len]
-        };
+            })
+            .collect();
 
         let mask_tensor = Tensor::from_slice(&mask, (seq_len, seq_len), device)?;
         let expanded_mask = mask_tensor.expand(&[batch_size, dim, seq_len, seq_len])?;
@@ -361,15 +374,29 @@ impl Gemma3Attention {
         let attention_bias = match attention_bias {
             Some(attention_bias) => {
                 let (batch_size, dim, seq_length, _) = attention_bias.shape().dims4()?;
-                let causal_mask = self.create_causal_mask(
+                let attention_mask = self.create_attention_mask(
                     batch_size,
                     dim,
                     seq_length,
                     attention_bias.device(),
                     attention_bias.dtype(),
                     self.sliding_window,
+                    self.use_bidirectional_attention,
                 )?;
-                Some(attention_bias.broadcast_add(&causal_mask)?)
+                Some(attention_bias.broadcast_add(&attention_mask)?)
+            }
+            // Equal-length batches have no padding bias, but still need the model's mask.
+            None if self.sliding_window.is_some() || !self.use_bidirectional_attention => {
+                let (batch_size, num_heads, seq_length, _) = q.dims4()?;
+                Some(self.create_attention_mask(
+                    batch_size,
+                    num_heads,
+                    seq_length,
+                    q.device(),
+                    q.dtype(),
+                    self.sliding_window,
+                    self.use_bidirectional_attention,
+                )?)
             }
             None => None,
         };
@@ -653,7 +680,16 @@ impl Gemma3Model {
             .head_dim
             .unwrap_or(config.hidden_size / config.num_attention_heads);
 
-        let inv_freqs = get_inv_freqs(rotary_dim, config.rope_theta, vb.device(), None)?;
+        // NOTE: https://github.com/huggingface/transformers/pull/39847
+        let rope_theta = match config.rope_theta {
+            Some(rope_theta) => rope_theta,
+            None => match &config.rope_parameters {
+                Some(rope_parameters) => rope_parameters.rope_theta,
+                None => candle::bail!("Neither `rope_theta` nor `rope_parameters.rope_theta` are defined in the `config.json`"),
+            },
+        };
+
+        let inv_freqs = get_inv_freqs(rotary_dim, rope_theta, vb.device(), None)?;
         let rotary_cache =
             get_cos_sin(config.max_position_embeddings, &inv_freqs, vb.dtype(), true)?;
 
@@ -806,8 +842,8 @@ impl Gemma3Model {
 
         let pooled_embeddings = if has_pooling_requests {
             match self.pool {
-                Pool::Cls | Pool::LastToken | Pool::Splade => {
-                    unreachable!("Only Mean Pooling is supported for Gemma3, neither CLS, nor Last-Token, nor SPLADE");
+                Pool::Cls | Pool::Splade => {
+                    unreachable!("Only Mean and Last-Token pooling are supported for Gemma3, no CLS or SPLADE");
                 }
                 Pool::Mean => {
                     if batch_size > 1 {
@@ -827,6 +863,22 @@ impl Gemma3Model {
                         let length = input_lengths[0];
                         let embeddings = outputs.i((0, ..length))?;
                         Some((embeddings.sum_keepdim(0)? / (length as f64))?)
+                    }
+                }
+                Pool::LastToken => {
+                    if batch_size > 1 {
+                        let results: Result<Vec<Tensor>> = batch
+                            .pooled_indices
+                            .iter()
+                            .map(|&i| {
+                                let i = i as usize;
+                                outputs.i((i..i + 1, input_lengths[i] - 1))
+                            })
+                            .collect();
+
+                        Some(Tensor::cat(&results?, 0)?)
+                    } else {
+                        Some(outputs.i((.., max_length - 1))?)
                     }
                 }
             }
@@ -872,5 +924,100 @@ impl Model for Gemma3Model {
 
     fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
         self.forward(batch)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Zero queries and keys give uniform attention over allowed values, so the expected
+    // output can be computed directly without model weights or a Hugging Face token.
+    fn uniform_attention(bidirectional: bool) -> Result<Gemma3Attention> {
+        let device = &Device::Cpu;
+        let zeros = Tensor::zeros((2, 2), DType::F32, device)?;
+        let identity = Tensor::eye(2, DType::F32, device)?;
+        let norm = || -> Result<Gemma3RMSNorm> {
+            Ok(Gemma3RMSNorm {
+                weight: Tensor::zeros(2, DType::F32, device)?,
+                epsilon: 1e-6,
+                span: tracing::Span::none(),
+            })
+        };
+        Ok(Gemma3Attention {
+            qkv_proj: Linear::new(Tensor::cat(&[&zeros, &zeros, &identity], 0)?, None, None),
+            o_proj: Linear::new(identity, None, None),
+            q_norm: norm()?,
+            k_norm: norm()?,
+            attention_head_size: 2,
+            num_attention_heads: 1,
+            num_key_value_heads: 1,
+            scaling: 1.0,
+            sliding_window: Some(if bidirectional { 4 } else { 2 }),
+            use_bidirectional_attention: bidirectional,
+            span: tracing::Span::none(),
+        })
+    }
+
+    fn assert_values(output: &Tensor, expected: &[f32]) -> Result<()> {
+        let actual = output.flatten_all()?.to_vec1::<f32>()?;
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!((actual - expected).abs() < 1e-5, "{actual} != {expected}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn sliding_attention_without_padding_matches_single_and_padded_batches() -> Result<()> {
+        let device = &Device::Cpu;
+        let attention = uniform_attention(true)?;
+        let input = Tensor::from_slice(
+            &[0f32, 10., 1., 11., 2., 12., 3., 13., 4., 14.],
+            (1, 5, 2),
+            device,
+        )?;
+        let cos = Tensor::ones((1, 1, 5, 2), DType::F32, device)?;
+        let sin = Tensor::zeros((1, 1, 5, 2), DType::F32, device)?;
+        let bias = Tensor::zeros((1, 1, 5, 5), DType::F32, device)?;
+        let expected = [1., 11., 1.5, 11.5, 2., 12., 2.5, 12.5, 3., 13.];
+
+        assert_values(
+            &attention.forward(&input, Some(&bias), &cos, &sin)?,
+            &expected,
+        )?;
+
+        let batched = Tensor::cat(&[&input, &input], 0)?;
+        let output = attention.forward(&batched, None, &cos, &sin)?;
+        assert_values(&output.i(0)?, &expected)?;
+        assert_values(&output.i(1)?, &expected)?;
+
+        let padding = Tensor::full(1000f32, (1, 1, 2), device)?;
+        let padded = Tensor::cat(&[&input, &padding], 1)?;
+        let cos = Tensor::ones((1, 1, 6, 2), DType::F32, device)?;
+        let sin = Tensor::zeros((1, 1, 6, 2), DType::F32, device)?;
+        let bias = Tensor::from_slice(
+            &[0f32, 0., 0., 0., 0., f32::NEG_INFINITY],
+            (1, 1, 1, 6),
+            device,
+        )?;
+        let bias = bias.broadcast_as((1, 1, 6, 6))?.contiguous()?;
+        let output = attention.forward(&padded, Some(&bias), &cos, &sin)?;
+        assert_values(&output.i((0, ..5))?, &expected)?;
+        Ok(())
+    }
+
+    #[test]
+    fn causal_sliding_attention_without_padding() -> Result<()> {
+        let device = &Device::Cpu;
+        let attention = uniform_attention(false)?;
+        let input = Tensor::from_slice(&[0f32, 10., 1., 11., 2., 12.], (1, 3, 2), device)?;
+        let cos = Tensor::ones((1, 1, 3, 2), DType::F32, device)?;
+        let sin = Tensor::zeros((1, 1, 3, 2), DType::F32, device)?;
+        assert_values(
+            &attention.forward(&input, None, &cos, &sin)?,
+            &[0., 10., 0.5, 10.5, 1.5, 11.5],
+        )?;
+        Ok(())
     }
 }

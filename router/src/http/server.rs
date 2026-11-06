@@ -174,16 +174,14 @@ async fn predict(
 
     let (response, metadata) = match req.inputs {
         PredictInput::Single(inputs) => {
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_count", "method" => "single").increment(1);
 
             let compute_chars = inputs.count_chars();
             let permit = infer.try_acquire_permit().map_err(ErrorResponse::from)?;
             let (prompt_tokens, tokenization, queue, inference, predictions) =
                 predict_inner(inputs, truncate, infer.0, info.0, Some(permit)).await?;
 
-            let counter = metrics::counter!("te_request_count", "method" => "single");
-            counter.increment(1);
+            metrics::counter!("te_request_success", "method" => "single").increment(1);
 
             (
                 PredictResponse::Single(predictions),
@@ -1624,6 +1622,7 @@ async fn metrics(prom_handle: Extension<PrometheusHandle>) -> String {
 }
 
 /// Serving method
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     infer: Infer,
     info: Info,
@@ -1632,7 +1631,10 @@ pub async fn run(
     payload_limit: usize,
     api_key: Option<String>,
     cors_allow_origin: Option<Vec<String>>,
+    root_path: Option<String>,
 ) -> Result<(), anyhow::Error> {
+    let root_path = normalize_root_path(root_path.as_deref())?;
+
     // OpenAPI documentation
     #[derive(OpenApi)]
     #[openapi(
@@ -1738,7 +1740,7 @@ pub async fn run(
         .allow_origin(allow_origin);
 
     // Define VertextApiDoc conditionally only if the "google" feature is enabled
-    let doc = {
+    let mut doc = {
         // avoid `mut` if possible
         #[cfg(feature = "google")]
         {
@@ -1757,6 +1759,17 @@ pub async fn run(
         #[cfg(not(feature = "google"))]
         ApiDoc::openapi()
     };
+
+    if let Some(root_path) = &root_path {
+        doc.servers = Some(vec![utoipa::openapi::Server::new(root_path)]);
+    }
+    let schema_url = format!(
+        "{}/api-doc/openapi.json",
+        root_path.as_deref().unwrap_or("")
+    );
+    let swagger_ui = SwaggerUi::new("/docs")
+        .url("/api-doc/openapi.json", doc)
+        .config(utoipa_swagger_ui::Config::new([schema_url]));
 
     let mut routes = Router::new()
         // Base routes
@@ -1859,7 +1872,7 @@ pub async fn run(
     }
 
     let app = Router::new()
-        .merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", doc))
+        .merge(swagger_ui)
         .merge(routes)
         .merge(public_routes)
         .layer(Extension(infer))
@@ -1871,6 +1884,33 @@ pub async fn run(
         ))
         .layer(DefaultBodyLimit::max(payload_limit))
         .layer(cors_layer);
+
+    let app = match root_path {
+        Some(root_path) => {
+            tracing::info!("Serving HTTP routes under root path: {root_path}");
+            let docs_redirect = HeaderValue::from_str(&format!("{root_path}/docs/"))?;
+            Router::new()
+                .nest(&root_path, app)
+                .layer(axum::middleware::map_response(
+                    move |mut response: axum::response::Response| {
+                        let docs_redirect = docs_redirect.clone();
+                        async move {
+                            if response
+                                .headers()
+                                .get(http::header::LOCATION)
+                                .is_some_and(|location| location == "/docs/")
+                            {
+                                response
+                                    .headers_mut()
+                                    .insert(http::header::LOCATION, docs_redirect);
+                            }
+                            response
+                        }
+                    },
+                ))
+        }
+        None => app,
+    };
 
     // Run server
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -1886,6 +1926,28 @@ pub async fn run(
         .await?;
 
     Ok(())
+}
+
+fn normalize_root_path(root_path: Option<&str>) -> Result<Option<String>, anyhow::Error> {
+    let Some(root_path) = root_path else {
+        return Ok(None);
+    };
+
+    let root_path = root_path.trim();
+    if root_path.trim_matches('/').is_empty() {
+        return Ok(None);
+    }
+
+    if root_path.contains('?') || root_path.contains('#') {
+        anyhow::bail!("`--root-path` must be a path and cannot contain `?` or `#`");
+    }
+
+    if root_path.contains('*') || root_path.split('/').any(|segment| segment.starts_with(':')) {
+        anyhow::bail!("`--root-path` must be a literal path without route captures or wildcards");
+    }
+
+    let root_path = format!("/{}", root_path.trim_matches('/'));
+    Ok(Some(root_path))
 }
 
 impl From<&ErrorType> for StatusCode {
@@ -1930,5 +1992,43 @@ impl From<serde_json::Error> for ErrorResponse {
             error: err.to_string(),
             error_type: ErrorType::Validation,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_root_path;
+
+    #[test]
+    fn normalize_root_path_ignores_empty_and_root() {
+        assert_eq!(normalize_root_path(None).unwrap(), None);
+        assert_eq!(normalize_root_path(Some("")).unwrap(), None);
+        assert_eq!(normalize_root_path(Some("   ")).unwrap(), None);
+        assert_eq!(normalize_root_path(Some("/")).unwrap(), None);
+        assert_eq!(normalize_root_path(Some("///")).unwrap(), None);
+    }
+
+    #[test]
+    fn normalize_root_path_adds_leading_slash_and_trims_trailing_slashes() {
+        assert_eq!(
+            normalize_root_path(Some("jinaai/jina-embeddings-v2-base-en")).unwrap(),
+            Some("/jinaai/jina-embeddings-v2-base-en".to_string())
+        );
+        assert_eq!(
+            normalize_root_path(Some("/jinaai/jina-embeddings-v2-base-en/")).unwrap(),
+            Some("/jinaai/jina-embeddings-v2-base-en".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_root_path_rejects_query_and_fragment() {
+        assert!(normalize_root_path(Some("/foo?bar")).is_err());
+        assert!(normalize_root_path(Some("/foo#bar")).is_err());
+    }
+
+    #[test]
+    fn normalize_root_path_rejects_route_patterns() {
+        assert!(normalize_root_path(Some("/:model")).is_err());
+        assert!(normalize_root_path(Some("/models/*rest")).is_err());
     }
 }
