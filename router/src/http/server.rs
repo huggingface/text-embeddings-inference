@@ -1628,12 +1628,14 @@ pub async fn run(
     info: Info,
     addr: SocketAddr,
     prom_builder: PrometheusBuilder,
+    prometheus_port: Option<u16>,
     payload_limit: usize,
     api_key: Option<String>,
     cors_allow_origin: Option<Vec<String>>,
     root_path: Option<String>,
 ) -> Result<(), anyhow::Error> {
     let root_path = normalize_root_path(root_path.as_deref())?;
+    let separate_metrics = prometheus_port.is_some_and(|port| port != addr.port());
 
     // OpenAPI documentation
     #[derive(OpenApi)]
@@ -1725,13 +1727,16 @@ pub async fn run(
         }
     });
 
-    // See: https://github.com/metrics-rs/metrics/issues/467#issuecomment-2022755151
-    let (recorder, exporter) = prom_builder
-        .build()
-        .context("failed to build prometheus recorder")?;
+    let (recorder, exporter) = if separate_metrics {
+        let (recorder, exporter) = prom_builder
+            .build()
+            .context("Failed to start Prometheus exporter")?;
+        (recorder, Some(exporter))
+    } else {
+        (prom_builder.build_recorder(), None)
+    };
     let prom_handle = recorder.handle();
     metrics::set_global_recorder(recorder).context("Failed to set global recorder")?;
-    tokio::runtime::Handle::current().spawn(exporter);
 
     // CORS layer
     let allow_origin = allow_origin.unwrap_or(AllowOrigin::any());
@@ -1761,6 +1766,9 @@ pub async fn run(
         ApiDoc::openapi()
     };
 
+    if separate_metrics {
+        doc.paths.paths.remove("/metrics");
+    }
     if let Some(root_path) = &root_path {
         doc.servers = Some(vec![utoipa::openapi::Server::new(root_path)]);
     }
@@ -1796,9 +1804,11 @@ pub async fn run(
         // Inference API health route
         .route("/", get(health))
         // AWS Sagemaker health route
-        .route("/ping", get(health))
-        // Prometheus metrics route
-        .route("/metrics", get(metrics));
+        .route("/ping", get(health));
+
+    if !separate_metrics {
+        public_routes = public_routes.route("/metrics", get(metrics));
+    }
 
     #[cfg(feature = "google")]
     {
@@ -1921,10 +1931,24 @@ pub async fn run(
     tracing::info!("Starting HTTP server: {}", &addr);
     tracing::info!("Ready");
 
-    axum::serve(listener, app)
-        // Wait until all requests are finished to shut down
-        .with_graceful_shutdown(shutdown::shutdown_signal())
-        .await?;
+    let server = async {
+        axum::serve(listener, app)
+            // Wait until all requests are finished to shut down
+            .with_graceful_shutdown(shutdown::shutdown_signal())
+            .await
+    };
+    if let Some(exporter) = exporter {
+        tracing::info!(
+            "Serving Prometheus metrics on port {}",
+            prometheus_port.unwrap()
+        );
+        tokio::select! {
+            result = server => result?,
+            result = exporter => result.map_err(|_| anyhow::anyhow!("Prometheus exporter failed"))?,
+        }
+    } else {
+        server.await?;
+    }
 
     Ok(())
 }

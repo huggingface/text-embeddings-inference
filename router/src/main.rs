@@ -206,9 +206,12 @@ struct Args {
     #[clap(default_value = "grpc", long, env, value_enum)]
     otlp_protocol: OtlpProtocol,
 
-    /// The Prometheus port to listen on.
-    #[clap(default_value = "9000", long, env)]
-    prometheus_port: u16,
+    /// The HTTP port for Prometheus metrics.
+    ///
+    /// HTTP servers share the API port by default. Set a different port to serve metrics
+    /// separately and remove `/metrics` from the API port. gRPC servers default to 9000.
+    #[clap(long, env)]
+    prometheus_port: Option<u16>,
 
     /// Unused for gRPC servers
     #[clap(long, env)]

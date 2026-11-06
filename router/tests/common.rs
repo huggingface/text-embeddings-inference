@@ -89,7 +89,7 @@ pub async fn start_server_with_ports(
             None,
             "text-embeddings-inference.server".to_owned(),
             OtlpProtocol::Grpc,
-            prometheus_port,
+            Some(prometheus_port),
             None,
         )
     });

@@ -16,6 +16,12 @@ async fn test_mrl_embeddings() -> Result<()> {
     )
     .await?;
 
+    let client = reqwest::Client::new();
+    let metrics = client.get("http://127.0.0.1:9000/metrics").send().await?;
+    assert_eq!(metrics.status(), reqwest::StatusCode::OK);
+    let metrics = client.get("http://127.0.0.1:8090/metrics").send().await?;
+    assert_eq!(metrics.status(), reqwest::StatusCode::NOT_FOUND);
+
     let request = json!({
         "inputs": "test",
         "dimensions": 128,
