@@ -68,7 +68,8 @@ Ember, GTE and E5. TEI implements many features such as:
 #### Text Embeddings
 
 Text Embeddings Inference currently supports Nomic, BERT, CamemBERT, XLM-RoBERTa models with absolute positions, JinaBERT
-model with Alibi positions and Mistral, Alibaba GTE, Qwen2 models with Rope positions, MPNet, ModernBERT, Qwen3, and Gemma3.
+model with Alibi positions and Mistral, Alibaba GTE, Qwen2 models with Rope positions, MPNet, ModernBERT, Qwen3, Gemma3, and
+the SigLIP and SigLIP2 text encoders.
 
 Below are some examples of the currently supported models:
 
@@ -94,6 +95,21 @@ Below are some examples of the currently supported models:
 | N/A       | 340M                   | Qwen3          | [voyageai/voyage-4-nano](https://hf.co/voyageai/voyage-4-nano)                                   |
 | N/A       | 137M                   | JinaBERT       | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)             |
 | N/A       | 137M                   | JinaBERT       | [jinaai/jina-embeddings-v2-base-code](https://hf.co/jinaai/jina-embeddings-v2-base-code)         |
+| N/A       | 109M–1B                | SigLIP / SigLIP2 | [Veritone/siglip-models](https://hf.co/collections/Veritone/siglip-models) (collection)         |
+
+**Note**: TEI serves only the SigLIP/SigLIP2 text tower. The official `google/siglip*` and `google/siglip2*`
+checkpoints do not load as-is — TEI needs a few fields their original `config.json` omits (it relies on model-code defaults):
+
+- `architectures` and a top-level `max_position_embeddings` — TEI's config parser requires both.
+- `pad_token_id` inside `text_config` — `0` for SigLIP2 (the Gemma tokenizer's `<pad>`) or `1` for SigLIP v1 (`</s>`).
+  SigLIP runs without an attention mask and pools a padding position, so a wrong value silently produces incorrect
+  embeddings; the field is required (no default) so a misconfigured repo fails loudly instead.
+- a `1_Pooling/config.json` (or pass `--pooling`), since `siglip` is not a BERT variant and TEI otherwise can't pick a
+  pooling mode (the model itself ignores it — it always pools the final position and applies the projection head).
+
+The [Veritone SigLIP models](https://hf.co/collections/Veritone/siglip-models) collection provides mirrors of the SigLIP
+and SigLIP2 text encoders (base through so400m) with these fields added, ready to use with TEI. The vision checkpoints in
+the collection are not supported.
 
 To explore the list of best performing text embeddings models, visit the
 [Massive Text Embedding Benchmark (MTEB) Leaderboard](https://huggingface.co/spaces/mteb/leaderboard).
