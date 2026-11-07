@@ -180,6 +180,7 @@ struct Args {
     ///
     /// By default the server responds to every request. With an api key set, the requests must have the Authorization header set with the api key as Bearer token.
     #[clap(long, env)]
+    #[redact]
     api_key: Option<String>,
 
     /// Outputs the logs in JSON format (useful for telemetry).
@@ -295,4 +296,22 @@ async fn main() -> Result<()> {
         global::shutdown_tracer_provider();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_output_redacts_api_key() {
+        let args = Args::parse_from([
+            "text-embeddings-router",
+            "--model-id",
+            "my-model",
+            "--api-key",
+            "super-secret-api-key",
+        ]);
+        let rendered = format!("{args:?}");
+        assert!(!rendered.contains("super-secret-api-key"), "{rendered}");
+    }
 }
