@@ -47,10 +47,18 @@ pub(crate) fn flash_attn_varlen(
         #[cfg(feature = "flash-attn-v1")]
         {
             use candle_flash_attn_v1::flash_attn_varlen;
+            // Flash attention v1 has no notion of grouped-query attention: its kernel
+            // indexes K and V with the *query* head index (`params.h`), while the Rust
+            // wrapper accepts `num_heads % num_heads_k == 0`. With fewer K/V heads than
+            // query heads (Qwen2/Qwen3/Mistral/Llama...), heads >= num_heads_k read past
+            // the K/V rows and return garbage or NaN. Expand K/V to the query head count
+            // first, the same grouping as `repeat_kv` (query head i uses K/V head
+            // i / n_rep). This costs O(tokens * heads * head_dim), not O(L^2).
+            let (k, v) = repeat_kv_for_v1(q, k, v)?;
             return flash_attn_varlen(
                 q,
-                k,
-                v,
+                &k,
+                &v,
                 seqlens_q,
                 seqlens_k,
                 max_seqlen_q,
@@ -117,4 +125,29 @@ pub(crate) fn flash_attn_varlen(
         "GPU with CUDA capability {} is not supported",
         runtime_compute_cap
     );
+}
+
+/// Expand grouped K/V heads (`[total, num_heads_k, head_dim]`) to the query's head
+/// count for flash attention v1, which does not support GQA/MQA. A no-op when the
+/// head counts already match.
+#[allow(unused)]
+fn repeat_kv_for_v1(q: &Tensor, k: &Tensor, v: &Tensor) -> Result<(Tensor, Tensor), candle::Error> {
+    let (_, num_heads, _) = q.dims3()?;
+    let (total_k, num_heads_k, head_size) = k.dims3()?;
+    if num_heads == num_heads_k {
+        return Ok((k.clone(), v.clone()));
+    }
+    if num_heads_k == 0 || num_heads % num_heads_k != 0 {
+        candle::bail!(
+            "number of k/v heads {num_heads_k} must divide number of heads in query {num_heads}"
+        );
+    }
+    let n_rep = num_heads / num_heads_k;
+    let expand = |t: &Tensor| -> Result<Tensor, candle::Error> {
+        t.unsqueeze(2)?
+            .broadcast_as((total_k, num_heads_k, n_rep, head_size))?
+            .contiguous()?
+            .reshape((total_k, num_heads, head_size))
+    };
+    Ok((expand(k)?, expand(v)?))
 }
