@@ -166,3 +166,43 @@ Like the embedding metrics, they are recorded per input. For `/rerank`, every qu
 | `te_request_input_length` | Powers of 2, with extra steps in between from 512 to 32768 (768, 1536, 3072, …), capped at the model's maximum input length. |
 | `te_batch_next_size` | Every integer from 1 to 32, then 64, 128, 256, 512, 1024, 2048 and 4096. |
 | `te_batch_next_tokens` | Same steps as `te_request_input_length`, up to 1048576. |
+
+## Example queries
+
+Request rate per `method`:
+
+```
+sum by (method) (rate(te_request_count[5m]))
+```
+
+Failure rate per reason:
+
+```
+sum by (err) (rate(te_request_failure[5m]))
+```
+
+95th percentile request latency:
+
+```
+histogram_quantile(0.95, sum by (le) (rate(te_request_duration_bucket[5m])))
+```
+
+Throughput, in input tokens per second:
+
+```
+rate(te_request_input_length_sum[5m])
+```
+
+Average number of inputs per batch:
+
+```
+rate(te_batch_next_size_sum[5m]) / rate(te_batch_next_size_count[5m])
+```
+
+## See also
+
+- [CLI arguments](./cli_arguments) for `--prometheus-port`, `--max-concurrent-requests`, `--max-batch-tokens` and
+  `--max-client-batch-size`.
+- Each HTTP response also includes per-request timings in `x-*-time` headers, in milliseconds.
+- TEI also supports distributed tracing with OpenTelemetry. Set `--otlp-endpoint` to the address of an OTLP collector
+  to export traces.
