@@ -19,6 +19,66 @@ rendered properly in your Markdown viewer.
 Text Embeddings Inference (TEI) exports [Prometheus](https://prometheus.io/) metrics that you can use to monitor
 traffic, errors, latency and batching. This page lists every metric, where to scrape it and what it measures.
 
+## Scraping the metrics
+
+Where the metrics are served depends on the server type and on `--prometheus-port` (or the `PROMETHEUS_PORT`
+environment variable):
+
+| Server | Default | `--prometheus-port` set to a different port than `--port` |
+|--------|---------|-----------------------------------------------------------|
+| HTTP   | `GET /metrics` on the API port (`3000` locally, `80` in the Docker images). If `--root-path` is set, the route is served under that prefix. | Metrics are served on the Prometheus port, and `/metrics` is removed from the API port and from the OpenAPI schema. |
+| gRPC   | Served on port `9000`. | Metrics are served on the given port. |
+
+> Serving HTTP metrics on a separate port requires TEI v1.10.0 or later. Earlier versions ignore `--prometheus-port`
+> for the HTTP server.
+
+For example, with the HTTP server running locally on port `8080`:
+
+```shell
+curl 127.0.0.1:8080/metrics
+```
+
+The response is empty until the server has handled its first request, because each metric is only created the first
+time it is recorded. For the same reason, a `te_request_failure` series for a given `err` value only appears after
+that failure has happened at least once.
+
+### Serving metrics on a separate port
+
+When `--api-key` is set, it only protects the inference routes: `/metrics` stays readable by anyone who can reach the
+API port. To keep the metrics off the public API port, for example behind an ingress, serve them on a dedicated port:
+
+```shell
+text-embeddings-router --model-id BAAI/bge-small-en-v1.5 --port 8080 --prometheus-port 9000
+curl 127.0.0.1:9000/metrics
+```
+
+With Docker, publish the metrics port as well as the API port:
+
+```shell
+docker run -p 8080:80 -p 9000:9000 -v $volume:/data --pull always \
+    ghcr.io/huggingface/text-embeddings-inference:cpu-1.10 \
+    --model-id BAAI/bge-small-en-v1.5 --prometheus-port 9000
+```
+
+### Prometheus configuration
+
+A minimal Prometheus scrape configuration:
+
+```yaml
+scrape_configs:
+  - job_name: text-embeddings-inference
+    static_configs:
+      - targets: ["127.0.0.1:8080"]  # or the value of --prometheus-port
+        labels:
+          model: BAAI/bge-small-en-v1.5
+```
+
+TEI does not add labels for the model, the route or the instance to its metrics. When you run several TEI servers,
+tell them apart with target labels, like the `model` label above.
+
+Metric names are exported exactly as listed on this page: counters have no `_total` suffix, and every histogram is
+exported as `_bucket`, `_sum` and `_count` series.
+
 ## Request metrics
 
 These metrics are recorded for every HTTP and gRPC route that runs the model.
