@@ -38,6 +38,7 @@ length of 512 tokens:
     - [Using Sequence Classification models](#using-sequence-classification-models)
     - [Using SPLADE pooling](#using-splade-pooling)
     - [Distributed Tracing](#distributed-tracing)
+    - [Prometheus Metrics](#prometheus-metrics)
     - [gRPC](#grpc)
 - [Local Install](#local-install)
     - [Apple Silicon (Homebrew)](#apple-silicon-homebrew)
@@ -516,6 +517,19 @@ Both protocols support authentication and custom headers through `OTEL_EXPORTER_
 `OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer%20token"`.
 `OTEL_EXPORTER_OTLP_TRACES_HEADERS`, when set, replaces the general header list for trace exports.
 These settings also apply to tracing in the Python backend.
+
+### Prometheus Metrics
+
+`text-embeddings-inference` exports Prometheus metrics. The HTTP server serves them at `/metrics` on the API port by
+default. Set `--prometheus-port` (or `PROMETHEUS_PORT`) to a different port to serve them separately. The gRPC server
+serves them on port `9000` by default.
+
+```shell
+curl 127.0.0.1:8080/metrics
+```
+
+See the **[Prometheus metrics reference](https://huggingface.co/docs/text-embeddings-inference/metrics)** for the
+full list of metrics, their labels and example queries.
 
 ### gRPC
 
