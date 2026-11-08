@@ -31,4 +31,6 @@
 - sections:
   - local: cli_arguments
     title: CLI arguments
+  - local: metrics
+    title: Prometheus metrics
   title: Reference
