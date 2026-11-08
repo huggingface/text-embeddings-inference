@@ -29,6 +29,7 @@ environment variable):
 | HTTP   | `GET /metrics` on the API port (`3000` locally, `80` in the Docker images). If `--root-path` is set, the route is served under that prefix. | Metrics are served on the Prometheus port, and `/metrics` is removed from the API port and from the OpenAPI schema. |
 | gRPC   | Served on port `9000`. | Metrics are served on the given port. |
 
+> [!NOTE]
 > Serving HTTP metrics on a separate port requires TEI v1.10.0 or later. Earlier versions ignore `--prometheus-port`
 > for the HTTP server.
 
