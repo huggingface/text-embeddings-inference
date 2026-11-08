@@ -55,6 +55,18 @@ pub(crate) fn flash_attn_varlen(
             // first, the same grouping as `repeat_kv` (query head i uses K/V head
             // i / n_rep). This costs O(tokens * heads * head_dim), not O(L^2).
             let (k, v) = repeat_kv_for_v1(q, k, v)?;
+            // candle-flash-attn-v1 0.0.1 allocates `softmax_lse` as
+            // batch * heads * max_seqlen_q floats, but hands the kernel
+            // seqlen_q = max_seqlen_q rounded up to 16, which the kernel uses as the
+            // per-(sequence, head) stride of that buffer, and it stores the log-sum-exp
+            // of whole 16-row tiles. Whenever max_seqlen_q % 16 != 0 the kernel writes
+            // up to 4 * batch * heads * 15 bytes past the end of the buffer, into
+            // whatever the stream-ordered allocator put next to it: an activation,
+            // or a weight, after which every pass returns NaN until a restart.
+            // Upstream flash-attn v1 (fmha_api.cpp, mha_fwd) allocates the rounded
+            // size. Passing the rounded length makes the allocation match the stride;
+            // the kernel already received exactly this value, and masks by cu_seqlens.
+            let max_seqlen_q = (max_seqlen_q + 15) / 16 * 16;
             return flash_attn_varlen(
                 q,
                 &k,
