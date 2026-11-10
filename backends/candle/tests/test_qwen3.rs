@@ -48,5 +48,23 @@ fn test_qwen3() -> Result<()> {
     assert_eq!(embeddings_batch[0], embeddings_single[0]);
     assert_eq!(embeddings_batch[2], embeddings_single[0]);
 
+    // Raw batch with left padding: the shorter member must get its own tokens, not padding
+    let raw_batch = batch(
+        vec![
+            tokenizer.encode("Hi", true).unwrap(),
+            tokenizer.encode("What is Deep Learning?", true).unwrap(),
+        ],
+        vec![],
+        [0, 1].to_vec(),
+    );
+    let raw_single = batch(vec![tokenizer.encode("Hi", true).unwrap()], vec![], [0].to_vec());
+
+    let (_, raw_batch) = sort_embeddings(backend.embed(raw_batch)?);
+    let (_, raw_single) = sort_embeddings(backend.embed(raw_single)?);
+    assert_eq!(
+        SnapshotEmbeddings::from(raw_batch)[0],
+        SnapshotEmbeddings::from(raw_single)[0]
+    );
+
     Ok(())
 }
