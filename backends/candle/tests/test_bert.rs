@@ -135,6 +135,19 @@ fn test_bert_pooled_raw() -> Result<()> {
     assert_eq!(raw_embeddings_batch[15], embeddings_single[0]);
     assert_eq!(embeddings_single.len(), 7);
 
+    // Raw-only batch, shorter member first: its padding must not shift the next member
+    let input_raw_only = batch(
+        vec![
+            tokenizer.encode("What is Deep Learning?", true).unwrap(),
+            tokenizer.encode("Deep Learning is...", true).unwrap(),
+        ],
+        vec![],
+        [0, 1].to_vec(),
+    );
+
+    let (_, raw_embeddings) = sort_embeddings(backend.embed(input_raw_only)?);
+    assert_eq!(SnapshotEmbeddings::from(raw_embeddings)[7], raw_embeddings_batch[7]);
+
     Ok(())
 }
 

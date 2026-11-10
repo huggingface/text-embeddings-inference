@@ -403,6 +403,8 @@ impl JinaCodeBertModel {
 
         let shape = (batch_size, max_length);
 
+        // Bool to know if we need to use the attention mask
+        let mut masking = false;
         let (input_ids, type_ids, position_ids, input_lengths, attention_bias, attention_mask) =
             if batch_size > 1 {
                 // Prepare padded batch
@@ -414,8 +416,6 @@ impl JinaCodeBertModel {
                 let mut attention_mask = Vec::with_capacity(elems);
                 let mut attention_bias = Vec::with_capacity(elems);
                 let mut input_lengths = Vec::with_capacity(batch_size);
-                // Bool to know if we need to use the attention mask
-                let mut masking = false;
 
                 for i in 0..batch_size {
                     let start = batch.cumulative_seq_lengths[i] as usize;
@@ -616,7 +616,7 @@ impl JinaCodeBertModel {
             // We need to remove the padding tokens only if batch_size > 1 and there are some
             // member of the batch that require pooling
             // or if batch_size > 1 and the members of the batch have different lengths
-            if (attention_mask.is_some() || has_pooling_requests) && batch_size > 1 {
+            if (masking || has_pooling_requests) && batch_size > 1 {
                 let mut final_indices: Vec<u32> = Vec::with_capacity(batch_size * max_length);
 
                 for i in batch.raw_indices.into_iter() {
