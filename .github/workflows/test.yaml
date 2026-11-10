@@ -62,7 +62,7 @@ jobs:
               path === 'rust-toolchain.toml' || path.startsWith('.cargo/') || path.startsWith('.github/workflows/')));
             core.setOutput('router', files.length < context.payload.pull_request.changed_files || paths.some(path => path.startsWith('router/')));
       - if: steps.changes.outputs.rust == 'true'
-        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
         with:
           rustflags: "-D warnings"
       - if: steps.changes.outputs.rust == 'true'
@@ -208,7 +208,7 @@ jobs:
         with:
           ref: ${{ needs.select-model-tests.outputs.sha || github.sha }}
           persist-credentials: false
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+      - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
         with:
           rustflags: "-D warnings"
       - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
