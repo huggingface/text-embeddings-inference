@@ -728,7 +728,7 @@ impl Qwen3Model {
                 for &i in &batch.raw_indices {
                     let i = i as usize;
                     let length = input_lengths[i];
-                    final_embeddings.push(outputs.i((i, ..length))?);
+                    final_embeddings.push(outputs.i((i, max_length - length..))?);
                 }
                 Some(Tensor::cat(&final_embeddings, 0)?)
             } else {
@@ -740,7 +740,7 @@ impl Qwen3Model {
                     // Multiple sequences, all raw
                     let mut all_embeddings = Vec::new();
                     for (i, &length) in input_lengths.iter().enumerate().take(batch_size) {
-                        all_embeddings.push(outputs.i((i, ..length))?);
+                        all_embeddings.push(outputs.i((i, max_length - length..))?);
                     }
                     Some(Tensor::cat(&all_embeddings, 0)?)
                 }
