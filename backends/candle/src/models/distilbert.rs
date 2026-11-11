@@ -556,9 +556,9 @@ impl DistilBertModel {
 
                 let (attention_bias, attention_mask) = match masking {
                     true => {
-                        // We only need the mask if we use mean pooling
+                        // We only need the mask if we use mean or splade pooling
                         // For CLS pooling, the bias is enough
-                        let attention_mask = if self.pool == Pool::Mean {
+                        let attention_mask = if matches!(self.pool, Pool::Mean | Pool::Splade) {
                             let attention_mask = Tensor::from_vec(
                                 attention_mask,
                                 (batch_size, max_length, 1),

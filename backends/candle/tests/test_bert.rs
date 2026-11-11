@@ -221,3 +221,47 @@ fn test_bert_classification() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+#[serial_test::serial]
+fn test_bert_splade_padding() -> Result<()> {
+    let (model_root, _) = download_artifacts(
+        "sparse-encoder-testing/splade-bert-tiny-nq",
+        Some("c080c2cff606c1ee9379e883895274367f2c29e3"),
+        None,
+    )?;
+    let tokenizer = load_tokenizer(&model_root)?;
+
+    let backend = CandleBackend::new(
+        &model_root,
+        "float32".to_string(),
+        ModelType::Embedding(Pool::Splade),
+        None,
+    )?;
+
+    let short = tokenizer.encode("What is Deep Learning?", true).unwrap();
+    let long = tokenizer
+        .encode(
+            "Deep Learning is a subset of machine learning based on neural networks with many layers.",
+            true,
+        )
+        .unwrap();
+    assert!(short.len() < long.len());
+
+    let input_single = batch(vec![short.clone()], [0].to_vec(), vec![]);
+    let (single, _) = sort_embeddings(backend.embed(input_single)?);
+
+    // The short input is padded to the length of the long one
+    let input_batch = batch(vec![short, long], [0, 1].to_vec(), vec![]);
+    let (batched, _) = sort_embeddings(backend.embed(input_batch)?);
+
+    // Padding positions must not contribute to the max pooling
+    let max_diff = batched[0]
+        .iter()
+        .zip(&single[0])
+        .map(|(b, s)| (b - s).abs())
+        .fold(0.0_f32, f32::max);
+    assert!(max_diff < 1e-4, "max abs difference: {max_diff}");
+
+    Ok(())
+}
