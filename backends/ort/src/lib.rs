@@ -13,6 +13,11 @@ use text_embeddings_backend_core::{
     Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool, Predictions,
 };
 
+#[cfg(test)]
+mod tests;
+
+const TOKEN_EMBEDDING_OUTPUTS: [&str; 2] = ["last_hidden_state", "token_embeddings"];
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     pub pad_token_id: Option<usize>,
@@ -399,6 +404,15 @@ impl Backend for OrtBackend {
         true
     }
 
+    fn supports_token_embeddings(&self) -> bool {
+        self.session
+            .lock()
+            .unwrap()
+            .outputs
+            .iter()
+            .any(|output| TOKEN_EMBEDDING_OUTPUTS.contains(&output.name.as_str()))
+    }
+
     fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError> {
         let batch_size = batch.len();
         let max_length = batch.max_length as usize;
@@ -421,59 +435,67 @@ impl Backend for OrtBackend {
         let mut embeddings =
             HashMap::with_capacity_and_hasher(batch_size, BuildNoHashHasher::default());
 
-        if outputs.contains_key("pooler_output_int8")
-            && self.config.model_type.as_deref() == Some("bidirectional_pplx_qwen3")
-        {
-            let outputs = outputs
-                .get("pooler_output_int8")
-                .ok_or(BackendError::Inference(format!(
-                    "Unknown output keys: {:?}",
-                    outputs
-                )))?
-                // NOTE: The ONNX model outputs INT8 tensors in [-127,127] range,
-                // so we extract as i8 and convert to f32. Temporary Solution.
-                .try_extract_array::<i8>()
-                .e()?
-                .to_owned();
-
-            for (i, e) in outputs.rows().into_iter().enumerate() {
-                embeddings.insert(i, Embedding::Pooled(e.iter().map(|&v| v as f32).collect()));
-            }
-        } else if outputs.contains_key("sentence_embedding") {
-            let outputs = outputs
-                .get("sentence_embedding")
-                .ok_or(BackendError::Inference(format!(
-                    "Unknown output keys: {:?}",
-                    outputs
-                )))?
+        let has_pooling_requests = !batch.pooled_indices.is_empty();
+        let has_raw_requests = !batch.raw_indices.is_empty();
+        let token_embeddings = || {
+            TOKEN_EMBEDDING_OUTPUTS
+                .iter()
+                .find_map(|name| outputs.get(name))
+                .ok_or_else(|| {
+                    BackendError::Inference(
+                        "The ONNX model does not provide token embeddings (last_hidden_state or token_embeddings)"
+                            .to_string(),
+                    )
+                })?
                 .try_extract_array::<f32>()
-                .e()?
-                .to_owned();
+                .e()
+        };
 
-            for (i, e) in outputs.rows().into_iter().enumerate() {
-                embeddings.insert(i, Embedding::Pooled(e.to_vec()));
+        if has_raw_requests {
+            let values = token_embeddings()?;
+            if !matches!(values.shape(), [b, s, _] if *b == batch_size && *s >= max_length) {
+                return Err(BackendError::Inference(format!(
+                    "Unexpected ONNX token embedding shape: {:?}",
+                    values.shape()
+                )));
             }
-        } else {
-            if self.config.model_type.as_deref() == Some("bidirectional_pplx_qwen3") {
-                tracing::warn!("`model_type` in `config.json` is set to `bidirectional_pplx_qwen3` but the output key `pooler_output_int8` is missing from the ONNX export, which might lead to degraded performance given that tanh should be applied to the pooled embeddings and then scaled to INT8.");
+            for &index in &batch.raw_indices {
+                let i = index as usize;
+                let length = (batch.cumulative_seq_lengths[i + 1] - batch.cumulative_seq_lengths[i])
+                    as usize;
+                let start = match self.tokenizer_config.padding_side {
+                    PaddingSide::Left => max_length - length,
+                    PaddingSide::Right => 0,
+                };
+                let rows = values.slice(s![i, start..start + length, ..]);
+                let tokens = rows.rows().into_iter().map(|row| row.to_vec()).collect();
+                embeddings.insert(i, Embedding::All(tokens));
             }
+        }
 
-            let outputs = outputs
-                .get("last_hidden_state")
-                .or(outputs.get("token_embeddings"))
-                .ok_or(BackendError::Inference(format!(
-                    "Unknown output keys: {:?}",
-                    outputs
-                )))?
-                .try_extract_array::<f32>()
-                .e()?
-                .to_owned();
+        let int8_model = self.config.model_type.as_deref() == Some("bidirectional_pplx_qwen3");
+        let int8_pooled = outputs.get("pooler_output_int8").filter(|_| int8_model);
+        let sentence_pooled = outputs.get("sentence_embedding");
+        if int8_model && int8_pooled.is_none() && sentence_pooled.is_none() {
+            tracing::warn!("`model_type` in `config.json` is set to `bidirectional_pplx_qwen3` but the output key `pooler_output_int8` is missing from the ONNX export, which might lead to degraded performance given that tanh should be applied to the pooled embeddings and then scaled to INT8.");
+        }
 
-            let has_pooling_requests = !batch.pooled_indices.is_empty();
-            let has_raw_requests = !batch.raw_indices.is_empty();
-
-            if has_pooling_requests {
-                let mut outputs = outputs.clone();
+        if has_pooling_requests {
+            if let Some(output) = int8_pooled {
+                // Preserve the quantized model output, converted to the response type.
+                insert_pooled_embeddings(
+                    output.try_extract_array::<i8>().e()?,
+                    &batch,
+                    &mut embeddings,
+                )?;
+            } else if let Some(output) = sentence_pooled {
+                insert_pooled_embeddings(
+                    output.try_extract_array::<f32>().e()?,
+                    &batch,
+                    &mut embeddings,
+                )?;
+            } else {
+                let mut outputs = token_embeddings()?.to_owned();
 
                 // Only use pooled_indices if at least one member of the batch ask for raw embeddings
                 let indices = if has_raw_requests {
@@ -487,14 +509,16 @@ impl Backend for OrtBackend {
                     None
                 };
 
+                let input_lengths = match &indices {
+                    Some(indices) => model_inputs.input_lengths.select(Axis(0), indices),
+                    None => model_inputs.input_lengths,
+                };
                 let pooled_embeddings = match self.pool {
                     Pool::Cls => match self.tokenizer_config.padding_side {
                         PaddingSide::Left => {
                             if masking {
                                 let mut cls_embeddings = Vec::new();
-                                for (batch_idx, &seq_length) in
-                                    model_inputs.input_lengths.iter().enumerate()
-                                {
+                                for (batch_idx, &seq_length) in input_lengths.iter().enumerate() {
                                     let padding = max_length as f32 - seq_length;
                                     let cls_pos = padding as usize;
                                     cls_embeddings
@@ -526,9 +550,7 @@ impl Backend for OrtBackend {
                         PaddingSide::Right => {
                             if masking {
                                 let mut last_token_embeddings = Vec::new();
-                                for (batch_idx, &seq_length) in
-                                    model_inputs.input_lengths.iter().enumerate()
-                                {
+                                for (batch_idx, &seq_length) in input_lengths.iter().enumerate() {
                                     let last_pos = seq_length as usize - 1;
                                     last_token_embeddings.push(
                                         outputs.slice(s![batch_idx, last_pos, ..]).to_owned(),
@@ -555,12 +577,10 @@ impl Backend for OrtBackend {
                     Pool::Mean => {
                         if masking {
                             let mut attention_mask = model_inputs.attention_mask;
-                            let mut input_lengths = model_inputs.input_lengths;
 
                             if let Some(indices) = indices {
                                 // Select values in the batch
                                 attention_mask = attention_mask.select(Axis(0), &indices);
-                                input_lengths = input_lengths.select(Axis(0), &indices);
                             };
 
                             match self.tokenizer_config.padding_side {
@@ -608,83 +628,6 @@ impl Backend for OrtBackend {
                 {
                     embeddings.insert(i as usize, Embedding::Pooled(e.to_vec()));
                 }
-            };
-
-            if has_raw_requests {
-                // Reshape outputs
-                let s = outputs.shape().to_vec();
-                #[allow(deprecated)]
-                let outputs = outputs.into_shape((s[0] * s[1], s[2])).e()?;
-
-                // We need to remove the padding tokens only if batch_size > 1 and there are some
-                // member of the batch that require pooling
-                // or if batch_size > 1 and the members of the batch have different lengths
-                let raw_embeddings = if (masking || has_pooling_requests) && batch_size > 1 {
-                    match self.tokenizer_config.padding_side {
-                        PaddingSide::Left => {
-                            let mut final_indices: Vec<usize> =
-                                Vec::with_capacity(batch_size * max_length);
-
-                            for i in batch.raw_indices.iter() {
-                                let i = *i as usize;
-                                let length = batch.cumulative_seq_lengths[i + 1]
-                                    - batch.cumulative_seq_lengths[i];
-                                let padding = batch.max_length - length;
-
-                                // For left padding, actual tokens start after the padding
-                                let start = i * batch.max_length as usize + padding as usize;
-                                let end = start + length as usize;
-
-                                for j in start..end {
-                                    final_indices.push(j);
-                                }
-                            }
-
-                            // Select the tokens with final indices
-                            outputs.select(Axis(0), &final_indices)
-                        }
-                        PaddingSide::Right => {
-                            let mut final_indices: Vec<usize> =
-                                Vec::with_capacity(batch_size * max_length);
-
-                            for i in batch.raw_indices.iter() {
-                                let start = i * batch.max_length;
-                                let i = *i as usize;
-                                let length = batch.cumulative_seq_lengths[i + 1]
-                                    - batch.cumulative_seq_lengths[i];
-
-                                for j in start..start + length {
-                                    // Add indices for the tokens of this specific member of the batch
-                                    final_indices.push(j as usize);
-                                }
-                            }
-
-                            // Select the tokens with final indices
-                            outputs.select(Axis(0), &final_indices)
-                        }
-                    }
-                } else {
-                    outputs
-                };
-
-                // Used for indexing in the raw_embeddings tensor
-                let input_lengths: Vec<usize> = (0..batch_size)
-                    .map(|i| {
-                        (batch.cumulative_seq_lengths[i + 1] - batch.cumulative_seq_lengths[i])
-                            as usize
-                    })
-                    .collect();
-
-                let mut cumulative_length = 0;
-                for i in batch.raw_indices.into_iter() {
-                    let length = input_lengths[i as usize];
-                    let e =
-                        raw_embeddings.slice(s![cumulative_length..cumulative_length + length, ..]);
-                    let e = e.rows().into_iter().map(|v| v.to_vec()).collect();
-
-                    embeddings.insert(i as usize, Embedding::All(e));
-                    cumulative_length += length;
-                }
             }
         }
 
@@ -719,6 +662,28 @@ impl Backend for OrtBackend {
 
         Ok(predictions)
     }
+}
+
+fn insert_pooled_embeddings<T: Copy + Into<f32>>(
+    values: ndarray::ArrayViewD<'_, T>,
+    batch: &Batch,
+    embeddings: &mut Embeddings,
+) -> Result<(), BackendError> {
+    // The last axis holds each vector, including exports with singleton dimensions.
+    let rows = values.rows().into_iter();
+    if rows.len() != batch.len() {
+        return Err(BackendError::Inference(format!(
+            "Unexpected ONNX sentence embedding shape: {:?}",
+            values.shape()
+        )));
+    }
+    for (i, values) in rows.enumerate() {
+        if batch.pooled_indices.contains(&(i as u32)) {
+            let row = values.iter().copied().map(Into::into).collect();
+            embeddings.insert(i, Embedding::Pooled(row));
+        }
+    }
+    Ok(())
 }
 
 pub trait WrapErr<O> {
