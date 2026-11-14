@@ -18,6 +18,9 @@ pub struct Infer {
     /// Inference limit
     limit_concurrent_requests: Arc<Semaphore>,
     backend: Backend,
+    /// Apply a sigmoid to each class score instead of a softmax over all of them
+    /// (`problem_type: multi_label_classification`)
+    multi_label: bool,
 }
 
 impl Infer {
@@ -27,6 +30,7 @@ impl Infer {
         queue: Queue,
         max_concurrent_requests: usize,
         backend: Backend,
+        multi_label: bool,
     ) -> Self {
         let notify_batching_task = Arc::new(Notify::new());
 
@@ -52,6 +56,7 @@ impl Infer {
             notify_batching_task,
             limit_concurrent_requests: semaphore,
             backend,
+            multi_label,
         }
     }
 
@@ -456,18 +461,11 @@ impl Infer {
         };
 
         if !raw_scores {
-            // Softmax
-            if response.results.len() > 1 {
-                if let Err(err) = softmax(&mut response.results) {
-                    let counter = metrics::counter!("te_request_failure", "err" => "inference");
-                    counter.increment(1);
-                    tracing::error!("{err}");
-                    return Err(TextEmbeddingsError::Backend(err));
-                }
-            }
-            // Sigmoid
-            else {
-                response.results[0] = 1.0 / (1.0 + (-response.results[0]).exp());
+            if let Err(err) = apply_activation(&mut response.results, self.multi_label) {
+                let counter = metrics::counter!("te_request_failure", "err" => "inference");
+                counter.increment(1);
+                tracing::error!("{err}");
+                return Err(TextEmbeddingsError::Backend(err));
             }
         }
 
@@ -618,6 +616,21 @@ async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextB
     }
 }
 
+/// In-place activation over classification scores.
+///
+/// A sigmoid is applied to every score for a single-class model or when `multi_label` is set,
+/// otherwise a softmax over all the scores.
+fn apply_activation(scores: &mut [f32], multi_label: bool) -> Result<(), BackendError> {
+    if multi_label || scores.len() == 1 {
+        for v in scores.iter_mut() {
+            *v = 1.0 / (1.0 + (-*v).exp());
+        }
+        Ok(())
+    } else {
+        softmax(scores)
+    }
+}
+
 /// In-place softmax over classification scores.
 ///
 /// Returns an error if any score is not finite.
@@ -675,6 +688,32 @@ pub struct AllEmbeddingsInferResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn multi_label_applies_sigmoid_to_each_score() {
+        let mut scores = vec![2.0, -1.0, 0.5];
+        apply_activation(&mut scores, true).unwrap();
+        for (actual, expected) in scores.iter().zip([0.8807971, 0.26894143, 0.62245935]) {
+            assert!((actual - expected).abs() < 1e-6);
+        }
+        assert!((scores.iter().sum::<f32>() - 1.0).abs() > 0.1);
+    }
+
+    #[test]
+    fn single_label_applies_sigmoid() {
+        for multi_label in [false, true] {
+            let mut scores = vec![0.0];
+            apply_activation(&mut scores, multi_label).unwrap();
+            assert!((scores[0] - 0.5).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn multi_class_applies_softmax() {
+        let mut scores = vec![2.0, -1.0, 0.5];
+        apply_activation(&mut scores, false).unwrap();
+        assert!((scores.iter().sum::<f32>() - 1.0).abs() < 1e-6);
+    }
 
     #[test]
     fn softmax_normalizes_scores() {

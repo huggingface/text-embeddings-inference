@@ -155,6 +155,10 @@ curl 127.0.0.1:8080/predict \
 For multiclass predictions with `raw_scores: false`, non-finite model scores
 (NaN or infinity) produce an inference error instead of softmax probabilities.
 
+With `raw_scores: false`, the scores are softmax probabilities over all the classes, a sigmoid for each
+class if the model has a single class or if its `config.json` sets `"problem_type": "multi_label_classification"`
+(as `SamLowe/roberta-base-go_emotions` does), in which case the scores are independent and do not sum to 1.
+
 ## Batching
 
 You can send multiple inputs in a batch. For example, for embeddings:
