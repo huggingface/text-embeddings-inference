@@ -266,29 +266,7 @@ fn test_bert_splade_padding() -> Result<()> {
         None,
     )?;
 
-    let short = tokenizer.encode("What is Deep Learning?", true).unwrap();
-    let long = tokenizer
-        .encode(
-            "Deep Learning is a subset of machine learning based on neural networks with many layers.",
-            true,
-        )
-        .unwrap();
-    assert!(short.len() < long.len());
-
-    let input_single = batch(vec![short.clone()], [0].to_vec(), vec![]);
-    let (single, _) = sort_embeddings(backend.embed(input_single)?);
-
-    // The short input is padded to the length of the long one
-    let input_batch = batch(vec![short, long], [0, 1].to_vec(), vec![]);
-    let (batched, _) = sort_embeddings(backend.embed(input_batch)?);
-
-    // Padding positions must not contribute to the max pooling
-    let max_diff = batched[0]
-        .iter()
-        .zip(&single[0])
-        .map(|(b, s)| (b - s).abs())
-        .fold(0.0_f32, f32::max);
-    assert!(max_diff < 1e-4, "max abs difference: {max_diff}");
+    common::assert_splade_batch_matches_single(&backend, &tokenizer)?;
 
     Ok(())
 }
