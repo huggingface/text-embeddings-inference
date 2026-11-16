@@ -630,6 +630,10 @@ async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextB
 /// A sigmoid is applied to every score for a single-class model or when `multi_label` is set,
 /// otherwise a softmax over all the scores.
 fn apply_activation(scores: &mut [f32], multi_label: bool) -> Result<(), BackendError> {
+    if scores.iter().any(|score| !score.is_finite()) {
+        return Err(BackendError::Inference("score is not finite".to_string()));
+    }
+
     if multi_label || scores.len() == 1 {
         for v in scores.iter_mut() {
             *v = 1.0 / (1.0 + (-*v).exp());
@@ -697,6 +701,30 @@ pub struct AllEmbeddingsInferResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn activation_rejects_non_finite_scores() {
+        for multi_label in [false, true] {
+            for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                for mut scores in [vec![value], vec![1.0, value, 3.0]] {
+                    let original: Vec<_> = scores.iter().map(|s| s.to_bits()).collect();
+                    let error = apply_activation(&mut scores, multi_label).unwrap_err();
+                    assert!(matches!(error, BackendError::Inference(_)));
+                    assert_eq!(
+                        scores.iter().map(|s| s.to_bits()).collect::<Vec<_>>(),
+                        original
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn multi_label_handles_large_finite_scores() {
+        let mut scores = [-1000.0, 0.0, 1000.0];
+        apply_activation(&mut scores, true).unwrap();
+        assert_eq!(scores, [0.0, 0.5, 1.0]);
+    }
 
     #[test]
     fn multi_label_applies_sigmoid_to_each_score() {
