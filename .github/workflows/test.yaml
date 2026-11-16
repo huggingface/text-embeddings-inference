@@ -7,7 +7,7 @@ on:
         description: PR number (blank runs on main)
         type: string
       tests:
-        description: related, all, or CPU targets such as test_qwen3,test_http_rerank
+        description: related, all, or CPU targets such as test_qwen3,test_http_rerank,test_grpc_rerank
         default: related
         type: string
   push:
@@ -58,9 +58,13 @@ jobs:
             });
             const paths = files.flatMap(file => [file.filename, file.previous_filename].filter(Boolean));
             core.setOutput('rust', files.length < context.payload.pull_request.changed_files || paths.some(path =>
-              path.endsWith('.rs') || path.endsWith('Cargo.toml') || path === 'Cargo.lock' ||
+              path.endsWith('.rs') || path.startsWith('backends/ort/tests/fixtures/') ||
+              path.endsWith('Cargo.toml') || path === 'Cargo.lock' ||
               path === 'rust-toolchain.toml' || path.startsWith('.cargo/') || path.startsWith('.github/workflows/')));
             core.setOutput('router', files.length < context.payload.pull_request.changed_files || paths.some(path => path.startsWith('router/')));
+            core.setOutput('ort', files.length < context.payload.pull_request.changed_files || paths.some(path =>
+              path.startsWith('backends/ort/') || path.startsWith('backends/core/') ||
+              path === 'backends/src/lib.rs' || path === 'Cargo.toml' || path === 'Cargo.lock'));
       - if: steps.changes.outputs.rust == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
@@ -88,6 +92,9 @@ jobs:
           cargo test --locked -p text-embeddings-backend -F candle --lib
           cargo test --locked -p text-embeddings-core --features text-embeddings-backend/candle,hf-hub/ureq --lib -- --skip tokenization::tests::tokenizer
           cargo test --locked -p text-embeddings-backend-candle --lib
+      - name: Run ONNX backend unit tests
+        if: steps.changes.outputs.rust == 'true' && steps.changes.outputs.ort == 'true'
+        run: cargo test --locked -p text-embeddings-backend-ort --lib
       - name: Run router unit tests without model downloads
         if: steps.changes.outputs.rust == 'true' && steps.changes.outputs.router == 'true'
         run: cargo test --locked -p text-embeddings-router --lib
@@ -146,8 +153,10 @@ jobs:
             const fs = require('node:fs');
             const httpTests = ['test_http_embed', 'test_http_rerank']
               .filter(name => fs.existsSync(`router/tests/${name}.rs`));
+            const grpcTests = ['test_grpc_rerank']
+              .filter(name => fs.existsSync(`router/tests/${name}.rs`));
             const available = fs.readdirSync('backends/candle/tests')
-              .filter(name => /^test_[a-z0-9_]+\.rs$/.test(name)).map(name => name.slice(0, -3)).concat(httpTests);
+              .filter(name => /^test_[a-z0-9_]+\.rs$/.test(name)).map(name => name.slice(0, -3)).concat(httpTests, grpcTests);
             const requested = context.eventName === 'workflow_dispatch' ? context.payload.inputs.tests || 'related' : 'related';
             let selected;
             if (requested !== 'related') {
@@ -177,9 +186,13 @@ jobs:
                 const model = path.match(/^backends\/candle\/src\/models\/([a-z0-9_]+)\.rs$/);
                 const test = path.match(/^backends\/candle\/tests\/(test_[a-z0-9_]+)\.rs$/);
                 const snapshot = path.match(/^(?:backends\/candle|router)\/tests\/snapshots\/(test_[a-z0-9_]+?)__/);
-                const http = path.match(/^router\/tests\/(test_http_[a-z0-9_]+)\.rs$/);
+                const router = path.match(/^router\/tests\/(test_(?:http|grpc)_[a-z0-9_]+)\.rs$/);
                 if (['router/src/http/server.rs', 'router/src/http/types.rs', 'router/tests/common.rs'].includes(path)) return httpTests;
-                const name = model ? `test_${model[1]}` : (test || snapshot || http)?.[1];
+                if (path === 'router/src/grpc/server.rs') return grpcTests;
+                if (path === 'backends/candle/src/models/qwen3.rs') {
+                  return ['test_qwen3', 'test_qwen3_equal_length_batch', 'test_pplx1'].filter(name => available.includes(name));
+                }
+                const name = model ? `test_${model[1]}` : (test || snapshot || router)?.[1];
                 return name && available.includes(name) ? [name] : [];
               });
             }
@@ -192,7 +205,7 @@ jobs:
               `Revision: ${process.env.SOURCE_SHA}.\n\n` +
               `Selected CPU targets: ${runnable.join(', ') || 'none'}.\n\n` +
               `Require GPU hardware or gated-model credentials: ${manual.join(', ') || 'none'}.\n\n` +
-              `Selection follows model/test filenames, HTTP handlers/types, and snapshots. Other shared code has no counterpart: use [Run workflow](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/workflows/test.yaml) with a PR number and tests=all or named targets. External PRs use the existing Approve workflows to run button; drafts wait until ready for review.`
+              `Selection follows model/test filenames, HTTP/gRPC handlers, HTTP types, and snapshots. Other shared code has no counterpart: use [Run workflow](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/workflows/test.yaml) with a PR number and tests=all or named targets. External PRs use the existing Approve workflows to run button; drafts wait until ready for review.`
             ).write();
 
   model-tests:
@@ -245,10 +258,12 @@ jobs:
           mapfile -t targets < <(jq -r '.[]' <<< "$MODEL_TESTS")
           candle_args=()
           http_args=()
+          grpc_args=()
           for target in "${targets[@]}"; do
             [[ "$target" =~ ^test_[a-z0-9_]+$ ]] || exit 1
             case "$target" in
               test_http_embed|test_http_rerank) http_args+=(--test "$target") ;;
+              test_grpc_rerank) grpc_args+=(--test "$target") ;;
               *) candle_args+=(--test "$target") ;;
             esac
           done
@@ -257,6 +272,9 @@ jobs:
           fi
           if ((${#http_args[@]})); then
             cargo test --locked --profile=release-debug -p text-embeddings-router "${http_args[@]}"
+          fi
+          if ((${#grpc_args[@]})); then
+            cargo test --locked --profile=release-debug -p text-embeddings-router --no-default-features --features candle,grpc "${grpc_args[@]}"
           fi
       - name: Compiler cache statistics
         if: always()
