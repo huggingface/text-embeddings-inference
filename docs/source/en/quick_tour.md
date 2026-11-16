@@ -152,8 +152,13 @@ curl 127.0.0.1:8080/predict \
     -H 'Content-Type: application/json'
 ```
 
-For multiclass predictions with `raw_scores: false`, non-finite model scores
-(NaN or infinity) produce an inference error instead of softmax probabilities.
+With `raw_scores: false`, models declaring `"problem_type": "multi_label_classification"`
+in `config.json` return an independent sigmoid score for each class. These scores do not need to
+sum to 1. This applies to `SamLowe/roberta-base-go_emotions`.
+
+Other models keep softmax for multiple classes and sigmoid for a single class. Non-finite logits
+(NaN or infinity) produce an inference error before either activation. `raw_scores: true` returns
+the original logits.
 
 ## Batching
 
