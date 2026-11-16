@@ -84,6 +84,7 @@ pub struct Backend {
     _backend_thread: Arc<BackendThread>,
     pub padded_model: bool,
     pub max_batch_size: Option<usize>,
+    pub supports_token_embeddings: bool,
     pub model_type: ModelType,
 }
 
@@ -116,6 +117,7 @@ impl Backend {
         .await?;
         let padded_model = backend.is_padded();
         let max_batch_size = backend.max_batch_size();
+        let supports_token_embeddings = backend.supports_token_embeddings();
 
         let (health_sender, health_receiver) = watch::channel(false);
         let _backend_thread =
@@ -127,6 +129,7 @@ impl Backend {
             _backend_thread,
             padded_model,
             max_batch_size,
+            supports_token_embeddings,
             model_type,
         })
     }
@@ -1065,6 +1068,7 @@ mod tests {
     fn test_backend(backend: impl CoreBackend + Send + 'static) -> Backend {
         let (backend_sender, backend_receiver) = mpsc::channel(8);
         let (health_sender, health_receiver) = watch::channel(true);
+        let supports_token_embeddings = backend.supports_token_embeddings();
         Backend {
             backend_sender,
             health_receiver,
@@ -1075,6 +1079,7 @@ mod tests {
             )),
             padded_model: false,
             max_batch_size: None,
+            supports_token_embeddings,
             model_type: ModelType::Embedding(Pool::Cls),
         }
     }

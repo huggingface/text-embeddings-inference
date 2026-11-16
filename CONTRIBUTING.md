@@ -114,6 +114,8 @@ If you are such an individual (or organization), please reach out to us and let'
 
 Pull requests run formatting/lint checks and focused CPU library tests. Documentation-only PRs skip Rust compilation. Non-draft PRs also run the CPU model tests whose filenames match changed model implementations, test files, or snapshots. For example, changes to `backends/candle/src/models/qwen3.rs`, `backends/candle/tests/test_qwen3.rs`, or its snapshots select `test_qwen3`. The same selection applies to main pushes. Draft PRs wait until marked ready for review.
 
+The gRPC reranking counterpart is `test_grpc_rerank`. Changes to its test or `router/src/grpc/server.rs` select it automatically. Maintainers can also run it through **Run workflow** with a PR number and `tests=test_grpc_rerank`.
+
 The repository already requires approval for workflows from all external contributors. Review the PR, then click **Approve workflows to run** in its checks panel; matching model tests run with the other checks. **Re-run jobs** repeats checks for that revision. No branch SHA is needed.
 
 For shared code without a matching model test, or to request wider coverage, open **Actions → Run basic tests → Run workflow**, select `main`, enter the PR number, and choose `related`, `all`, or comma-separated targets such as `test_bert,test_qwen3` in `tests`. Leaving the PR number blank runs against main. The workflow resolves and records the selected revision automatically. Changed and renamed files are considered; no counterpart means the model job is skipped. CUDA-only targets are listed in the summary but require a separate GPU runtime setup. Gated Gemma tests run only on trusted refs with the model-read token configured; PR jobs never receive it.
