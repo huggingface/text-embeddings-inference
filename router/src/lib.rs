@@ -118,6 +118,9 @@ pub async fn run(
     let config: ModelConfig =
         serde_json::from_str(&config).context("Failed to parse `config.json`")?;
 
+    // Classification scores are independent sigmoids rather than a softmax for multi-label models
+    let multi_label = config.problem_type.as_deref() == Some("multi_label_classification");
+
     // Set model type from config
     let backend_model_type = get_backend_model_type(&config, &model_root, pooling)?;
 
@@ -330,7 +333,13 @@ pub async fn run(
     );
 
     // Create infer task
-    let infer = Infer::new(tokenization, queue, max_concurrent_requests, backend);
+    let infer = Infer::new(
+        tokenization,
+        queue,
+        max_concurrent_requests,
+        backend,
+        multi_label,
+    );
 
     // Endpoint info
     let info = Info {
@@ -489,6 +498,7 @@ pub struct ModelConfig {
     pub pad_token_id: Option<usize>,
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
+    pub problem_type: Option<String>,
     pub auto_map: Option<HashMap<String, String>>,
 }
 
