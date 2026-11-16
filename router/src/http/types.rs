@@ -214,7 +214,9 @@ impl From<TruncationDirection> for tokenizers::TruncationDirection {
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct PredictRequest {
     pub inputs: PredictInput,
-    #[schema(default = "false", example = "false", nullable = true)]
+    /// Whether to truncate inputs that are longer than the maximum supported size. Defaults to
+    /// the `--auto-truncate` value of the server, which is `true` unless changed.
+    #[schema(example = "false", nullable = true)]
     pub truncate: Option<bool>,
     #[serde(default)]
     #[schema(default = "right", example = "right")]
@@ -246,7 +248,9 @@ pub(crate) struct RerankRequest {
     #[schema(example = json!(["Deep Learning is ..."]))]
     pub texts: Vec<String>,
     #[serde(default)]
-    #[schema(default = "false", example = "false", nullable = true)]
+    /// Whether to truncate inputs that are longer than the maximum supported size. Defaults to
+    /// the `--auto-truncate` value of the server, which is `true` unless changed.
+    #[schema(example = "false", nullable = true)]
     pub truncate: Option<bool>,
     #[serde(default)]
     #[schema(default = "right", example = "right")]
@@ -377,7 +381,9 @@ pub(crate) struct SimilarityInput {
 
 #[derive(Deserialize, ToSchema, Default)]
 pub(crate) struct SimilarityParameters {
-    #[schema(default = "false", example = "false", nullable = true)]
+    /// Whether to truncate inputs that are longer than the maximum supported size. Defaults to
+    /// the `--auto-truncate` value of the server, which is `true` unless changed.
+    #[schema(example = "false", nullable = true)]
     pub truncate: Option<bool>,
     #[serde(default)]
     #[schema(default = "right", example = "right")]
@@ -412,7 +418,9 @@ pub(crate) struct EmbedRequest {
     pub inputs: Input,
 
     #[serde(default)]
-    #[schema(default = "false", example = "false", nullable = true)]
+    /// Whether to truncate inputs that are longer than the maximum supported size. Defaults to
+    /// the `--auto-truncate` value of the server, which is `true` unless changed.
+    #[schema(example = "false", nullable = true)]
     pub truncate: Option<bool>,
 
     #[serde(default)]
@@ -453,7 +461,9 @@ pub(crate) struct EmbedResponse(pub Vec<Vec<f32>>);
 pub(crate) struct EmbedSparseRequest {
     pub inputs: Input,
     #[serde(default)]
-    #[schema(default = "false", example = "false", nullable = true)]
+    /// Whether to truncate inputs that are longer than the maximum supported size. Defaults to
+    /// the `--auto-truncate` value of the server, which is `true` unless changed.
+    #[schema(example = "false", nullable = true)]
     pub truncate: Option<bool>,
     #[serde(default)]
     #[schema(default = "right", example = "right")]
@@ -484,7 +494,9 @@ pub(crate) struct EmbedSparseResponse(pub Vec<Vec<SparseValue>>);
 pub(crate) struct EmbedAllRequest {
     pub inputs: Input,
     #[serde(default)]
-    #[schema(default = "false", example = "false", nullable = true)]
+    /// Whether to truncate inputs that are longer than the maximum supported size. Defaults to
+    /// the `--auto-truncate` value of the server, which is `true` unless changed.
+    #[schema(example = "false", nullable = true)]
     pub truncate: Option<bool>,
     #[serde(default)]
     #[schema(default = "right", example = "right")]
@@ -602,4 +614,27 @@ pub(crate) enum VertexPrediction {
 #[derive(Serialize, ToSchema)]
 pub(crate) struct VertexResponse {
     pub predictions: Vec<VertexPrediction>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_schema_does_not_claim_a_false_default() {
+        // `truncate` falls back to `--auto-truncate`, which defaults to `true`
+        for (name, schema) in [
+            PredictRequest::schema(),
+            RerankRequest::schema(),
+            SimilarityParameters::schema(),
+            EmbedRequest::schema(),
+            EmbedSparseRequest::schema(),
+            EmbedAllRequest::schema(),
+        ] {
+            let schema = serde_json::to_value(schema).unwrap();
+            let truncate = &schema["properties"]["truncate"];
+            assert!(truncate.is_object(), "{name}: {schema}");
+            assert!(truncate.get("default").is_none(), "{name}: {truncate}");
+        }
+    }
 }
