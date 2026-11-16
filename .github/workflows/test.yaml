@@ -189,6 +189,9 @@ jobs:
                 const router = path.match(/^router\/tests\/(test_(?:http|grpc)_[a-z0-9_]+)\.rs$/);
                 if (['router/src/http/server.rs', 'router/src/http/types.rs', 'router/tests/common.rs'].includes(path)) return httpTests;
                 if (path === 'router/src/grpc/server.rs') return grpcTests;
+                if (path === 'backends/candle/src/models/qwen3.rs') {
+                  return ['test_qwen3', 'test_qwen3_equal_length_batch', 'test_pplx1'].filter(name => available.includes(name));
+                }
                 const name = model ? `test_${model[1]}` : (test || snapshot || router)?.[1];
                 return name && available.includes(name) ? [name] : [];
               });

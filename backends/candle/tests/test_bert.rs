@@ -4,7 +4,7 @@ use crate::common::{sort_embeddings, SnapshotEmbeddings, SnapshotScores};
 use anyhow::Result;
 use common::{batch, cosine_matcher, download_artifacts, load_tokenizer, relative_matcher};
 use text_embeddings_backend_candle::CandleBackend;
-use text_embeddings_backend_core::{Backend, ModelType, Pool};
+use text_embeddings_backend_core::{Backend, Embedding, ModelType, Pool};
 
 #[test]
 #[serial_test::serial]
@@ -135,6 +135,33 @@ fn test_bert_pooled_raw() -> Result<()> {
     assert_eq!(raw_embeddings_batch[15], embeddings_single[0]);
     assert_eq!(embeddings_single.len(), 7);
 
+    // Compare every token in raw-only batches with different lengths and input orders.
+    for texts in [
+        ["What is Deep Learning?", "Deep Learning is..."],
+        ["Deep Learning is...", "What is Deep Learning?"],
+        ["What is Deep Learning?", "What is Deep Learning?"],
+    ] {
+        let encodings: Vec<_> = texts
+            .iter()
+            .map(|text| tokenizer.encode(*text, true).unwrap())
+            .collect();
+        let actual = backend.embed(batch(encodings.clone(), vec![], vec![0, 1]))?;
+
+        for (index, encoding) in encodings.into_iter().enumerate() {
+            let single = backend.embed(batch(vec![encoding], vec![], vec![0]))?;
+            let Embedding::All(actual) = &actual[&index] else {
+                panic!("Expected raw token embeddings for row {index}");
+            };
+            let Embedding::All(expected) = &single[&0] else {
+                panic!("Expected raw token embeddings for the single input");
+            };
+            assert_eq!(
+                SnapshotEmbeddings::from(actual.clone()),
+                SnapshotEmbeddings::from(expected.clone()),
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -218,6 +245,28 @@ fn test_bert_classification() -> Result<()> {
 
     let matcher = relative_matcher();
     insta::assert_yaml_snapshot!("bert_classification_single", predictions_single, &matcher);
+
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn test_bert_splade_padding() -> Result<()> {
+    let (model_root, _) = download_artifacts(
+        "sparse-encoder-testing/splade-bert-tiny-nq",
+        Some("c080c2cff606c1ee9379e883895274367f2c29e3"),
+        None,
+    )?;
+    let tokenizer = load_tokenizer(&model_root)?;
+
+    let backend = CandleBackend::new(
+        &model_root,
+        "float32".to_string(),
+        ModelType::Embedding(Pool::Splade),
+        None,
+    )?;
+
+    common::assert_splade_batch_matches_single(&backend, &tokenizer)?;
 
     Ok(())
 }

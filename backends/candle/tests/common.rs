@@ -359,3 +359,112 @@ pub fn batch(encodings: Vec<Encoding>, pooled_indices: Vec<u32>, raw_indices: Ve
         raw_indices,
     }
 }
+
+/// Check raw and pooled row selection against standalone inference with left padding.
+#[allow(dead_code)]
+pub fn assert_raw_batch_matches_single(
+    backend: &impl text_embeddings_backend_core::Backend,
+    tokenizer: &Tokenizer,
+) -> Result<()> {
+    let encodings: Vec<_> = ["Hi", "What is Deep Learning?", "Deep Learning is..."]
+        .into_iter()
+        .map(|text| tokenizer.encode(text, true).unwrap())
+        .collect();
+    let raw_single = encodings
+        .iter()
+        .map(|e| backend.embed(batch(vec![e.clone()], vec![], vec![0])))
+        .collect::<Result<Vec<_>, _>>()?;
+    let pooled_single = encodings
+        .iter()
+        .map(|e| backend.embed(batch(vec![e.clone()], vec![0], vec![])))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for (rows, pooled, raw) in [
+        ([0, 1, 2], vec![], vec![0, 1, 2]),
+        ([1, 0, 2], vec![], vec![0, 1, 2]),
+        ([0, 0, 0], vec![], vec![0, 1, 2]),
+        ([0, 1, 2], vec![1], vec![0, 2]),
+        ([1, 0, 2], vec![0, 2], vec![1]),
+    ] {
+        let actual = backend.embed(batch(
+            rows.iter().map(|&i| encodings[i].clone()).collect(),
+            pooled.clone(),
+            raw.clone(),
+        ))?;
+        for index in raw {
+            let Embedding::All(actual) = &actual[&(index as usize)] else {
+                panic!("Expected raw token embeddings for row {index}");
+            };
+            let Embedding::All(expected) = &raw_single[rows[index as usize]][&0] else {
+                panic!("Expected raw token embeddings for the single input");
+            };
+            assert_eq!(
+                SnapshotEmbeddings::from(actual.clone()),
+                SnapshotEmbeddings::from(expected.clone())
+            );
+        }
+        for index in pooled {
+            let Embedding::Pooled(actual) = &actual[&(index as usize)] else {
+                panic!("Expected a pooled embedding for row {index}");
+            };
+            let Embedding::Pooled(expected) = &pooled_single[rows[index as usize]][&0] else {
+                panic!("Expected a pooled embedding for the single input");
+            };
+            assert_eq!(
+                SnapshotEmbeddings::from(vec![actual.clone()]),
+                SnapshotEmbeddings::from(vec![expected.clone()])
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Padding must not contribute to SPLADE max pooling, including selected batch rows.
+#[allow(dead_code)]
+pub fn assert_splade_batch_matches_single(
+    backend: &impl text_embeddings_backend_core::Backend,
+    tokenizer: &Tokenizer,
+) -> Result<()> {
+    let short = tokenizer.encode("What is Deep Learning?", true).unwrap();
+    let long = tokenizer.encode(
+        "Deep Learning is a subset of machine learning based on neural networks with many layers.",
+        true,
+    ).unwrap();
+    assert!(short.len() < long.len());
+    let encodings = [short, long];
+    let single = encodings
+        .iter()
+        .map(|encoding| backend.embed(batch(vec![encoding.clone()], vec![0], vec![])))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for (rows, pooled, raw) in [
+        ([0, 1], vec![0, 1], vec![]),
+        ([1, 0], vec![0, 1], vec![]),
+        ([0, 0], vec![0, 1], vec![]),
+        ([0, 1], vec![0], vec![1]),
+        ([1, 0], vec![1], vec![0]),
+    ] {
+        let actual = backend.embed(batch(
+            rows.iter().map(|&i| encodings[i].clone()).collect(),
+            pooled.clone(),
+            raw,
+        ))?;
+        for index in pooled {
+            let Embedding::Pooled(actual) = &actual[&(index as usize)] else {
+                panic!("Expected a pooled embedding for row {index}");
+            };
+            let Embedding::Pooled(expected) = &single[rows[index as usize]][&0] else {
+                panic!("Expected a pooled embedding for the single input");
+            };
+            assert_eq!(actual.len(), expected.len());
+            assert!(actual.iter().chain(expected).all(|v| v.is_finite()));
+            let max_diff = actual
+                .iter()
+                .zip(expected)
+                .map(|(a, e)| (a - e).abs())
+                .fold(0.0_f32, f32::max);
+            assert!(max_diff < 1e-4, "row {index} max abs difference {max_diff}");
+        }
+    }
+    Ok(())
+}
