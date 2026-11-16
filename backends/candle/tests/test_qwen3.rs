@@ -48,5 +48,7 @@ fn test_qwen3() -> Result<()> {
     assert_eq!(embeddings_batch[0], embeddings_single[0]);
     assert_eq!(embeddings_batch[2], embeddings_single[0]);
 
+    common::assert_raw_batch_matches_single(&backend, &tokenizer)?;
+
     Ok(())
 }

@@ -1225,8 +1225,21 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
 
         // Drop the sender to signal to the underlying task that we are done
         drop(rerank_sender);
+        // Drop the sender so that the result loop below ends after the last result
+        drop(intermediate_sender);
 
         let batch_size = index;
+
+        if batch_size == 0 {
+            let message = "`RerankStream` must receive at least one request".to_string();
+            tracing::error!("{message}");
+            let err = ErrorResponse {
+                error: message,
+                error_type: ErrorType::Validation,
+            };
+            metrics::counter!("te_request_failure", "err" => "validation").increment(1);
+            Err(err)?;
+        }
 
         let mut ranks = Vec::with_capacity(batch_size);
         let mut total_tokenization_time = 0;
