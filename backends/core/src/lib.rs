@@ -42,6 +42,10 @@ pub trait Backend {
 
     fn is_padded(&self) -> bool;
 
+    fn supports_token_embeddings(&self) -> bool {
+        true
+    }
+
     fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError>;
 
     fn predict(&self, batch: Batch) -> Result<Predictions, BackendError>;
