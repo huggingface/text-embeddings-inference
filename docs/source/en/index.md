@@ -28,7 +28,7 @@ TEI offers multiple features tailored to optimize the deployment process and enh
 * **Dynamic Batching:** TEI incorporates token-based dynamic batching thus optimizing resource utilization during inference.
 * **Optimized Inference:** TEI leverages [Flash Attention](https://github.com/HazyResearch/flash-attention), [Candle](https://github.com/huggingface/candle), and [cuBLASLt](https://docs.nvidia.com/cuda/cublas/#using-the-cublaslt-api) by using optimized transformers code for inference.
 * **Safetensors weight loading:** TEI loads [Safetensors](https://github.com/huggingface/safetensors) weights for faster boot times.
-* **Production-Ready:** TEI supports distributed tracing through Open Telemetry and exports Prometheus metrics.
+* **Production-Ready:** TEI supports distributed tracing through Open Telemetry and exports [Prometheus metrics](./metrics).
 
 **Benchmarks**
 
