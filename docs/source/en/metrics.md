@@ -39,9 +39,8 @@ For example, with the HTTP server running locally on port `8080`:
 curl 127.0.0.1:8080/metrics
 ```
 
-The response is empty until the server has handled its first request, because each metric is only created the first
-time it is recorded. For the same reason, a `te_request_failure` series for a given `err` value only appears after
-that failure has happened at least once.
+Metric series appear when they are first recorded. A fresh server can return an empty response before inference
+work begins. A `te_request_failure` series for a given `err` value only appears after that failure has happened.
 
 ### Serving metrics on a separate port
 
@@ -53,10 +52,13 @@ text-embeddings-router --model-id BAAI/bge-small-en-v1.5 --port 8080 --prometheu
 curl 127.0.0.1:9000/metrics
 ```
 
-With Docker, publish the metrics port as well as the API port:
+A separate metrics port does not add authentication. Keep it reachable only by your scraper, using a private
+interface or network rules. This Docker example publishes it on the host loopback interface.
 
 ```shell
-docker run -p 8080:80 -p 9000:9000 -v $volume:/data --pull always \
+volume=$PWD/data
+
+docker run -p 8080:80 -p 127.0.0.1:9000:9000 -v "$volume:/data" --pull always \
     ghcr.io/huggingface/text-embeddings-inference:cpu-1.10 \
     --model-id BAAI/bge-small-en-v1.5 --prometheus-port 9000
 ```
@@ -74,8 +76,13 @@ scrape_configs:
           model: BAAI/bge-small-en-v1.5
 ```
 
-TEI does not add labels for the model, the route or the instance to its metrics. When you run several TEI servers,
-tell them apart with target labels, like the `model` label above.
+Use a target address that is reachable from Prometheus. `127.0.0.1` works when Prometheus runs on the TEI host;
+for separate containers, use the TEI service address. For shared HTTP metrics with `--root-path /tei`, add
+`metrics_path: /tei/metrics` to the scrape job. With a dedicated metrics port, use that port and the default
+`/metrics` path, regardless of the API root path.
+
+TEI does not add model or route labels. Prometheus adds `job` and `instance` labels when scraping; add target
+labels such as `model` to identify the model served by each instance.
 
 Metric names are exported exactly as listed on this page: counters have no `_total` suffix, and every histogram is
 exported as `_bucket`, `_sum` and `_count` series.
@@ -155,9 +162,9 @@ Like the embedding metrics, they are recorded per input. For `/rerank`, every qu
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `te_queue_size` | Gauge | Number of inputs waiting for inference. An input is counted from the moment it is queued until the batch it belongs to is sent to the model, and is removed if the client disconnects. |
-| `te_batch_next_size` | Histogram | Number of inputs in each batch formed by the scheduler. |
-| `te_batch_next_tokens` | Histogram | Number of tokens (without padding) in each batch formed by the scheduler, bounded by `--max-batch-tokens`. |
+| `te_queue_size` | Gauge | Number of inputs waiting for dispatch. Inputs remain counted in prefetched batches until handed to the backend, and are removed if the client disconnects. |
+| `te_batch_next_size` | Histogram | Number of inputs returned by each scheduler poll, including zero when no batch is available. |
+| `te_batch_next_tokens` | Histogram | Number of tokens, excluding padding, returned by each scheduler poll. Empty polls record zero. Non-empty batches are bounded by `--max-batch-tokens`. |
 
 ## Histogram buckets
 
@@ -188,13 +195,13 @@ sum by (err) (rate(te_request_failure[5m]))
 histogram_quantile(0.95, sum by (le) (rate(te_request_duration_bucket[5m])))
 ```
 
-Throughput, in input tokens per second:
+Tokenized input tokens per second:
 
 ```
 rate(te_request_input_length_sum[5m])
 ```
 
-Average number of inputs per batch:
+Average number of inputs per scheduler poll, including empty polls:
 
 ```
 rate(te_batch_next_size_sum[5m]) / rate(te_batch_next_size_count[5m])
