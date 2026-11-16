@@ -131,11 +131,31 @@ async fn test_rerank_stream() -> Result<()> {
     assert!(response.ranks[0].score > response.ranks[1].score);
 
     // An empty stream is rejected
-    let status = tokio::time::timeout(Duration::from_secs(30), rerank_stream(channel, vec![]))
-        .await
-        .expect("`RerankStream` did not respond")
-        .unwrap_err();
+    let status = tokio::time::timeout(
+        Duration::from_secs(30),
+        rerank_stream(channel.clone(), vec![]),
+    )
+    .await
+    .expect("`RerankStream` did not respond")
+    .unwrap_err();
     assert_eq!(status.code(), Code::InvalidArgument);
+
+    // Rejecting an empty stream must leave the server able to serve another stream.
+    let response = tokio::time::timeout(
+        Duration::from_secs(30),
+        rerank_stream(
+            channel,
+            vec![RerankStreamRequest {
+                query,
+                text: "Deep learning uses neural networks.".to_string(),
+            }],
+        ),
+    )
+    .await
+    .expect("`RerankStream` did not respond after an empty stream")?;
+    assert_eq!(response.ranks.len(), 1);
+    assert_eq!(response.ranks[0].index, 0);
+    assert!(response.ranks[0].score.is_finite());
 
     Ok(())
 }
