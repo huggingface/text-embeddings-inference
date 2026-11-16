@@ -1012,7 +1012,7 @@
           },
           "truncate": {
             "type": "boolean",
-            "default": "false",
+            "description": "Whether to truncate inputs that are longer than the maximum supported size. Defaults to\nthe `--auto-truncate` value of the server, which is `true` unless changed.",
             "example": "false",
             "nullable": true
           },
@@ -1079,7 +1079,7 @@
           },
           "truncate": {
             "type": "boolean",
-            "default": "false",
+            "description": "Whether to truncate inputs that are longer than the maximum supported size. Defaults to\nthe `--auto-truncate` value of the server, which is `true` unless changed.",
             "example": "false",
             "nullable": true
           },
@@ -1128,7 +1128,7 @@
           },
           "truncate": {
             "type": "boolean",
-            "default": "false",
+            "description": "Whether to truncate inputs that are longer than the maximum supported size. Defaults to\nthe `--auto-truncate` value of the server, which is `true` unless changed.",
             "example": "false",
             "nullable": true
           },
@@ -1575,7 +1575,7 @@
           },
           "truncate": {
             "type": "boolean",
-            "default": "false",
+            "description": "Whether to truncate inputs that are longer than the maximum supported size. Defaults to\nthe `--auto-truncate` value of the server, which is `true` unless changed.",
             "example": "false",
             "nullable": true
           },
@@ -1683,7 +1683,7 @@
           },
           "truncate": {
             "type": "boolean",
-            "default": "false",
+            "description": "Whether to truncate inputs that are longer than the maximum supported size. Defaults to\nthe `--auto-truncate` value of the server, which is `true` unless changed.",
             "example": "false",
             "nullable": true
           },
@@ -1739,7 +1739,7 @@
           },
           "truncate": {
             "type": "boolean",
-            "default": "false",
+            "description": "Whether to truncate inputs that are longer than the maximum supported size. Defaults to\nthe `--auto-truncate` value of the server, which is `true` unless changed.",
             "example": "false",
             "nullable": true
           },
