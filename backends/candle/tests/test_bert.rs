@@ -4,7 +4,7 @@ use crate::common::{sort_embeddings, SnapshotEmbeddings, SnapshotScores};
 use anyhow::Result;
 use common::{batch, cosine_matcher, download_artifacts, load_tokenizer, relative_matcher};
 use text_embeddings_backend_candle::CandleBackend;
-use text_embeddings_backend_core::{Backend, ModelType, Pool};
+use text_embeddings_backend_core::{Backend, Embedding, ModelType, Pool};
 
 #[test]
 #[serial_test::serial]
@@ -135,18 +135,32 @@ fn test_bert_pooled_raw() -> Result<()> {
     assert_eq!(raw_embeddings_batch[15], embeddings_single[0]);
     assert_eq!(embeddings_single.len(), 7);
 
-    // Raw-only batch, shorter member first: its padding must not shift the next member
-    let input_raw_only = batch(
-        vec![
-            tokenizer.encode("What is Deep Learning?", true).unwrap(),
-            tokenizer.encode("Deep Learning is...", true).unwrap(),
-        ],
-        vec![],
-        [0, 1].to_vec(),
-    );
+    // Compare every token in raw-only batches with different lengths and input orders.
+    for texts in [
+        ["What is Deep Learning?", "Deep Learning is..."],
+        ["Deep Learning is...", "What is Deep Learning?"],
+        ["What is Deep Learning?", "What is Deep Learning?"],
+    ] {
+        let encodings: Vec<_> = texts
+            .iter()
+            .map(|text| tokenizer.encode(*text, true).unwrap())
+            .collect();
+        let actual = backend.embed(batch(encodings.clone(), vec![], vec![0, 1]))?;
 
-    let (_, raw_embeddings) = sort_embeddings(backend.embed(input_raw_only)?);
-    assert_eq!(SnapshotEmbeddings::from(raw_embeddings)[7], raw_embeddings_batch[7]);
+        for (index, encoding) in encodings.into_iter().enumerate() {
+            let single = backend.embed(batch(vec![encoding], vec![], vec![0]))?;
+            let Embedding::All(actual) = &actual[&index] else {
+                panic!("Expected raw token embeddings for row {index}");
+            };
+            let Embedding::All(expected) = &single[&0] else {
+                panic!("Expected raw token embeddings for the single input");
+            };
+            assert_eq!(
+                SnapshotEmbeddings::from(actual.clone()),
+                SnapshotEmbeddings::from(expected.clone()),
+            );
+        }
+    }
 
     Ok(())
 }
