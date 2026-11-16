@@ -148,7 +148,10 @@ impl Infer {
             .await?;
 
         let InferResult::AllEmbedding(response) = results else {
-            panic!("unexpected enum variant")
+            let message = "The backend did not return token embeddings".to_string();
+            metrics::counter!("te_request_failure", "err" => "inference").increment(1);
+            tracing::error!("{message}");
+            return Err(BackendError::Inference(message).into());
         };
 
         let total_time = start_time.elapsed();
@@ -339,6 +342,12 @@ impl Infer {
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
             )));
+        }
+        if !pooling && !self.backend.supports_token_embeddings {
+            let message = "The model does not provide token embeddings for `embed_all`".to_string();
+            metrics::counter!("te_request_failure", "err" => "model_type").increment(1);
+            tracing::error!("{message}");
+            return Err(BackendError::Inference(message).into());
         }
 
         let counter = metrics::counter!("te_embed_count");
