@@ -58,9 +58,13 @@ jobs:
             });
             const paths = files.flatMap(file => [file.filename, file.previous_filename].filter(Boolean));
             core.setOutput('rust', files.length < context.payload.pull_request.changed_files || paths.some(path =>
-              path.endsWith('.rs') || path.endsWith('Cargo.toml') || path === 'Cargo.lock' ||
+              path.endsWith('.rs') || path.startsWith('backends/ort/tests/fixtures/') ||
+              path.endsWith('Cargo.toml') || path === 'Cargo.lock' ||
               path === 'rust-toolchain.toml' || path.startsWith('.cargo/') || path.startsWith('.github/workflows/')));
             core.setOutput('router', files.length < context.payload.pull_request.changed_files || paths.some(path => path.startsWith('router/')));
+            core.setOutput('ort', files.length < context.payload.pull_request.changed_files || paths.some(path =>
+              path.startsWith('backends/ort/') || path.startsWith('backends/core/') ||
+              path === 'backends/src/lib.rs' || path === 'Cargo.toml' || path === 'Cargo.lock'));
       - if: steps.changes.outputs.rust == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
@@ -88,6 +92,9 @@ jobs:
           cargo test --locked -p text-embeddings-backend -F candle --lib
           cargo test --locked -p text-embeddings-core --features text-embeddings-backend/candle,hf-hub/ureq --lib -- --skip tokenization::tests::tokenizer
           cargo test --locked -p text-embeddings-backend-candle --lib
+      - name: Run ONNX backend unit tests
+        if: steps.changes.outputs.rust == 'true' && steps.changes.outputs.ort == 'true'
+        run: cargo test --locked -p text-embeddings-backend-ort --lib
       - name: Run router unit tests without model downloads
         if: steps.changes.outputs.rust == 'true' && steps.changes.outputs.router == 'true'
         run: cargo test --locked -p text-embeddings-router --lib
