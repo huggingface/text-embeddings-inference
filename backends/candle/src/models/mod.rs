@@ -11,6 +11,7 @@ mod bert;
 mod debertav2;
 mod dense;
 mod distilbert;
+mod embedding_gemma2;
 mod gemma3;
 mod gte;
 mod jina;
@@ -29,6 +30,9 @@ mod flash_bert;
 
 #[cfg(feature = "cuda")]
 mod flash_distilbert;
+
+#[cfg(feature = "cuda")]
+mod flash_embedding_gemma2;
 
 #[cfg(feature = "cuda")]
 mod flash_gte;
@@ -58,6 +62,7 @@ pub use bert::{BertConfig, BertModel, PositionEmbeddingType};
 pub use debertav2::{DebertaV2Config, DebertaV2Model};
 pub use dense::{Dense, DenseConfig, DenseLayer};
 pub use distilbert::{DistilBertConfig, DistilBertModel};
+pub use embedding_gemma2::{EmbeddingGemma2Config, EmbeddingGemma2Model};
 pub use gemma3::{Gemma3Config, Gemma3Model};
 pub use gte::{GTEConfig, GTEModel};
 pub use jina::JinaBertModel;
@@ -76,6 +81,9 @@ pub use flash_bert::FlashBertModel;
 
 #[cfg(feature = "cuda")]
 pub use flash_distilbert::FlashDistilBertModel;
+
+#[cfg(feature = "cuda")]
+pub use flash_embedding_gemma2::FlashEmbeddingGemma2Model;
 
 #[cfg(feature = "cuda")]
 pub use flash_gte::FlashGTEModel;
