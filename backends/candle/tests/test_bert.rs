@@ -248,3 +248,25 @@ fn test_bert_classification() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+#[serial_test::serial]
+fn test_bert_splade_padding() -> Result<()> {
+    let (model_root, _) = download_artifacts(
+        "sparse-encoder-testing/splade-bert-tiny-nq",
+        Some("c080c2cff606c1ee9379e883895274367f2c29e3"),
+        None,
+    )?;
+    let tokenizer = load_tokenizer(&model_root)?;
+
+    let backend = CandleBackend::new(
+        &model_root,
+        "float32".to_string(),
+        ModelType::Embedding(Pool::Splade),
+        None,
+    )?;
+
+    common::assert_splade_batch_matches_single(&backend, &tokenizer)?;
+
+    Ok(())
+}

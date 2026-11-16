@@ -418,3 +418,53 @@ pub fn assert_raw_batch_matches_single(
     }
     Ok(())
 }
+
+/// Padding must not contribute to SPLADE max pooling, including selected batch rows.
+#[allow(dead_code)]
+pub fn assert_splade_batch_matches_single(
+    backend: &impl text_embeddings_backend_core::Backend,
+    tokenizer: &Tokenizer,
+) -> Result<()> {
+    let short = tokenizer.encode("What is Deep Learning?", true).unwrap();
+    let long = tokenizer.encode(
+        "Deep Learning is a subset of machine learning based on neural networks with many layers.",
+        true,
+    ).unwrap();
+    assert!(short.len() < long.len());
+    let encodings = [short, long];
+    let single = encodings
+        .iter()
+        .map(|encoding| backend.embed(batch(vec![encoding.clone()], vec![0], vec![])))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for (rows, pooled, raw) in [
+        ([0, 1], vec![0, 1], vec![]),
+        ([1, 0], vec![0, 1], vec![]),
+        ([0, 0], vec![0, 1], vec![]),
+        ([0, 1], vec![0], vec![1]),
+        ([1, 0], vec![1], vec![0]),
+    ] {
+        let actual = backend.embed(batch(
+            rows.iter().map(|&i| encodings[i].clone()).collect(),
+            pooled.clone(),
+            raw,
+        ))?;
+        for index in pooled {
+            let Embedding::Pooled(actual) = &actual[&(index as usize)] else {
+                panic!("Expected a pooled embedding for row {index}");
+            };
+            let Embedding::Pooled(expected) = &single[rows[index as usize]][&0] else {
+                panic!("Expected a pooled embedding for the single input");
+            };
+            assert_eq!(actual.len(), expected.len());
+            assert!(actual.iter().chain(expected).all(|v| v.is_finite()));
+            let max_diff = actual
+                .iter()
+                .zip(expected)
+                .map(|(a, e)| (a - e).abs())
+                .fold(0.0_f32, f32::max);
+            assert!(max_diff < 1e-4, "row {index} max abs difference {max_diff}");
+        }
+    }
+    Ok(())
+}
