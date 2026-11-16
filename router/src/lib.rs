@@ -183,6 +183,14 @@ pub async fn run(
         };
     }
 
+    // The Nemotron Embed chat template escapes the control tokens within the input text (e.g.
+    // `[INST]` or `</s>`), so that those are tokenized as regular text; which is the same as not
+    // matching the special tokens when encoding.
+    // https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16/blob/main/chat_template.jinja
+    if config.model_type == "mistral3" || config.model_type == "ministral3" {
+        tokenizer.set_encode_special_tokens(true);
+    }
+
     // Position IDs offset. Used for Roberta and camembert.
     let position_offset = if &config.model_type == "xlm-roberta"
         || &config.model_type == "camembert"
@@ -204,7 +212,12 @@ pub async fn run(
         }
     }
 
-    let max_position_embeddings = match config.max_position_embeddings {
+    // NOTE: multimodal models e.g. `mistral3` nest the text model configuration in `text_config`
+    let max_position_embeddings = match config.max_position_embeddings.or(config
+        .text_config
+        .as_ref()
+        .and_then(|text_config| text_config.max_position_embeddings))
+    {
         Some(max_position_embeddings) => max_position_embeddings,
         None => match config.max_trained_positions {
             Some(max_trained_positions) => max_trained_positions,
@@ -490,6 +503,12 @@ pub struct ModelConfig {
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
     pub auto_map: Option<HashMap<String, String>>,
+    pub text_config: Option<TextModelConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TextModelConfig {
+    pub max_position_embeddings: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

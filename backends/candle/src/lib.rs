@@ -24,15 +24,15 @@ use crate::compute_cap::{
 use crate::models::{
     BertConfig, BertModel, DebertaV2Config, DebertaV2Model, Dense, DenseConfig, DenseLayer,
     DistilBertConfig, DistilBertModel, GTEConfig, GTEModel, Gemma3Config, Gemma3Model,
-    JinaBertModel, JinaCodeBertModel, LlamaConfig, MPNetConfig, MPNetModel, MistralConfig, Model,
-    ModernBertConfig, ModernBertModel, NomicBertModel, NomicConfig, Pplx1Config, Pplx1Model,
-    Qwen2Config, Qwen3Config, Qwen3Model,
+    JinaBertModel, JinaCodeBertModel, LlamaConfig, MPNetConfig, MPNetModel, Ministral3Config,
+    Ministral3Model, Mistral3Config, MistralConfig, Model, ModernBertConfig, ModernBertModel,
+    NomicBertModel, NomicConfig, Pplx1Config, Pplx1Model, Qwen2Config, Qwen3Config, Qwen3Model,
 };
 #[cfg(feature = "cuda")]
 use crate::models::{
     FlashBertModel, FlashDistilBertModel, FlashGTEModel, FlashJinaBertModel,
-    FlashJinaCodeBertModel, FlashMistralModel, FlashModernBertModel, FlashNomicBertModel,
-    FlashQwen2Model, FlashQwen3Model,
+    FlashJinaCodeBertModel, FlashMinistral3Model, FlashMistralModel, FlashModernBertModel,
+    FlashNomicBertModel, FlashQwen2Model, FlashQwen3Model,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -135,8 +135,10 @@ enum Config {
     Gte(GTEConfig),
     #[serde(rename = "mpnet")]
     MPNet(MPNetConfig),
+    Ministral3(Ministral3Config),
     #[allow(dead_code)] // NOTE: As it's only used when `cuda` feature is enabled
     Mistral(MistralConfig),
+    Mistral3(Mistral3Config),
     #[serde(rename(deserialize = "modernbert"))]
     ModernBert(ModernBertConfig),
     #[serde(rename(deserialize = "nomic_bert"))]
@@ -151,6 +153,27 @@ enum Config {
     #[allow(dead_code)]
     #[serde(alias = "llama_bidirec")]
     Llama(LlamaConfig),
+}
+
+fn load_ministral3(
+    vb: VarBuilder,
+    config: &Ministral3Config,
+    model_type: ModelType,
+    device: &Device,
+) -> Result<Box<dyn Model + Send>, BackendError> {
+    #[cfg(feature = "cuda")]
+    if matches!(device, Device::Cuda(_))
+        && vb.dtype() == DType::F16
+        && use_flash_attn(&[FlashAttn::V2])
+    {
+        tracing::info!("Starting FlashMinistral3 model on {:?}", device);
+        return Ok(Box::new(
+            FlashMinistral3Model::load(vb, config, model_type).s()?,
+        ));
+    }
+
+    tracing::info!("Starting Ministral3 model on {:?}", device);
+    Ok(Box::new(Ministral3Model::load(vb, config, model_type).s()?))
 }
 
 pub struct CandleBackend {
@@ -337,6 +360,11 @@ impl CandleBackend {
             (Config::MPNet(config), _) => {
                 tracing::info!("Starting MPNet model on {:?}", device);
                 Ok(Box::new(MPNetModel::load(vb, &config, model_type).s()?))
+            }
+            (Config::Ministral3(config), _) => load_ministral3(vb, &config, model_type, &device),
+            (Config::Mistral3(config), _) => {
+                tracing::warn!("Mistral3 is a multimodal model, but only text inputs are supported, so the vision tower won't be loaded.");
+                load_ministral3(vb, &config.text_config, model_type, &device)
             }
             (Config::Llama(_), Device::Cpu | Device::Metal(_)) => Err(BackendError::Start(
                 "Llama is only supported on Cuda devices in fp16 with flash attention enabled"
