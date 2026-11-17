@@ -57,7 +57,7 @@ jobs:
       contents: read
       actions: read
       pull-requests: write
-    uses: huggingface/doc-builder/.github/workflows/upload_pr_documentation.yml@145b9d4f6ab65ad3af87c66773b2c43294e52446 # main
+    uses: huggingface/doc-builder/.github/workflows/upload_pr_documentation.yml@7b35a31ae9844db8b177ef3ca869184a79d791f8 # main
     with:
       package_name: text-embeddings-inference
     secrets:
