@@ -55,6 +55,15 @@
     "dockerfile": "Dockerfile-cuda"
   },
   {
+    "name": "blackwell-103",
+    "imageNamePrefix": "103-",
+    "runOn": "always",
+    "sccache": true,
+    "cudaComputeCap": 103,
+    "grpc": true,
+    "dockerfile": "Dockerfile-cuda"
+  },
+  {
     "name": "blackwell-120",
     "imageNamePrefix": "120-",
     "runOn": "always",
