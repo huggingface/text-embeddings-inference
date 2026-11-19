@@ -42,6 +42,12 @@ pub trait Backend {
 
     fn is_padded(&self) -> bool;
 
+    /// Whether the model runs on the CPU. Startup warmup uses a single sequence for padded
+    /// models on the CPU, where a full `max_batch_tokens` batch can take minutes.
+    fn is_cpu(&self) -> bool {
+        false
+    }
+
     fn supports_token_embeddings(&self) -> bool {
         true
     }

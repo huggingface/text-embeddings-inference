@@ -83,6 +83,7 @@ pub struct Backend {
     health_receiver: watch::Receiver<bool>,
     _backend_thread: Arc<BackendThread>,
     pub padded_model: bool,
+    pub cpu: bool,
     pub max_batch_size: Option<usize>,
     pub supports_token_embeddings: bool,
     pub model_type: ModelType,
@@ -116,6 +117,7 @@ impl Backend {
         )
         .await?;
         let padded_model = backend.is_padded();
+        let cpu = backend.is_cpu();
         let max_batch_size = backend.max_batch_size();
         let supports_token_embeddings = backend.supports_token_embeddings();
 
@@ -128,6 +130,7 @@ impl Backend {
             health_receiver,
             _backend_thread,
             padded_model,
+            cpu,
             max_batch_size,
             supports_token_embeddings,
             model_type,
@@ -323,9 +326,11 @@ impl Backend {
                 .await;
         }
 
-        // In padded_model (CPU), use minimal warmup size (max_input_length tokens) for fast startup
-        // Non-padded (GPU), use full max_batch_tokens to exercise production batching limits
-        let warmup_tokens = if padded_model {
+        // Padded models on the CPU use a minimal warmup (max_input_length tokens) for fast startup.
+        // Everywhere else, use the full max_batch_tokens to exercise production batching limits:
+        // padded models on an accelerator (e.g. MPNet, DeBERTa-v2 on CUDA) need the most memory
+        // for a full batch, so it should fail at startup rather than on the first large request.
+        let warmup_tokens = if padded_model && self.cpu {
             max_input_length.min(max_batch_tokens)
         } else {
             max_batch_tokens
@@ -1078,9 +1083,57 @@ mod tests {
                 health_sender,
             )),
             padded_model: false,
+            cpu: false,
             max_batch_size: None,
             supports_token_embeddings,
             model_type: ModelType::Embedding(Pool::Cls),
+        }
+    }
+
+    /// Backend that reports the number of tokens in each forward pass
+    struct TokenCountBackend(std_mpsc::Sender<usize>);
+
+    impl CoreBackend for TokenCountBackend {
+        fn health(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+
+        fn is_padded(&self) -> bool {
+            false
+        }
+
+        fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError> {
+            let _ = self.0.send(batch.input_ids.len());
+            Ok(Embeddings::default())
+        }
+
+        fn predict(&self, batch: Batch) -> Result<Predictions, BackendError> {
+            let _ = self.0.send(batch.input_ids.len());
+            Ok(Predictions::default())
+        }
+    }
+
+    /// Only padded models on the CPU warm up with a single sequence. Padded models on an
+    /// accelerator (e.g. MPNet or DeBERTa-v2 on CUDA) need the full `max_batch_tokens` batch,
+    /// otherwise a batch that does not fit in memory is first seen in production.
+    #[tokio::test]
+    async fn warmup_runs_full_batch_unless_padded_on_cpu() {
+        for (padded_model, cpu, expected) in [
+            (false, false, 64),
+            (false, true, 64),
+            (true, false, 64),
+            (true, true, 16),
+        ] {
+            let (sender, receiver) = std_mpsc::channel();
+            let mut backend = test_backend(TokenCountBackend(sender));
+            backend.padded_model = padded_model;
+            backend.cpu = cpu;
+            backend.warmup(16, 64, None, padded_model).await.unwrap();
+            assert_eq!(
+                receiver.recv().unwrap(),
+                expected,
+                "padded_model={padded_model} cpu={cpu}"
+            );
         }
     }
 

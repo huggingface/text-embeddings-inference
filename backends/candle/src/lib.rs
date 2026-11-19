@@ -653,6 +653,10 @@ impl Backend for CandleBackend {
         self.model.is_padded()
     }
 
+    fn is_cpu(&self) -> bool {
+        matches!(self.device, Device::Cpu)
+    }
+
     fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError> {
         let batch_size = batch.len();
         let pooled_indices = batch.pooled_indices.clone();

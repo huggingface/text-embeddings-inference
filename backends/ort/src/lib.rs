@@ -404,6 +404,10 @@ impl Backend for OrtBackend {
         true
     }
 
+    fn is_cpu(&self) -> bool {
+        true
+    }
+
     fn supports_token_embeddings(&self) -> bool {
         self.session
             .lock()
