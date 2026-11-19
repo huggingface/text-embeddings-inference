@@ -42,6 +42,11 @@ pub trait Backend {
 
     fn is_padded(&self) -> bool;
 
+    /// Whether the model runs on CUDA, where padded models warm up with a full batch.
+    fn is_cuda(&self) -> bool {
+        false
+    }
+
     fn supports_token_embeddings(&self) -> bool {
         true
     }
