@@ -653,8 +653,8 @@ impl Backend for CandleBackend {
         self.model.is_padded()
     }
 
-    fn is_cpu(&self) -> bool {
-        matches!(self.device, Device::Cpu)
+    fn is_cuda(&self) -> bool {
+        matches!(self.device, Device::Cuda(_))
     }
 
     fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError> {
