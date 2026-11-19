@@ -326,16 +326,13 @@ impl Backend {
                 .await;
         }
 
-        // Warm up with the largest batch the queue can build, so a batch that doesn't fit in GPU memory
-        // fails at startup rather than on the first large request. The queue pads every sequence of a
-        // padded model (e.g. MPNet, DeBERTa-v2) to the longest, so its largest batch is whole
-        // max_input_length sequences. Padded models off CUDA use a single sequence instead: a full
-        // batch can take minutes on the CPU, and Metal swaps rather than failing.
-        let warmup_tokens = if !padded_model {
+        // Warm up with the full max_batch_tokens, so a batch that doesn't fit in GPU memory fails at
+        // startup rather than on the first large request. For a padded model (e.g. MPNet, DeBERTa-v2)
+        // this runs one padded sequence more than the queue ever batches; that margin is intended, as
+        // memory use grows after the first large batch. Padded models off CUDA use a single sequence
+        // instead: a full batch can take minutes on the CPU, and Metal swaps rather than failing.
+        let warmup_tokens = if !padded_model || self.cuda {
             max_batch_tokens
-        } else if self.cuda {
-            // The router caps max_input_length at max_batch_tokens, so this is at least one sequence.
-            max_batch_tokens / max_input_length * max_input_length
         } else {
             max_input_length.min(max_batch_tokens)
         };
@@ -1117,17 +1114,15 @@ mod tests {
         }
     }
 
-    /// Padded models warm up with the largest batch the queue can build only on CUDA: one sequence elsewhere, and
-    /// whole `max_input_length` sequences on CUDA, since the queue pads each sequence to the longest. Unpadded
-    /// models always warm up with `max_batch_tokens`.
+    /// Padded models warm up with the full `max_batch_tokens` only on CUDA, and with one sequence elsewhere.
+    /// Unpadded models always warm up with `max_batch_tokens`.
     #[tokio::test]
     async fn warmup_batch_by_padding_and_device() {
-        // max_input_length 16, max_batch_tokens 70: a padded batch holds at most 4 × 16 = 64 tokens.
         for (padded_model, cuda, expected) in [
             (false, false, 70),
             (false, true, 70),
             (true, false, 16),
-            (true, true, 64),
+            (true, true, 70),
         ] {
             let (sender, receiver) = std_mpsc::channel();
             let mut backend = test_backend(TokenCountBackend(sender));
