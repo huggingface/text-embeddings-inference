@@ -326,11 +326,9 @@ impl Backend {
                 .await;
         }
 
-        // Warm up with the full max_batch_tokens, so a batch that doesn't fit in GPU memory fails at
-        // startup rather than on the first large request. For a padded model (e.g. MPNet, DeBERTa-v2)
-        // this runs one padded sequence more than the queue ever batches; that margin is intended, as
-        // memory use grows after the first large batch. Padded models off CUDA use a single sequence
-        // instead: a full batch can take minutes on the CPU, and Metal swaps rather than failing.
+        // A full batch makes a GPU that's too small fail at startup, not on the first large request.
+        // For padded models it's slightly larger than any real batch, which leaves headroom on purpose.
+        // Off CUDA, padded models use one sequence: a full batch is slow on the CPU and swaps on Metal.
         let warmup_tokens = if !padded_model || self.cuda {
             max_batch_tokens
         } else {
@@ -1114,8 +1112,7 @@ mod tests {
         }
     }
 
-    /// Padded models warm up with the full `max_batch_tokens` only on CUDA, and with one sequence elsewhere.
-    /// Unpadded models always warm up with `max_batch_tokens`.
+    /// Padded models warm up with one sequence except on CUDA.
     #[tokio::test]
     async fn warmup_batch_by_padding_and_device() {
         for (padded_model, cuda, expected) in [

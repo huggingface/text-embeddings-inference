@@ -42,8 +42,7 @@ pub trait Backend {
 
     fn is_padded(&self) -> bool;
 
-    /// Whether the model runs on CUDA. Startup warmup runs the largest padded batch only there,
-    /// where a batch that doesn't fit in GPU memory fails instead of swapping or crawling.
+    /// Whether the model runs on CUDA, where padded models warm up with a full batch.
     fn is_cuda(&self) -> bool {
         false
     }
