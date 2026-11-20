@@ -263,3 +263,12 @@ export OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer%20token"
 
 If `OTEL_EXPORTER_OTLP_TRACES_HEADERS` is set, it replaces `OTEL_EXPORTER_OTLP_HEADERS`
 for trace exports. The protocol, endpoint handling, and header settings also apply to the Python backend.
+
+The router adds the attributes from `OTEL_RESOURCE_ATTRIBUTES` to the resource of its exported traces:
+
+```bash
+export OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production,service.namespace=search"
+```
+
+`service.name` is always taken from `--otlp-service-name` (or `OTLP_SERVICE_NAME`), which takes priority over
+`OTEL_SERVICE_NAME` and a `service.name` entry in `OTEL_RESOURCE_ATTRIBUTES`.

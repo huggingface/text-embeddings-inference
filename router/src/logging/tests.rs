@@ -1,17 +1,16 @@
-use super::{otlp_exporter, JsonWithTraceIds, OtlpProtocol};
+use super::{otlp_exporter, otlp_resource, JsonWithTraceIds, OtlpProtocol};
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Response, Server};
 use opentelemetry::trace::{
     Span, SpanContext, SpanId, TraceContextExt, TraceFlags, TraceId, Tracer, TracerProvider,
 };
 use opentelemetry::Context;
-use opentelemetry::KeyValue;
 use opentelemetry_proto::tonic::collector::trace::v1::{
     trace_service_server::{TraceService, TraceServiceServer},
     ExportTraceServiceRequest, ExportTraceServiceResponse,
 };
 use opentelemetry_proto::tonic::common::v1::any_value::Value;
-use opentelemetry_sdk::{trace, Resource};
+use opentelemetry_sdk::trace;
 use prost::Message;
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -57,6 +56,14 @@ fn run_isolated(case: &str) {
             "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
             "authorization=Bearer%20trace%2Ctoken%3Dvalue%2520,x-signal=trace",
         );
+    }
+    if case == "http-resource" {
+        command
+            .env(
+                "OTEL_RESOURCE_ATTRIBUTES",
+                "deployment.environment=staging,service.name=attributes-service",
+            )
+            .env("OTEL_SERVICE_NAME", "environment-service");
     }
     let _certificates = if case.starts_with("https-") {
         let directory = tempfile::tempdir().unwrap();
@@ -110,6 +117,11 @@ fn http_generic_endpoint_overrides_the_cli_endpoint() {
 #[test]
 fn http_trace_endpoint_overrides_generic_and_cli_endpoints() {
     run_isolated("http-trace-endpoint");
+}
+
+#[test]
+fn resource_keeps_environment_attributes_and_the_cli_service_name() {
+    run_isolated("http-resource");
 }
 
 #[test]
@@ -174,6 +186,7 @@ fn otlp_export_child() {
                 match case.as_str() {
                     "http-generic"
                     | "http-signal"
+                    | "http-resource"
                     | "http-generic-endpoint"
                     | "http-trace-endpoint" => check_http(&case, listener).await,
                     "https-generic" => check_https(&case).await,
@@ -216,12 +229,7 @@ async fn export_span(endpoint: &str, protocol: OtlpProtocol) {
         .build_span_exporter()
         .unwrap();
     let provider = trace::TracerProvider::builder()
-        .with_config(
-            trace::config().with_resource(Resource::new(vec![KeyValue::new(
-                "service.name",
-                "tei-export-test",
-            )])),
-        )
+        .with_config(trace::config().with_resource(otlp_resource("tei-export-test".to_owned())))
         .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
         .build();
     let tracer = provider.tracer("tei-export-test");
@@ -243,20 +251,18 @@ async fn export_span(endpoint: &str, protocol: OtlpProtocol) {
     .unwrap();
 }
 
+fn resource_attribute<'a>(request: &'a ExportTraceServiceRequest, key: &str) -> Option<&'a Value> {
+    let resource = request.resource_spans[0].resource.as_ref().unwrap();
+    let attribute = resource.attributes.iter().find(|a| a.key == key)?;
+    attribute.value.as_ref()?.value.as_ref()
+}
+
 fn assert_export(request: &ExportTraceServiceRequest) {
     assert_eq!(request.resource_spans.len(), 1);
     let resource_spans = &request.resource_spans[0];
-    let service_name = resource_spans
-        .resource
-        .as_ref()
-        .unwrap()
-        .attributes
-        .iter()
-        .find(|attribute| attribute.key == "service.name")
-        .unwrap();
     assert_eq!(
-        service_name.value.as_ref().unwrap().value,
-        Some(Value::StringValue("tei-export-test".to_owned()))
+        resource_attribute(request, "service.name"),
+        Some(&Value::StringValue("tei-export-test".to_owned()))
     );
     assert_eq!(resource_spans.scope_spans.len(), 1);
     let spans = &resource_spans.scope_spans[0].spans;
@@ -323,6 +329,12 @@ async fn check_http(case: &str, listener: std::net::TcpListener) {
         assert_eq!(headers["content-type"], "application/x-protobuf");
         assert_headers(&headers, case);
         assert_export(&message);
+        if case == "http-resource" {
+            assert_eq!(
+                resource_attribute(&message, "deployment.environment"),
+                Some(&Value::StringValue("staging".to_owned()))
+            );
+        }
     }
     shutdown.send(()).unwrap();
     server.await.unwrap().unwrap();
