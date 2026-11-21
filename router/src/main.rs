@@ -73,6 +73,21 @@ struct Args {
     #[clap(default_value = "16384", long, env)]
     max_batch_tokens: usize,
 
+    /// Optionally bound the attention size of a batch for padded models, i.e. models running
+    /// without flash attention (CPU, MPS, Turing GPUs, ...).
+    ///
+    /// Padded models pad every input of a batch to the longest one, so the attention scores grow
+    /// with `batch_size * max_length^2` while `--max-batch-tokens` only bounds
+    /// `batch_size * max_length`. A full batch of 8192-token inputs needs 8 times the attention
+    /// memory of a full batch of 1024-token inputs, so a `--max-batch-tokens` that suits short
+    /// inputs can run out of memory on long ones.
+    ///
+    /// For example `--max-batch-attention 67108864` (8192^2) still batches 16 inputs of 1024
+    /// tokens but runs inputs of 8192 tokens one at a time. A single input is always admitted.
+    /// Ignored for non-padded models.
+    #[clap(long, env)]
+    max_batch_attention: Option<usize>,
+
     /// Optionally control the maximum number of individual requests in a batch
     #[clap(long, env)]
     max_batch_requests: Option<usize>,
@@ -269,6 +284,7 @@ async fn main() -> Result<()> {
         args.pooling,
         args.max_concurrent_requests,
         args.max_batch_tokens,
+        args.max_batch_attention,
         args.max_batch_requests,
         args.max_client_batch_size,
         args.auto_truncate,

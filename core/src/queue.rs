@@ -42,6 +42,7 @@ impl Queue {
     pub fn new(
         padded_model: bool,
         max_batch_tokens: usize,
+        max_batch_attention: Option<usize>,
         max_batch_requests: Option<usize>,
         max_concurrent_requests: usize,
     ) -> Self {
@@ -55,6 +56,7 @@ impl Queue {
             queue_blocking_task(
                 padded_model,
                 max_batch_tokens,
+                max_batch_attention,
                 max_batch_requests,
                 max_concurrent_requests,
                 queue_receiver,
@@ -99,6 +101,7 @@ impl Queue {
 fn queue_blocking_task(
     padded_model: bool,
     max_batch_tokens: usize,
+    max_batch_attention: Option<usize>,
     max_batch_requests: Option<usize>,
     max_concurrent_requests: usize,
     mut queue_receiver: mpsc::Receiver<QueueCommand>,
@@ -161,6 +164,20 @@ fn queue_blocking_task(
                     if total_tokens > max_batch_tokens {
                         entries.push_front(entry);
                         break;
+                    }
+
+                    // For padded models the attention scores of a batch scale with
+                    // `batch_size * max_length^2`, not with the token count bounded above.
+                    // The first entry is always admitted.
+                    if let (true, Some(max_batch_attention)) = (padded_model, max_batch_attention) {
+                        let padded_length = max(max_length as usize, entry_tokens);
+                        let attention = padded_length
+                            .saturating_mul(padded_length)
+                            .saturating_mul(metadata.len() + 1);
+                        if !metadata.is_empty() && attention > max_batch_attention {
+                            entries.push_front(entry);
+                            break;
+                        }
                     }
 
                     match entry.metadata.pooling {
@@ -319,7 +336,7 @@ mod tests {
     fn test_queue_size_counts_batched_requests_until_dispatched() {
         let _lock = queue_size_lock();
         let runtime = Runtime::new().unwrap();
-        let queue = Queue::new(false, 1024, None, 16);
+        let queue = Queue::new(false, 1024, None, None, 16);
 
         let _receivers: Vec<_> = (0..4).map(|_| append(&queue, 8)).collect();
         wait_for_queue_size(4);
@@ -344,7 +361,7 @@ mod tests {
         let _lock = queue_size_lock();
         let runtime = Runtime::new().unwrap();
         // Room for two 8 tokens requests per batch
-        let queue = Queue::new(false, 16, None, 16);
+        let queue = Queue::new(false, 16, None, None, 16);
 
         let _first = append(&queue, 8);
         let dropped = append(&queue, 8);
@@ -367,5 +384,61 @@ mod tests {
 
         record_batch_dispatched(metadata.len());
         assert_eq!(queue_size(), 0.0);
+    }
+
+    /// Appends requests of `lengths` tokens and returns the sizes of the batches the queue builds
+    fn batch_sizes(
+        padded_model: bool,
+        max_batch_tokens: usize,
+        max_batch_attention: Option<usize>,
+        lengths: &[usize],
+    ) -> Vec<usize> {
+        let runtime = Runtime::new().unwrap();
+        let queue = Queue::new(
+            padded_model,
+            max_batch_tokens,
+            max_batch_attention,
+            None,
+            64,
+        );
+        let _receivers: Vec<_> = lengths.iter().map(|&n| append(&queue, n)).collect();
+        let mut sizes = Vec::new();
+        while let Some((metadata, _)) = runtime.block_on(queue.next_batch()) {
+            record_batch_dispatched(metadata.len());
+            sizes.push(metadata.len());
+        }
+        sizes
+    }
+
+    #[test]
+    fn test_padded_model_without_attention_limit_batches_long_inputs_together() {
+        let _lock = queue_size_lock();
+        assert_eq!(batch_sizes(true, 16384, None, &[8192, 8192]), vec![2]);
+    }
+
+    #[test]
+    fn test_attention_limit_runs_long_inputs_alone() {
+        let _lock = queue_size_lock();
+        let limit = Some(8192 * 8192);
+        assert_eq!(batch_sizes(true, 16384, limit, &[8192, 8192]), vec![1, 1]);
+        // A long input is not padded together with short ones either
+        assert_eq!(
+            batch_sizes(true, 16384, limit, &[8192, 1024, 1024]),
+            vec![1, 2]
+        );
+        // Short inputs are still batched as before
+        assert_eq!(batch_sizes(true, 16384, limit, &[1024; 16]), vec![16]);
+    }
+
+    #[test]
+    fn test_attention_limit_always_admits_a_single_input() {
+        let _lock = queue_size_lock();
+        assert_eq!(batch_sizes(true, 16384, Some(1), &[8192, 8192]), vec![1, 1]);
+    }
+
+    #[test]
+    fn test_attention_limit_is_ignored_for_non_padded_models() {
+        let _lock = queue_size_lock();
+        assert_eq!(batch_sizes(false, 16384, Some(1), &[8192, 8192]), vec![2]);
     }
 }
