@@ -121,3 +121,38 @@ fn token_only_output_can_pool_mixed_batches() {
         assert_raw(&mixed, 2, &[2.0]);
     }
 }
+
+#[test]
+fn real_tokens_keep_their_positions_when_batched_or_padded() {
+    for padding_side in [PaddingSide::Left, PaddingSide::Right] {
+        let mut backend = backend(TOKEN_OUTPUT, padding_side, Pool::Mean);
+        backend.position_ids = true;
+        let mut mixed = batch(vec![0, 1, 2], vec![]);
+        // The tokenizer starts RoBERTa positions at pad_token_id + 1.
+        mixed.position_ids = vec![2, 3, 4, 2, 3, 2];
+        let single = Batch {
+            input_ids: vec![4, 5],
+            token_type_ids: vec![0; 2],
+            position_ids: vec![2, 3],
+            cumulative_seq_lengths: vec![0, 2],
+            max_length: 2,
+            pooled_indices: vec![0],
+            raw_indices: vec![],
+        };
+
+        for batch in [mixed, single] {
+            let (inputs, _) = backend
+                .prepare_inputs(&batch, &backend.tokenizer_config.padding_side)
+                .unwrap();
+            let real_positions: Vec<_> = inputs
+                .position_ids
+                .unwrap()
+                .iter()
+                .zip(inputs.attention_mask.iter())
+                .filter_map(|(&pos, &mask)| (mask == 1).then_some(pos))
+                .collect();
+            let expected: Vec<_> = batch.position_ids.into_iter().map(i64::from).collect();
+            assert_eq!(real_positions, expected);
+        }
+    }
+}

@@ -209,11 +209,11 @@ impl OrtBackend {
                             let seq_length = (end - start) as u32;
                             input_lengths.push(seq_length as f32);
 
-                            for (pos, j) in (start..end).enumerate() {
+                            for j in start..end {
                                 input_ids.push(batch.input_ids[j] as i64);
                                 attention_mask.push(1_i64);
                                 token_type_ids.push(batch.token_type_ids[j] as i64);
-                                position_ids.push(pos as i64);
+                                position_ids.push(i64::from(batch.position_ids[j]));
                             }
 
                             let padding = batch.max_length - seq_length;
@@ -259,11 +259,11 @@ impl OrtBackend {
                                 }
                             }
 
-                            for (pos, j) in (start..end).enumerate() {
+                            for j in start..end {
                                 input_ids.push(batch.input_ids[j] as i64);
                                 attention_mask.push(1_i64);
                                 token_type_ids.push(batch.token_type_ids[j] as i64);
-                                position_ids.push((padding + pos as u32) as i64);
+                                position_ids.push(i64::from(batch.position_ids[j]));
                             }
                         }
 
@@ -279,7 +279,7 @@ impl OrtBackend {
                 }
             } else {
                 let attention_mask = vec![1_i64; elems];
-                let position_ids: Vec<i64> = (0..max_length as i64).collect();
+                let position_ids = batch.position_ids.iter().copied().map(i64::from).collect();
 
                 (
                     batch.input_ids.iter().map(|v| *v as i64).collect(),
