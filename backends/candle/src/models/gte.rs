@@ -21,8 +21,8 @@ pub struct GTEConfig {
     pub hidden_act: HiddenAct,
     pub max_position_embeddings: usize,
     pub type_vocab_size: usize,
-    pub layer_norm_type: String,
     pub layer_norm_eps: f32,
+    #[serde(default = "default_position_embedding_type")]
     pub position_embedding_type: PositionEmbeddingType,
     pub rope_theta: Option<f32>,
     pub rope_parameters: Option<RopeParameters>,
@@ -32,6 +32,11 @@ pub struct GTEConfig {
     #[serde(default)]
     pub logn_attention_clip1: bool,
     pub id2label: Option<HashMap<String, String>>,
+}
+
+// Native Transformers GTE configs have no `position_embedding_type`, and GTE always uses rope
+fn default_position_embedding_type() -> PositionEmbeddingType {
+    PositionEmbeddingType::Rope
 }
 
 struct GTEAttention {
@@ -431,6 +436,10 @@ impl GTEModel {
             vb.device(),
             config.rope_scaling.as_ref(),
         )?;
+        let inv_freqs = match &config.rope_parameters {
+            Some(rope_parameters) => rope_parameters.scale(inv_freqs)?,
+            None => inv_freqs,
+        };
 
         let rotary_cache =
             get_cos_sin(config.max_position_embeddings, &inv_freqs, vb.dtype(), true)?;

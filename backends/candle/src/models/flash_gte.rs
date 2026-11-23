@@ -214,6 +214,10 @@ impl FlashGTEModel {
             vb.device(),
             config.rope_scaling.as_ref(),
         )?;
+        let inv_freqs = match &config.rope_parameters {
+            Some(rope_parameters) => rope_parameters.scale(inv_freqs)?,
+            None => inv_freqs,
+        };
 
         let (cos_cache, sin_cache) = get_cos_sin(
             config.max_position_embeddings,
