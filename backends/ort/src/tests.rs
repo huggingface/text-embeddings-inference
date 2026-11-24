@@ -6,6 +6,9 @@ use super::*;
 const DUAL_OUTPUTS: &[u8] = include_bytes!("../tests/fixtures/dual.onnx");
 const POOLED_OUTPUT: &[u8] = include_bytes!("../tests/fixtures/pooled.onnx");
 const TOKEN_OUTPUT: &[u8] = include_bytes!("../tests/fixtures/token-only.onnx");
+// Same token output as above, plus `past_key_values.0.{key,value}` inputs of shape
+// [batch, 2, past_sequence, 4] (2 key/value heads of size 4) whose sums are added to it.
+const PAST_KEY_VALUES: &[u8] = include_bytes!("../tests/fixtures/past-key-values.onnx");
 
 fn backend(graph: &[u8], padding_side: PaddingSide, pool: Pool) -> OrtBackend {
     let session = Session::builder()
@@ -22,7 +25,9 @@ fn backend(graph: &[u8], padding_side: PaddingSide, pool: Pool) -> OrtBackend {
             model_type: None,
             hidden_size: 2,
             num_hidden_layers: 1,
+            num_attention_heads: None,
             num_key_value_heads: None,
+            head_dim: None,
         },
         tokenizer_config: TokenizerConfig { padding_side },
         token_type_ids: false,
@@ -119,5 +124,24 @@ fn token_only_output_can_pool_mixed_batches() {
         assert_pooled(&mixed, 1, &expected);
         assert_raw(&mixed, 0, &[2.0, 3.0, 4.0]);
         assert_raw(&mixed, 2, &[2.0]);
+    }
+}
+
+#[test]
+fn past_key_values_use_the_attention_head_size() {
+    // GQA with 4 attention heads of size 4 sharing 2 key/value heads, once with the head size
+    // derived from `hidden_size` and once with an explicit `head_dim` as in Qwen3 configs
+    for (hidden_size, num_attention_heads, head_dim) in [(16, 4, None), (64, 8, Some(4))] {
+        let mut backend = backend(PAST_KEY_VALUES, PaddingSide::Right, Pool::Mean);
+        backend.past_key_values = true;
+        backend.config.hidden_size = hidden_size;
+        backend.config.num_attention_heads = Some(num_attention_heads);
+        backend.config.num_key_value_heads = Some(2);
+        backend.config.head_dim = head_dim;
+
+        let pooled = backend.embed(batch(vec![0, 1, 2], vec![])).unwrap();
+        assert_pooled(&pooled, 0, &[3.0, 1.0]);
+        assert_pooled(&pooled, 1, &[4.5, 1.0]);
+        assert_pooled(&pooled, 2, &[2.0, 1.0]);
     }
 }
