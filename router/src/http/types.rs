@@ -637,4 +637,60 @@ mod tests {
             assert!(truncate.get("default").is_none(), "{name}: {truncate}");
         }
     }
+
+    fn openai_request(input: serde_json::Value) -> OpenAICompatRequest {
+        serde_json::from_value(serde_json::json!({ "input": input })).unwrap()
+    }
+
+    #[test]
+    fn openai_input_accepts_strings_and_token_ids() {
+        assert!(matches!(
+            openai_request(serde_json::json!("hello")).input,
+            Input::Single(InputType::String(s)) if s == "hello"
+        ));
+        // A flat list of integers is a single tokenized input, not a batch
+        assert!(matches!(
+            openai_request(serde_json::json!([1, 2, 3])).input,
+            Input::Single(InputType::Ids(ids)) if ids == [1, 2, 3]
+        ));
+
+        let Input::Batch(batch) = openai_request(serde_json::json!(["a", "b"])).input else {
+            panic!("Expected a batch of strings");
+        };
+        assert!(
+            matches!(&batch[..], [InputType::String(a), InputType::String(b)] if a == "a" && b == "b")
+        );
+
+        let Input::Batch(batch) = openai_request(serde_json::json!([[1, 2], [3]])).input else {
+            panic!("Expected a batch of token ids");
+        };
+        assert!(
+            matches!(&batch[..], [InputType::Ids(a), InputType::Ids(b)] if a == &[1, 2] && b == &[3])
+        );
+    }
+
+    #[test]
+    fn openai_request_options() {
+        let request = openai_request(serde_json::json!("hello"));
+        assert!(matches!(request.encoding_format, EncodingFormat::Float));
+        assert_eq!(request.dimensions, None);
+
+        let request: OpenAICompatRequest = serde_json::from_value(serde_json::json!({
+            "input": "hello",
+            "model": "any",
+            "encoding_format": "base64",
+            "dimensions": 256,
+        }))
+        .unwrap();
+        assert!(matches!(request.encoding_format, EncodingFormat::Base64));
+        assert_eq!(request.dimensions, Some(256));
+
+        for invalid in [
+            serde_json::json!({ "input": "hello", "encoding_format": "int8" }),
+            serde_json::json!({ "input": "hello", "dimensions": -1 }),
+            serde_json::json!({ "input": [1.5] }),
+        ] {
+            assert!(serde_json::from_value::<OpenAICompatRequest>(invalid).is_err());
+        }
+    }
 }
