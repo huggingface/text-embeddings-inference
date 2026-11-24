@@ -467,8 +467,9 @@ impl EncodingInput {
                 truncate_string(s, limit);
             }
             EncodingInput::Dual(s1, s2) => {
-                truncate_string(s1, limit / 2);
-                truncate_string(s2, limit / 2);
+                let first_limit = (limit / 2).max(limit.saturating_sub(s2.chars().count()));
+                truncate_string(s1, first_limit);
+                truncate_string(s2, limit - s1.chars().count());
             }
             EncodingInput::Ids(_) => {}
         }
@@ -612,6 +613,45 @@ mod tests {
             encode(TruncationDirection::Left, &mut tokenizer),
             vec![1; 4]
         );
+    }
+
+    #[test]
+    fn long_pair_uses_the_shorter_inputs_unused_character_budget() {
+        let model = WordLevel::builder()
+            .vocab(
+                [("a".to_string(), 0), ("b".to_string(), 1)]
+                    .into_iter()
+                    .collect(),
+            )
+            .unk_token("[UNK]".to_string())
+            .build()
+            .unwrap();
+        let mut tokenizer = Tokenizer::new(model);
+        tokenizer.with_pre_tokenizer(Some(Whitespace {}));
+        let document = format!("{}b b{}", " ".repeat(750), " ".repeat(750));
+
+        for direction in [TruncationDirection::Left, TruncationDirection::Right] {
+            for (first, second, expected) in [
+                ("a".to_string(), document.clone(), vec![0, 1, 1]),
+                (document.clone(), "a".to_string(), vec![1, 1, 0]),
+                (String::new(), document.clone(), vec![1, 1]),
+                (document.clone(), String::new(), vec![1, 1]),
+            ] {
+                let encoding = encode_input(
+                    EncodingInput::Dual(first, second),
+                    true,
+                    direction,
+                    4,
+                    0,
+                    None,
+                    None,
+                    None,
+                    &mut tokenizer,
+                )
+                .unwrap();
+                assert_eq!(encoding.input_ids, expected);
+            }
+        }
     }
 
     #[test]
