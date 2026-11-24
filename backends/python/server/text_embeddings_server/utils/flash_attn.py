@@ -11,6 +11,8 @@ if os.getenv("USE_FLASH_ATTENTION", "").lower() == "false":
 
 HAS_FLASH_ATTN = False
 HAS_FLASH_ATTN_V2 = False
+# Imported by decoder models on every backend. Only the ROCm branch may set this True.
+ROCM_HAS_FA_VARLEN = False
 
 is_hpu = is_hpu()
 is_rocm = is_rocm()
