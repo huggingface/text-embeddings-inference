@@ -430,10 +430,10 @@ fn get_backend_model_type(
     for arch in &config.architectures {
         // Edge case affecting `Alibaba-NLP/gte-multilingual-base` and possibly other fine-tunes of
         // the same base model. More context at https://huggingface.co/Alibaba-NLP/gte-multilingual-base/discussions/7
-        if arch == "NewForTokenClassification"
+        if (arch == "NewForTokenClassification" || arch == "GteForTokenClassification")
             && (config.id2label.is_none() | config.label2id.is_none())
         {
-            tracing::warn!("Provided `--model-id` is likely an AlibabaNLP GTE model, but the `config.json` contains the architecture `NewForTokenClassification` but it doesn't contain the `id2label` and `label2id` mapping, so `NewForTokenClassification` architecture will be ignored.");
+            tracing::warn!("Provided `--model-id` is likely an AlibabaNLP GTE model, but the `config.json` contains the architecture `{arch}` but it doesn't contain the `id2label` and `label2id` mapping, so `{arch}` architecture will be ignored.");
             continue;
         }
 
