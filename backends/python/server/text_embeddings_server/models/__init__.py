@@ -14,7 +14,6 @@ from text_embeddings_server.models.classification_model import ClassificationMod
 from text_embeddings_server.models.jinaBert_model import FlashJinaBert
 from text_embeddings_server.models.flash_mistral import FlashMistral
 from text_embeddings_server.models.flash_qwen3 import FlashQwen3
-from text_embeddings_server.utils.flash_eligibility import bert_flash_eligible
 from text_embeddings_server.utils.device import get_device, is_rocm, use_ipex
 
 __all__ = ["Model"]
@@ -88,12 +87,11 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
 
     if config.model_type == "bert":
         config: BertConfig
-        if bert_flash_eligible(
-            use_ipex(),
-            device.type,
-            config.position_embedding_type,
-            datatype,
-            FLASH_ATTENTION,
+        if (
+            (use_ipex() or device.type in ["cuda", "hpu"])
+            and config.position_embedding_type == "absolute"
+            and datatype in [torch.float16, torch.bfloat16]
+            and FLASH_ATTENTION
         ):
             if pool != "cls":
                 if config.architectures[0].endswith("ForMaskedLM") and pool == "splade":
