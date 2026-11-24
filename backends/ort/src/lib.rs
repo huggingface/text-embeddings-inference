@@ -37,7 +37,9 @@ pub struct Config {
     #[serde(alias = "n_layer")]
     pub num_hidden_layers: usize,
     #[serde(alias = "n_head")]
+    pub num_attention_heads: Option<usize>,
     pub num_key_value_heads: Option<usize>,
+    pub head_dim: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -311,13 +313,23 @@ impl OrtBackend {
         let input_lengths = ndarray::Array1::from_vec(input_lengths);
 
         let past_key_values = if self.past_key_values {
-            let hidden_size = self.config.hidden_size;
             let num_hidden_layers = self.config.num_hidden_layers;
+            let num_attention_heads = self.config.num_attention_heads.ok_or_else(|| {
+                BackendError::Inference(
+                    "`num_attention_heads` is required in `config.json` to build the `past_key_values` inputs"
+                        .to_string(),
+                )
+            })?;
+            // NOTE: with GQA/MQA the key/value heads are shared, but they keep the size of the
+            // attention heads
             let num_key_value_heads = self
                 .config
                 .num_key_value_heads
-                .unwrap_or(self.config.num_hidden_layers);
-            let head_size = hidden_size / num_key_value_heads;
+                .unwrap_or(num_attention_heads);
+            let head_size = self
+                .config
+                .head_dim
+                .unwrap_or(self.config.hidden_size / num_attention_heads);
             let mut arrays = Vec::new();
 
             for _ in 0..num_hidden_layers {

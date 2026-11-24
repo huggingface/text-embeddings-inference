@@ -88,8 +88,7 @@ def get_model(model_path: Path, dtype: Optional[str], pool: str):
     if config.model_type == "bert":
         config: BertConfig
         if (
-            use_ipex()
-            or device.type in ["cuda", "hpu"]
+            (use_ipex() or device.type in ["cuda", "hpu"])
             and config.position_embedding_type == "absolute"
             and datatype in [torch.float16, torch.bfloat16]
             and FLASH_ATTENTION
