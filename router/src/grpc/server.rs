@@ -8,7 +8,7 @@ use crate::grpc::{
     PredictRequest, PredictResponse, Prediction, Rank, RerankRequest, RerankResponse,
 };
 use crate::ResponseMetadata;
-use crate::{grpc, shutdown, ErrorResponse, ErrorType, Info, ModelType};
+use crate::{grpc, shutdown, sort_by_score_descending, ErrorResponse, ErrorType, Info, ModelType};
 use futures::future::join_all;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use std::future::Future;
@@ -312,9 +312,7 @@ impl TextEmbeddingsService {
                 label: id2label.get(&i.to_string()).unwrap().clone(),
             });
         }
-        // Reverse sort
-        predictions.sort_by(|x, y| x.score.partial_cmp(&y.score).unwrap());
-        predictions.reverse();
+        sort_by_score_descending(&mut predictions, |x| x.score);
 
         response_metadata.record_span(&span);
         response_metadata.record_metrics();
@@ -1018,9 +1016,7 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
             })
         }
 
-        // Reverse sort
-        ranks.sort_by(|x, y| x.score.partial_cmp(&y.score).unwrap());
-        ranks.reverse();
+        sort_by_score_descending(&mut ranks, |x| x.score);
 
         let batch_size = batch_size as u64;
 
@@ -1292,9 +1288,7 @@ impl grpc::rerank_server::Rerank for TextEmbeddingsService {
             Err(err)?;
         }
 
-        // Reverse sort
-        ranks.sort_by(|x, y| x.score.partial_cmp(&y.score).unwrap());
-        ranks.reverse();
+        sort_by_score_descending(&mut ranks, |x| x.score);
 
         let batch_size = batch_size as u64;
 
