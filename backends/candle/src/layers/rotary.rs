@@ -4,8 +4,20 @@ use serde::Deserialize;
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct RopeParameters {
     pub rope_theta: f32,
-    #[allow(unused)]
     rope_type: String,
+    factor: Option<f32>,
+}
+
+impl RopeParameters {
+    /// Applies `linear` scaling to the inverse frequencies, the only scaled `rope_type` supported
+    pub fn scale(&self, inv_freqs: Tensor) -> Result<Tensor> {
+        match (self.rope_type.as_str(), self.factor) {
+            ("default", _) => Ok(inv_freqs),
+            ("linear", Some(factor)) => inv_freqs / factor as f64,
+            ("linear", None) => candle::bail!("`rope_type` `linear` requires a `factor`"),
+            (rope_type, _) => candle::bail!("`rope_type` `{rope_type}` is not supported"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -127,4 +139,50 @@ pub fn apply_rotary(
     let rotate_x = Tensor::cat(&[&x2.neg()?, &x1], D::Minus1)?;
     let rope = (x.broadcast_mul(cos)? + rotate_x.broadcast_mul(sin)?)?;
     Ok(rope)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linear_rope_parameters_match_ntk_rope_scaling() -> Result<()> {
+        // `gte-base-en-v1.5` and `gte-multilingual-base`, before and after their native config
+        for (theta, ntk_factor, rope_parameters) in [
+            (
+                500000.0,
+                2.0,
+                r#"{"factor": 1.0218971486541166, "rope_theta": 1000000.0, "rope_type": "linear"}"#,
+            ),
+            (
+                20000.0,
+                8.0,
+                r#"{"factor": 1.0671404006768237, "rope_theta": 160000.0, "rope_type": "linear"}"#,
+            ),
+        ] {
+            let ntk = RopeScaling::Ntk {
+                rope_type: "ntk".to_string(),
+                factor: ntk_factor,
+            };
+            let old = get_inv_freqs(64, theta, &Device::Cpu, Some(&ntk))?;
+            let linear: RopeParameters = serde_json::from_str(rope_parameters).unwrap();
+            let new = linear.scale(get_inv_freqs(64, linear.rope_theta, &Device::Cpu, None)?)?;
+
+            let diff = (old - new)?.abs()?.max_all()?.to_scalar::<f32>()?;
+            assert!(diff < 1e-7, "max abs diff {diff} for {rope_parameters}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_rope_parameters_are_rejected() {
+        for rope_parameters in [
+            r#"{"factor": 4.0, "rope_theta": 10000.0, "rope_type": "yarn"}"#,
+            r#"{"rope_theta": 10000.0, "rope_type": "linear"}"#,
+        ] {
+            let params: RopeParameters = serde_json::from_str(rope_parameters).unwrap();
+            let inv_freqs = get_inv_freqs(64, params.rope_theta, &Device::Cpu, None).unwrap();
+            assert!(params.scale(inv_freqs).is_err(), "{rope_parameters}");
+        }
+    }
 }
