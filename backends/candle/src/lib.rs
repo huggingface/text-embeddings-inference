@@ -1,6 +1,8 @@
 mod alibi;
 #[cfg(feature = "cuda")]
 mod compute_cap;
+#[cfg(any(feature = "cuda", test))]
+mod cuda_mempool;
 #[cfg(feature = "cuda")]
 mod flash_attn;
 mod layers;
@@ -238,7 +240,13 @@ impl CandleBackend {
         let device = if candle::utils::cuda_is_available() {
             #[cfg(feature = "cuda")]
             match compatible_compute_cap() {
-                Ok(true) => Device::new_cuda(0),
+                Ok(true) => {
+                    let device = Device::new_cuda(0);
+                    if device.is_ok() {
+                        cuda_mempool::configure_default_mempool(0);
+                    }
+                    device
+                }
                 Ok(false) => {
                     return Err(BackendError::Start(format!(
                         "Runtime compute cap {} is not compatible with compile time compute cap {}",
