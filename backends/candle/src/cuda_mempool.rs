@@ -1,8 +1,13 @@
+#[cfg(feature = "cuda")]
 use std::ffi::{c_int, c_void};
+#[cfg(feature = "cuda")]
 use std::mem::MaybeUninit;
 
+#[cfg(feature = "cuda")]
 use anyhow::Context;
+#[cfg(feature = "cuda")]
 use candle::cuda_backend::cudarc::driver;
+#[cfg(feature = "cuda")]
 use candle::cuda_backend::cudarc::driver::sys::{
     self, CUdevice_attribute::CU_DEVICE_ATTRIBUTE_MEMORY_POOLS_SUPPORTED,
     CUmemPool_attribute::CU_MEMPOOL_ATTR_RELEASE_THRESHOLD,
@@ -49,21 +54,23 @@ impl ReleaseThreshold {
     }
 }
 
-/// Configure `CU_MEMPOOL_ATTR_RELEASE_THRESHOLD` on the device's default CUDA memory pool.
+/// Set `CU_MEMPOOL_ATTR_RELEASE_THRESHOLD` on the CUDA device's default memory pool.
 ///
-/// By default CUDA sets the release threshold to `0`, causing `cuMemFreeAsync` to hand memory back
-/// to the OS/driver on every stream synchronization. Under Candle's per-forward temporary tensor
-/// allocations, this triggers frequent driver/UVM memory unmap ioctls that degrade throughput and
-/// cause severe latency spikes (up to hundreds of milliseconds on older drivers / virtualized
-/// hosts).
-///
-/// Setting the threshold to `u64::MAX` (or an explicit MiB cap via
-/// `CUDA_MEMPOOL_RELEASE_THRESHOLD_MB`) retains only the memory already allocated by this process
-/// without pre-allocating VRAM. Setting `CUDA_MEMPOOL_RELEASE_THRESHOLD_MB=0` keeps the CUDA
-/// driver default.
+/// Controlled by `CUDA_MEMPOOL_RELEASE_THRESHOLD_MB`: unset/`"unlimited"`/`"max"` sets
+/// `u64::MAX` (retaining only already-allocated buffers without pre-allocating VRAM),
+/// `"0"` keeps CUDA's driver default, and a positive integer caps retention in MiB.
+#[cfg(feature = "cuda")]
 pub fn configure_default_mempool(ordinal: usize) {
-    let raw = std::env::var(RELEASE_THRESHOLD_ENV).ok();
-    let threshold = ReleaseThreshold::from_env_value(raw.as_deref());
+    let threshold = match std::env::var(RELEASE_THRESHOLD_ENV) {
+        Ok(raw) => ReleaseThreshold::from_env_value(Some(&raw)),
+        Err(std::env::VarError::NotPresent) => ReleaseThreshold::Unlimited,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            tracing::warn!(
+                "Invalid non-UTF-8 value for {RELEASE_THRESHOLD_ENV}; falling back to unlimited"
+            );
+            ReleaseThreshold::Unlimited
+        }
+    };
 
     let Some(threshold_bytes) = threshold.as_bytes() else {
         tracing::info!(
@@ -79,10 +86,12 @@ pub fn configure_default_mempool(ordinal: usize) {
     }
 }
 
+#[cfg(feature = "cuda")]
 fn set_default_mempool_release_threshold(
     ordinal: usize,
     threshold_bytes: u64,
 ) -> Result<(), anyhow::Error> {
+    driver::result::init().context("cuInit failed")?;
     let ordinal = c_int::try_from(ordinal).context("CUDA device ordinal overflows c_int")?;
     let cu_dev = driver::result::device::get(ordinal).context("cuDeviceGet failed")?;
 
@@ -166,6 +175,10 @@ mod tests {
             ReleaseThreshold::Bytes(16384 * MIB)
         );
         assert_eq!(
+            ReleaseThreshold::from_env_value(Some("-1")),
+            ReleaseThreshold::Unlimited
+        );
+        assert_eq!(
             ReleaseThreshold::from_env_value(Some("invalid")),
             ReleaseThreshold::Unlimited
         );
@@ -175,5 +188,77 @@ mod tests {
         );
         assert_eq!(ReleaseThreshold::DriverDefault.as_bytes(), None);
         assert_eq!(ReleaseThreshold::Unlimited.as_bytes(), Some(u64::MAX));
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn test_set_and_readback_default_mempool_release_threshold() -> Result<(), anyhow::Error> {
+        if !candle::utils::cuda_is_available() {
+            return Ok(());
+        }
+
+        driver::result::init().context("cuInit failed")?;
+        let cu_dev = driver::result::device::get(0).context("cuDeviceGet failed")?;
+        let supported = unsafe {
+            driver::result::device::get_attribute(
+                cu_dev,
+                CU_DEVICE_ATTRIBUTE_MEMORY_POOLS_SUPPORTED,
+            )
+        }
+        .context("cuDeviceGetAttribute failed")?;
+        if supported == 0 {
+            return Ok(());
+        }
+
+        let mut pool = MaybeUninit::uninit();
+        unsafe {
+            sys::cuDeviceGetDefaultMemPool(pool.as_mut_ptr(), cu_dev)
+                .result()
+                .context("cuDeviceGetDefaultMemPool failed")?;
+        }
+        let pool = unsafe { pool.assume_init() };
+
+        let read_threshold = || -> Result<u64, anyhow::Error> {
+            let mut val: u64 = 0;
+            unsafe {
+                sys::cuMemPoolGetAttribute(
+                    pool,
+                    CU_MEMPOOL_ATTR_RELEASE_THRESHOLD,
+                    (&mut val as *mut u64).cast::<c_void>(),
+                )
+                .result()
+                .context("cuMemPoolGetAttribute failed")?;
+            }
+            Ok(val)
+        };
+
+        let original = read_threshold()?;
+
+        struct RestoreGuard {
+            pool: sys::CUmemoryPool,
+            original: u64,
+        }
+        impl Drop for RestoreGuard {
+            fn drop(&mut self) {
+                let mut val = self.original;
+                let _ = unsafe {
+                    sys::cuMemPoolSetAttribute(
+                        self.pool,
+                        CU_MEMPOOL_ATTR_RELEASE_THRESHOLD,
+                        (&mut val as *mut u64).cast::<c_void>(),
+                    )
+                };
+            }
+        }
+        let _guard = RestoreGuard { pool, original };
+
+        let target = 64 * MIB;
+        set_default_mempool_release_threshold(0, target)?;
+        assert_eq!(read_threshold()?, target);
+
+        set_default_mempool_release_threshold(0, u64::MAX)?;
+        assert_eq!(read_threshold()?, u64::MAX);
+
+        Ok(())
     }
 }

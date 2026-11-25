@@ -1,7 +1,7 @@
 mod alibi;
 #[cfg(feature = "cuda")]
 mod compute_cap;
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", test))]
 mod cuda_mempool;
 #[cfg(feature = "cuda")]
 mod flash_attn;
