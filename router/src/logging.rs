@@ -59,6 +59,15 @@ fn otlp_exporter(
     }
 }
 
+/// Resource attached to exported spans: the SDK defaults, which include the attributes from
+/// `OTEL_RESOURCE_ATTRIBUTES`, with `service.name` always set from `--otlp-service-name`.
+fn otlp_resource(service_name: String) -> Resource {
+    Resource::default().merge(&Resource::new(vec![KeyValue::new(
+        "service.name",
+        service_name,
+    )]))
+}
+
 /// JSON event formatter that adds the OpenTelemetry `trace_id` and `span_id` of the
 /// current span to each record, so log lines can be matched with their exported trace.
 /// Records outside of a span, or without the OpenTelemetry layer, are left unchanged.
@@ -201,10 +210,7 @@ pub fn init_logging(
         global::set_text_map_propagator(TraceContextPropagator::new());
 
         let trace_config = trace::config()
-            .with_resource(Resource::new(vec![KeyValue::new(
-                "service.name",
-                otlp_service_name,
-            )]))
+            .with_resource(otlp_resource(otlp_service_name))
             .with_sampler(Sampler::AlwaysOn);
 
         let tracer = otlp_exporter(otlp_endpoint, otlp_protocol).and_then(|exporter| {

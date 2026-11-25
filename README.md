@@ -518,6 +518,11 @@ Both protocols support authentication and custom headers through `OTEL_EXPORTER_
 `OTEL_EXPORTER_OTLP_TRACES_HEADERS`, when set, replaces the general header list for trace exports.
 These settings also apply to tracing in the Python backend.
 
+The router adds the attributes from `OTEL_RESOURCE_ATTRIBUTES` (comma-separated `key=value` pairs, for example
+`OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production"`) to the resource of its exported traces.
+`service.name` is always taken from `--otlp-service-name` (or `OTLP_SERVICE_NAME`), which takes priority over
+`OTEL_SERVICE_NAME` and a `service.name` entry in `OTEL_RESOURCE_ATTRIBUTES`.
+
 ### Prometheus Metrics
 
 `text-embeddings-inference` exports Prometheus metrics. The HTTP server serves them at `/metrics` on the API port by
