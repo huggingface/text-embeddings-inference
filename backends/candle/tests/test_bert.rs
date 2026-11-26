@@ -64,6 +64,8 @@ fn test_bert() -> Result<()> {
     assert_eq!(embeddings_batch[0], pooled_embeddings[0]);
     assert_eq!(raw_embeddings.len(), 8);
 
+    common::assert_raw_batch_matches_single(&backend, &tokenizer)?;
+
     Ok(())
 }
 
