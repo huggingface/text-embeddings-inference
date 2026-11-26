@@ -1236,6 +1236,7 @@ impl DebertaV2Model {
 
                 // Select values in the batch
                 outputs = outputs.index_select(&pooled_indices, 0)?;
+                input_lengths = input_lengths.index_select(&pooled_indices, 0)?;
                 Some(pooled_indices)
             } else {
                 None
@@ -1254,7 +1255,6 @@ impl DebertaV2Model {
                         if let Some(pooled_indices) = pooled_indices {
                             // Select values in the batch
                             attention_mask = attention_mask.index_select(&pooled_indices, 0)?;
-                            input_lengths = input_lengths.index_select(&pooled_indices, 0)?;
                         };
 
                         // Mask padded values

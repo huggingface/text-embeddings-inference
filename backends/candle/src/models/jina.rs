@@ -623,7 +623,7 @@ impl JinaBertModel {
         let input_ids = Tensor::from_vec(input_ids, shape, &self.device)?;
         let type_ids = Tensor::from_vec(type_ids, shape, &self.device)?;
         let position_ids = Tensor::from_vec(position_ids, shape, &self.device)?;
-        let input_lengths =
+        let mut input_lengths =
             Tensor::from_vec(input_lengths, (batch_size, 1), &self.device)?.to_dtype(self.dtype)?;
 
         let embedding_output = self
@@ -648,6 +648,7 @@ impl JinaBertModel {
 
                 // Select values in the batch
                 outputs = outputs.index_select(&pooled_indices, 0)?;
+                input_lengths = input_lengths.index_select(&pooled_indices, 0)?;
                 Some(pooled_indices)
             } else {
                 None

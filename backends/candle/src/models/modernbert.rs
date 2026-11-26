@@ -764,6 +764,7 @@ impl ModernBertModel {
                     Tensor::from_vec(batch.pooled_indices, pooled_indices_length, &self.device)?;
 
                 outputs = outputs.index_select(&pooled_indices, 0)?;
+                input_lengths = input_lengths.index_select(&pooled_indices, 0)?;
                 Some(pooled_indices)
             } else {
                 None
@@ -778,7 +779,6 @@ impl ModernBertModel {
 
                         if let Some(pooled_indices) = pooled_indices {
                             attention_mask = attention_mask.index_select(&pooled_indices, 0)?;
-                            input_lengths = input_lengths.index_select(&pooled_indices, 0)?;
                         };
 
                         outputs = outputs.broadcast_mul(&attention_mask)?;

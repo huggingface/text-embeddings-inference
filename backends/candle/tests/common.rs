@@ -385,6 +385,7 @@ pub fn assert_raw_batch_matches_single(
         ([0, 0, 0], vec![], vec![0, 1, 2]),
         ([0, 1, 2], vec![1], vec![0, 2]),
         ([1, 0, 2], vec![0, 2], vec![1]),
+        ([0, 0, 0], vec![0, 2], vec![1]),
     ] {
         let actual = backend.embed(batch(
             rows.iter().map(|&i| encodings[i].clone()).collect(),
