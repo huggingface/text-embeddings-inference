@@ -36,7 +36,7 @@ jobs:
           fi
       - name: Secret Scanning
         if: steps.range.outputs.scan == 'true'
-        uses: trufflesecurity/trufflehog@b2b0a92070f206ab7b5a1105d82a7f2f48d92341 # v3.99.0
+        uses: trufflesecurity/trufflehog@ea68ca03c865c5f324e86e849ced20ed3cf9dbbb # v3.99.8
         with:
           base: ${{ steps.range.outputs.base }}
           head: ${{ github.sha }}
