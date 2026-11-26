@@ -53,6 +53,7 @@ pub async fn run(
     pooling: Option<text_embeddings_backend::Pool>,
     max_concurrent_requests: usize,
     max_batch_tokens: usize,
+    max_batch_attention: Option<usize>,
     max_batch_requests: Option<usize>,
     max_client_batch_size: usize,
     auto_truncate: bool,
@@ -324,10 +325,15 @@ pub async fn run(
         })
         .or(max_batch_requests);
 
+    if max_batch_attention.is_some() && !backend.padded_model {
+        tracing::warn!("`--max-batch-attention` only applies to padded models and will be ignored");
+    }
+
     // Queue logic
     let queue = Queue::new(
         backend.padded_model,
         max_batch_tokens,
+        max_batch_attention,
         max_batch_requests,
         max_concurrent_requests,
     );
