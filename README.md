@@ -649,7 +649,7 @@ model=Qwen/Qwen3-Embedding-0.6B
 text-embeddings-router --model-id $model --port 8080
 ```
 
-## Docker
+## Docker Build
 
 You can build the CPU container with Docker as:
 
