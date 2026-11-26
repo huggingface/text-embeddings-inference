@@ -505,7 +505,7 @@ impl FlashQwen3Model {
                         Some((outputs.sum_keepdim(0)? / (batch.max_length as f64))?)
                     }
                 }
-                Pool::Splade => {
+                Pool::Splade | Pool::M3Sparse => {
                     unreachable!();
                 }
             }

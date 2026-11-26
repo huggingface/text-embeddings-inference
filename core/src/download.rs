@@ -1,5 +1,6 @@
 use hf_hub::api::tokio::{ApiError, ApiRepo};
 use std::path::PathBuf;
+use text_embeddings_backend::Pool;
 use tracing::instrument;
 
 // `sentence_bert_config.json` default Sentence Transformers configuration file name, and other
@@ -37,13 +38,13 @@ async fn download_st_config_legacy(api: &ApiRepo) -> Result<PathBuf, ApiError> {
 }
 
 #[instrument(skip_all)]
-pub async fn download_artifacts(api: &ApiRepo, pool_config: bool) -> Result<PathBuf, ApiError> {
+pub async fn download_artifacts(api: &ApiRepo, pool: Option<Pool>) -> Result<PathBuf, ApiError> {
     let start = std::time::Instant::now();
     tracing::info!("Starting download");
 
     // Try to download `1_Pooling`, only if `--pooling` hasn't been provided, otherwise, the
     // `--pooling` argument will be used instead.
-    if pool_config {
+    if pool.is_none() {
         let _ = download_file(api, "1_Pooling/config.json")
             .await
             .map_err(|err| {
@@ -65,6 +66,11 @@ pub async fn download_artifacts(api: &ApiRepo, pool_config: bool) -> Result<Path
             tracing::warn!("Download failed: {err}");
             err
         });
+
+    // The bge-m3 sparse head lives in a standalone `sparse_linear.pt`, outside the model weights
+    if pool == Some(Pool::M3Sparse) {
+        download_file(api, "sparse_linear.pt").await?;
+    }
 
     download_file(api, "config.json").await?;
     let path = download_file(api, "tokenizer.json").await?;
