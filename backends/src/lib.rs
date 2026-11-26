@@ -83,6 +83,7 @@ pub struct Backend {
     health_receiver: watch::Receiver<bool>,
     _backend_thread: Arc<BackendThread>,
     pub padded_model: bool,
+    pub cuda: bool,
     pub max_batch_size: Option<usize>,
     pub supports_token_embeddings: bool,
     pub model_type: ModelType,
@@ -116,6 +117,7 @@ impl Backend {
         )
         .await?;
         let padded_model = backend.is_padded();
+        let cuda = backend.is_cuda();
         let max_batch_size = backend.max_batch_size();
         let supports_token_embeddings = backend.supports_token_embeddings();
 
@@ -128,6 +130,7 @@ impl Backend {
             health_receiver,
             _backend_thread,
             padded_model,
+            cuda,
             max_batch_size,
             supports_token_embeddings,
             model_type,
@@ -323,12 +326,13 @@ impl Backend {
                 .await;
         }
 
-        // In padded_model (CPU), use minimal warmup size (max_input_length tokens) for fast startup
-        // Non-padded (GPU), use full max_batch_tokens to exercise production batching limits
-        let warmup_tokens = if padded_model {
-            max_input_length.min(max_batch_tokens)
-        } else {
+        // A full batch makes a GPU that's too small fail at startup, not on the first large request.
+        // For padded models it's slightly larger than any real batch, which leaves headroom on purpose.
+        // Off CUDA, padded models use one sequence: a full batch is slow on the CPU and swaps on Metal.
+        let warmup_tokens = if !padded_model || self.cuda {
             max_batch_tokens
+        } else {
+            max_input_length.min(max_batch_tokens)
         };
 
         let mut input_ids = Vec::with_capacity(warmup_tokens);
@@ -1078,9 +1082,55 @@ mod tests {
                 health_sender,
             )),
             padded_model: false,
+            cuda: false,
             max_batch_size: None,
             supports_token_embeddings,
             model_type: ModelType::Embedding(Pool::Cls),
+        }
+    }
+
+    /// Backend that reports the number of tokens in each forward pass
+    struct TokenCountBackend(std_mpsc::Sender<usize>);
+
+    impl CoreBackend for TokenCountBackend {
+        fn health(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+
+        fn is_padded(&self) -> bool {
+            false
+        }
+
+        fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError> {
+            let _ = self.0.send(batch.input_ids.len());
+            Ok(Embeddings::default())
+        }
+
+        fn predict(&self, batch: Batch) -> Result<Predictions, BackendError> {
+            let _ = self.0.send(batch.input_ids.len());
+            Ok(Predictions::default())
+        }
+    }
+
+    /// Padded models warm up with one sequence except on CUDA.
+    #[tokio::test]
+    async fn warmup_batch_by_padding_and_device() {
+        for (padded_model, cuda, expected) in [
+            (false, false, 70),
+            (false, true, 70),
+            (true, false, 16),
+            (true, true, 70),
+        ] {
+            let (sender, receiver) = std_mpsc::channel();
+            let mut backend = test_backend(TokenCountBackend(sender));
+            backend.padded_model = padded_model;
+            backend.cuda = cuda;
+            backend.warmup(16, 70, None, padded_model).await.unwrap();
+            assert_eq!(
+                receiver.recv().unwrap(),
+                expected,
+                "padded_model={padded_model} cuda={cuda}"
+            );
         }
     }
 

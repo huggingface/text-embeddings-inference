@@ -653,6 +653,10 @@ impl Backend for CandleBackend {
         self.model.is_padded()
     }
 
+    fn is_cuda(&self) -> bool {
+        matches!(self.device, Device::Cuda(_))
+    }
+
     fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError> {
         let batch_size = batch.len();
         let pooled_indices = batch.pooled_indices.clone();
