@@ -16,6 +16,7 @@ mod gte;
 mod jina;
 mod jina_code;
 mod llama;
+mod ministral3;
 mod mistral;
 mod modernbert;
 mod mpnet;
@@ -38,6 +39,9 @@ mod flash_jina;
 
 #[cfg(feature = "cuda")]
 mod flash_jina_code;
+
+#[cfg(feature = "cuda")]
+mod flash_ministral3;
 
 #[cfg(feature = "cuda")]
 mod flash_mistral;
@@ -63,6 +67,7 @@ pub use gte::{GTEConfig, GTEModel};
 pub use jina::JinaBertModel;
 pub use jina_code::JinaCodeBertModel;
 pub use llama::LlamaConfig;
+pub use ministral3::{Ministral3Config, Ministral3Model, Mistral3Config};
 pub use mistral::MistralConfig;
 pub use modernbert::{ModernBertConfig, ModernBertModel};
 pub use mpnet::{MPNetConfig, MPNetModel};
@@ -85,6 +90,9 @@ pub use flash_jina::FlashJinaBertModel;
 
 #[cfg(feature = "cuda")]
 pub use flash_jina_code::FlashJinaCodeBertModel;
+
+#[cfg(feature = "cuda")]
+pub use flash_ministral3::FlashMinistral3Model;
 
 #[cfg(feature = "cuda")]
 pub use flash_mistral::FlashMistralModel;

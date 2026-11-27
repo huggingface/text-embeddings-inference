@@ -21,7 +21,8 @@ We are continually expanding our support for other model types and plan to inclu
 ## Supported embeddings models
 
 Text Embeddings Inference currently supports Nomic, BERT, CamemBERT, XLM-RoBERTa models with absolute positions, JinaBERT
-model with Alibi positions and Mistral, Alibaba GTE, Qwen2 models with Rope positions, MPNet, ModernBERT, Qwen3, and Gemma3.
+model with Alibi positions and Mistral, Alibaba GTE, Qwen2 models with Rope positions, MPNet, ModernBERT, Qwen3, Gemma3,
+and Ministral3 (text-only).
 
 Below are some examples of the currently supported models:
 
@@ -44,6 +45,7 @@ Below are some examples of the currently supported models:
 | N/A       | 475M-A305M             | NomicBERT      | [nomic-ai/nomic-embed-text-v2-moe](https://hf.co/nomic-ai/nomic-embed-text-v2-moe)               |
 | N/A       | 434M                   | Alibaba GTE    | [Alibaba-NLP/gte-large-en-v1.5](https://hf.co/Alibaba-NLP/gte-large-en-v1.5)                     |
 | N/A       | 396M                   | ModernBERT     | [answerdotai/ModernBERT-large](https://hf.co/answerdotai/ModernBERT-large)                       |
+| N/A       | 1.55B (Expensive)      | Ministral3     | [nvidia/Nemotron-3.5-Embed-1B-BF16](https://hf.co/nvidia/Nemotron-3.5-Embed-1B-BF16) (text-only) |
 | N/A       | 340M                   | Qwen3          | [voyageai/voyage-4-nano](https://hf.co/voyageai/voyage-4-nano)                                   |
 | N/A       | 137M                   | JinaBERT       | [jinaai/jina-embeddings-v2-base-en](https://hf.co/jinaai/jina-embeddings-v2-base-en)             |
 | N/A       | 137M                   | JinaBERT       | [jinaai/jina-embeddings-v2-base-code](https://hf.co/jinaai/jina-embeddings-v2-base-code)         |
