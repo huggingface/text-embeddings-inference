@@ -1712,21 +1712,6 @@ pub async fn run(
     )]
     struct ApiDoc;
 
-    // CORS allowed origins
-    // map to go inside the option and then map to parse from String to HeaderValue
-    // Finally, convert to AllowOrigin
-    let allow_origin: Option<AllowOrigin> = cors_allow_origin.map(|cors_allow_origin| {
-        if cors_allow_origin.iter().any(|origin| origin == "*") {
-            AllowOrigin::any()
-        } else {
-            AllowOrigin::list(
-                cors_allow_origin
-                    .into_iter()
-                    .map(|origin| origin.parse::<HeaderValue>().unwrap()),
-            )
-        }
-    });
-
     let (recorder, exporter) = if separate_metrics {
         let (recorder, exporter) = prom_builder
             .build()
@@ -1738,12 +1723,7 @@ pub async fn run(
     let prom_handle = recorder.handle();
     metrics::set_global_recorder(recorder).context("Failed to set global recorder")?;
 
-    // CORS layer
-    let allow_origin = allow_origin.unwrap_or(AllowOrigin::any());
-    let cors_layer = CorsLayer::new()
-        .allow_methods([Method::GET, Method::POST])
-        .allow_headers([http::header::CONTENT_TYPE])
-        .allow_origin(allow_origin);
+    let cors_layer = cors_layer(cors_allow_origin);
 
     // Define VertextApiDoc conditionally only if the "google" feature is enabled
     let mut doc = {
@@ -1953,6 +1933,30 @@ pub async fn run(
     Ok(())
 }
 
+fn cors_layer(cors_allow_origin: Option<Vec<String>>) -> CorsLayer {
+    // CORS allowed origins
+    // map to go inside the option and then map to parse from String to HeaderValue
+    // Finally, convert to AllowOrigin
+    let allow_origin: Option<AllowOrigin> = cors_allow_origin.map(|cors_allow_origin| {
+        if cors_allow_origin.iter().any(|origin| origin == "*") {
+            AllowOrigin::any()
+        } else {
+            AllowOrigin::list(
+                cors_allow_origin
+                    .into_iter()
+                    .map(|origin| origin.parse::<HeaderValue>().unwrap()),
+            )
+        }
+    });
+
+    let allow_origin = allow_origin.unwrap_or(AllowOrigin::any());
+    CorsLayer::new()
+        .allow_methods([Method::GET, Method::POST])
+        // `Authorization` carries the `--api-key` bearer token
+        .allow_headers([http::header::CONTENT_TYPE, AUTHORIZATION])
+        .allow_origin(allow_origin)
+}
+
 fn normalize_root_path(root_path: Option<&str>) -> Result<Option<String>, anyhow::Error> {
     let Some(root_path) = root_path else {
         return Ok(None);
@@ -2022,7 +2026,9 @@ impl From<serde_json::Error> for ErrorResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_root_path;
+    use super::{cors_layer, normalize_root_path};
+    use axum::routing::post;
+    use axum::Router;
 
     #[test]
     fn normalize_root_path_ignores_empty_and_root() {
@@ -2055,5 +2061,32 @@ mod tests {
     fn normalize_root_path_rejects_route_patterns() {
         assert!(normalize_root_path(Some("/:model")).is_err());
         assert!(normalize_root_path(Some("/models/*rest")).is_err());
+    }
+
+    #[tokio::test]
+    async fn cors_preflight_allows_the_api_key_header() {
+        let app = Router::new()
+            .route("/embed", post(|| async {}))
+            .layer(cors_layer(Some(vec!["http://localhost:5173".to_string()])));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+
+        // What a browser sends before a `POST` with `Authorization: Bearer <api key>`
+        let response = reqwest::Client::new()
+            .request(reqwest::Method::OPTIONS, format!("http://{addr}/embed"))
+            .header("Origin", "http://localhost:5173")
+            .header("Access-Control-Request-Method", "POST")
+            .header(
+                "Access-Control-Request-Headers",
+                "authorization,content-type",
+            )
+            .send()
+            .await
+            .unwrap();
+        let allowed = response.headers()["access-control-allow-headers"]
+            .to_str()
+            .unwrap();
+        assert!(allowed.contains("authorization"), "{allowed}");
     }
 }
