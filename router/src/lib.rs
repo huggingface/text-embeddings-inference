@@ -32,9 +32,10 @@ use text_embeddings_core::infer::Infer;
 use text_embeddings_core::queue::Queue;
 use text_embeddings_core::tokenization::Tokenization;
 use text_embeddings_core::TextEmbeddingsError;
+use tokenizers::normalizers::{Lowercase, Sequence as NormalizerSequence};
 use tokenizers::processors::sequence::Sequence;
 use tokenizers::processors::template::TemplateProcessing;
-use tokenizers::{PostProcessorWrapper, Tokenizer};
+use tokenizers::{NormalizerWrapper, PostProcessorWrapper, Tokenizer};
 use tracing::Span;
 
 pub use logging::init_logging;
@@ -207,6 +208,10 @@ pub async fn run(
         }
     }
 
+    if st_config.as_ref().and_then(|config| config.do_lower_case) == Some(true) {
+        add_lowercase_normalizer(&mut tokenizer);
+    }
+
     let max_position_embeddings = match config.max_position_embeddings {
         Some(max_position_embeddings) => max_position_embeddings,
         None => match config.max_trained_positions {
@@ -215,7 +220,7 @@ pub async fn run(
         },
     };
 
-    let base_input_length = match st_config.and_then(|config| config.max_seq_length) {
+    let base_input_length = match st_config.as_ref().and_then(|config| config.max_seq_length) {
         Some(max_seq_length) => max_seq_length,
         None => {
             tracing::warn!("Could not find `max_seq_length` in a Sentence Transformers config");
@@ -540,6 +545,15 @@ impl TryFrom<PoolConfig> for Pool {
 #[derive(Debug, Deserialize)]
 pub struct STConfig {
     pub max_seq_length: Option<usize>,
+    pub do_lower_case: Option<bool>,
+}
+
+/// Lowercase the inputs before the tokenizer normalizer runs, as Sentence Transformers does when
+/// `do_lower_case` is set in its config
+fn add_lowercase_normalizer(tokenizer: &mut Tokenizer) {
+    let mut normalizers = vec![NormalizerWrapper::Lowercase(Lowercase)];
+    normalizers.extend(tokenizer.get_normalizer().cloned());
+    tokenizer.with_normalizer(Some(NormalizerSequence::new(normalizers)));
 }
 
 #[derive(Debug, Deserialize)]
@@ -762,6 +776,9 @@ impl From<ResponseMetadata> for HeaderMap {
 mod metadata_tests {
     use super::*;
     use serde_json::json;
+    use tokenizers::models::wordlevel::WordLevel;
+    use tokenizers::normalizers::BertNormalizer;
+    use tokenizers::pre_tokenizers::whitespace::Whitespace;
 
     #[test]
     fn legacy_pooling_modes_are_preserved() {
@@ -818,5 +835,32 @@ mod metadata_tests {
             let config: STConfig = serde_json::from_value(value).unwrap();
             assert_eq!(config.max_seq_length, None);
         }
+    }
+
+    #[test]
+    fn do_lower_case_lowercases_before_the_tokenizer_normalizer() {
+        let vocab = [("hello", 0), ("世", 1), ("界", 2), ("[UNK]", 3)]
+            .into_iter()
+            .map(|(token, id)| (token.to_string(), id))
+            .collect();
+        let model = WordLevel::builder()
+            .vocab(vocab)
+            .unk_token("[UNK]".to_string())
+            .build()
+            .unwrap();
+        let mut tokenizer = Tokenizer::new(model);
+        // Same normalizer as `BAAI/bge-small-zh-v1.5`, which sets `do_lower_case` in its
+        // Sentence Transformers config but does not lowercase in `tokenizer.json`
+        tokenizer.with_normalizer(Some(BertNormalizer::new(true, true, None, false)));
+        tokenizer.with_pre_tokenizer(Some(Whitespace {}));
+
+        let config: STConfig =
+            serde_json::from_value(json!({"max_seq_length": 512, "do_lower_case": true})).unwrap();
+        assert_eq!(config.do_lower_case, Some(true));
+        add_lowercase_normalizer(&mut tokenizer);
+
+        let encoding = tokenizer.encode("Hello世界", false).unwrap();
+        assert_eq!(encoding.get_ids(), [0, 1, 2]);
+        assert_eq!(encoding.get_offsets(), [(0, 5), (5, 8), (8, 11)]);
     }
 }
