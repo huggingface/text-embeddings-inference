@@ -271,10 +271,10 @@ fn prepare_pre_prompt(
     let pre_prompt = if let Some(prompt_name) = prompt_name.as_ref() {
         match prompts {
             None => {
-                return Err(TextEmbeddingsError::Validation(format!("`default-prompt-name` is set to `{prompt_name}` but no prompts were found in the Sentence Transformers configuration")));
+                return Err(TextEmbeddingsError::Validation(format!("`prompt_name` is set to `{prompt_name}` but no prompts were found in the Sentence Transformers configuration")));
             }
             Some(prompts) if !prompts.contains_key(prompt_name) => {
-                return Err(TextEmbeddingsError::Validation(format!("`default-prompt-name` is set to `{prompt_name}` but it was not found in the Sentence Transformers prompts. Available prompts: {:?}", prompts.keys())));
+                return Err(TextEmbeddingsError::Validation(format!("`prompt_name` is set to `{prompt_name}` but it was not found in the Sentence Transformers prompts. Available prompts: {:?}", prompts.keys())));
             }
             Some(prompts) => prompts.get(prompt_name).cloned(),
         }
@@ -565,6 +565,24 @@ mod tests {
         let mut input = EncodingInput::Dual("abcdé".to_string(), "éabcd".to_string());
         input.apply_limit(4, TruncationDirection::Left);
         assert!(matches!(input, EncodingInput::Dual(s1, s2) if s1 == "dé" && s2 == "cd"));
+    }
+
+    #[test]
+    fn unknown_request_prompt_name_is_reported_as_prompt_name() {
+        let prompts = HashMap::from([("query".to_string(), "query: ".to_string())]);
+        for prompts in [None, Some(&prompts)] {
+            let err = prepare_pre_prompt(None, Some("passage".to_string()), prompts).unwrap_err();
+            let TextEmbeddingsError::Validation(message) = err else {
+                panic!("Expected a validation error, got {err:?}");
+            };
+            assert!(
+                message.starts_with("`prompt_name` is set to `passage`"),
+                "{message}"
+            );
+        }
+
+        let pre_prompt = prepare_pre_prompt(None, Some("query".to_string()), Some(&prompts));
+        assert_eq!(pre_prompt.unwrap(), Some("query: ".to_string()));
     }
 
     #[test]
