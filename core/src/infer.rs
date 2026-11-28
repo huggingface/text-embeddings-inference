@@ -294,20 +294,7 @@ impl Infer {
         }
 
         if normalize {
-            // Normalize embedding
-            let scale = (1.0
-                / response
-                    .results
-                    .iter()
-                    .map(|v| {
-                        let v = *v as f64;
-                        v * v
-                    })
-                    .sum::<f64>()
-                    .sqrt()) as f32;
-            for v in response.results.iter_mut() {
-                *v *= scale;
-            }
+            normalize_embedding(&mut response.results);
         }
 
         // Timings
@@ -625,6 +612,21 @@ async fn backend_task(backend: Backend, mut embed_receiver: mpsc::Receiver<NextB
     }
 }
 
+fn normalize_embedding(values: &mut [f32]) {
+    let norm = values
+        .iter()
+        .map(|&v| f64::from(v).powi(2))
+        .sum::<f64>()
+        .sqrt();
+    if norm == 0.0 {
+        return;
+    }
+    let scale = norm.recip();
+    for v in values {
+        *v = (f64::from(*v) * scale) as f32;
+    }
+}
+
 /// In-place activation over classification scores.
 ///
 /// A sigmoid is applied to every score for a single-class model or when `multi_label` is set,
@@ -701,6 +703,20 @@ pub struct AllEmbeddingsInferResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_zero_embedding() {
+        let mut values = [0.0, 0.0];
+        normalize_embedding(&mut values);
+        assert_eq!(values, [0.0, 0.0]);
+    }
+
+    #[test]
+    fn normalize_small_nonzero_embedding() {
+        let mut values = [f32::from_bits(1), 0.0];
+        normalize_embedding(&mut values);
+        assert_eq!(values, [1.0, 0.0]);
+    }
 
     #[test]
     fn activation_rejects_non_finite_scores() {
