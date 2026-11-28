@@ -10,8 +10,8 @@ use crate::http::types::{
     VertexResponse,
 };
 use crate::{
-    logging, shutdown, ClassifierModel, EmbeddingModel, ErrorResponse, ErrorType, Info, ModelType,
-    ResponseMetadata,
+    logging, shutdown, sort_by_score_descending, ClassifierModel, EmbeddingModel, ErrorResponse,
+    ErrorType, Info, ModelType, ResponseMetadata,
 };
 use ::http::HeaderMap;
 use anyhow::Context;
@@ -157,9 +157,7 @@ async fn predict(
                 label: id2label.get(&i.to_string()).unwrap().clone(),
             });
         }
-        // Reverse sort
-        predictions.sort_by(|x, y| x.score.partial_cmp(&y.score).unwrap());
-        predictions.reverse();
+        sort_by_score_descending(&mut predictions, |x| x.score);
 
         Ok::<(usize, Duration, Duration, Duration, Vec<Prediction>), ErrorResponse>((
             response.metadata.prompt_tokens,
@@ -439,9 +437,7 @@ async fn rerank(
             ranks.push(Rank { index, text, score })
         }
 
-        // Reverse sort
-        ranks.sort_by(|x, y| x.score.partial_cmp(&y.score).unwrap());
-        ranks.reverse();
+        sort_by_score_descending(&mut ranks, |x| x.score);
 
         let batch_size = batch_size as u64;
 

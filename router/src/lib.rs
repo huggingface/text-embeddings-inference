@@ -758,6 +758,26 @@ impl From<ResponseMetadata> for HeaderMap {
     }
 }
 
+/// Sort by descending score, keeping items with the same score in their input order
+/// (like Sentence Transformers `CrossEncoder.rank`). Scores must not be NaN.
+pub(crate) fn sort_by_score_descending<T>(items: &mut [T], score: impl Fn(&T) -> f32) {
+    items.sort_by(|x, y| score(y).partial_cmp(&score(x)).unwrap());
+}
+
+#[cfg(test)]
+mod sort_tests {
+    use super::sort_by_score_descending;
+
+    #[test]
+    fn ties_keep_their_input_order() {
+        let mut ranks: Vec<(usize, f32)> =
+            [0.5, 1.0, 1.0, 0.2, 1.0].into_iter().enumerate().collect();
+        sort_by_score_descending(&mut ranks, |(_, score)| *score);
+        let indices: Vec<usize> = ranks.iter().map(|(index, _)| *index).collect();
+        assert_eq!(indices, [1, 2, 4, 0, 3]);
+    }
+}
+
 #[cfg(test)]
 mod metadata_tests {
     use super::*;
